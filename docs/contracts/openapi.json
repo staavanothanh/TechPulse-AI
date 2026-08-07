@@ -1,0 +1,5136 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TechPulse AI API",
+    "version": "1.1.0",
+    "description": "Canonical HTTP contract for the Vietnamese-first TechPulse AI MVP. External content is untrusted data; no response contains source full text or media binary."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same-origin API"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth"
+    },
+    {
+      "name": "Account"
+    },
+    {
+      "name": "Content"
+    },
+    {
+      "name": "AI"
+    },
+    {
+      "name": "Admin Sources"
+    },
+    {
+      "name": "Admin Jobs"
+    },
+    {
+      "name": "Admin Content"
+    },
+    {
+      "name": "Admin Governance"
+    },
+    {
+      "name": "Internal"
+    }
+  ],
+  "security": [
+    {
+      "cookieAuth": []
+    }
+  ],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "operationId": "getHealth",
+        "summary": "Check API process health without exposing dependency details",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "API process is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "registerUser",
+        "summary": "Register a user account",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Account and session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "login",
+        "summary": "Create a server-side session",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "logout",
+        "summary": "Revoke the current session",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session revoked"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "getCurrentUser",
+        "summary": "Get the current account",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/me/preferences": {
+      "patch": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "updatePreferences",
+        "summary": "Replace topic preferences",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferencesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/me/deletion-requests": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "requestAccountDeletion",
+        "summary": "Request deletion of the current account",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Deletion request accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/me/saved-articles": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "listSavedArticles",
+        "summary": "List the current user's saved articles",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "clearSavedArticles",
+        "summary": "Delete the current user's saved-article history",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Saved-article history cleared"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/me/saved-articles/{articleId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ArticleIdPath"
+        }
+      ],
+      "put": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "saveArticle",
+        "summary": "Idempotently save an article",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Article is saved"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "unsaveArticle",
+        "summary": "Idempotently remove a saved article",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Article is not saved"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/chat-sessions": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "listChatSessions",
+        "summary": "List the current user's chat sessions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "clearChatSessions",
+        "summary": "Delete all chat sessions owned by the current user",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Chat sessions deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/chat-sessions/{chatSessionId}": {
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "deleteChatSession",
+        "summary": "Delete one owned chat session",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ChatSessionIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Chat session deleted or already absent"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/articles": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "operationId": "listArticles",
+        "summary": "List visible published articles",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "topic",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "sourceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "publishedAfter",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "publishedBefore",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/articles/{articleId}": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "operationId": "getArticle",
+        "summary": "Get one visible article with source citation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArticleIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/search-results": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "operationId": "searchArticles",
+        "summary": "Search visible articles using text or hybrid retrieval",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 300
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "text",
+                "hybrid"
+              ],
+              "default": "hybrid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "topic",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "sourceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "publishedAfter",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "publishedBefore",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/answers": {
+      "post": {
+        "tags": [
+          "AI"
+        ],
+        "operationId": "createGroundedAnswer",
+        "summary": "Answer from retrieved evidence with paragraph citations",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/overview": {
+      "get": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "getAdminOverview",
+        "summary": "Get actionable operational counts",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverviewResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/sources": {
+      "get": {
+        "tags": [
+          "Admin Sources"
+        ],
+        "operationId": "listSources",
+        "summary": "List Source Registry entries",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "operationalStatus",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/OperationalStatus"
+            }
+          },
+          {
+            "name": "licenseStatus",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/LicenseStatus"
+            }
+          },
+          {
+            "name": "connectorType",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ConnectorType"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin Sources"
+        ],
+        "operationId": "createSource",
+        "summary": "Create a draft source",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Draft source created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/sources/{sourceId}": {
+      "get": {
+        "tags": [
+          "Admin Sources"
+        ],
+        "operationId": "getSource",
+        "summary": "Get a Source Registry entry",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SourceIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Admin Sources"
+        ],
+        "operationId": "updateSource",
+        "summary": "Update source configuration or operational state",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SourceIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/sources/{sourceId}/technical-checks": {
+      "post": {
+        "tags": [
+          "Admin Sources"
+        ],
+        "operationId": "runSourceTechnicalCheck",
+        "summary": "Run a bounded SSRF-protected technical check",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SourceIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TechnicalCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalCheckResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/sources/{sourceId}/policy-reviews": {
+      "post": {
+        "tags": [
+          "Admin Sources"
+        ],
+        "operationId": "reviewSourcePolicy",
+        "summary": "Record a human rights-policy decision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SourceIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ingestion-jobs": {
+      "get": {
+        "tags": [
+          "Admin Jobs"
+        ],
+        "operationId": "listIngestionJobs",
+        "summary": "List durable ingestion jobs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/JobStatus"
+            }
+          },
+          {
+            "name": "sourceId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestionJobListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin Jobs"
+        ],
+        "operationId": "createIngestionJob",
+        "summary": "Trigger bounded ingestion using the shared job service",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestionJobCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted; inspect returned state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestionJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ingestion-jobs/{jobId}": {
+      "get": {
+        "tags": [
+          "Admin Jobs"
+        ],
+        "operationId": "getIngestionJob",
+        "summary": "Get one ingestion job",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestionJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ingestion-jobs/{jobId}/retries": {
+      "post": {
+        "tags": [
+          "Admin Jobs"
+        ],
+        "operationId": "retryIngestionJob",
+        "summary": "Create a bounded retry attempt",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Retry accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestionJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ingestion-jobs/{jobId}/cancellation": {
+      "post": {
+        "tags": [
+          "Admin Jobs"
+        ],
+        "operationId": "cancelIngestionJob",
+        "summary": "Cancel a queued job or request safe stop",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestionJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/articles": {
+      "get": {
+        "tags": [
+          "Admin Content"
+        ],
+        "operationId": "listAdminArticles",
+        "summary": "List articles across moderation states",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ArticleStatus"
+            }
+          },
+          {
+            "name": "sourceId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "summaryStatus",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactStatus"
+            }
+          },
+          {
+            "name": "embeddingStatus",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminArticleListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/articles/{articleId}": {
+      "patch": {
+        "tags": [
+          "Admin Content"
+        ],
+        "operationId": "updateAdminArticle",
+        "summary": "Change article status or topics",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArticleIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminArticleUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminArticleResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/articles/{articleId}/summary-jobs": {
+      "post": {
+        "tags": [
+          "Admin Content"
+        ],
+        "operationId": "createSummaryJob",
+        "summary": "Regenerate a summary under current source policy",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArticleIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexingJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/articles/{articleId}/indexing-jobs": {
+      "post": {
+        "tags": [
+          "Admin Content"
+        ],
+        "operationId": "createIndexingJob",
+        "summary": "Create embedding or visibility-reconciliation work",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArticleIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IndexingJobCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexingJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/duplicate-merges": {
+      "post": {
+        "tags": [
+          "Admin Content"
+        ],
+        "operationId": "mergeDuplicateArticles",
+        "summary": "Merge duplicate records while preserving provenance",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateMergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminArticleResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/takedown-requests": {
+      "get": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "listTakedownRequests",
+        "summary": "List takedown requests",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/TakedownStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakedownListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "createTakedownRequest",
+        "summary": "Record a takedown or privacy request",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakedownCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakedownResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/takedown-requests/{takedownRequestId}": {
+      "get": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "getTakedownRequest",
+        "summary": "Get one takedown request",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TakedownRequestIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakedownResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "updateTakedownRequest",
+        "summary": "Advance a takedown request through an allowed transition",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TakedownRequestIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakedownUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakedownResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "listAdminUsers",
+        "summary": "List minimal operational user data",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UserStatus"
+            }
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{userId}": {
+      "get": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "getAdminUser",
+        "summary": "Get minimal operational user data",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "updateUserStatus",
+        "summary": "Suspend or restore a user and revoke sessions as required",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/audit-logs": {
+      "get": {
+        "tags": [
+          "Admin Governance"
+        ],
+        "operationId": "listAuditLogs",
+        "summary": "Read append-only admin audit records",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "adminId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetType",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "targetId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/internal/cron/daily-ingestion": {
+      "post": {
+        "tags": [
+          "Internal"
+        ],
+        "operationId": "runDailyIngestion",
+        "summary": "Run the bounded daily ingestion coordinator",
+        "security": [
+          {
+            "cronBearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Daily run accepted and bounded work attempted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CronRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "techpulse_session",
+        "description": "Opaque server-side session token."
+      },
+      "cronBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "Vercel CRON_SECRET; never accepted from a browser session."
+      }
+    },
+    "parameters": {
+      "CsrfTokenHeader": {
+        "name": "X-CSRF-Token",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 32
+        }
+      },
+      "IdempotencyKeyHeader": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128
+        }
+      },
+      "CursorQuery": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "description": "Opaque cursor; clients must not parse it."
+      },
+      "LimitQuery": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        }
+      },
+      "ArticleIdPath": {
+        "name": "articleId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "SourceIdPath": {
+        "name": "sourceId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "JobIdPath": {
+        "name": "jobId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "UserIdPath": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "ChatSessionIdPath": {
+        "name": "chatSessionId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "TakedownRequestIdPath": {
+        "name": "takedownRequestId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Malformed request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "bad_request",
+                "message": "Malformed request",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Authentication required",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "unauthorized",
+                "message": "Authentication required",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permission or invalid CSRF token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "forbidden",
+                "message": "Insufficient permission or invalid CSRF token",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "not_found",
+                "message": "Resource not found",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "State, duplicate, lease, or idempotency conflict",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "conflict",
+                "message": "State, duplicate, lease, or idempotency conflict",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "UnprocessableEntity": {
+        "description": "Semantic validation failed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "validation_error",
+                "message": "Semantic validation failed",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds until retry is permitted",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "rate_limit_exceeded",
+                "message": "Rate limit exceeded",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Unexpected internal failure",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "internal_error",
+                "message": "Unexpected internal failure",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Required dependency is temporarily unavailable",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds until a retry may succeed",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "service_unavailable",
+                "message": "Required dependency is temporarily unavailable",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "OperationalStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "testing",
+          "active",
+          "paused",
+          "archived"
+        ]
+      },
+      "LicenseStatus": {
+        "type": "string",
+        "enum": [
+          "permitted",
+          "metadata-only",
+          "review-needed",
+          "blocked"
+        ]
+      },
+      "LlmInputScope": {
+        "type": "string",
+        "enum": [
+          "metadata",
+          "excerpt",
+          "fulltext-temporary",
+          "none"
+        ]
+      },
+      "ConnectorType": {
+        "type": "string",
+        "enum": [
+          "rss",
+          "arxiv",
+          "hacker-news"
+        ]
+      },
+      "AuthorityTier": {
+        "type": "string",
+        "enum": [
+          "primary",
+          "editorial",
+          "community-signal"
+        ]
+      },
+      "ArticleStatus": {
+        "type": "string",
+        "enum": [
+          "processing",
+          "review-needed",
+          "published",
+          "hidden",
+          "removed"
+        ]
+      },
+      "ArtifactStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "processing",
+          "ready",
+          "failed",
+          "removed"
+        ]
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "partial",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "UserStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "suspended",
+          "deletion-pending",
+          "deleted"
+        ]
+      },
+      "TakedownStatus": {
+        "type": "string",
+        "enum": [
+          "received",
+          "reviewing",
+          "approved",
+          "rejected",
+          "completed"
+        ]
+      },
+      "HealthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "timestamp"
+            ],
+            "properties": {
+              "status": {
+                "const": "ok"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "email",
+          "role",
+          "status",
+          "topicPreferences",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "admin"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          },
+          "topicPreferences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "maxItems": 20
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 128
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "AuthData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "user",
+          "csrfToken"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "csrfToken": {
+            "type": "string",
+            "minLength": 32,
+            "description": "Send in X-CSRF-Token for state-changing session-authenticated requests."
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AuthData"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "PreferencesRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "topicPreferences"
+        ],
+        "properties": {
+          "topicPreferences": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "uniqueItems": true,
+            "maxItems": 20
+          }
+        }
+      },
+      "AccountDeletionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        }
+      },
+      "AccountDeletion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "requestedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "deletion-pending"
+            ]
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountDeletionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountDeletion"
+          }
+        }
+      },
+      "SourceCitation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceId",
+          "sourceName",
+          "titleOriginal",
+          "originalUrl",
+          "publishedAt",
+          "sourceLanguage"
+        ],
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "titleOriginal": {
+            "type": "string"
+          },
+          "originalUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        }
+      },
+      "LeadMedia": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Remote media metadata only. Images may use remote-preview when source policy permits; video is link-only in the MVP. Binary media is never returned or stored by TechPulse AI.",
+        "required": [
+          "type",
+          "displayMode",
+          "url",
+          "sourcePageUrl",
+          "altText",
+          "credit",
+          "mediaEvidenceStatus"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["image", "video"]
+          },
+          "displayMode": {
+            "type": "string",
+            "enum": ["remote-preview", "link-only"]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "sourcePageUrl": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "altText": {
+            "type": ["string", "null"]
+          },
+          "credit": {
+            "type": ["string", "null"]
+          },
+          "mediaEvidenceStatus": {
+            "const": "not-analyzed"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "type": { "const": "image" } },
+              "required": ["type"]
+            },
+            "then": {
+              "properties": { "displayMode": { "const": "remote-preview" } }
+            }
+          },
+          {
+            "if": {
+              "properties": { "type": { "const": "video" } },
+              "required": ["type"]
+            },
+            "then": {
+              "properties": { "displayMode": { "const": "link-only" } }
+            }
+          }
+        ]
+      },
+      "ArticleCard": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "titleOriginal",
+          "titleVi",
+          "source",
+          "publishedAt",
+          "sourceLanguage",
+          "topics",
+          "summaryVi",
+          "summaryStatus",
+          "summaryBasis",
+          "leadMedia",
+          "isSaved"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "titleOriginal": {
+            "type": "string"
+          },
+          "titleVi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name",
+              "authorityTier"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "authorityTier": {
+                "$ref": "#/components/schemas/AuthorityTier"
+              }
+            }
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "summaryVi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summaryStatus": {
+            "$ref": "#/components/schemas/ArtifactStatus"
+          },
+          "summaryBasis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "metadata",
+              "excerpt",
+              "fulltext-temporary",
+              null
+            ]
+          },
+          "leadMedia": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/LeadMedia" },
+              { "type": "null" }
+            ]
+          },
+          "isSaved": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ArticleDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "titleOriginal",
+          "titleVi",
+          "source",
+          "publishedAt",
+          "sourceLanguage",
+          "topics",
+          "summaryVi",
+          "summaryStatus",
+          "summaryBasis",
+          "leadMedia",
+          "isSaved",
+          "originalUrl",
+          "author",
+          "retrievedAt",
+          "citation",
+          "aiDisclosure"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "titleOriginal": { "type": "string" },
+          "titleVi": { "type": ["string", "null"] },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "authorityTier"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "authorityTier": { "$ref": "#/components/schemas/AuthorityTier" }
+            }
+          },
+          "publishedAt": { "type": "string", "format": "date-time" },
+          "sourceLanguage": { "type": "string" },
+          "topics": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "summaryVi": { "type": ["string", "null"] },
+          "summaryStatus": { "$ref": "#/components/schemas/ArtifactStatus" },
+          "summaryBasis": {
+            "type": ["string", "null"],
+            "enum": ["metadata", "excerpt", "fulltext-temporary", null]
+          },
+          "leadMedia": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/LeadMedia" },
+              { "type": "null" }
+            ]
+          },
+          "isSaved": { "type": "boolean" },
+          "originalUrl": { "type": "string", "format": "uri" },
+          "author": { "type": ["string", "null"] },
+          "retrievedAt": { "type": "string", "format": "date-time" },
+          "citation": { "$ref": "#/components/schemas/SourceCitation" },
+          "aiDisclosure": { "type": "string" }
+        }
+      },
+      "CursorMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hasNext",
+          "nextCursor"
+        ],
+        "properties": {
+          "hasNext": {
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ArticleListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArticleCard"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "ArticleDetailResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ArticleDetail"
+          }
+        }
+      },
+      "SearchResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "article",
+          "score",
+          "textScore",
+          "semanticScore"
+        ],
+        "properties": {
+          "article": {
+            "$ref": "#/components/schemas/ArticleCard"
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "textScore": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "semanticScore": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": -1,
+            "maximum": 1
+          }
+        }
+      },
+      "SearchMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hasNext",
+          "nextCursor",
+          "requestedMode",
+          "effectiveMode",
+          "fallbackUsed",
+          "fallbackReason"
+        ],
+        "properties": {
+          "hasNext": {
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestedMode": {
+            "type": "string",
+            "enum": [
+              "text",
+              "hybrid"
+            ]
+          },
+          "effectiveMode": {
+            "type": "string",
+            "enum": [
+              "text",
+              "hybrid"
+            ]
+          },
+          "fallbackUsed": {
+            "type": "boolean"
+          },
+          "fallbackReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "embedding-unavailable",
+              "no-compatible-vectors",
+              "provider-timeout",
+              null
+            ]
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SearchMeta"
+          }
+        }
+      },
+      "AnswerScope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "articleId": {
+            "type": "string"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "maxItems": 10
+          },
+          "publishedAfter": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "publishedBefore": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "anyOf": [
+          { "required": ["articleId"] },
+          { "required": ["topics"] },
+          { "required": ["publishedAfter", "publishedBefore"] }
+        ],
+        "description": "At least one of articleId, topics, or a time-bounded topic query must be supplied."
+      },
+      "AnswerRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "scope"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1000
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AnswerScope"
+          },
+          "chatSessionId": {
+            "type": "string"
+          }
+        }
+      },
+      "AnswerParagraph": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "citationIds"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "citationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          }
+        }
+      },
+      "AnswerCitation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "articleId",
+          "sourceId",
+          "sourceName",
+          "titleOriginal",
+          "originalUrl",
+          "publishedAt",
+          "sourceLanguage"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "articleId": { "type": "string" },
+          "sourceId": { "type": "string" },
+          "sourceName": { "type": "string" },
+          "titleOriginal": { "type": "string" },
+          "originalUrl": { "type": "string", "format": "uri" },
+          "author": { "type": ["string", "null"] },
+          "publishedAt": { "type": "string", "format": "date-time" },
+          "sourceLanguage": { "type": "string" }
+        }
+      },
+      "Answer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "paragraphs",
+          "citations",
+          "refusalReason",
+          "chatSessionId",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "answered",
+              "refused"
+            ]
+          },
+          "paragraphs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnswerParagraph"
+            }
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnswerCitation"
+            }
+          },
+          "refusalReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "insufficient-evidence",
+              "policy-blocked",
+              "provider-unavailable",
+              null
+            ]
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "answered requires non-empty paragraphs/citations; refused requires empty paragraphs and a refusalReason. Citation URLs are resolved by the server, never accepted from the model."
+      },
+      "AnswerResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Answer"
+          }
+        }
+      },
+      "ChatSessionSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ChatSessionListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatSessionSummary"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "StorageScope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metadata",
+          "excerpt",
+          "summary",
+          "embedding"
+        ],
+        "properties": {
+          "metadata": {
+            "type": "boolean"
+          },
+          "excerpt": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "boolean"
+          },
+          "embedding": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MediaPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Display permission is independent from text storage and LLM input rights. The MVP never downloads or rehosts source media.",
+        "required": [
+          "imageMode",
+          "videoMode",
+          "allowedHosts",
+          "attributionRequired",
+          "evidenceNote"
+        ],
+        "properties": {
+          "imageMode": {
+            "type": "string",
+            "enum": ["none", "remote-preview"]
+          },
+          "videoMode": {
+            "type": "string",
+            "enum": ["none", "link-only"]
+          },
+          "allowedHosts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 253
+            },
+            "uniqueItems": true,
+            "maxItems": 20
+          },
+          "attributionRequired": {
+            "type": "boolean"
+          },
+          "evidenceNote": {
+            "type": ["string", "null"],
+            "maxLength": 4000
+          }
+        }
+      },
+      "RssConnectorConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "feedUrl",
+          "batchSize"
+        ],
+        "properties": {
+          "kind": {
+            "const": "rss"
+          },
+          "feedUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "batchSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "ArxivConnectorConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "arxivQuery",
+          "batchSize"
+        ],
+        "properties": {
+          "kind": {
+            "const": "arxiv"
+          },
+          "arxivQuery": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "batchSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "HackerNewsConnectorConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "hackerNewsStream",
+          "batchSize"
+        ],
+        "properties": {
+          "kind": {
+            "const": "hacker-news"
+          },
+          "hackerNewsStream": {
+            "type": "string",
+            "enum": [
+              "topstories",
+              "newstories",
+              "beststories"
+            ]
+          },
+          "batchSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "ConnectorConfig": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RssConnectorConfig"
+          },
+          {
+            "$ref": "#/components/schemas/ArxivConnectorConfig"
+          },
+          {
+            "$ref": "#/components/schemas/HackerNewsConnectorConfig"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind"
+        }
+      },
+      "TechnicalCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "checkedAt",
+          "contentType",
+          "resolvedHost",
+          "sampleCount",
+          "error"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "not-run",
+              "passed",
+              "failed"
+            ]
+          },
+          "checkedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "contentType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolvedHost": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sampleCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SafeError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Source": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "sourceKey",
+          "publisherName",
+          "domain",
+          "connectorType",
+          "accessMethod",
+          "authorityTier",
+          "connectorConfig",
+          "operationalStatus",
+          "licenseStatus",
+          "llmInputScope",
+          "storageScope",
+          "mediaPolicy",
+          "attributionRequired",
+          "policyVersion",
+          "technicalCheck",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sourceKey": {
+            "type": "string"
+          },
+          "publisherName": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "connectorType": {
+            "$ref": "#/components/schemas/ConnectorType"
+          },
+          "accessMethod": {
+            "type": "string",
+            "enum": [
+              "rss",
+              "atom",
+              "api"
+            ]
+          },
+          "authorityTier": {
+            "$ref": "#/components/schemas/AuthorityTier"
+          },
+          "connectorConfig": {
+            "$ref": "#/components/schemas/ConnectorConfig"
+          },
+          "operationalStatus": {
+            "$ref": "#/components/schemas/OperationalStatus"
+          },
+          "licenseStatus": {
+            "$ref": "#/components/schemas/LicenseStatus"
+          },
+          "llmInputScope": {
+            "$ref": "#/components/schemas/LlmInputScope"
+          },
+          "storageScope": {
+            "$ref": "#/components/schemas/StorageScope"
+          },
+          "mediaPolicy": {
+            "$ref": "#/components/schemas/MediaPolicy"
+          },
+          "attributionRequired": {
+            "type": "boolean"
+          },
+          "attributionText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "termsUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "licenseUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "evidenceNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reviewedBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policyVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "technicalCheck": {
+            "$ref": "#/components/schemas/TechnicalCheck"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SourceCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "sourceKey",
+          "publisherName",
+          "domain",
+          "connectorType",
+          "accessMethod",
+          "authorityTier",
+          "connectorConfig"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "sourceKey": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9:-]{2,119}$"
+          },
+          "publisherName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "domain": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "connectorType": {
+            "$ref": "#/components/schemas/ConnectorType"
+          },
+          "accessMethod": {
+            "type": "string",
+            "enum": [
+              "rss",
+              "atom",
+              "api"
+            ]
+          },
+          "authorityTier": {
+            "$ref": "#/components/schemas/AuthorityTier"
+          },
+          "connectorConfig": {
+            "$ref": "#/components/schemas/ConnectorConfig"
+          },
+          "mediaPolicy": {
+            "$ref": "#/components/schemas/MediaPolicy",
+            "description": "Optional on draft creation; the server defaults to imageMode=none, videoMode=none and an empty host allowlist."
+          }
+        }
+      },
+      "SourceUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "publisherName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "domain": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "authorityTier": {
+            "$ref": "#/components/schemas/AuthorityTier"
+          },
+          "connectorConfig": {
+            "$ref": "#/components/schemas/ConnectorConfig"
+          },
+          "mediaPolicy": {
+            "$ref": "#/components/schemas/MediaPolicy"
+          },
+          "operationalStatus": {
+            "$ref": "#/components/schemas/OperationalStatus"
+          },
+          "attributionRequired": {
+            "type": "boolean"
+          },
+          "attributionText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        },
+        "anyOf": [
+          { "required": ["name"] },
+          { "required": ["publisherName"] },
+          { "required": ["domain"] },
+          { "required": ["authorityTier"] },
+          { "required": ["connectorConfig"] },
+          { "required": ["mediaPolicy"] },
+          { "required": ["operationalStatus"] },
+          { "required": ["attributionRequired"] },
+          { "required": ["attributionText"] }
+        ],
+        "description": "At least one mutable field besides reason is required. Activating a source is rejected unless technical and policy preconditions pass."
+      },
+      "TechnicalCheckRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        }
+      },
+      "TechnicalCheckResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceId",
+          "technicalCheck"
+        ],
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "technicalCheck": {
+            "$ref": "#/components/schemas/TechnicalCheck"
+          }
+        }
+      },
+      "TechnicalCheckResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TechnicalCheckResult"
+          }
+        }
+      },
+      "PolicyReviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "licenseStatus",
+          "llmInputScope",
+          "storageScope",
+          "mediaPolicy",
+          "attributionRequired",
+          "evidenceNote",
+          "reviewedAt",
+          "reason"
+        ],
+        "properties": {
+          "licenseStatus": {
+            "type": "string",
+            "enum": [
+              "permitted",
+              "metadata-only",
+              "blocked"
+            ]
+          },
+          "llmInputScope": {
+            "$ref": "#/components/schemas/LlmInputScope"
+          },
+          "storageScope": {
+            "$ref": "#/components/schemas/StorageScope"
+          },
+          "mediaPolicy": {
+            "$ref": "#/components/schemas/MediaPolicy"
+          },
+          "attributionRequired": {
+            "type": "boolean"
+          },
+          "attributionText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "termsUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "licenseUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "evidenceNote": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "reviewedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        },
+        "description": "If rights are unclear, choose metadata-only. Technical check or AI output cannot approve this review."
+      },
+      "SourceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Source"
+          }
+        }
+      },
+      "SourceListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "SafeError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "occurredAt"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "upstreamStatus": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "JobCounters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fetched",
+          "created",
+          "updated",
+          "duplicate",
+          "skipped",
+          "failed"
+        ],
+        "properties": {
+          "fetched": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "created": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "duplicate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "IngestionJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "idempotencyKey",
+          "sourceId",
+          "connectorType",
+          "trigger",
+          "status",
+          "attempt",
+          "batchSize",
+          "counters",
+          "error",
+          "createdAt",
+          "startedAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "connectorType": {
+            "$ref": "#/components/schemas/ConnectorType"
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "cron",
+              "admin",
+              "retry"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "batchSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "parentJobId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "counters": {
+            "$ref": "#/components/schemas/JobCounters"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SafeError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "IngestionJobCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceId"
+        ],
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "batchSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "ReasonRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        }
+      },
+      "IngestionJobResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IngestionJob"
+          }
+        }
+      },
+      "IngestionJobListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IngestionJob"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "IndexingJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "articleId",
+          "tasks",
+          "trigger",
+          "status",
+          "attempt",
+          "error",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "articleId": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "summary",
+                "embedding",
+                "visibility-reconcile"
+              ]
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "ingestion",
+              "admin",
+              "policy-change",
+              "model-change",
+              "retry"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SafeError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IndexingJobCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tasks",
+          "reason"
+        ],
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "embedding",
+                "visibility-reconcile"
+              ]
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        }
+      },
+      "IndexingJobResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IndexingJob"
+          }
+        }
+      },
+      "CronRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "runDate",
+          "jobs"
+        ],
+        "properties": {
+          "runDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IngestionJob"
+            }
+          }
+        }
+      },
+      "CronRunResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CronRun"
+          }
+        }
+      },
+      "AdminOverview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "activeSources",
+          "pausedSources",
+          "sourcesNeedingReview",
+          "queuedJobs",
+          "failedJobs",
+          "articlesNeedingReview",
+          "failedIndexes",
+          "openTakedowns"
+        ],
+        "properties": {
+          "activeSources": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pausedSources": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sourcesNeedingReview": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "queuedJobs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedJobs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "articlesNeedingReview": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedIndexes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "openTakedowns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastSuccessfulIngestionAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminOverviewResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminOverview"
+          }
+        }
+      },
+      "AdminArticle": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "sourceId",
+          "titleOriginal",
+          "status",
+          "topics",
+          "leadMedia",
+          "leadMediaStatus",
+          "summaryStatus",
+          "embeddingStatus",
+          "embeddingModel",
+          "embeddingVersion",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "titleOriginal": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ArticleStatus"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "leadMedia": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/LeadMedia" },
+              { "type": "null" }
+            ]
+          },
+          "leadMediaStatus": {
+            "type": "string",
+            "enum": ["none", "available", "hidden"]
+          },
+          "summaryStatus": {
+            "$ref": "#/components/schemas/ArtifactStatus"
+          },
+          "embeddingStatus": {
+            "$ref": "#/components/schemas/ArtifactStatus"
+          },
+          "embeddingModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "embeddingVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminArticleUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ArticleStatus"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "uniqueItems": true,
+            "maxItems": 20
+          },
+          "leadMediaStatus": {
+            "type": "string",
+            "enum": ["available", "hidden"]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        },
+        "anyOf": [
+          { "required": ["status"] },
+          { "required": ["topics"] },
+          { "required": ["leadMediaStatus"] }
+        ],
+        "description": "At least one of status, topics or leadMediaStatus is required. Restoring media requires a current source policy that still permits its mode and host. Removed article restoration is subject to takedown policy."
+      },
+      "AdminArticleResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminArticle"
+          }
+        }
+      },
+      "AdminArticleListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminArticle"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "DuplicateMergeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "canonicalArticleId",
+          "duplicateArticleIds",
+          "reason"
+        ],
+        "properties": {
+          "canonicalArticleId": {
+            "type": "string"
+          },
+          "duplicateArticleIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "minItems": 1,
+            "maxItems": 20
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        }
+      },
+      "TakedownCompletion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hidden",
+          "metadataRemoved",
+          "mediaMetadataRemoved",
+          "summaryRemoved",
+          "embeddingRemoved"
+        ],
+        "properties": {
+          "hidden": {
+            "type": "boolean"
+          },
+          "metadataRemoved": {
+            "type": "boolean"
+          },
+          "mediaMetadataRemoved": {
+            "type": "boolean"
+          },
+          "summaryRemoved": {
+            "type": "boolean"
+          },
+          "embeddingRemoved": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TakedownRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "requesterName",
+          "requesterContact",
+          "targetType",
+          "targetIds",
+          "reason",
+          "requestedScope",
+          "completion",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TakedownStatus"
+          },
+          "requesterName": {
+            "type": "string"
+          },
+          "requesterContact": {
+            "type": "string"
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "source",
+              "article",
+              "user-data"
+            ]
+          },
+          "targetIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidenceNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestedScope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "metadata",
+                "media-metadata",
+                "summary",
+                "embedding",
+                "account-data"
+              ]
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "decisionReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "completion": {
+            "$ref": "#/components/schemas/TakedownCompletion"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TakedownCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requesterName",
+          "requesterContact",
+          "targetType",
+          "targetIds",
+          "reason",
+          "requestedScope"
+        ],
+        "properties": {
+          "requesterName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "requesterContact": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 254
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "source",
+              "article",
+              "user-data"
+            ]
+          },
+          "targetIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          },
+          "evidenceNote": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "requestedScope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "metadata",
+                "media-metadata",
+                "summary",
+                "embedding",
+                "account-data"
+              ]
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          }
+        }
+      },
+      "TakedownUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TakedownStatus"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 4000
+          }
+        },
+        "description": "Only transitions allowed by the PRD state machine are accepted. Completing requires all approved cleanup checks."
+      },
+      "TakedownResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TakedownRequest"
+          }
+        }
+      },
+      "TakedownListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TakedownRequest"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "AdminUser": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "email",
+          "role",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "admin"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminUserUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suspended"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        }
+      },
+      "AdminUserResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminUser"
+          }
+        }
+      },
+      "AdminUserListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminUser"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "AuditLog": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "adminId",
+          "action",
+          "targetType",
+          "targetId",
+          "reason",
+          "requestId",
+          "result",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "adminId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "targetType": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "before": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "after": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "reason": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuditLogListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditLog"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field",
+          "message",
+          "code"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorObject": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "requestId"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            }
+          },
+          "requestId": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorObject"
+          }
+        }
+      }
+    }
+  }
+}

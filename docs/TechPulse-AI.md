@@ -1,8 +1,10 @@
 # TechPulse AI
 
-> Trạng thái: Ý tưởng thô / tài liệu sống  
-> Cập nhật lần đầu: 07/08/2026  
+> Trạng thái: Phạm vi MVP đã chốt / tài liệu sống
+> Cập nhật lần đầu: 07/08/2026
+> Cập nhật gần nhất: 08/08/2026
 > Mục đích: Lưu định hướng sản phẩm, phạm vi MVP, hướng phát triển và các ràng buộc quan trọng trước khi viết PRD hoặc thiết kế kỹ thuật chi tiết.
+> Bộ tài liệu triển khai: [README.md](./README.md)
 
 ## 1. Ý tưởng gốc
 
@@ -62,6 +64,9 @@ TechPulse AI không đặt mục tiêu sao chép hoặc thay thế các trang b�
 5. **Không vượt biện pháp bảo vệ:** không vượt paywall, CAPTCHA, đăng nhập hoặc biện pháp kỹ thuật của website.
 6. **Nội dung bên ngoài là dữ liệu không đáng tin cậy:** AI không được thực thi chỉ dẫn hoặc prompt xuất hiện bên trong bài viết.
 7. **Phạm vi nhỏ nhưng hoàn chỉnh:** ưu tiên một luồng end-to-end hoạt động tốt hơn việc thu thập quá nhiều nguồn.
+8. **Quyền sử dụng được thực thi bằng code:** phạm vi gửi tới LLM/embedding phải lấy từ Source Registry, không dựa vào suy đoán tại runtime.
+9. **Tiếng Việt trước:** UI, summary và AI Q&A của MVP dùng tiếng Việt; nguồn gốc và citation luôn được giữ nguyên.
+10. **Hiển thị media khác với xử lý media:** link nguồn, preview ảnh và input AI là ba quyền khác nhau; một quyền không tự suy ra hai quyền còn lại.
 
 ## 4. Luồng sử dụng chính của MVP
 
@@ -90,39 +95,83 @@ Trang quản trị nguồn là một phần bắt buộc của MVP, không phả
 
 Mỗi nguồn cần lưu tối thiểu:
 
-- tên nguồn và domain;
-- URL API, RSS/Atom hoặc định danh repo/query tương ứng;
-- loại nguồn và loại connector;
+- tên nguồn, `publisherName`, domain và chủ thể quyền nếu xác định được;
+- URL API, RSS/Atom hoặc category/query tương ứng;
+- `accessMethod` và loại connector;
 - cấp độ thẩm quyền của nguồn: `primary`, `editorial` hoặc `community-signal`;
-- trạng thái bật/tắt;
-- phạm vi nội dung được phép sử dụng;
-- loại giấy phép hoặc điều khoản liên quan;
-- URL điều khoản sử dụng;
-- ngày kiểm tra điều khoản gần nhất;
-- ghi chú về attribution;
-- trạng thái `permitted`, `metadata-only`, `review-needed` hoặc `blocked`.
+- trạng thái vận hành `draft`, `testing`, `active`, `paused` hoặc `archived`;
+- `termsUrl`, `licenseUrl`, loại giấy phép và ghi chú về attribution;
+- `licenseStatus`: `permitted`, `metadata-only`, `review-needed` hoặc `blocked`;
+- `llmInputScope`: `metadata`, `excerpt`, `fulltext-temporary` hoặc `none`;
+- `storageScope`: phạm vi metadata, summary và dữ liệu dẫn xuất được phép lưu;
+- `mediaPolicy`: `imageMode` (`none` hoặc `remote-preview`), `videoMode` (`none` hoặc `link-only`), `allowedHosts`, yêu cầu attribution và ghi chú bằng chứng riêng cho media;
+- `attributionRequired`, `evidenceNote`, `reviewedAt` và `reviewedBy`.
 
-Hệ thống không được ingest nguồn có trạng thái `blocked` hoặc chưa được duyệt.
+Các khái niệm phải được phân biệt rõ:
+
+- **Publisher** là tổ chức xuất bản hoặc vận hành nguồn; publisher không tự động đồng nghĩa với chủ sở hữu mọi thành phần trong bài.
+- **License** hoặc văn bản cho phép mới xác định phạm vi tái sử dụng; website công khai hoặc đọc miễn phí không mặc nhiên cấp license.
+- `robots.txt` chỉ là tín hiệu về truy cập tự động, không phải giấy phép bản quyền.
+- API/RSS cho phép truy cập dữ liệu không đồng nghĩa với quyền lưu, dịch, gửi toàn văn tới AI hoặc tái xuất bản.
+
+Quy trình duyệt nguồn của MVP:
+
+```text
+draft → technical-check → review-needed
+review-needed → active + permitted
+review-needed → active + metadata-only
+review-needed → blocked
+
+active ↔ paused → archived
+```
+
+- Hệ thống tự kiểm tra URL, protocol, redirect, content type, khả năng parse và lỗi kết nối.
+- Admin kiểm tra Terms of Use, API/RSS terms, copyright/license trên bài và kênh licensing của publisher.
+- AI có thể hỗ trợ trích xuất hoặc giải thích điều khoản nhưng không được tự phê duyệt nguồn.
+- Nếu không tìm thấy quyền xử lý rõ ràng, nguồn mặc định là `metadata-only`, không phải `permitted`.
+- Hệ thống không được tạo production ingestion job cho nguồn `blocked` hoặc `review-needed`; technical check có thể lấy mẫu tối thiểu cần thiết. Nguồn `metadata-only` chỉ được xử lý trong phạm vi đã cấu hình.
 
 ### 5.3. Pipeline thu thập dữ liệu
 
 - Pipeline được thiết kế theo kiến trúc connector; số lượng nguồn không bị hard-code trong ứng dụng.
-- MVP chỉ triển khai bốn nhóm connector:
+- MVP chỉ triển khai ba nhóm connector:
   - **RSS/Atom Connector:** nhận dữ liệu từ nhiều feed báo chí, blog công nghệ, research lab và website tổ chức đã được duyệt trong Source Registry;
   - **arXiv Connector:** nhận metadata và abstract theo category hoặc truy vấn được cấu hình; chỉ xử lý full text khi giấy phép của paper cho phép;
-  - **GitHub Connector:** nhận metadata và release notes từ danh sách public repository được chọn;
   - **Hacker News Connector:** nhận các item từ API chính thức như `topstories`, `newstories` và `beststories` để phát hiện xu hướng cộng đồng.
+- Phạm vi demo dự kiến gồm 8–10 RSS/Atom feed, 3 arXiv category/query và 3 luồng Hacker News kể trên.
 - Hacker News được xem là nguồn `community-signal`. Bài viết được liên kết từ HN phải được kiểm tra như một nguồn độc lập; không mặc nhiên được lưu toàn văn hoặc dùng làm bằng chứng duy nhất.
 - Chỉ dùng API chính thức, RSS/Atom hoặc phương thức truy cập được nguồn cho phép.
-- Chạy theo lịch định kỳ bằng Node.js.
+- Chạy một lần mỗi ngày bằng Vercel Cron và cho phép admin yêu cầu chạy thủ công.
+- Mỗi lần chạy xử lý một batch có giới hạn; trạng thái và lock của job phải lưu trong MongoDB.
 - Chuẩn hóa dữ liệu về một schema chung.
 - Lưu log cho mỗi lần ingest: nguồn, thời gian, số bản ghi thành công, số bản ghi lỗi và lý do lỗi.
-- Có retry giới hạn, rate limiting và cơ chế tắt nhanh một nguồn gặp vấn đề.
+- Job phải idempotent vì cron có thể được gọi lặp; retry do ứng dụng quản lý vì Vercel không tự retry cron thất bại.
+- Có retry giới hạn, rate limiting, distributed lock và cơ chế tắt nhanh một nguồn gặp vấn đề.
+
+#### 5.3.1. Chính sách xử lý nội dung
+
+| `llmInputScope` | Dữ liệu được gửi tới AI | Quy tắc |
+|---|---|---|
+| `metadata` | title, author, date, topic và URL | Không fetch toàn văn |
+| `excerpt` | metadata và excerpt chính thức | Không tự mở rộng sang nội dung trang |
+| `fulltext-temporary` | phần main content đã làm sạch và chia chunk | Chỉ dùng khi quyền xử lý rõ ràng; không lưu toàn văn |
+| `none` | Không có | Không gọi LLM/embedding với dữ liệu nguồn |
+
+- Không gửi raw HTML, menu, quảng cáo, comment hoặc phần không liên quan tới LLM.
+- Với `fulltext-temporary`, backend chỉ giữ nội dung trong thời gian xử lý, loại bỏ markup, chia chunk cần thiết rồi giải phóng sau khi tạo summary.
+- Nội dung đã làm sạch vẫn là dữ liệu không đáng tin cậy và không được phép thay đổi system instruction hoặc kích hoạt tool.
+- Không vượt paywall, đăng nhập, CAPTCHA hoặc biện pháp bảo vệ để lấy full text.
+- Dữ liệu được phép lưu lâu dài trong MVP là metadata, summary ngắn, citation, hash và embedding tạo từ phạm vi hợp lệ.
+- Binary ảnh, video, audio và logo luôn nằm ngoài persistence và AI pipeline MVP; MongoDB không lưu file, base64, GridFS hoặc bản cache media nguồn.
+- Connector chỉ có thể giữ metadata/URL media. Ảnh chỉ được remote-preview nếu current `mediaPolicy.imageMode=remote-preview` và hostname thuộc `allowedHosts`; video quan trọng chỉ được hiển thị dưới dạng link về nguồn khi `videoMode=link-only`.
+- Không tự dùng mọi `og:image`, không tạo backend proxy để né hotlink và không suy diễn “công khai” thành “được phép sao chép”. Khi media không được phép hoặc lỗi, UI dùng visual fallback do TechPulse sở hữu.
+- Media MVP luôn có trạng thái `not-analyzed`; summary, embedding và Q&A không được dùng chi tiết chỉ xuất hiện trong ảnh/video.
 
 Metadata tối thiểu của một bài:
 
 ```text
-title
+titleOriginal
+titleVi
 originalUrl
 canonicalUrl
 sourceId
@@ -133,20 +182,37 @@ authorityTier
 author
 publishedAt
 retrievedAt
-language
+sourceLanguage
 topics
-excerpt
-aiSummary
+excerptOriginal
+summaryVi
+summaryStatus
+summaryBasis
 contentScope
 licenseStatus
+llmInputScope
+embeddingStatus
+embeddingModel
+embeddingDimensions
+embeddingInputHash
+embeddingVersion
+embeddedAt
+leadMedia.type
+leadMedia.displayMode
+leadMedia.url
+leadMedia.sourcePageUrl
+leadMedia.altText
+leadMedia.credit
+leadMedia.mediaEvidenceStatus
 ```
 
-Không lưu toàn bộ nội dung bài viết có bản quyền nếu chưa có quyền sử dụng rõ ràng.
+Không lưu toàn bộ nội dung bài viết trong MVP, kể cả khi được dùng tạm thời để tạo summary.
 
 ### 5.4. Chuẩn hóa, phân loại và chống trùng
 
 - Chuẩn hóa canonical URL và thời gian xuất bản.
-- Phát hiện bản ghi trùng bằng URL, content hash và độ tương đồng tiêu đề.
+- Phát hiện bản ghi trùng bằng canonical URL, external ID, normalized title và hash của phần nội dung được phép xử lý.
+- Có thể dùng độ tương đồng embedding để hỗ trợ phát hiện gần trùng, nhưng không tự hợp nhất nếu điểm số chưa đủ chắc chắn.
 - Phân loại tối thiểu theo các chủ đề đã xác định.
 - Cho phép admin sửa chủ đề hoặc hợp nhất bản ghi bị trùng sai.
 
@@ -154,29 +220,37 @@ Không lưu toàn bộ nội dung bài viết có bản quyền nếu chưa có 
 
 - Feed mới nhất theo chủ đề.
 - Lọc theo nguồn, chủ đề và khoảng thời gian.
-- Tìm kiếm theo tiêu đề, mô tả và bản tóm tắt được phép lưu.
+- Tìm kiếm từ khóa trên `titleOriginal`, `titleVi`, `summaryVi`, `topics` và trường `searchTextNormalized` đã viết thường/bỏ dấu.
+- Dùng MongoDB text index với `default_language: "none"` cùng index thông thường cho status, source, topic và thời gian.
+- Semantic retrieval dùng embedding của `titleOriginal + titleVi + summaryVi + topics`; với quy mô vài trăm bài, backend tính cosine similarity trong Node.js.
+- Nếu embedding provider lỗi hoặc bài chưa có embedding, hệ thống phải fallback về text search thay vì làm hỏng feed hoặc AI Q&A.
 - Phân trang hoặc infinite scroll có kiểm soát.
 - Mỗi card phải hiển thị tên nguồn, tác giả nếu có, ngày xuất bản và liên kết bài gốc.
+- Card có thể hiển thị ảnh đại diện đã qua media policy; nếu không có/quá trình tải lỗi thì dùng visual fallback của TechPulse, không proxy hoặc lưu bản sao nguồn.
 
 ### 5.6. Trang chi tiết tin
 
-- Tiêu đề, nguồn, tác giả, ngày xuất bản và ngày hệ thống thu thập.
-- Bản tóm tắt AI ngắn, dùng cách diễn đạt mới.
+- Tiêu đề gốc, tiêu đề tiếng Việt nếu được tạo, nguồn, tác giả, ngôn ngữ nguồn, ngày xuất bản và ngày hệ thống thu thập.
+- Bản tóm tắt AI ngắn bằng tiếng Việt, dùng cách diễn đạt mới.
+- Hiển thị summary được tạo từ `metadata`, `excerpt` hay `fulltext-temporary` để người dùng hiểu giới hạn bằng chứng.
 - Chủ đề được hệ thống phân loại.
 - Nút **Đọc bài gốc** được đặt nổi bật.
-- Thông báo rằng nội dung được AI tổng hợp và có thể cần kiểm chứng.
-- Không hiển thị lại toàn bộ bài viết hoặc hình ảnh nếu nguồn không cho phép.
+- Thông báo rằng nội dung được AI dịch/tổng hợp và có thể cần kiểm chứng.
+- Nếu media policy cho phép, hiển thị ảnh remote-preview cùng alt/credit; nếu video là phần quan trọng, hiển thị link tới trang nguồn và nhãn **AI chưa phân tích video này**.
+- Không hiển thị lại toàn bộ bài viết, không rehost media và không hiển thị media khi nguồn không cho phép.
 
 ### 5.7. AI Q&A có citation
 
 - Người dùng có thể hỏi về một bài, một chủ đề hoặc một khoảng thời gian.
 - Backend truy xuất dữ liệu phù hợp trước khi gọi mô hình AI.
 - Câu trả lời chỉ được sử dụng phần dữ liệu có `licenseStatus` phù hợp.
-- Mỗi kết luận quan trọng phải gắn citation đến bài gốc.
-- Hiển thị tên nguồn và ngày xuất bản cùng citation.
+- Trang chi tiết và summary dùng citation cấp bài.
+- AI Q&A gắn citation sau từng đoạn hoặc nhóm phát biểu; citation cấp từng claim được để lại cho hậu MVP.
+- Mỗi citation hiển thị tối thiểu tên nguồn, title gốc, tác giả nếu có, ngôn ngữ nguồn, ngày xuất bản và original URL.
 - Nếu nhiều nguồn mâu thuẫn, phải trình bày sự khác biệt thay vì tự chọn một nguồn là đúng.
 - Nếu không đủ dữ liệu, trả lời rõ rằng hệ thống chưa có đủ bằng chứng.
 - Không cho phép mô hình làm theo chỉ dẫn nằm trong nội dung bài viết được ingest.
+- Không dùng nội dung chỉ có trong ảnh/video `not-analyzed` để tạo claim hoặc citation.
 
 ### 5.8. Trang quản trị tối thiểu
 
@@ -194,15 +268,15 @@ Trang quản trị là bề mặt vận hành nội bộ của TechPulse AI. Ph�
 | Xử lý yêu cầu gỡ nội dung và khóa user | Không | Có | Không |
 | Ghi audit/operational log | Không | Tạo qua thao tác | Tạo qua quá trình chạy job |
 
-- `system-worker` là danh tính nội bộ của backend, không phải tài khoản có thể đăng nhập vào giao diện.
-- Admin không chạy connector trực tiếp trong HTTP request. Admin chỉ tạo job; worker lấy job từ hàng đợi hoặc database để thực thi.
+- `system-worker` là danh tính nội bộ của backend, không phải tài khoản có thể đăng nhập vào giao diện. Trong MVP, actor này là Vercel Function được gọi bởi cron hoặc trigger quản trị.
+- Frontend không fetch nguồn bên ngoài. Admin chỉ yêu cầu chạy job; function phía server xác thực yêu cầu, lấy distributed lock và xử lý một batch có giới hạn.
 - Worker không sử dụng session hoặc mật khẩu của admin.
 
 #### 5.8.2. Đăng nhập và bảo vệ trang admin
 
 - Admin đăng nhập bằng tài khoản có role `admin` thông qua cùng authentication backend với user.
 - Có thể dùng giao diện riêng `/admin/login` và `/admin`, nhưng URL riêng không được xem là biện pháp bảo mật.
-- Phương án mặc định cho MVP là server-side session với session ID trong cookie `HttpOnly`, `SameSite` và `Secure` khi chạy HTTPS; không lưu auth token trong `localStorage`.
+- Phương án mặc định cho MVP là server-side session lưu trong MongoDB, với session ID trong cookie `HttpOnly`, `SameSite` và `Secure` khi chạy HTTPS; không lưu auth token trong `localStorage` hoặc memory của Vercel Function.
 - Mọi endpoint `/api/admin/*` phải kiểm tra authentication và role tại backend. Chỉ ẩn nút hoặc route ở React là không đủ.
 - Chưa đăng nhập trả về `401`; đã đăng nhập nhưng không phải admin trả về `403`.
 - Tài khoản admin đầu tiên được tạo bằng seed script hoặc thao tác triển khai có kiểm soát; không có API đăng ký admin công khai và không có giao diện đổi role trong MVP.
@@ -212,17 +286,20 @@ Trang quản trị là bề mặt vận hành nội bộ của TechPulse AI. Ph�
 
 Admin có thể:
 
-- tạo và cập nhật source definition cho RSS/Atom, arXiv, GitHub hoặc Hacker News;
+- tạo và cập nhật source definition cho RSS/Atom, arXiv hoặc Hacker News;
 - kiểm tra kết nối trước khi bật nguồn;
-- cấu hình connector, URL/feed, repo, category/query, lịch chạy và cấp độ thẩm quyền;
-- ghi nhận `licenseStatus`, điều khoản, attribution và phạm vi nội dung được phép xử lý;
+- cấu hình connector, URL/feed, category/query, lịch chạy và cấp độ thẩm quyền;
+- ghi nhận publisher, `termsUrl`, `licenseUrl`, `licenseStatus`, bằng chứng kiểm tra, attribution, `llmInputScope` và `storageScope`;
+- cấu hình media policy độc lập: cho phép/tắt ảnh preview, video link-only, hostname media được duyệt, attribution và evidence note;
 - bật, tạm dừng, chặn hoặc lưu trữ một nguồn;
 - xem lần ingest thành công gần nhất và lỗi gần nhất của nguồn.
 
 Ràng buộc:
 
-- nguồn `review-needed` hoặc `blocked` không được tạo ingestion job mới;
+- nguồn `review-needed` hoặc `blocked` không được tạo production ingestion job mới; thao tác test connection chỉ lấy mẫu tối thiểu;
 - `metadata-only` chỉ được xử lý trong phạm vi metadata được phép;
+- không tìm thấy quyền rõ ràng thì admin phải chọn `metadata-only`, không tự suy diễn thành `permitted`;
+- `robots.txt` được xem như tín hiệu kỹ thuật, không được ghi nhận như bằng chứng license;
 - URL do admin nhập vẫn phải được validate; backend chỉ cho phép protocol và host phù hợp, đồng thời chặn truy cập địa chỉ nội bộ để giảm nguy cơ SSRF;
 - credential của connector, nếu có, được cấu hình bằng biến môi trường hoặc hệ thống secret khi triển khai; admin không nhập hoặc đọc secret trực tiếp trên dashboard;
 - tắt nguồn chỉ dừng lần ingest tiếp theo, không tự động xóa dữ liệu cũ. Việc giữ, ẩn hoặc xóa dữ liệu đã có phải là quyết định riêng và được audit.
@@ -238,6 +315,8 @@ Admin có thể:
 - hủy job đang chờ và yêu cầu dừng an toàn đối với job đang chạy nếu worker hỗ trợ;
 - tạm dừng lịch chạy của nguồn gặp lỗi liên tiếp.
 
+Mỗi lần chạy phải lấy lock theo connector/source, lưu idempotency key và giới hạn số item. Cron chạy một lần mỗi ngày; trigger thủ công dùng chung logic job và không được bỏ qua lock hoặc policy nguồn.
+
 Admin không được nhìn thấy API key, access token hoặc secret trong dashboard và log. Lỗi hiển thị cho admin cần đủ để xử lý nhưng phải redact secret và dữ liệu nhạy cảm.
 
 #### 5.8.5. Quản lý bài viết và AI index
@@ -252,14 +331,18 @@ Admin có thể:
 - yêu cầu tạo lại summary khi summary lỗi hoặc không bám nguồn;
 - xem trạng thái index: `pending`, `indexed`, `failed` hoặc `removed`;
 - yêu cầu retry indexing hoặc gỡ bài khỏi index;
+- xem embedding model, version và thời điểm index gần nhất;
 - xem lý do summary/indexing thất bại.
+- xem `leadMedia`, host/mode/policy version và ẩn media riêng khi link lỗi, attribution thiếu hoặc quyền thay đổi mà không bắt buộc ẩn cả article.
 
 Các invariant bắt buộc:
 
 - chỉ bài `published` mới được xuất hiện trong feed, search result hoặc AI retrieval;
 - bài `review-needed`, `hidden` hoặc `removed` không được đưa vào câu trả lời AI;
 - khi article, summary hoặc quyền sử dụng thay đổi, index tương ứng phải được cập nhật hoặc vô hiệu hóa;
+- embedding chỉ được tạo từ trường đã được phép; đổi embedding model/version bắt buộc re-index toàn bộ document liên quan;
 - bài chỉ được khôi phục/index lại khi source và `licenseStatus` vẫn hợp lệ;
+- media chỉ được serialize khi current source media policy vẫn hợp lệ; media `not-analyzed` không được đưa vào index hoặc AI evidence;
 - admin không sửa nội dung gốc để làm thay đổi phát biểu của tác giả;
 - hard delete chỉ dùng khi có yêu cầu bản quyền, quyền riêng tư hoặc nghĩa vụ pháp lý. Thao tác vận hành thông thường ưu tiên hide/soft delete để có thể phục hồi.
 
@@ -269,7 +352,7 @@ Admin có thể:
 
 - tạo và theo dõi yêu cầu gỡ với trạng thái `received`, `reviewing`, `approved`, `rejected` hoặc `completed`;
 - lưu người yêu cầu, nội dung liên quan, lý do, bằng chứng và kết quả xử lý;
-- khi yêu cầu được chấp thuận, ẩn hoặc xóa metadata, summary và embedding liên quan rồi cập nhật index;
+- khi yêu cầu được chấp thuận, ẩn hoặc xóa metadata, media reference, summary và embedding liên quan rồi cập nhật index;
 - tìm user theo ID hoặc email và xem các trường vận hành tối thiểu như role, trạng thái và ngày tạo;
 - quản lý trạng thái tài khoản `active`, `suspended`, `deletion-pending` hoặc `deleted`;
 - khóa hoặc mở khóa tài khoản user vi phạm quy định sử dụng; khi khóa phải vô hiệu hóa các session hiện có;
@@ -311,51 +394,94 @@ Admin Dashboard
 └── Audit Logs
 ```
 
-`Overview` chỉ cần hiển thị các số liệu giúp admin biết việc nào cần xử lý: nguồn đang bật/tạm dừng, job đang chờ/thất bại, bài `review-needed`, index thất bại và yêu cầu gỡ chưa hoàn tất.
+`Overview` chỉ cần hiển thị các số liệu giúp admin biết việc nào cần xử lý: nguồn đang bật/tạm dừng/chờ duyệt quyền, job đang chờ/thất bại, bài `review-needed`, index thất bại và yêu cầu gỡ chưa hoàn tất.
 
 MVP không cần `superadmin`, phân quyền chi tiết cho từng admin, SSO hoặc workflow nhiều người phê duyệt. Dashboard cũng không cho sửa system prompt, chọn tùy ý model/API endpoint, xem API key hoặc tải lên mã connector; các cấu hình này thuộc lớp triển khai của backend.
 
+### 5.9. Ngôn ngữ và dịch
+
+- UI, AI summary và AI Q&A của MVP dùng tiếng Việt.
+- Hệ thống giữ `titleOriginal`, `excerptOriginal`, `sourceLanguage` và original URL; citation luôn trỏ tới nguồn nguyên bản.
+- Chỉ title ngắn và summary được dịch/tạo bằng tiếng Việt; không dịch hoặc hiển thị lại toàn văn bài nguồn.
+- Nguồn ở ngôn ngữ khác vẫn có thể được trích dẫn nếu pipeline tạo được summary tiếng Việt đủ chất lượng; lỗi dịch phải chuyển `summaryStatus` sang `failed` hoặc `review-needed`.
+- Tiếng Anh là ngôn ngữ UI/output được ưu tiên bổ sung sau khi MVP tiếng Việt ổn định; các ngôn ngữ output khác nằm ở giai đoạn sau.
+
 ## 6. Phạm vi kỹ thuật dự kiến
 
-- **Frontend:** React.
-- **Backend:** Node.js và Express hoặc framework Node.js tương đương.
-- **Database:** MongoDB.
-- **Search:** MongoDB Search cho full-text/filter; MongoDB Vector Search cho semantic retrieval nếu hạ tầng cho phép.
-- **AI:** một LLM API để tóm tắt và trả lời dựa trên dữ liệu truy xuất.
-- **Scheduler:** cron job hoặc background worker trong Node.js.
-- **MVP connectors:** RSS/Atom, arXiv API, GitHub REST API và Hacker News API.
+- **Language:** JavaScript/JSX (`.js`, `.jsx`) để bám sát học phần; không dùng TypeScript/TSX trong MVP. OpenAPI runtime validation, generated JavaScript client/JSDoc và test giữ frontend/backend đồng bộ.
+- **Frontend:** React với JavaScript/JSX, ưu tiên Vite.
+- **Backend:** Node.js/Express bằng JavaScript, triển khai dưới dạng Vercel Function.
+- **Hosting:** một Vercel Hobby project cho frontend, API và cron endpoint; đây là deployment phi thương mại, tạm thời phục vụ demo/chấm đồ án.
+- **Database:** MongoDB Atlas Free; không lưu session, job hoặc dữ liệu lâu dài trên filesystem của function.
+- **Keyword search:** MongoDB text index với `default_language: "none"`, trường `searchTextNormalized` và index cho status/source/topic/time.
+- **Embedding:** OpenRouter Embeddings API với model `baai/bge-m3`, 1024 dimensions; input gồm title, `summaryVi` và topics.
+- **Semantic retrieval:** lưu vector trong MongoDB và tính cosine similarity trong Node.js cho tập dữ liệu khoảng 250–400 bài; MongoDB Atlas Vector Search chưa phải dependency của MVP.
+- **LLM:** ưu tiên `deepseek-v4-flash-free` qua OpenCode Zen; fallback sang `deepseek-v4-flash` trả phí thấp qua cấu hình provider riêng.
+- **Scheduler:** Vercel Cron một lần mỗi ngày và endpoint chạy thủ công có bảo vệ cho admin.
+- **MVP connectors:** RSS/Atom, arXiv API và Hacker News API.
+
+Tham khảo kỹ thuật chính:
+
+- [Vercel Express](https://vercel.com/docs/frameworks/backend/express), [Vercel Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing) và [quản lý Cron Job](https://vercel.com/docs/cron-jobs/manage-cron-jobs);
+- [OpenRouter Embeddings API](https://openrouter.ai/docs/api/reference/embeddings) và [BAAI/bge-m3](https://openrouter.ai/baai/bge-m3);
+- [MongoDB text index](https://www.mongodb.com/docs/manual/core/indexes/index-types/index-text/create-text-index/) và [`default_language: "none"`](https://www.mongodb.com/docs/manual/reference/operator/query/text/index.html).
+
+Ràng buộc triển khai Vercel:
+
+- không dùng `node-cron`, queue trong memory hoặc giả định có một process chạy liên tục;
+- không dùng rate-limit/quota counter theo process; login, AI Q&A, admin trigger và source test dùng shared Mongo bucket hoặc platform limiter tương đương;
+- cron và trigger thủ công gọi chung một service xử lý job;
+- mỗi job có idempotency key, distributed lock, batch size và trạng thái bền vững trong MongoDB;
+- ứng dụng tự quản lý retry vì Vercel không tự retry cron thất bại;
+- code phải chịu được việc cùng một cron event được gửi nhiều lần;
+- summary chạy non-streaming; Q&A có thể streaming nhưng phải fallback sang non-streaming khi cần;
+- API key và provider URL chỉ nằm trong Vercel Environment Variables.
 
 Các collection MongoDB dự kiến:
 
 ```text
 users
 sessions
+rateLimitBuckets
 sources
 articles
 savedArticles
 ingestionJobs
 indexingJobs
+jobLeases
 chatSessions
 takedownRequests
 adminAuditLogs
 ```
 
-Embedding chỉ được tạo từ phần nội dung mà dự án có quyền xử lý. Không dùng vector database như một cách để che giấu việc lưu nội dung không được phép.
+Mỗi embedding phải lưu kèm `embeddingModel`, `embeddingDimensions`, `embeddingInputHash`, `embeddingVersion` và `embeddedAt`. Document và query phải dùng cùng model/version; đổi model bắt buộc tạo lại toàn bộ vector liên quan.
+
+`nvidia/nemotron-3-embed-1b` là ứng viên thay thế nếu benchmark tiếng Việt tốt hơn hoặc BGE-M3 không khả dụng. Đây không phải runtime fallback: chuyển sang model khác phải tăng `embeddingVersion` và re-index toàn bộ corpus.
+
+Embedding chỉ được tạo từ phần nội dung mà dự án có quyền xử lý. Provider embedding chỉ tạo vector, không thay thế Source Registry hoặc cấp thêm quyền sử dụng dữ liệu. OpenRouter nên tắt input/output logging, không opt-in sử dụng dữ liệu và ưu tiên Zero Data Retention khi endpoint hỗ trợ.
 
 ## 7. Tiêu chí hoàn thành MVP
 
 MVP được xem là hoàn thành khi:
 
-- Cả bốn connector RSS/Atom, arXiv, GitHub và Hacker News đều hoạt động end-to-end.
-- Source Registry có nhiều source definition được bật cho RSS/Atom và GitHub; category/query của arXiv và endpoint của Hacker News có thể cấu hình mà không sửa logic lõi.
-- Mỗi nguồn được kích hoạt đều có hồ sơ quyền sử dụng, cấp độ thẩm quyền và chính sách citation.
+- Cả ba connector RSS/Atom, arXiv và Hacker News đều hoạt động end-to-end.
+- Bản demo cấu hình được 8–10 RSS/Atom feed, 3 arXiv category/query cùng `topstories`, `newstories`, `beststories` của Hacker News mà không sửa logic lõi.
+- Mỗi nguồn được kích hoạt đều có publisher, Terms/License URL, bằng chứng kiểm tra, cấp độ thẩm quyền, `licenseStatus`, `llmInputScope`, `storageScope` và chính sách citation.
+- Mỗi nguồn có media policy rõ ràng; nguồn chưa review mặc định không preview ảnh/video.
+- Nguồn không có quyền xử lý rõ ràng mặc định ở `metadata-only`; nguồn `review-needed` hoặc `blocked` không tạo job ingest.
 - Luồng ingest → chuẩn hóa → lưu MongoDB → hiển thị React hoạt động end-to-end.
-- Người dùng có thể tìm, lọc và lưu bài.
-- AI tạo được tóm tắt ngắn cho nội dung hợp lệ.
-- AI trả lời câu hỏi từ dữ liệu truy xuất và cung cấp citation có thể mở được.
+- Ảnh được phép remote-preview với alt/credit, ảnh thiếu/lỗi có TechPulse fallback; video quan trọng là link-only và ghi rõ AI chưa phân tích.
+- Vercel Cron chạy được một batch mỗi ngày; admin trigger dùng chung logic, có lock và không tạo bản ghi trùng khi gọi lặp.
+- Ứng dụng được deploy trên Vercel Hobby và toàn bộ state bền vững nằm trong MongoDB Atlas.
+- Người dùng có thể tìm, lọc và lưu bài bằng text search ngay cả khi embedding provider không khả dụng.
+- Semantic retrieval tạo được embedding BGE-M3, lưu đúng model/version và tìm top candidate bằng cosine similarity.
+- AI tạo được title/summary tiếng Việt ngắn cho nội dung hợp lệ mà không lưu hoặc hiển thị toàn văn.
+- AI Q&A trả lời bằng tiếng Việt từ dữ liệu truy xuất, dùng citation cấp đoạn; trang chi tiết/summary dùng citation cấp bài.
 - Hệ thống từ chối trả lời khi không có bằng chứng phù hợp.
-- Không lưu hoặc hiển thị toàn bộ bài báo có bản quyền khi chưa có quyền sử dụng.
+- Không gửi raw HTML hoặc phần không liên quan tới AI; `fulltext-temporary` chỉ dùng cho nguồn được phép và bị loại bỏ sau khi xử lý.
+- MongoDB/log không có binary/base64 media; media host ngoài policy không xuất hiện trong user response và media không được dùng làm AI evidence.
 - Có bộ câu hỏi kiểm thử để đánh giá độ đúng của citation, độ bám nguồn và khả năng từ chối.
+- LLM provider có thể đổi bằng environment variable; lỗi Zen có thể fallback sang DeepSeek mà không đổi code nghiệp vụ.
 - Admin đăng nhập được bằng tài khoản được seed; user thông thường bị từ chối tại mọi endpoint admin.
 - Admin có thể tạo nguồn hợp lệ, yêu cầu chạy ingestion, xem lỗi, ẩn bài và retry indexing mà không truy cập trực tiếp vào worker hoặc secret.
 - Chỉ bài `published` xuất hiện trong feed, search và AI retrieval; bài `review-needed`, `hidden` hoặc `removed` không bị rò rỉ qua bất kỳ bề mặt nào.
@@ -367,8 +493,10 @@ Các chỉ số nên theo dõi trong quá trình đánh giá:
 
 - tỷ lệ bài có đầy đủ nguồn và original URL;
 - tỷ lệ citation trỏ đúng tài liệu hỗ trợ phát biểu;
+- tỷ lệ truy vấn có nguồn hỗ trợ xuất hiện trong top 5 kết quả retrieval;
 - số bản ghi trùng được phát hiện;
 - tỷ lệ job ingest thành công;
+- tỷ lệ source có hồ sơ Terms/License và ngày review hợp lệ;
 - thời gian phản hồi của tìm kiếm và AI Q&A;
 - số câu trả lời bị từ chối đúng khi thiếu bằng chứng.
 
@@ -376,6 +504,7 @@ Các chỉ số nên theo dõi trong quá trình đánh giá:
 
 ### 8.1. Mở rộng nguồn và nền tảng
 
+- GitHub Connector cho metadata và release notes của repository có license rõ ràng.
 - YouTube Data API cho video từ các kênh tổ chức chính thức.
 - X API cho post từ các tài khoản chính thức, nếu ngân sách và điều khoản API phù hợp.
 - Facebook Pages và Instagram Professional Accounts thông qua API chính thức và sau khi hoàn thành các yêu cầu quyền truy cập hoặc App Review.
@@ -404,10 +533,14 @@ Các chỉ số nên theo dõi trong quá trình đánh giá:
 - Biểu đồ tần suất công nghệ, framework hoặc công ty được nhắc đến.
 - Knowledge graph liên kết công ty, sản phẩm, mô hình AI và sự kiện.
 - Theo dõi thay đổi của một sản phẩm hoặc công nghệ theo thời gian.
+- Chuyển semantic retrieval sang MongoDB Atlas Vector Search hoặc search service riêng khi dữ liệu vượt quy mô tính cosine trong Node.js.
 
 ### 8.5. Trải nghiệm nội dung
 
-- Hỗ trợ song ngữ Việt–Anh.
+- Bổ sung UI, summary và AI Q&A bằng tiếng Anh sau khi bản tiếng Việt ổn định.
+- Mở rộng thêm ngôn ngữ output khác dựa trên chất lượng model và nhu cầu người dùng.
+- Official video embed theo điều khoản nền tảng; connector YouTube chính thức, transcript có quyền và AI image/video understanding có disclosure riêng.
+- Media cache/object storage chỉ khi có license rõ, retention/takedown policy và ngân sách phù hợp.
 - Chuyển bản tổng hợp thành audio hoặc podcast ngắn.
 - PWA hoặc ứng dụng mobile.
 - Browser extension để lưu và hỏi về bài đang đọc.
@@ -416,6 +549,7 @@ Các chỉ số nên theo dõi trong quá trình đánh giá:
 ### 8.6. Responsible AI nâng cao
 
 - Chấm điểm groundedness và citation coverage tự động.
+- Nâng citation từ cấp bài/đoạn lên cấp từng claim đối với phát biểu quan trọng.
 - Kiểm tra mức độ giống nhau giữa bản tóm tắt và bài gốc để hạn chế sao chép gần nguyên văn.
 - Hiển thị mức độ chắc chắn dựa trên số lượng và chất lượng bằng chứng.
 - Theo dõi thay đổi hoặc correction từ nguồn gốc.
@@ -442,11 +576,16 @@ Các feature thương mại chỉ được triển khai sau khi đánh giá lạ
 ## 9. Những nội dung không thuộc MVP
 
 - Crawler toàn bộ Internet.
+- GitHub Connector.
 - Connector cho YouTube, X, Facebook và Instagram.
 - Thu thập bài đăng từ tài khoản mạng xã hội cá nhân hoặc không được xác minh.
 - Vượt paywall, CAPTCHA hoặc đăng nhập của website khác.
 - Lưu trữ và phát lại toàn văn bài báo.
+- Dịch hoặc công bố lại toàn văn nguồn sang tiếng Việt hay ngôn ngữ khác.
+- Citation tự động ở cấp từng claim.
+- Phụ thuộc bắt buộc vào MongoDB Atlas Search/Vector Search, Elasticsearch, Meilisearch hoặc Typesense.
 - Sao chép hình ảnh, video hoặc logo khi chưa có quyền sử dụng.
+- Download/cache/rehost media nguồn, arbitrary image proxy, official video embed, transcript extraction hoặc AI image/video analysis.
 - Mạng xã hội nội bộ hoặc hệ thống bình luận phức tạp.
 - Thanh toán, quảng cáo hoặc affiliate link.
 - Cam kết rằng AI luôn đúng hoặc mọi nguồn đều hoàn toàn khách quan.
@@ -484,6 +623,7 @@ Vì vậy:
 - AI nên tổng hợp dữ kiện bằng cách diễn đạt mới;
 - không sao chép đoạn dài hoặc giữ nguyên cấu trúc bài gốc;
 - không sử dụng hình ảnh nếu chưa có quyền;
+- việc link đến trang nguồn không đồng nghĩa với quyền copy/rehost asset; remote-preview/embed vẫn phải theo license/Terms và yêu cầu attribution của nguồn;
 - luôn ghi tên nguồn, tác giả nếu có và liên kết đến bài gốc;
 - citation không tự động thay thế cho giấy phép sử dụng.
 
@@ -497,14 +637,29 @@ Ngay cả khi một cách sử dụng có thể thuộc ngoại lệ của luậ
 
 - **RSS/Atom:** feed là một phương thức phân phối dữ liệu, không mặc nhiên là giấy phép tái xuất bản toàn bộ nội dung. Cần tuân theo điều khoản của từng publisher.
 - **arXiv:** sử dụng API theo [điều khoản và hướng dẫn của arXiv](https://info.arxiv.org/help/api/index.html), ghi nhận nguồn theo yêu cầu và kiểm tra giấy phép riêng của từng paper trước khi xử lý full text.
-- **GitHub:** public release có thể được truy xuất bằng [GitHub Releases API](https://docs.github.com/en/rest/releases/releases), nhưng việc truy cập công khai không tự động cấp quyền tái sử dụng mọi nội dung hoặc asset trong repository.
 - **Hacker News:** [API chính thức](https://github.com/HackerNews/API) cung cấp metadata, item và liên kết. Quyền truy cập HN không đồng thời cấp quyền sử dụng bài viết tại website được liên kết.
+
+GitHub nằm ở hậu MVP. Khi bổ sung, public repository hoặc public release vẫn không tự động cấp quyền tái sử dụng; phải kiểm tra repository license và phạm vi áp dụng cho documentation/release notes.
+
+Checklist kiểm tra một publisher/source:
+
+1. Mở Terms of Use, Copyright, Content Licensing, Permissions và Privacy Policy ở footer.
+2. Kiểm tra riêng API Terms hoặc RSS Terms của phương thức truy cập đang dùng.
+3. Kiểm tra byline, copyright notice, Creative Commons và nội dung do bên thứ ba cung cấp ở cấp bài.
+4. Tìm kênh licensing/contact hoặc văn bản chấp thuận nếu muốn xử lý vượt metadata/excerpt.
+5. Lưu URL bằng chứng, kết luận, người kiểm tra và ngày kiểm tra trong Source Registry.
+
+`robots.txt`, sitemap hoặc việc website cho đọc miễn phí không phải license. Nếu không tìm thấy quyền rõ ràng, hệ thống áp dụng `metadata-only`; chỉ nâng lên `fulltext-temporary` khi có bằng chứng phù hợp.
+
+Ví dụ vận hành: với một publisher như CNN hoặc một trang báo tương tự, nếu chỉ tìm thấy bài công khai/RSS nhưng không có quyền xử lý full text bằng AI rõ ràng, nguồn vẫn ở `metadata-only`. Hệ thống chỉ dùng title, byline, ngày, original URL và excerpt chính thức; không lấy ảnh, video hoặc toàn văn để gửi provider.
+
+Media được review riêng: URL công khai có thể được giữ làm liên kết tới trang nguồn, nhưng ảnh chỉ được remote-preview nếu Terms/license cho phép cách hiển thị đó và host nằm trong allowlist. Video MVP không được tải xuống hoặc phát lại; chỉ đặt link tới trang nguồn. Với nền tảng có cơ chế embed chính thức, việc embed vẫn phải tuân [YouTube API Services Terms and Developer Policies](https://developers.google.com/youtube/terms/developer-policies) hoặc điều khoản tương ứng và được để hậu MVP. Có thể tham khảo kênh hướng dẫn/quyền của [Cục Bản quyền tác giả](https://cov.gov.vn/giam-dinh-quyen-tac-gia-quyen-lien-quan/gioi-thieu-ve-dich-vu-giam-dinh-quyen-tac-gia-quyen-lien-quan-167148.html) khi phạm vi quyền không rõ.
 
 Các connector mạng xã hội trong tương lai phải dùng API hoặc cơ chế embed chính thức, đồng thời tuân thủ quy định hiển thị, lưu trữ, xóa dữ liệu và attribution của từng nền tảng.
 
-### 10.4. Gửi nội dung đến nhà cung cấp AI
+### 10.4. Gửi nội dung đến nhà cung cấp AI và embedding
 
-Gửi bài viết đến một LLM API là một hình thức xử lý và truyền dữ liệu cho bên thứ ba. Trước khi thực hiện cần kiểm tra:
+Gửi dữ liệu đến LLM hoặc embedding API là một hình thức xử lý và truyền dữ liệu cho bên thứ ba. Trước khi thực hiện cần kiểm tra:
 
 - nguồn có cho phép xử lý nội dung theo cách đó hay không;
 - nhà cung cấp AI lưu dữ liệu trong bao lâu;
@@ -512,7 +667,14 @@ Gửi bài viết đến một LLM API là một hình thức xử lý và truy�
 - khu vực lưu trữ và cơ chế xóa dữ liệu;
 - nội dung có chứa dữ liệu cá nhân hoặc thông tin nhạy cảm hay không.
 
-Không gửi toàn văn của nguồn `metadata-only`, `blocked` hoặc `review-needed` đến LLM.
+Quy tắc vận hành:
+
+- Không gửi raw HTML hoặc phần không liên quan tới provider.
+- Nguồn `metadata-only` chỉ được gửi metadata; nguồn `blocked`, `review-needed` hoặc `llmInputScope: none` không được gửi dữ liệu nguồn tới provider.
+- `fulltext-temporary` chỉ dùng cho nguồn có bằng chứng quyền xử lý rõ ràng, được làm sạch/chia chunk, không lưu lâu dài và không được dùng để thay thế bài gốc.
+- Embedding không tạo thêm quyền sử dụng dữ liệu; input embedding phải tuân cùng Source Registry policy như input LLM.
+- Với OpenCode Zen, model miễn phí có thể chỉ tồn tại tạm thời và một số free endpoint có thể dùng dữ liệu để cải thiện model; không gửi dữ liệu cá nhân, bí mật hoặc toàn văn chưa được phép. Xem [OpenCode Zen](https://opencode.ai/docs/zen).
+- Với OpenRouter, tắt input/output logging, không opt-in dùng dữ liệu và ưu tiên endpoint [Zero Data Retention](https://openrouter.ai/docs/guides/features/zdr); dữ liệu vẫn được chuyển tới model provider nên phải kiểm tra policy của endpoint đó.
 
 ### 10.5. Bảo vệ dữ liệu cá nhân
 
@@ -528,18 +690,18 @@ Không gửi toàn văn của nguồn `metadata-only`, `blocked` hoặc `review-
 Hệ thống cần có khả năng:
 
 - tắt ngay một nguồn;
-- xóa metadata, summary và embedding liên quan;
+- xóa metadata, media reference, summary và embedding liên quan;
 - lưu yêu cầu gỡ nội dung và kết quả xử lý;
 - cập nhật lại index sau khi xóa;
 - cung cấp kênh liên hệ cho chủ sở hữu quyền.
 
 ### 10.7. Chế độ triển khai đồ án
 
-Phiên bản đầu nên được triển khai theo một trong các hình thức:
+Phiên bản MVP được triển khai trên Vercel Hobby bằng một public URL tạm thời phục vụ demo/chấm đồ án. Dự án vẫn phải dùng tài khoản cho các chức năng cá nhân và không quảng bá như một dịch vụ tin tức thay thế publisher.
 
-- chạy local khi demo;
-- website có tài khoản và giới hạn người truy cập;
-- deployment tạm thời phục vụ chấm đồ án.
+- Vercel Hobby phù hợp với project cá nhân, phi thương mại; cần đánh giá lại plan nếu có mục đích thương mại. Xem [Vercel Hobby](https://vercel.com/docs/plans/hobby).
+- Có thể giữ bản local làm phương án dự phòng khi demo.
+- Deployment không làm thay đổi `licenseStatus` hoặc mở rộng quyền xử lý nội dung.
 
 Trước khi mở công khai cho mọi người hoặc thêm quảng cáo, affiliate, subscription hay khách hàng doanh nghiệp, phải đánh giá lại toàn bộ nguồn và quyền sử dụng.
 
@@ -547,39 +709,60 @@ Trước khi mở công khai cho mọi người hoặc thêm quảng cáo, affil
 
 | Rủi ro | Cách giảm thiểu ban đầu |
 |---|---|
-| Vi phạm bản quyền hoặc điều khoản nguồn | Source allowlist, lưu trạng thái giấy phép, không lưu full text mặc định |
+| Vi phạm bản quyền hoặc điều khoản nguồn | Source allowlist, lưu bằng chứng Terms/License, thực thi `llmInputScope`, không lưu full text |
+| Điều khoản publisher thay đổi sau khi duyệt | Lưu `reviewedAt`, URL bằng chứng; chuyển `review-needed` và tạm ingest khi phát hiện thay đổi quan trọng |
+| Gửi dữ liệu vượt phạm vi tới LLM/embedding provider | Policy check phía backend trước mọi request, redact dữ liệu, ưu tiên ZDR và audit model/scope |
 | AI hallucination | RAG, citation, từ chối khi thiếu bằng chứng, bộ kiểm thử groundedness |
 | Prompt injection từ bài viết | Coi nội dung nguồn là dữ liệu, tách system instruction, lọc và giới hạn tool |
 | Tin trùng | Canonical URL, hash và semantic similarity |
 | Tin cũ hoặc sai thời điểm | Hiển thị `publishedAt`, `retrievedAt` và phạm vi thời gian truy vấn |
 | Chi phí LLM | Cache summary, giới hạn độ dài input, batch job và quota người dùng |
 | API thay đổi hoặc hết quota | Adapter riêng cho từng nguồn, retry giới hạn và khả năng tắt nguồn |
+| Vercel Cron chạy trùng, lỗi hoặc hết thời gian | Idempotency key, distributed lock, batch nhỏ, app-level retry và nút chạy thủ công |
+| Embedding provider lỗi | Fallback về MongoDB text search; đánh dấu `embeddingStatus: failed` để retry sau |
+| Đổi embedding model làm vector không tương thích | Pin model/dimension/version và re-index toàn bộ document khi thay đổi |
 | Nội dung cộng đồng bị nhầm là thông tin đã xác thực | Gắn Hacker News là `community-signal`; yêu cầu nguồn primary hoặc editorial xác nhận |
-| Bản tóm tắt thay thế bài gốc | Tóm tắt ngắn, không dùng ảnh/toàn văn, nút đọc nguồn nổi bật |
+| Bản tóm tắt thay thế bài gốc | Tóm tắt ngắn, không dùng toàn văn/media làm evidence; nút đọc nguồn nổi bật |
+| Ảnh/video công khai bị dùng vượt quyền | Media policy độc lập, allowlisted HTTPS host, remote-preview/link-only, attribution và không rehost |
+| Ảnh hotlink hỏng hoặc publisher chặn | Lazy-load và TechPulse-owned fallback; không proxy tùy ý để che lỗi |
+| AI suy diễn từ media chưa xử lý | `mediaEvidenceStatus=not-analyzed`; loại media khỏi summary/embedding/Q&A input |
+| Dịch/tóm tắt sai nguồn ngoại ngữ | Giữ title/ngôn ngữ/URL gốc, gắn nhãn AI, đưa lỗi chất lượng vào `review-needed` |
 | User chiếm quyền hoặc gọi trực tiếp admin API | Kiểm tra role tại backend, session an toàn, CSRF protection, rate limiting và test `401/403` |
 | Source URL độc hại truy cập mạng nội bộ | Validate URL/host, chặn private IP và redirect không an toàn trước khi worker fetch |
 | Bài chưa duyệt hoặc đã ẩn vẫn còn trong AI index | Chỉ index trạng thái `published`, đồng bộ article/index và kiểm thử các invariant trạng thái |
 | Admin thao tác nhầm hoặc khó truy vết | Ưu tiên soft delete, yêu cầu xác nhận/lý do và ghi audit log theo kiểu append-only ở tầng ứng dụng |
 
-## 12. Câu hỏi còn mở
+## 12. Việc cần xác nhận khi triển khai
 
-- Thời gian và số thành viên thực hiện dự án là bao nhiêu?
-- Giảng viên yêu cầu deployment công khai hay chỉ cần demo?
-- Nguồn nào có giấy phép đủ rõ để dùng phần nội dung dài hơn metadata?
-- MVP sẽ bật bao nhiêu RSS/Atom feed, arXiv category/query và GitHub repository trong bản demo?
-- LLM API và ngân sách sử dụng dự kiến là gì?
-- MongoDB Atlas Search/Vector Search có nằm trong hạ tầng cho phép không?
-- Citation cần ở cấp bài, cấp đoạn hay cấp từng phát biểu?
-- Có cần hỗ trợ tiếng Việt ngay trong MVP hay chỉ tiếng Anh?
-- Mức độ tự động của việc kiểm tra và duyệt nguồn là bao nhiêu?
+Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thiết kế kỹ thuật. Các việc sau được xác nhận trong lúc triển khai:
+
+- chọn chính xác 8–10 RSS/Atom feed và hoàn thành hồ sơ Terms/License cho từng feed;
+- seed ba arXiv query ban đầu (`cs.AI`, `cs.MA`, `cs.RO`) và điều chỉnh nếu dữ liệu demo mất cân bằng;
+- kiểm tra availability/quota hiện tại của OpenCode Zen, DeepSeek, OpenRouter và Vercel trước ngày demo;
+- benchmark BGE-M3 bằng một bộ câu hỏi tiếng Việt nhỏ trước khi cố định `embeddingVersion: 1`;
+- chốt thời điểm tắt deployment Vercel tạm thời sau khi hoàn thành việc chấm đồ án.
 
 ## 13. Quyết định hiện tại
 
 - **Go** với ý tưởng TechPulse AI.
-- Ưu tiên một MVP nhỏ, có nguồn rõ ràng và luồng AI có citation.
-- Chốt bốn nhóm nguồn cho MVP: RSS/Atom, arXiv, GitHub và Hacker News.
-- YouTube, X, Facebook, Instagram và các nền tảng khác được chuyển sang giai đoạn hoàn thiện sau MVP.
+- Thời gian thực hiện là 4 tuần; nhóm danh nghĩa có 4 thành viên nhưng phạm vi kỹ thuật phải đủ để một người hoàn thành.
+- Ưu tiên một MVP nhỏ, khoảng 250–400 bài, có nguồn rõ ràng và luồng AI có citation.
+- Chốt ba nhóm nguồn cho MVP: RSS/Atom, arXiv và Hacker News.
+- GitHub, YouTube, X, Facebook, Instagram và các nền tảng khác được chuyển sang giai đoạn hoàn thiện sau MVP.
+- Bản demo dự kiến bật 8–10 RSS feed, 3 arXiv query và ba luồng Hacker News `topstories`, `newstories`, `beststories`.
 - Số lượng source definition có thể tăng qua Source Registry mà không cần thêm connector mới.
+- Triển khai React + Node.js/Express trên Vercel Hobby; MongoDB Atlas lưu toàn bộ state bền vững.
+- Implementation dùng JavaScript/JSX (`.js`, `.jsx`), không dùng TypeScript/TSX trong MVP; contract được bảo vệ bằng OpenAPI/runtime validation/JSDoc và test.
+- Ingestion chạy một lần mỗi ngày bằng Vercel Cron và có trigger thủ công cho admin; job phải idempotent, có distributed lock và batch giới hạn.
+- Keyword search dùng MongoDB text index và trường bỏ dấu; không phụ thuộc MongoDB Atlas Search/Vector Search trong MVP.
+- Semantic retrieval dùng `baai/bge-m3` qua OpenRouter, lưu vector 1024 chiều trong MongoDB và tính cosine similarity trong Node.js; text search là fallback.
+- LLM ưu tiên `deepseek-v4-flash-free` qua OpenCode Zen và có fallback cấu hình sang `deepseek-v4-flash` trả phí thấp.
+- UI, summary và AI Q&A dùng tiếng Việt; giữ nguyên title, ngôn ngữ và URL nguồn; chỉ dịch/tạo summary, không dịch toàn văn.
+- Citation cấp bài được dùng ở trang chi tiết/summary; citation cấp đoạn được dùng trong AI Q&A; citation cấp từng claim là hậu MVP.
+- Source Registry phân biệt publisher, license, access method và operational status; không tìm thấy quyền rõ ràng thì mặc định `metadata-only`.
+- Chỉ nguồn `fulltext-temporary` được phép xử lý main content đã làm sạch/chia chunk; không gửi raw HTML và không lưu toàn văn.
+- Media policy độc lập với quyền xử lý text: ảnh chỉ remote-preview từ host đã duyệt, video chỉ link tới nguồn, không rehost binary và AI không phân tích media trong MVP.
+- Việc kiểm tra kỹ thuật nguồn được tự động hóa; việc kết luận Terms/License và phạm vi AI do admin phê duyệt.
 - MVP có hai role người dùng `user` và `admin`; `system-worker` là actor nội bộ, không phải tài khoản đăng nhập.
 - Admin dùng authentication backend chung, giao diện `/admin` riêng và server-side session; role luôn được kiểm tra ở backend.
 - Admin đầu tiên được tạo bằng seed script; không cho đăng ký hoặc tự nâng role admin qua UI/API.
@@ -587,4 +770,4 @@ Trước khi mở công khai cho mọi người hoặc thêm quảng cáo, affil
 - Mọi thao tác quản trị thay đổi trạng thái phải có audit log; chỉ bài `published` được xuất hiện trong feed, search và AI retrieval.
 - Xem quản trị nguồn và responsible AI là năng lực cốt lõi của sản phẩm.
 - Không xây sản phẩm dựa trên việc “lách luật” hoặc giả định rằng phi thương mại đồng nghĩa với được phép sử dụng mọi nội dung.
-- Chưa chuyển tài liệu này thành PRD hoặc đặc tả triển khai cho đến khi chốt phạm vi nguồn, thời gian và quy mô nhóm.
+- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh baseline JavaScript/JSX cùng media policy này.
