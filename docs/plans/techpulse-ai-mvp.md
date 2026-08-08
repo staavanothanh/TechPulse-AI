@@ -1,7 +1,7 @@
 # TechPulse AI — 4-Week MVP Construction Blueprint
 
-> Trạng thái: Ready v1.4 — durable-fencing/security repair reconciled
-> Phiên bản: 1.4
+> Trạng thái: Ready v1.5 — coordination/lifecycle repair reconciled
+> Phiên bản: 1.5
 > Cập nhật: 08/08/2026  
 > Objective: xây MVP TechPulse AI end-to-end theo solo-owner + coding-agent execution; bốn tuần là planning horizon, không phải lý do hạ safety/contract gate
 > Execution mode: direct mode — git có sẵn trên `main`, chưa có remote và GitHub CLI  
@@ -66,11 +66,14 @@ Mọi step phải giữ các invariant sau:
 10. Media nguồn chỉ là metadata/URL theo current `mediaPolicy`; không persist/rehost binary và media `not-analyzed` không vào AI evidence.
 11. Không thêm connector, commercial feature, full-text archive hoặc claim-level citation.
 12. `answered`/`refused` tuân theo conditional OpenAPI và mọi citation ID resolve tới visible evidence.
-13. Job/checkpoint/article/artifact commit conditionally touch persistent active lease owner/generation trong cùng transaction; lease high-water không TTL/reset.
+13. Job/checkpoint/article/artifact commit conditionally touch canonical resource lease với exact active owner/generation/unexpired authoritative time; lease high-water không TTL/reset và expired heartbeat không resurrect.
 14. Audit không có arbitrary before/after snapshot; direct mutation + audit commit atomically.
-15. Content takedown và automatic account deletion là hai workflow riêng với machine-readable completion evidence.
+15. Content takedown và automatic account deletion là hai workflow riêng: takedown redacts historical citation, deletion same-request recovery giữ completion flags.
 16. Mọi external URL fetch/render là canonical HTTPS không credential; safe-fetch pin actual connection vào validated public IP.
-17. AI artifact commit match job `expectedSourcePolicyVersion` với current Source Policy hoặc discard output.
+17. Ingestion/AI commit match job `expectedSourcePolicyVersion` với current Source Policy/config/state hoặc discard output; ingestion mismatch không advance checkpoint.
+18. Reconciliation marker mutation CAS exact source/required policy version + status/cursor; worker N không mutate marker N+1.
+19. Due-work dùng queue-local priority + reserved bounded progress cho mỗi registered queue; unregistered queue không query collection.
+20. Delayed user-owned write match active user + exact sessionVersion + current article/takedown lifecycle trước persistence.
 
 ## 5. Definition of Done cho mỗi step
 
@@ -108,17 +111,17 @@ flowchart TD
     S4 --> S11
     S7 --> S11
     S9 --> S11
-    S10 --> S12[12. Eval, E2E, deploy, demo]
-    S11 --> S12
+    S10 --> S11
+    S11 --> S12[12. Eval, E2E, deploy, demo]
 ```
 
 Parallel opportunities:
 
 - Step 5 và Step 6 có thể chạy song song sau Step 4 vì sở hữu connector/fixture riêng; Step 7 là integration gate.
-- Sau Step 9, phần UI/admin không chạm Q&A có thể tiến song song với Step 10 nếu ownership file rõ.
+- Sau Step 9, phần UI/admin không chạm Q&A có thể được chuẩn bị song song với Step 10 nếu ownership file rõ; Step 11 chỉ exit sau Step 10 handoff để chạy deletion/takedown delayed-Q&A races.
 - Trong solo mode, vẫn thực hiện tuần tự để giảm context switching; DAG chỉ giúp biết phần nào không phụ thuộc logic.
 
-Critical path dự kiến: `1 → 2 → 3 → 4 → 5/6 → 7 → 8 → 9 → {10, 11} → 12`. Cả Step 10 và Step 11 đều là predecessor bắt buộc của release gate.
+Critical path dự kiến: `1 → 2 → 3 → 4 → 5/6 → 7 → 8 → 9 → 10 → 11 → 12`. Step 11 tích hợp lifecycle race với Q&A trước release gate.
 
 ## 7. Four-week schedule
 
@@ -173,7 +176,7 @@ eslint/prettier/vitest config, vercel.json, .env.example
 
 1. Scaffold React/Vite bằng JavaScript/JSX và Express composition root bằng JavaScript; giữ entrypoint production mỏng và không tạo `.ts`/`.tsx`.
 2. Pin Node/package-manager version và dependency versions; thêm `.env.example` chỉ có tên biến.
-3. Cài validation OpenAPI 3.1 và generator cho `api-client.js`/`api-schema.js` có JSDoc/runtime schema; reject remote/path-traversal `$ref`. Thêm contract completeness lint: JSON-body operation phải có `400`, Mongo-backed operation phải có `503`; Step 1 sửa canonical OpenAPI cho tới khi rule pass trước khi business route implementation bắt đầu. Contract kill-tests phải cover `HttpsUrl`, `reasonCode`, attribution conditional, generic cron aggregate và `expectedSourcePolicyVersion`.
+3. Cài validation OpenAPI 3.1 và generator cho `api-client.js`/`api-schema.js` có JSDoc/runtime schema; reject remote/path-traversal `$ref`. Thêm contract completeness lint: JSON-body operation phải có `400`, Mongo-backed operation phải có `503`; Step 1 sửa canonical OpenAPI cho tới khi rule pass trước business route. Contract kill-tests cover `HttpsUrl`/reviewed media host, operation/status-specific `reasonCode`, Source request+response attribution, reconciliation terminal states, cron aggregate, ingestion/indexing expected policy version, historical unavailable citation và takedown chat-completion conditional.
 4. Thêm toàn bộ script name mà Steps 1–12 sẽ gọi: `contract:validate`, `contract:generate`, `contract:test`, `lint`, `test`, `test:integration`, `test:security`, `test:ui`, `test:e2e`, `eval:retrieval`, `eval:groundedness`, `eval:citations`, `db:migrate`, `db:migrate:dry-run`, `db:verify`, `build`. Script có thể chạy empty suite hợp lệ ở Step 1 nhưng không được là placeholder báo pass giả.
 5. Implement `GET /api/v1/health` đúng contract, request ID middleware và centralized error envelope tối thiểu.
 6. Thêm test contract cho health success/error và test generated output không drift.
@@ -280,7 +283,7 @@ Revert auth routes/repositories và drop chỉ indexes/seed data do migration st
 **Dependencies:** Step 2.  
 **Estimate:** Timebox 1.5 ngày.  
 **Review tier:** Policy/security-sensitive.  
-**Primary requirements:** SRC-001, SRC-003..011, ADMIN-006..008, NFR-010/011/013.
+**Primary requirements:** SRC-001, SRC-003..012, ADMIN-006..008, NFR-010/011/013.
 **ADRs:** 0006, 0009.
 
 ### Cold-start context
@@ -304,11 +307,11 @@ tests/{unit,integration}/sources/**
 1. Implement source schema/index/state transition, connector/access/authority discriminated validation và PRD Source Policy compatibility matrix ở request/domain/Mongo validators.
 2. Implement admin list/create/read/update, policy-review và re-review operations đúng OpenAPI; reviewer/time do server sở hữu.
 3. Implement pure content/media policy gates trả allowed fields/mode/host hoặc structured rejection; connector/provider không được tự nâng scope.
-4. Enforce activation prerequisites, policyVersion increment và fail-closed current-policy lookup; re-review atomically ghi `reconciliation.status=pending` + required policy version trên source, không phụ thuộc `indexingJobs` chưa tồn tại.
+4. Enforce activation prerequisites, policyVersion increment và fail-closed current-policy lookup; re-review atomically ghi `reconciliation.status=pending` + required policy version trên source, không phụ thuộc `indexingJobs` chưa tồn tại. Marker validator enforce terminal timestamp/version/error shape; runtime enforce completed version bằng required version.
 5. Ghi safe structured audit (`changedFields` + allowlisted state transition + action-specific `reasonCode`/result) trong cùng transaction với direct source mutation; không snapshot document hoặc free-form admin note.
 6. Xây admin Sources UI cho draft/config/review/activate/pause, không hiển thị credential.
 7. Seed source definitions ở `draft`; không seed `permitted` nếu chưa có evidence.
-8. Test mọi state transition và matrix `licenseStatus × llmInputScope × storageScope`, connector mismatch/HN authority, attribution patch `true + null`, cùng `imageMode/videoMode × allowedHosts`; re-review phải pause + version++ + durable pending reconciliation marker.
+8. Test mọi state transition và matrix `licenseStatus × llmInputScope × storageScope`, connector mismatch/HN authority, Source request/response attribution `true + missing|null|empty`, reconciliation terminal-state invalid fixtures, cùng `imageMode/videoMode × canonical public allowedHosts`; IP literal/private/single-label host bị reject. Re-review phải pause + version++ + durable pending marker.
 9. Validate serialized success/error responses của Source Registry operations bằng OpenAPI fixtures.
 
 ### Verification
@@ -346,18 +349,19 @@ Pause mọi source được tạo bởi step, revert route/UI, giữ evidence ex
 **Dependencies:** Steps 2–3.  
 **Estimate:** Timebox 2 ngày.  
 **Review tier:** Architecture/security-critical.  
-**Primary requirements:** SRC-002/007, ING-002..006/009/010, ADMIN-002, ART-008, NFR-001/005/006/012.
-**ADRs:** 0001, 0002, 0003, 0006, 0010.
+**Primary requirements:** SRC-002/007, ING-002..006/009..012, ADMIN-002, ART-008, NFR-001/005/006/012.
+**ADRs:** 0001, 0002, 0003, 0006, 0010, 0011.
 
 ### Cold-start context
 
-Vercel không giữ process/queue memory. Protected `GET /api/internal/cron/due-work` và admin POST trigger gọi cùng runner nhưng có auth boundary riêng. `jobLeases` giữ persistent `generationHighWater` và nullable active owner, không TTL; expired ownership phải recovery trước reacquire. URL admin nhập vẫn untrusted: HTTPS/no credential, validate toàn bộ A/AAAA, reject mixed/private/link-local/mapped, pin actual connection và tự xử lý mỗi redirect.
+Vercel không giữ process/queue memory. Protected `GET /api/internal/cron/due-work` và admin POST trigger gọi cùng runner nhưng có auth boundary riêng. `jobLeases` giữ persistent `generationHighWater` và nullable active owner, không TTL; expired ownership phải recovery trước reacquire. Lease keys derive server-side từ ADR-0011 canonical resource table. Step 4 cung cấp queue registry + two recovery strategies để Step 9/11 đăng ký, và fairness chọn trong từng queue trước khi spill. URL admin nhập vẫn untrusted: HTTPS/no credential, validate toàn bộ A/AAAA, reject mixed/private/link-local/mapped, pin actual connection và tự xử lý mỗi redirect.
 
 ### Ownership/output
 
 ```text
 server/domain/jobs/**, server/application/jobs/**, server/jobs/**
 server/repositories/mongo/{job,lease}-repository.*
+server/jobs/{queue-registry,due-work-coordinator,recovery-strategies}.*
 server/infrastructure/http/safe-fetch.*
 server/http/admin/ingestion-jobs/**
 server/http/internal/cron/**, server/http/admin/source-technical-checks/**
@@ -367,14 +371,14 @@ tests/{unit,integration}/jobs/**, tests/security/ssrf/**
 
 ### Tasks
 
-1. Implement generic runner/lease primitives và idempotent migrations cho `ingestionJobs`/`jobLeases` + due indexes; Step 9 sở hữu `indexingJobs`, Step 11 sở hữu `accountDeletionRequests`.
-2. Implement persistent lease acquire/heartbeat/release theo ADR-0010: recovery exact owner/generation, terminal parent + tối đa một linked retry, clear ownership nhưng giữ high-water; mọi job/checkpoint/article/artifact write transactionally touch exact unexpired fence.
+1. Implement generic runner/lease primitives, queue adapter/registration contract và idempotent migrations cho `ingestionJobs`/`jobLeases` + due indexes. Step 4 chỉ đăng ký ingestion; Step 9 đăng ký/indexing schema, Step 11 đăng ký/account-deletion schema. Unregistered queue trả zero summary và không query collection; response vẫn giữ ba fixed summaries.
+2. Implement persistent lease acquire/heartbeat/release theo ADR-0010/0011: canonical keys only; exact owner/generation/unexpired heartbeat; expired lease không resurrect. Ingestion/indexing recovery terminal parent + tối đa một deterministic linked retry; generic contract còn cho Step 11 đăng ký same-request recovery. Mọi job/checkpoint/article/artifact write transactionally touch exact unexpired fence.
 3. Implement idempotency identity `(actorScope, key, canonicalRequestHash)` cho cron/manual/retry; same intent reuse logical job, mismatched hash trả `409 idempotency_mismatch`.
-4. Implement two-phase bounded due-work coordinator: `maxRecoveries` expired-running recovery trước stable queued selection theo `availableAt`/priority; aggregate counters cho ingestion/indexing/account-deletion và `nextAvailableAt`.
+4. Implement bounded due-work coordinator: validate `maxJobs >= registeredQueueCount` và reserve deadline/claim margin cho toàn reserved phase trước recovery/execution; budget thiếu fail safe/no spill. Sau recovery, queue-local effective-priority/aging sort, một reserved due selection attempt cho mỗi registered queue, rồi spill theo oldest due head; `nextAvailableAt` là minimum queued time còn lại.
 5. Implement SSRF-safe fetch adapter: URL parser HTTPS/no credential, validate mọi A/AAAA, pin connection trong khi giữ Host/SNI/certificate hostname, `redirect=manual` và revalidate/pin từng hop; không lưu sample body.
 6. Implement protected `GET /api/internal/cron/due-work` và admin POST/job operations đúng OpenAPI; cron idempotently materialize daily ingestion intents, áp Mongo-backed rate-limit scope cho admin trigger/source test.
 7. Xây minimal job list/detail/retry/cancel UI.
-8. Test duplicate invocation, request-hash mismatch, concurrent lease, crash-after-claim recovery/linked retry/high-water persistence/stale commit, due ordering/backoff, partial resume, non-retryable policy error, cron aggregate, technical-check evidence, DNS rebinding/mixed A/AAAA/mapped-private/redirect-to-private và oversized response.
+8. Test duplicate invocation, request-hash mismatch, cron/manual cùng source contend `ingestion:source:<sourceId>`, invalid actor/job-derived key, concurrent lease, heartbeat wrong owner/generation/expired, crash recovery linked retry/high-water/stale commit, queue-local ordering/aging/reserved fairness dưới sustained backlog, unregistered no-query/zero counters, backoff/partial resume, non-retryable policy error, cron aggregate, technical-check evidence, DNS rebinding/mixed A/AAAA/mapped-private/redirect-to-private và oversized response.
 9. Validate serialized success/error responses của cron/source-check/job operations bằng OpenAPI fixtures.
 
 ### Verification
@@ -393,6 +397,8 @@ npm run test:security -- ssrf
 
 - Hai invocation cùng actor/key/hash trả cùng logical job; key với hash khác trả conflict và không double side effect.
 - Chỉ exact unexpired active owner/generation commit được; release/recovery không xóa high-water và stale worker không ghi checkpoint/article/artifact sau reacquire.
+- Cron/manual/retry cùng logical target dùng canonical shared key; expired heartbeat không làm lease sống lại.
+- Mỗi registered due queue tiến triển hữu hạn khi queue khác backlog liên tục; unregistered indexing/deletion trước handoff không bị query và trả zero counters.
 - Technical check không thể truy cập localhost/private/link-local/mapped private qua direct, mixed DNS, rebinding hoặc redirect URL; actual socket dùng IP đã validate.
 - Cron GET dùng bearer riêng; admin cookie không gọi internal route và ngược lại; response có đúng ba queue summaries và queued due work được dequeue theo budget.
 
@@ -522,8 +528,8 @@ Unregister failing connector và pause source definitions tương ứng; connect
 **Dependencies:** Steps 3–6.  
 **Estimate:** Timebox 1.5–2 ngày.  
 **Review tier:** Architecture/data-integrity review.  
-**Primary requirements:** ING-001/003/004/007/008, ART-001/002/005..007, SRC-009, NFR-001/011.  
-**ADRs:** 0002, 0003, 0006, 0009.
+**Primary requirements:** ING-001/003/004/007/008/011, ART-001/002/005..007, SRC-009, NFR-001/011.
+**ADRs:** 0002, 0003, 0006, 0009, 0010, 0011.
 
 ### Cold-start context
 
@@ -544,10 +550,10 @@ tests/{unit,integration}/articles/**, tests/integration/ingestion/**
 1. Implement normalized candidate → article mapper, URL/time/language/topic normalization, allowed excerpt sanitization và media policy gate cho optional `leadMedia`.
 2. Create/apply/verify article indexes/validators bằng versioned migration và shared current-source visibility predicate; rollback/dry-run target theo exact migration/job/source.
 3. Implement layered dedupe, stable dedupe key, union provenance và ambiguous review flow.
-4. Integrate connector runner → upsert → counters/checkpoint without duplicate side effect.
+4. Integrate connector runner → upsert → counters/checkpoint without duplicate side effect. Job capture `expectedSourcePolicyVersion` trước fetch; final transaction conditionally touch canonical lease và exact source ID/version/active/eligible/connector config trước article/checkpoint write. CAS miss discard candidate, không advance counter/checkpoint.
 5. Set summary/embedding pending states, rights/media policy snapshot/version and publish/review decision; không fetch/persist media binary.
-6. Implement hide/restore/merge domain operations and visibility reconciliation jobs; artifact `removed` unsets content/model/hash/error fields.
-7. Test rerun same batch, cross-source canonical duplicate, conflicting metadata, source blocked mid-run, removed-artifact no-leak, allowed/blocked media host/mode và crash-before-checkpoint recovery.
+6. Implement hide/restore/merge domain operations and durable visibility-reconciliation intent/marker handling; artifact `removed` unsets content/model/hash/error fields. Step 7 không materialize source-marker jobs hoặc checkpoint marker; Step 9 là sole owner của fan-out/completion.
+7. Test rerun same batch, cross-source canonical duplicate, conflicting metadata, source blocked/policy/config changed mid-fetch → no article/checkpoint advance, removed-artifact no-leak, allowed/blocked media host/mode và crash-before-checkpoint recovery.
 
 ### Verification
 
@@ -564,13 +570,14 @@ npm run test:integration -- ingestion visibility idempotency
 - Re-run không tăng logical article/save/provenance sai.
 - Chỉ valid article published; ambiguous case vào review.
 - Source policy đổi fail-closed ở query/pipeline dù reconciliation chưa xong.
+- Late ingestion candidate không commit nếu expected source policy/config/state đã đổi; checkpoint/counter giữ nguyên.
 - `leadMedia` chỉ giữ HTTPS metadata đã qua current policy; video luôn link-only và `not-analyzed`; database không có binary/base64.
 
 ### Rollback
 
 Pause production source và disable runner trước. Revert mapper/repository; dùng dry-run cleanup theo `jobId/sourceId` nếu dữ liệu demo do bug tạo, không broad-delete collection.
 
-**Out of scope:** AI summary, embedding, user feed UI.
+**Out of scope:** AI summary, embedding, source reconciliation job materialization/checkpoint completion, user feed UI.
 
 ---
 
@@ -645,7 +652,7 @@ Revert user routes/UI theo module; article data/pipeline giữ nguyên. Nếu cu
 **Estimate:** Timebox 2 ngày.  
 **Review tier:** AI/policy/data-integrity review.  
 **Primary requirements:** SEARCH-003..006, AI-001..005/007/008, ADMIN-003, NFR-003/005/008/009/011/012.
-**ADRs:** 0005, 0006, 0007, 0008, 0009, 0010.
+**ADRs:** 0005, 0006, 0007, 0008, 0009, 0010, 0011.
 
 ### Cold-start context
 
@@ -658,22 +665,24 @@ server/providers/{llm,embedding}/**
 server/application/{summaries,embeddings,retrieval}/**
 server/domain/ai-policy/**
 server/jobs/indexing/**
+server/http/admin/indexing-jobs/**
 scripts/migrations/*indexing-jobs*
 client/features/article-detail/summary-state.*
+client/features/admin/jobs/indexing/**
 tests/{unit,integration,eval}/ai/**
 ```
 
 ### Tasks
 
-1. Implement/apply/verify `indexingJobs` schema/migration trên generic runner từ Step 4; một job chỉ có một task, có `availableAt`, actor-scoped idempotency/request hash, fencing generation và server-captured `expectedSourcePolicyVersion`.
+1. Implement/apply/verify `indexingJobs` schema/migration trên generic runner từ Step 4; đăng ký indexing queue adapter + immutable linked-retry strategy. Một job chỉ có một task, có `availableAt`, actor-scoped idempotency/request hash, canonical `indexing:article:<articleId>` fencing và server-captured `expectedSourcePolicyVersion`.
 2. Implement JavaScript LLM/embedding ports với JSDoc, runtime output schemas, configured adapters, timeout/error mapping và fake adapters.
 3. Build policy-derived summary/embedding inputs; sanitize/delimit external data, loại media fields và disable tools.
 4. Validate structured summary output, length/novel wording, Vietnamese label, model/basis/hash/status; fenced commit lưu `summarySourcePolicyVersion`.
 5. Validate embedding length/model/version/hash; cache unchanged input, fenced commit lưu `embeddingSourcePolicyVersion` và enqueue re-index on change.
 6. Implement candidate filter + cosine + hybrid ranking; record effective mode/fallback reason.
-7. Implement bounded summary/index job cùng admin list/detail/retry/cancel operations; failed summary và embedding có state độc lập, không dùng một overall task array. Materialize Step 3 pending source reconciliation marker thành idempotent bounded per-article `visibility-reconcile` jobs và checkpoint marker tới completed.
+7. Implement bounded summary/index job cùng server HTTP admin list/detail/retry/cancel operations và indexing-job UI handoff dưới `client/features/admin/jobs/indexing/**`; failed summary/embedding có state độc lập. Materialize Step 3 marker bằng canonical `reconciliation:source:<sourceId>` lock: mọi claim/cursor/error/retry/completion CAS exact source policy version + marker required version + expected status/cursor; fan-out identity `sourceId:articleId:task:policyVersion`; completed version phải bằng required version.
 8. Create small Vietnamese retrieval benchmark; do not fix version 1 until top-5 gate passes.
-9. Test provider outage, primary→fallback, policy rejection no-fallback, ZDR/non-confidential routing config, media/PII exclusion, stale generation commit, policy đổi khi fake provider đang pending → output discard, reconciliation marker fan-out/checkpoint, dimension mismatch, temporary-text disposal và log redaction.
+9. Test provider outage, primary→fallback, policy rejection no-fallback, ZDR/non-confidential routing config, media/PII exclusion, stale generation commit, policy đổi khi fake provider pending → output discard, source reconciliation N→N+1 race (N không mutate marker mới), idempotent versioned fan-out/checkpoint, indexing queue registration/fairness, dimension mismatch, temporary-text disposal và log redaction.
 10. Validate serialized search fallback/hybrid và admin indexing responses bằng OpenAPI fixtures.
 
 ### Verification
@@ -697,6 +706,7 @@ npm run eval:retrieval
 - Memory/log/database scan không có temporary full text.
 - Summary/embedding input không chứa media URL/alt/binary và không claim chi tiết chỉ có trong media.
 - Indexing job có thể poll/retry/cancel sau page reload; summary success không bị ghi đè bởi stale embedding/worker result.
+- Reconciliation marker N chỉ được completed ở exact required version; N→N+1 race không đổi status/cursor/error/completion của N+1.
 
 ### Rollback
 
@@ -714,12 +724,12 @@ Disable provider config và hybrid mode; text search/UI content tiếp tục ho�
 **Dependencies:** Steps 8–9.  
 **Estimate:** Timebox 2 ngày.  
 **Review tier:** AI safety/security-critical.  
-**Primary requirements:** QA-001..008, USER-004, AI-007, NFR-003/005/009/011.  
+**Primary requirements:** QA-001..009, USER-004, AI-007, NFR-003/005/009/011.
 **ADRs:** 0005, 0006, 0007, 0009.
 
 ### Cold-start context
 
-Model không tạo URL. Server gán stable evidence ID, validate cited IDs và hydrate citation từ MongoDB. External text nằm trong delimited data; provider không có tool. `leadMedia` có `not-analyzed` không vào evidence block. Answer factual paragraph cần citation; insufficient/blocked/provider-unavailable có refusal code rõ.
+Model không tạo URL. Server gán stable evidence ID, validate cited IDs và hydrate citation từ MongoDB. External text nằm trong delimited data; provider không có tool. `leadMedia` có `not-analyzed` không vào evidence block. Answer factual paragraph cần citation; insufficient/blocked/provider-unavailable có refusal code rõ. Provider call không giữ quyền ghi: request capture user/session lifecycle, final persistence phải CAS active user + exact sessionVersion + current article/takedown state.
 
 ### Ownership/output
 
@@ -733,15 +743,15 @@ tests/{unit,integration,eval}/qa/**
 
 ### Tasks
 
-1. Implement question/scope validation, Mongo-backed minute/daily quota buckets và visible evidence retrieval.
+1. Implement question/scope validation, Mongo-backed minute/daily quota buckets và visible evidence retrieval; capture `userId + expectedSessionVersion` trước external provider work.
 2. Build prompt/evidence envelope chống prompt injection; no tools/model URL.
 3. Parse structured answer paragraphs + evidence IDs; validate ID existence, visibility và citation coverage; hydrate citation `originalUrl` only through server canonical `HttpsUrl`, never model output.
 4. Handle conflict presentation, bounded repair attempt và deterministic refusal path.
-5. Implement/apply/verify chat migration rồi persist minimal user-owned history với bounds: 30 messages/session, 1.000-char question, 12 paragraphs, 50 citations và rollover; implement list/delete/clear endpoints.
+5. Implement/apply/verify chat migration và available/unavailable citation union. Final chat/quota append transaction conditionally touch user `status=active` + exact session version và every cited article current lifecycle; CAS miss discard provider result/no user-owned persistence. Giữ bounds 30 messages/session, 1.000-char question, 12 paragraphs, 50 citations và rollover; implement list/delete/clear endpoints.
 6. Build Q&A UI với loading, paragraphs, citation drawer/link dùng safe external rel, refusal/conflict states.
 7. Build versioned evaluation set tối thiểu 30 prompt gồm grounded, insufficient, conflicting, hidden-source, media-only claim và injected-instruction cases; lưu atomic-claim labels/adjudication notes.
-8. Test primary/fallback and non-streaming baseline; streaming chỉ thêm nếu baseline ổn định mà không đổi semantic contract.
-9. Validate answered/refused/rate-limited/error serialized responses bằng OpenAPI fixtures; negative fixtures phải reject answered rỗng/không citation, refused có paragraph/thiếu refusal reason, empty topics và non-HTTPS/credential citation URL.
+8. Test primary/fallback/non-streaming baseline và fake delayed provider: user sessionVersion/status đổi hoặc article bị hidden trong lúc chờ → resume không persist chat/quota/citation. Streaming chỉ thêm nếu baseline ổn định mà không đổi semantic contract.
+9. Validate answered/refused/rate-limited/error và historical citation shapes bằng OpenAPI fixtures; negative fixtures reject answered rỗng/không citation, refused có paragraph/thiếu reason, empty topics, non-HTTPS/credential citation URL và unavailable citation còn URL/title.
 
 ### Verification
 
@@ -763,6 +773,7 @@ npm run eval:citations
 - Hidden/removed/review/blocked content không vào prompt/citation.
 - Câu hỏi chỉ có câu trả lời trong ảnh/video chưa xử lý phải refuse hoặc nói không đủ bằng chứng, không suy diễn từ metadata.
 - User xóa được chat của mình; cross-user read/delete bị chặn.
+- User deletion/session-version hoặc article lifecycle thắng delayed-provider race thì không có chat/quota/citation mới.
 
 ### Rollback
 
@@ -777,11 +788,11 @@ Feature-flag Q&A off và giữ feed/search/citations bài gốc. Xóa/anonymize 
 
 **Intent:** Ghép các backend capability thành dashboard vận hành tối thiểu: overview, jobs, articles/index, takedown, users và immutable audit view.
 
-**Dependencies:** Steps 2–4, 7 and 9. Có thể hoàn tất song song Step 10 nếu file ownership tách.  
+**Dependencies:** Steps 2–4, 7, 9 and 10. UI/backend không chạm Q&A có thể chuẩn bị song song, nhưng exit cần Step 10 lifecycle handoff.
 **Estimate:** Timebox 1.5–2 ngày; backend operations phần lớn đã hình thành ở Steps 2–9.  
 **Review tier:** Security/governance review.  
-**Primary requirements:** ADMIN-001..009, ART-005..007, AUTH-005/006, SRC-009, NFR-011.
-**ADRs:** 0002, 0003, 0004, 0006, 0009.
+**Primary requirements:** ADMIN-001..010, ART-005..007, AUTH-005/006, SRC-009, QA-009, NFR-011.
+**ADRs:** 0002, 0003, 0004, 0006, 0009, 0010, 0011.
 
 ### Cold-start context
 
@@ -793,6 +804,7 @@ Admin xử lý ngoại lệ, không duyệt từng article. Dangerous mutation y
 server/application/admin/**, server/application/{takedowns,account-deletion}/**
 server/http/admin/{overview,articles,takedowns,account-deletion,users,audit}/**
 client/features/admin/{overview,articles,takedowns,account-deletion,users,audit}/**
+server/jobs/account-deletion/**
 scripts/migrations/*takedown*.*, scripts/migrations/*account-deletion*.*
 tests/{integration,ui,security}/admin/**
 ```
@@ -801,13 +813,13 @@ tests/{integration,ui,security}/admin/**
 
 1. Implement actionable overview counts và stale/failed indicators.
 2. Complete safe admin article detail/provenance/artifact diagnostics và topic/status/merge/summary/index/media-preview operations với reconciliation; không expose excerpt/full text/vector/provider payload.
-3. Implement content takedown lifecycle: hide first, cleanup toàn bộ requested metadata/media-reference/summary/vector scope, anonymize/disable historical chat citation, verify, complete; list DTO không hydrate requester PII.
+3. Implement content takedown lifecycle: hide first, cleanup toàn bộ requested metadata/media-reference/summary/vector scope, convert historical citations atomically to `unavailable` without URL/title/publishedAt, set `historicalChatCitationsRedacted=true` only after scan, then complete. Serialize against delayed Q&A article lifecycle fence; list DTO không hydrate requester PII.
 4. Implement minimal user list/detail/suspend/restore; suspend revokes sessions.
-5. Implement automatic account-deletion request/job: transaction tạo request + audit intent, revoke sessions, idempotent saved/chat/quota cleanup, identity anonymization, completion flags, admin safe progress/retry.
+5. Implement automatic account-deletion request/job và register account-deletion queue adapter + `same-request` recovery: transaction tạo stable unique-user request + user-actor audit intent, revoke sessions/increment sessionVersion, idempotent saved/chat/quota cleanup, identity anonymization, completion flags. Exact-fence recovery/admin retry requeue cùng request, tăng attempt/priority-aware availableAt, giữ flags và không tạo child.
 6. Implement read-only safe audit list; no update/delete operation, arbitrary snapshot hoặc free-form reason. Direct mutation + action-specific allowlisted `reasonCode` audit commit cùng transaction; long workflow append terminal event.
 7. Build dashboard navigation/states/confirm-reasonCode controls và error handling; option label có thể thân thiện nhưng payload chỉ gửi enum.
-8. Add `401/403`, CSRF, dangerous transition, media-policy/host, takedown-list PII, deleted-user DTO, audit-atomicity và secret-redaction tests cho mọi admin group.
-9. Run one end-to-end content takedown, one complete/failed-retry account deletion và one user suspend/restore scenario on seeded data.
+8. Add `401/403`, CSRF, operation/status-specific reasonCode negative fixtures, media-policy/public-host, takedown-list PII, unavailable citation, deleted-user DTO, user audit actor, audit-atomicity và secret-redaction tests cho mọi admin group.
+9. Run E2E content takedown + fake delayed Q&A resume (không tái tạo available URL/title), complete/expired/failed account deletion + fake delayed Q&A resume (không tái tạo chat/quota), same-request flags preserved, sustained three-queue backlog progress và user suspend/restore.
 10. Apply/verify governance migrations và validate serialized success/error/empty responses của mọi admin operation bằng OpenAPI fixtures.
 
 ### Verification
@@ -826,8 +838,8 @@ npm run test:security -- admin-redaction
 ### Exit criteria
 
 - User không gọi được bất kỳ admin operation nào; admin mutation có action-specific `reasonCode`/audit và không thể nhập PII/token/source text vào audit reason.
-- Takedown completed loại đúng metadata/media-reference/summary/vector scope và không còn user/retrieval leak.
-- Account deletion chỉ completed khi mọi flag true; session/saved/chat/quota/identity không còn và retry không restore dữ liệu.
+- Takedown completed loại đúng metadata/media-reference/summary/vector scope, historical citation không còn URL/title và delayed Q&A không tái tạo metadata.
+- Account deletion chỉ completed khi mọi flag true; session/saved/chat/quota/identity không còn, same-request retry giữ flag và delayed Q&A không restore dữ liệu.
 - Suspend user làm session hiện tại mất hiệu lực.
 - Dashboard/takedown list không render requester PII, deleted email, arbitrary audit value, stack trace hoặc secret.
 - Admin đổi media policy làm media vi phạm biến mất khỏi user API mà không cần ẩn cả bài; action có `reasonCode`/audit.
@@ -867,7 +879,7 @@ deployment config và release evidence
 ### Tasks
 
 1. Validate contract; run full unit/integration/UI/E2E suite và runtime response validation.
-2. Run negative-invariant matrix: hidden/removed/review/blocked, answer conditional, role/object/CSRF reload, policy/connector/attribution mismatch, crash recovery + persistent lease high-water + stale generation, in-flight policy change, audit reasonCode/no-leak/atomicity, takedown/deletion completion, prompt injection, HTTPS external URL, media mode/host/AI exclusion, duplicate generic cron, DNS rebinding/mixed/mapped/redirect SSRF, secret/fulltext/binary-media scan.
+2. Run negative-invariant matrix: hidden/removed/review/blocked, answer conditional, delayed deletion/takedown Q&A, role/object/CSRF reload, Source response attribution/reconciliation terminal states, connector/policy mismatch, canonical cron/manual lease key, exact heartbeat/expired no-resurrection, linked vs same-request recovery, queue fairness/unregistered adapter, ingestion mid-fetch policy/config fence, reconciliation N→N+1 CAS, stale generation, operation-specific reasonCode, user audit actor, historical unavailable citation/takedown completion, prompt injection, HTTPS external URL, media canonical public host/CSP/browser boundary, DNS rebinding/mixed/mapped/redirect server-fetch SSRF, secret/fulltext/binary-media scan.
 3. Run retrieval/citation/refusal eval trên versioned 30+ prompt dataset; record claim segmentation, denominator, precision, coverage, unsupported-claim rate, refusal accuracy, failures và model/version.
 4. Complete evidence record cho exact demo sources; default unclear feed to metadata-only.
 5. Seed deterministic admin/user/source/demo data without committed secret.
@@ -997,6 +1009,8 @@ Không cắt source policy, admin backend authorization, idempotency/lease, text
 | 1.1 | 2026-08-08 | Resolve adversarial review findings | Reviewer found no critical blocker; project owner request authorized plan completion |
 | 1.2 | 2026-08-08 | Lock JavaScript/JSX and policy-controlled external media | Project owner explicitly approved both decisions; ADR-0008/0009 |
 | 1.3 | 2026-08-08 | Repair contract, privacy, audit and durable-job semantics before Step 1 | Project owner approved GO WITH CONDITIONS remediation after Claude/Codex audit |
+| 1.4 | 2026-08-08 | Preserve generation high-water, bounded recovery and provider/source security fences | Project owner approved durable-fencing/security repair; ADR-0010 |
+| 1.5 | 2026-08-08 | Close ingestion/reconciliation races, canonical coordination, fairness and delayed lifecycle writes | Project owner approved independent review repair; ADR-0011 |
 
 ## 13. Adversarial review record
 
@@ -1048,8 +1062,23 @@ Plan-of-Record repair v1.3: Claude Code audit phát hiện cron POST/GET mismatc
 
 Residual risk: scope vẫn tham vọng, nhưng solo owner làm cùng coding agent có thể tăng tốc đáng kể. `Ready v1.4` nghĩa contract/safety/job semantics đã có owner và failure test; milestone thực tế mới kích hoạt product-owner mutation, không làm chất lượng/security suy giảm âm thầm.
 
+### v1.5 Coordination/lifecycle repair disposition
+
+| Finding | Resolution/owner |
+|---|---|
+| Late ingestion write vượt policy/config change | `expectedSourcePolicyVersion` + exact source state/config CAS; Steps 4/7 |
+| Reconciliation worker N ghi đè marker N+1 | Exact version/status/cursor CAS + versioned fan-out identity; Steps 3/9 |
+| Lease key không canonical | ADR-0011 namespace/grammar và cron/manual contention tests; Step 4 |
+| Generic recovery không phù hợp account deletion | Linked retry cho ingestion/indexing, same-request recovery giữ flags cho deletion; Steps 4/11 |
+| Global priority gây starvation | Queue-local sort, per-queue reserved progress, spill/aging và sustained-backlog tests; Steps 4/9/11 |
+| Takedown còn URL/title trong historical chat | Available/unavailable citation union + required chat-redaction completion evidence; Steps 10/11 |
+| Delayed Q&A tái tạo dữ liệu sau deletion | Final active-user/sessionVersion + article/takedown transaction fence; Steps 10/11 |
+| Contract/media/audit medium gaps | Source/reconciliation conditionals, operation-specific reason schemas, user audit actor, canonical media hostname/CSP boundary; Steps 1/3/8/11 |
+
+`Ready v1.5` là document/contract baseline, không phải implementation release. Step 1 vẫn phải đóng TP-M01 và tạo contract toolchain trước business code.
+
 ### Residual non-blocking follow-up
 
 - `TP-M01`: OpenAPI hiện còn operation chưa khai báo đầy đủ reusable `400/503`. Step 1 sở hữu deterministic completeness lint và contract-only repair trước khi Step 2 implement business routes; không được xử lý bằng undocumented `500`.
 - Exact session/chat/job/audit retention durations được khóa ở step tạo collection sau khi có demo-data evidence; hành vi xóa/anonymize/TTL bắt buộc đã nằm trong Data Model.
-- ADR-0010 đã được project owner duyệt để mở rộng ADR-0003 bằng persistent high-water, bounded expired-job recovery và transactional commit fencing; không sửa rationale lịch sử của ADR-0003.
+- ADR-0010/0011 đã được project owner duyệt để mở rộng ADR-0003 bằng persistent high-water, canonical bounded-resource keys, workflow-specific recovery, bounded fairness và transactional commit fencing; không sửa rationale lịch sử của ADR-0003/0010.

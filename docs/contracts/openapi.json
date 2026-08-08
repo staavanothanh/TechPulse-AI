@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "TechPulse AI API",
-    "version": "1.2.0",
+    "version": "1.5.0",
     "description": "Canonical HTTP contract for the Vietnamese-first TechPulse AI MVP. External content is untrusted data; no response contains source full text or media binary."
   },
   "servers": [
@@ -1228,7 +1228,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReasonRequest"
+                "$ref": "#/components/schemas/SourcePolicyReReviewRequest"
               }
             }
           }
@@ -1448,7 +1448,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReasonRequest"
+                "$ref": "#/components/schemas/JobRetryRequest"
               }
             }
           }
@@ -1511,7 +1511,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReasonRequest"
+                "$ref": "#/components/schemas/JobCancellationRequest"
               }
             }
           }
@@ -1732,7 +1732,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReasonRequest"
+                "$ref": "#/components/schemas/ArtifactRegenerationRequest"
               }
             }
           }
@@ -1956,7 +1956,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReasonRequest"
+                "$ref": "#/components/schemas/JobRetryRequest"
               }
             }
           }
@@ -1999,7 +1999,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReasonRequest"
+                "$ref": "#/components/schemas/JobCancellationRequest"
               }
             }
           }
@@ -2362,7 +2362,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReasonRequest"
+                "$ref": "#/components/schemas/AccountDeletionRetryRequest"
               }
             }
           }
@@ -2979,6 +2979,7 @@
           "article_topics_changed",
           "article_media_visibility_changed",
           "duplicate_merge_confirmed",
+          "takedown_review_started",
           "takedown_approved",
           "takedown_rejected",
           "takedown_completed",
@@ -3331,6 +3332,9 @@
         "required": [
           "id",
           "status",
+          "priority",
+          "attempt",
+          "availableAt",
           "completion",
           "error",
           "requestedAt",
@@ -3349,6 +3353,19 @@
               "completed",
               "failed"
             ]
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "availableAt": {
+            "type": "string",
+            "format": "date-time"
           },
           "completion": {
             "$ref": "#/components/schemas/AccountDeletionCompletion"
@@ -4226,6 +4243,13 @@
           }
         }
       },
+      "ReviewedMediaHostname": {
+        "type": "string",
+        "minLength": 4,
+        "maxLength": 253,
+        "pattern": "^(?=.{1,253}$)(?![0-9]{1,3}(?:\\.[0-9]{1,3}){3}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$",
+        "description": "Canonical lowercase public DNS hostname reviewed in Source Registry. IP literals, localhost/single-label hosts, credentials and URL fragments are forbidden; IDN hosts are stored as A-labels. Runtime validation also rejects private/special-use resolution."
+      },
       "MediaPolicy": {
         "type": "object",
         "additionalProperties": false,
@@ -4249,9 +4273,7 @@
           "allowedHosts": {
             "type": "array",
             "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 253
+              "$ref": "#/components/schemas/ReviewedMediaHostname"
             },
             "uniqueItems": true,
             "maxItems": 20
@@ -4465,6 +4487,59 @@
             ]
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "status": { "enum": ["pending", "processing"] } },
+              "required": ["status"]
+            },
+            "then": {
+              "properties": {
+                "requestedAt": { "type": "string", "format": "date-time" },
+                "completedPolicyVersion": { "type": "null" },
+                "error": { "type": "null" }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "status": { "const": "completed" } },
+              "required": ["status"]
+            },
+            "then": {
+              "properties": {
+                "requestedAt": { "type": "string", "format": "date-time" },
+                "completedPolicyVersion": { "type": "integer", "minimum": 1 },
+                "error": { "type": "null" }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "status": { "const": "failed" } },
+              "required": ["status"]
+            },
+            "then": {
+              "properties": {
+                "requestedAt": { "type": "string", "format": "date-time" },
+                "completedPolicyVersion": { "type": "null" },
+                "error": { "$ref": "#/components/schemas/SafeError" }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "status": { "const": "idle" } },
+              "required": ["status"]
+            },
+            "then": {
+              "properties": {
+                "requestedAt": { "type": "null" },
+                "error": { "type": "null" }
+              }
+            }
+          }
+        ],
         "description": "Durable source-owned marker. Step 3 persists pending state atomically with policy change; Step 9 materializes and completes bounded reconciliation work."
       },
       "Source": {
@@ -4615,7 +4690,21 @@
             "type": "string",
             "format": "date-time"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "attributionRequired": { "const": true } },
+              "required": ["attributionRequired"]
+            },
+            "then": {
+              "required": ["attributionText"],
+              "properties": {
+                "attributionText": { "type": "string", "minLength": 1, "maxLength": 500 }
+              }
+            }
+          }
+        ]
       },
       "SourceCreateRequest": {
         "type": "object",
@@ -4760,7 +4849,8 @@
             "maxLength": 500
           },
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "type": "string",
+            "enum": ["source_configuration_changed", "source_status_changed"]
           }
         },
         "anyOf": [
@@ -4788,7 +4878,7 @@
             }
           }
         ],
-        "description": "At least one mutable field besides reasonCode is required. The server must merge this patch with current source state and validate the complete Source Policy; activating a source is rejected unless technical and policy preconditions pass."
+        "description": "At least one mutable field besides reasonCode is required. The server must merge this patch with current source state and validate the complete Source Policy; activating a source is rejected unless technical and policy preconditions pass. Runtime domain validation returns 422 when reasonCode does not match the changed field set."
       },
       "TechnicalCheckRequest": {
         "type": "object",
@@ -4798,7 +4888,7 @@
         ],
         "properties": {
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "const": "source_technical_check_requested"
           }
         }
       },
@@ -4882,7 +4972,7 @@
             "maxLength": 4000
           },
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "const": "source_policy_reviewed"
           }
         },
         "allOf": [
@@ -5068,6 +5158,7 @@
           "idempotencyKey",
           "sourceId",
           "connectorType",
+          "expectedSourcePolicyVersion",
           "trigger",
           "status",
           "attempt",
@@ -5092,6 +5183,11 @@
           },
           "connectorType": {
             "$ref": "#/components/schemas/ConnectorType"
+          },
+          "expectedSourcePolicyVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Source policy/config version captured before external fetch and required by the final article/checkpoint transaction."
           },
           "trigger": {
             "type": "string",
@@ -5177,7 +5273,7 @@
           }
         }
       },
-      "ReasonRequest": {
+      "SourcePolicyReReviewRequest": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -5185,10 +5281,41 @@
         ],
         "properties": {
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "const": "source_policy_re_review_requested"
           }
-        },
-        "description": "Administrative reason category only. Operation-specific domain validation rejects unrelated codes."
+        }
+      },
+      "JobRetryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reasonCode"],
+        "properties": {
+          "reasonCode": { "const": "job_retry_requested" }
+        }
+      },
+      "JobCancellationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reasonCode"],
+        "properties": {
+          "reasonCode": { "const": "job_cancel_requested" }
+        }
+      },
+      "ArtifactRegenerationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reasonCode"],
+        "properties": {
+          "reasonCode": { "const": "artifact_regeneration_requested" }
+        }
+      },
+      "AccountDeletionRetryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reasonCode"],
+        "properties": {
+          "reasonCode": { "const": "account_deletion_retry_requested" }
+        }
       },
       "IngestionJobResponse": {
         "type": "object",
@@ -5344,7 +5471,7 @@
             ]
           },
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "const": "artifact_regeneration_requested"
           }
         }
       },
@@ -5733,7 +5860,12 @@
             "enum": ["available", "hidden"]
           },
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "type": "string",
+            "enum": [
+              "article_status_changed",
+              "article_topics_changed",
+              "article_media_visibility_changed"
+            ]
           }
         },
         "anyOf": [
@@ -5741,7 +5873,7 @@
           { "required": ["topics"] },
           { "required": ["leadMediaStatus"] }
         ],
-        "description": "At least one of status, topics or leadMediaStatus is required. Restoring media requires a current source policy that still permits its mode and host. Removed article restoration is subject to takedown policy."
+        "description": "At least one of status, topics or leadMediaStatus is required. Runtime domain validation returns 422 when reasonCode does not match the changed field set. Restoring media requires a current source policy that still permits its mode and host. Removed article restoration is subject to takedown policy."
       },
       "AdminArticleResponse": {
         "type": "object",
@@ -5796,9 +5928,47 @@
             "maxItems": 20
           },
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "const": "duplicate_merge_confirmed"
           }
         }
+      },
+      "HistoricalCitationAvailable": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "articleId", "sourceId", "originalUrl", "titleOriginal", "publishedAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "const": "available" },
+          "articleId": { "type": "string" },
+          "sourceId": { "type": "string" },
+          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
+          "titleOriginal": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "publishedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "HistoricalCitationUnavailable": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "unavailableReason"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "const": "unavailable" },
+          "articleId": { "type": "string" },
+          "sourceId": { "type": "string" },
+          "unavailableReason": {
+            "type": "string",
+            "enum": ["takedown", "source-policy", "article-removed"]
+          }
+        },
+        "description": "Redacted historical citation. originalUrl, titleOriginal and publishedAt are intentionally forbidden by additionalProperties=false."
+      },
+      "HistoricalChatCitation": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/HistoricalCitationAvailable" },
+          { "$ref": "#/components/schemas/HistoricalCitationUnavailable" }
+        ],
+        "discriminator": { "propertyName": "status" },
+        "description": "Persistence/serialization contract for citations retained in historical chat after source-policy or takedown changes."
       },
       "TakedownCompletion": {
         "type": "object",
@@ -5808,7 +5978,8 @@
           "metadataRemoved",
           "mediaMetadataRemoved",
           "summaryRemoved",
-          "embeddingRemoved"
+          "embeddingRemoved",
+          "historicalChatCitationsRedacted"
         ],
         "properties": {
           "hidden": {
@@ -5825,6 +5996,10 @@
           },
           "embeddingRemoved": {
             "type": "boolean"
+          },
+          "historicalChatCitationsRedacted": {
+            "type": "boolean",
+            "description": "True only after every historical citation for the target is converted to the unavailable shape or absence is verified."
           }
         }
       },
@@ -5927,7 +6102,10 @@
             "then": {
               "properties": {
                 "completion": {
-                  "properties": { "hidden": { "const": true } }
+                  "properties": {
+                    "hidden": { "const": true },
+                    "historicalChatCitationsRedacted": { "const": true }
+                  }
                 },
                 "completedAt": { "type": "string", "format": "date-time" }
               }
@@ -6063,12 +6241,32 @@
         ],
         "properties": {
           "status": {
-            "$ref": "#/components/schemas/TakedownStatus"
+            "type": "string",
+            "enum": ["reviewing", "approved", "rejected", "completed"]
           },
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "type": "string",
+            "enum": ["takedown_review_started", "takedown_approved", "takedown_rejected", "takedown_completed"]
           }
         },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "reviewing" } }, "required": ["status"] },
+            "then": { "properties": { "reasonCode": { "const": "takedown_review_started" } } }
+          },
+          {
+            "if": { "properties": { "status": { "const": "approved" } }, "required": ["status"] },
+            "then": { "properties": { "reasonCode": { "const": "takedown_approved" } } }
+          },
+          {
+            "if": { "properties": { "status": { "const": "rejected" } }, "required": ["status"] },
+            "then": { "properties": { "reasonCode": { "const": "takedown_rejected" } } }
+          },
+          {
+            "if": { "properties": { "status": { "const": "completed" } }, "required": ["status"] },
+            "then": { "properties": { "reasonCode": { "const": "takedown_completed" } } }
+          }
+        ],
         "description": "MVP decisions are all-or-nothing. approved covers the complete requestedScope; completed requires every corresponding cleanup check. Account deletion is a separate workflow."
       },
       "TakedownResponse": {
@@ -6196,9 +6394,20 @@
             ]
           },
           "reasonCode": {
-            "$ref": "#/components/schemas/AdminReasonCode"
+            "type": "string",
+            "enum": ["user_suspended", "user_restored"]
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "suspended" } }, "required": ["status"] },
+            "then": { "properties": { "reasonCode": { "const": "user_suspended" } } }
+          },
+          {
+            "if": { "properties": { "status": { "const": "active" } }, "required": ["status"] },
+            "then": { "properties": { "reasonCode": { "const": "user_restored" } } }
+          }
+        ]
       },
       "AdminUserResponse": {
         "type": "object",
@@ -6275,6 +6484,7 @@
             "type": "string",
             "enum": [
               "admin",
+              "user",
               "system-worker"
             ]
           },
@@ -6328,7 +6538,7 @@
             "format": "date-time"
           }
         },
-        "description": "Safe structured audit event. Raw documents, PII, secrets, session data, private chat, provider payload and source content are forbidden before persistence and serialization."
+        "description": "Safe structured audit event. actorType=user records a user-initiated workflow such as account deletion using only an opaque actorId. Raw documents, PII, secrets, session data, private chat, provider payload and source content are forbidden before persistence and serialization."
       },
       "AuditLogListResponse": {
         "type": "object",

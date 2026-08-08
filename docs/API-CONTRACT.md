@@ -69,11 +69,13 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - State-changing cookie-auth request gửi `X-CSRF-Token`.
 - `GET /api/v1/me` trả `{ user, csrfToken }` cho session còn hiệu lực; CSRF token không persist ở `localStorage`.
 - Manual ingestion/deletion/retry gửi `Idempotency-Key`; identity là actor scope + key + canonical request hash. Cùng intent trả cùng logical result, khác intent trả `409 idempotency_mismatch`.
-- Sensitive admin mutation có action-specific allowlisted `reasonCode`; không nhận free-form admin reason và không copy requester/account case text vào audit.
+- Sensitive admin mutation có action-specific allowlisted `reasonCode`; OpenAPI dùng const/conditional enum theo operation, domain trả `422` khi code không khớp changed fields/state. Không nhận free-form admin reason và không copy requester/account case text vào audit.
 - Mọi external URL được serialize/render dùng canonical `HttpsUrl`: HTTPS, không username/password credential; runtime parse URL thay vì chỉ tin `format: uri`/regex.
-- Indexing job expose server-captured `expectedSourcePolicyVersion`; artifact commit phải match current policy version hoặc discard output.
+- Ingestion/indexing job expose server-captured `expectedSourcePolicyVersion`; article/checkpoint/artifact commit phải match current source version/state/config hoặc discard output mà không advance checkpoint.
 - `answered` và `refused` là hai schema loại trừ nhau. Runtime còn phải kiểm tra citation ID resolve tới retrieved article đang visible.
-- Audit response chỉ có changed field names và safe state transition; raw before/after document không thuộc HTTP contract.
+- Historical chat citation có discriminated `available|unavailable` shape; unavailable không có URL/title/publishedAt. Takedown completion luôn có `historicalChatCitationsRedacted=true`.
+- Source response enforce `attributionRequired=true` thì `attributionText` bắt buộc non-empty; reconciliation terminal state enforce timestamp/version/error shape, còn equality completed/required version được runtime domain validation kiểm tra.
+- Audit response chỉ có changed field names và safe state transition; `actorType=user` dùng opaque ID cho user-initiated workflow. Raw before/after document không thuộc HTTP contract.
 
 ### 4.1. Admin reason-code matrix
 
@@ -86,11 +88,11 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 | Summary/index request | `artifact_regeneration_requested` |
 | Article status/topics/media patch | Code tương ứng `article_status_changed`, `article_topics_changed`, `article_media_visibility_changed`; payload nhiều field phải match ít nhất một changed category |
 | Duplicate merge | `duplicate_merge_confirmed` |
-| Takedown decision | `takedown_approved`, `takedown_rejected`, `takedown_completed` khớp target status |
+| Takedown workflow | `takedown_review_started`, `takedown_approved`, `takedown_rejected`, `takedown_completed` khớp target status |
 | Account-deletion retry | `account_deletion_retry_requested` |
 | User suspend/restore | `user_suspended`, `user_restored` khớp target status |
 
-Code ngoài subset của operation trả `422`. Free-form `reason` chỉ còn ở user account-deletion request và restricted takedown requester case; hai field này không được copy sang audit.
+Code ngoài subset của operation trả `422`; OpenAPI const/conditional schema reject phần lớn mismatch trước domain layer, còn multi-field patch được domain validator đối chiếu changed-field set. Free-form `reason` chỉ còn ở user account-deletion request và restricted takedown requester case; hai field này không được copy sang audit.
 
 Audit event dùng `AuditReasonCode`: union của admin code ở trên và system-derived code như `source_created`, `ingestion_trigger_requested`, `lease_expired_recovered`, `policy_version_mismatch` hoặc workflow terminal state. System-derived code không được chấp nhận từ browser payload.
 
@@ -168,6 +170,8 @@ Expected behavior:
 
 Generator chạy không network/secret và generated diff phải được review. Cho đến khi scaffold tồn tại, JSON parse và local `$ref` audit là validation tối thiểu.
 
+Residual TP-M01: contract hiện chưa chứng minh đầy đủ `400` cho mọi JSON-body operation và `503` cho mọi Mongo-backed operation. Step 1 sở hữu deterministic audit + negative fixtures và không được báo contract toolchain hoàn tất khi hai tập thiếu này chưa về zero.
+
 ## 10. Contract acceptance gate
 
 - [ ] OpenAPI parse được và không có remote `$ref`.
@@ -178,15 +182,16 @@ Generator chạy không network/secret và generated diff phải được review
 - [ ] Empty collection và refusal answer có fixture hợp lệ.
 - [ ] Invalid answer fixtures bị reject: answered rỗng/không citation, refused có paragraph hoặc thiếu refusal reason.
 - [ ] Source policy/connector fixture mâu thuẫn bị reject; technical check `passed` thiếu evidence bị reject.
-- [ ] Source patch có `attributionRequired=true` và `attributionText=null|missing` bị reject; merged-state domain validation cũng chạy.
+- [ ] Source request/response có `attributionRequired=true` và `attributionText=null|missing|empty` bị reject; merged-state domain validation cũng chạy.
+- [ ] SourceReconciliation completed thiếu version/null error hoặc failed thiếu SafeError bị reject; runtime reject `completedPolicyVersion != requiredPolicyVersion`.
 - [ ] Rendered/fetched URL fixture dùng `javascript:`, `data:`, `file:` hoặc HTTPS credential bị reject.
 - [ ] Cron response có recovery summary và đúng ba per-queue summaries; không trả `IngestionJob[]` như generic work result.
-- [ ] Indexing job có `expectedSourcePolicyVersion`; stale-policy artifact response/commit path bị reject.
-- [ ] Content takedown không nhận `user-data/account-data`; account deletion chỉ completed khi mọi cleanup flag true.
+- [ ] Ingestion/indexing job có `expectedSourcePolicyVersion`; stale-policy article/checkpoint/artifact commit path bị reject.
+- [ ] Content takedown không nhận `user-data/account-data`; completed thiếu `historicalChatCitationsRedacted=true` bị reject; unavailable citation có URL/title bị reject; account deletion chỉ completed khi mọi cleanup flag true.
 - [ ] Frontend client/JSDoc/mock được derive, không copy tay.
-- [ ] `leadMedia` nullable, `leadMediaStatus` và `mediaPolicy` được kiểm thử với remote-preview, link-only, hide/restore, host bị chặn và fallback.
+- [ ] `leadMedia` nullable, `leadMediaStatus` và `mediaPolicy` được kiểm thử với remote-preview, link-only, hide/restore, canonical public hostname, IP literal/private host bị chặn và fallback.
 - [ ] `leadMedia.attribution` luôn non-empty và do server resolve; UI không phụ thuộc nullable `credit`.
 - [ ] Express response thực được runtime-validate trong test.
 - [ ] Không response nào leak password hash, session token, secret, full text hoặc private chat cho admin.
 - [ ] Audit response không có arbitrary object; takedown list không trả requester contact/reason/evidence.
-- [ ] Audit chỉ có `reasonCode` từ allowlist; không schema nào cho admin mutation có free-form `reason`.
+- [ ] Audit chỉ có `reasonCode` từ allowlist; operation/status-specific mismatch bị schema/domain reject và không schema nào cho admin mutation có free-form `reason`.

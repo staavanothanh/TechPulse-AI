@@ -1,7 +1,7 @@
 # TechPulse AI — Product Requirements & Capability Contract
 
 > Trạng thái: Plan-of-Record repair locked for implementation
-> Phiên bản: 1.3
+> Phiên bản: 1.5
 > Cập nhật: 08/08/2026  
 > Product rationale: [PRODUCT-BRIEF.md](./PRODUCT-BRIEF.md)  
 > Nguồn quyết định chi tiết: [TechPulse-AI.md](./TechPulse-AI.md)
@@ -135,6 +135,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | SRC-009 | Source có `mediaPolicy` độc lập với quyền dùng text | Ảnh/video chỉ hiển thị theo mode và host đã duyệt |
 | SRC-010 | Policy fields tuân theo compatibility matrix | Contract-valid payload không thể nâng quyền xử lý |
 | SRC-011 | Terms change đưa source về re-review fail-closed | Source tự pause, tăng policyVersion và atomically persist pending reconciliation marker |
+| SRC-012 | Reconciliation worker không được ghi đè policy marker mới | Mọi marker mutation CAS exact policy version/status/cursor; completed version bằng required version |
 
 ### 4.4. Ingestion và normalization
 
@@ -150,6 +151,8 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ING-008 | Deduplicate bằng URL, external ID, normalized title/hash | Ambiguous merge vào review queue |
 | ING-009 | Raw HTML không đi thẳng vào AI | Main content được extract/sanitize/chunk |
 | ING-010 | Lease fencing high-water tồn tại qua expire/release | Lease không TTL; crash-after-claim recovery parent trước linked retry và stale worker không commit |
+| ING-011 | Ingestion candidate/checkpoint commit theo current source policy/config | Capture version trước fetch; state/version/config đổi thì discard candidate và không advance checkpoint |
+| ING-012 | Cross-queue due work có bounded fairness | Canonical resource keys; mỗi registered due queue có reserved progress trước spill capacity |
 
 ### 4.5. Article lifecycle, feed và detail
 
@@ -200,6 +203,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | QA-006 | Thiếu evidence dẫn tới refusal | Không bịa câu trả lời |
 | QA-007 | Prompt injection trong evidence không thay đổi instruction/tool use | External text chỉ là quoted data |
 | QA-008 | Primary provider lỗi retryable có thể dùng configured fallback | Không fallback khi lỗi policy/validation |
+| QA-009 | Delayed Q&A không tái tạo dữ liệu sau deletion/takedown | Final write match active user + exact sessionVersion + current article lifecycle; CAS miss discard output |
 
 ### 4.9. Admin operations và governance
 
@@ -214,6 +218,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ADMIN-007 | Dashboard không hiển thị secret/private chat/password hash | Redaction được kiểm thử |
 | ADMIN-008 | Admin review/đổi media policy và ẩn media độc lập | Thay đổi có allowlisted reasonCode, policyVersion và audit |
 | ADMIN-009 | Admin xem safe article provenance/artifact diagnostics | Không expose excerpt/full text/vector/provider payload/private data |
+| ADMIN-010 | Takedown redacts historical chat citations trước completion | Citation unavailable cấm URL/title; completion có machine-readable chat cleanup evidence |
 
 ## 5. States và transitions
 
@@ -228,7 +233,7 @@ Rules:
 
 - `active` chỉ hợp lệ khi license là `permitted` hoặc `metadata-only`.
 - `blocked` luôn vô hiệu production ingestion.
-- Terms change chuyển license về `review-needed`, pause source, tăng `policyVersion` và enqueue visibility/artifact reconciliation trong cùng application workflow.
+- Terms change chuyển license về `review-needed`, pause source, tăng `policyVersion` và persist durable pending reconciliation marker trong cùng source mutation; Step 9 mới materialize marker thành visibility/artifact jobs.
 - `reviewedBy` và `reviewedAt` do server lấy từ session/time hiện tại; browser không được khai báo hai field này.
 
 #### 5.1.1. Source Policy compatibility matrix
@@ -267,9 +272,20 @@ failed | partial → queued (retry mới)
 
 - Retry tạo attempt mới, giữ link tới original job.
 - `running` quá timeout được bounded recovery transaction đánh dấu `failed/lease_expired` trước khi tạo tối đa một linked retry.
-- `queued` có `availableAt`; coordinator lấy due work theo priority, `availableAt`, `createdAt` và request budget ổn định.
+- `queued` có `availableAt`; từng queue sort theo effective priority, `availableAt`, creation time và `_id`. Coordinator reserve deadline/claim margin rồi cấp một selection attempt cho mỗi registered due queue trước khi spill slot; budget không đủ thì fail safe, priority không so trực tiếp xuyên queue.
 - Mỗi logical lease key giữ persistent `generationHighWater` không TTL; acquisition sau recovery tăng generation, release chỉ clear active owner.
-- Mọi checkpoint, transition, article/artifact commit conditionally touch exact active owner + generation + unexpired lease trong cùng transaction.
+- Lease key derive server-side theo canonical resource: source ingestion, article indexing, source reconciliation hoặc user account deletion; cấm actor/invocation/random job ID.
+- Mọi checkpoint, transition, article/artifact commit conditionally touch exact active owner + generation + unexpired lease trong cùng transaction; ingestion còn match current source version/state/config.
+
+#### 5.3.1. Account deletion recovery
+
+```text
+queued → running → completed | failed
+expired running | failed → queued (same stable request)
+```
+
+- Recovery/admin retry CAS exact request + lease fence, tăng attempt và giữ mọi completion flag đã true.
+- Không tạo linked child hoặc `parentJobId`; cleanup chỉ chạy flag còn false.
 
 ### 5.4. Summary/embedding
 
@@ -301,6 +317,7 @@ approved → completed
 - Takedown MVP chỉ áp dụng cho target `source|article` và scope `metadata|media-metadata|summary|embedding`.
 - Quyết định là all-or-nothing: `approved` nghĩa toàn bộ `requestedScope` được duyệt; MVP không có partial approval hoặc `approvedScope` riêng.
 - `completed` chỉ hợp lệ khi mọi completion flag tương ứng `requestedScope` đã được xác minh.
+- `completed` luôn yêu cầu historical chat citations đã chuyển sang unavailable shape hoặc scan xác nhận không có citation; unavailable citation không còn URL/title/publishedAt.
 - Account deletion không được biểu diễn bằng `targetType=user-data` hoặc `scope=account-data`.
 
 ## 6. Capability invariants
@@ -324,6 +341,9 @@ approved → completed
 17. Direct admin mutation và audit record commit atomically; workflow dài ghi audit intent trước và terminal result idempotently.
 18. Idempotency identity gồm actor scope, key và canonical request hash; reuse key cho intent khác trả conflict.
 19. Account deletion completion độc lập content takedown và có machine-readable evidence cho từng cleanup item.
+20. Delayed user-owned write chỉ commit khi user còn `active` và `sessionVersion` đúng snapshot; account deletion thắng race thì không persist chat/quota.
+21. Reconciliation marker mutation và ingestion article/checkpoint commit đều fence bằng current source policy/config version.
+22. Mỗi registered due queue đang có work phải tiến triển trong số invocation hữu hạn dù queue khác backlog liên tục.
 
 ## 7. Data ownership và implications
 
@@ -348,7 +368,8 @@ approved → completed
 - Rate-limit/quota state dùng shared Mongo bucket hoặc platform-native shared limiter; không dùng per-process counter trên Vercel.
 - SSRF defense cho source URL: chỉ HTTPS không credential; normalize IPv4-mapped IPv6, validate toàn bộ A/AAAA và reject cả answer set nếu có private/loopback/link-local/unspecified/multicast/reserved IP; actual connection pin vào validated public IP trong khi giữ hostname/SNI; mỗi redirect tự resolve/validate/pin lại; có timeout và response-size limit.
 - External source/citation/media/admin link dùng canonical `HttpsUrl`; browser anchor dùng `rel="noopener noreferrer external"`.
-- Media URL phải là HTTPS, thuộc host allowlist của source; client áp dụng CSP/referrer policy, backend không làm arbitrary media proxy.
+- Media URL phải là HTTPS, thuộc exact canonical public-host allowlist của source; wildcard/IP literal/localhost/private resolution bị cấm. Client dùng `referrerPolicy=no-referrer`, không gửi credential và CSP `img-src` chỉ allow `'self'` + reviewed hosts, không blanket `https:`; backend không làm arbitrary media proxy.
+- Server-side DNS pinning chỉ bảo vệ server safe-fetch, không bảo vệ direct browser preview; remote media không được coi là trusted evidence và luôn có visual fallback.
 - CRON_SECRET/service secret tách khỏi admin/user credential.
 - Provider API key chỉ ở Vercel Environment Variables.
 - Không gửi email, token, private chat hoặc unapproved full text tới provider.
@@ -414,16 +435,18 @@ Evaluation protocol được version-control cùng fixture:
 ### Operations/security gate
 
 - User không gọi được admin endpoint.
-- Cron/manual job dùng persistent fencing và actor-scoped idempotency.
+- Cron/manual job dùng persistent fencing, actor-scoped idempotency và cùng canonical source lease key.
 - Vercel Cron gọi protected `GET /api/internal/cron/due-work`, recover expired work rồi trả aggregate cho ingestion/indexing/account-deletion; admin manual POST dùng cùng runner nhưng trust boundary riêng.
-- Crash-after-claim tạo terminal parent + linked retry đúng một lần; lease generation mới lớn hơn generation cũ và stale worker không commit.
+- Crash-after-claim ingestion/indexing tạo terminal parent + linked retry đúng một lần; account deletion requeue cùng request và giữ completion flags. Lease generation mới lớn hơn generation cũ, expired heartbeat/stale worker không commit.
+- Sustained backlog test chứng minh ingestion, indexing và account deletion due queue đều tiến triển hữu hạn; unregistered adapter không query collection và trả zero counter.
+- Source bị block/policy/config đổi giữa ingestion fetch làm candidate bị discard, checkpoint không advance; reconciliation N không mutate marker N+1.
 - Policy đổi trong lúc fake provider đang chạy làm artifact commit cũ thất bại.
 - DNS rebinding/mixed A/AAAA/mapped-private/redirect-to-private và rendered `javascript:|data:|file:`/credential URL đều bị chặn.
 - Secret/full text không xuất hiện trong logs/dashboard/database.
-- Database scan không có binary/base64 ảnh/video; host media ngoài policy không được serialize ra user API.
-- Takedown xóa/ẩn đúng metadata, media reference, summary và vector.
+- Database scan không có binary/base64 ảnh/video; host media ngoài policy/IP literal không được serialize ra user API và CSP không mở blanket `https:`.
+- Takedown xóa/ẩn đúng metadata, media reference, summary/vector và redacts historical citation URL/title trước `completed`.
 - Mọi admin mutation có audit record với action-specific `reasonCode`, không có free-form admin reason.
-- Account deletion test chứng minh session/saved/chat/quota cleanup và identity anonymization trước `completed`.
+- Account deletion test chứng minh session/saved/chat/quota cleanup và identity anonymization trước `completed`; fake delayed Q&A resume sau deletion không tạo lại dữ liệu.
 
 ### Deployment gate
 

@@ -7,7 +7,7 @@
 
 ## 1. Kết luận product-lens
 
-**Khuyến nghị: GO — Plan-of-Record repair v1.4 đã khóa persistent fencing, recovery, policy-version commit và các security contract còn thiếu; bắt đầu Step 1 trong strict scaffold scope.**
+**Khuyến nghị: GO — Plan-of-Record baseline v1.5 đã khóa source-policy fence cho ingestion/reconciliation, canonical work coordination, bounded queue fairness, workflow-specific recovery và delayed-write/takedown lifecycle; bắt đầu Step 1 trong strict scaffold scope.**
 
 TechPulse AI có một vấn đề đủ rõ để làm đồ án: người đọc công nghệ phải theo dõi nhiều nguồn, khó loại tin trùng và khó kiểm chứng câu trả lời AI. Điểm chứng minh giá trị không phải số lượng nguồn mà là một luồng hoàn chỉnh từ nguồn đã duyệt đến summary tiếng Việt và AI Q&A có citation.
 
@@ -122,6 +122,7 @@ Phạm vi cố định:
 - Chạy lặp cùng ingestion job không tạo duplicate.
 - Search vẫn hoạt động khi embedding provider lỗi.
 - Mọi admin mutation có audit record.
+- Ingestion/indexing/account-deletion backlog đều tiến triển hữu hạn; account deletion và takedown không bị delayed Q&A tái tạo dữ liệu đã gỡ.
 
 Các ngưỡng trên là tiêu chí đánh giá đồ án, không phải số liệu product-market fit đã được chứng minh.
 
@@ -179,6 +180,7 @@ Các session với 3–5 người là **learning/demo evidence ở Step 12**, kh
 | Summary thay thế bài gốc | Summary ngắn, không toàn văn; media chỉ để định hướng và CTA nguồn luôn nổi bật |
 | Ảnh/video công khai bị hiểu nhầm là được tự do sao chép | Media policy độc lập theo source; remote-preview/link-only, không rehost, có attribution và fallback |
 | URL ảnh nguồn hỏng hoặc bị chặn hotlink | Lazy-load, error fallback do TechPulse sở hữu; không proxy tùy ý qua backend |
+| Direct browser remote-preview nằm ngoài server DNS pinning | Chỉ exact reviewed public host, CSP/referrer/credential boundary, không coi media là AI evidence và luôn có fallback |
 | Nguồn nhiều nhưng chất lượng thấp | Authority tier và allowlist; HN chỉ là community signal |
 | License không rõ | Mặc định `metadata-only`; admin phê duyệt scope |
 | Scope/verification trượt dù có coding agent | Giữ safety/contract/thesis; streaming/polish hoặc bất kỳ MVP-P1 nào chỉ được cắt bằng PRD mutation có ghi nhận; semantic retrieval/citation gate không tự biến thành optional |

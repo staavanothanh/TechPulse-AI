@@ -303,9 +303,10 @@ Ràng buộc:
 - không tìm thấy quyền rõ ràng thì admin phải chọn `metadata-only`, không tự suy diễn thành `permitted`;
 - `robots.txt` được xem như tín hiệu kỹ thuật, không được ghi nhận như bằng chứng license;
 - URL do admin nhập chỉ chấp nhận canonical HTTPS không credential. Backend validate toàn bộ A/AAAA, chặn mixed public/private/link-local/IPv4-mapped private, pin actual connection vào IP đã kiểm tra và tự revalidate/pin từng redirect để chặn DNS rebinding/SSRF;
+- hostname media phải là canonical lowercase public DNS host đã review; cấm wildcard, IP literal, localhost/single-label/private host. Server DNS pinning không bảo vệ direct browser preview, nên client không gửi credential/referrer, dùng CSP exact-host và fallback;
 - credential của connector, nếu có, được cấu hình bằng biến môi trường hoặc hệ thống secret khi triển khai; admin không nhập hoặc đọc secret trực tiếp trên dashboard;
 - tắt nguồn chỉ dừng lần ingest tiếp theo, không tự động xóa dữ liệu cũ. Việc giữ, ẩn hoặc xóa dữ liệu đã có phải là quyết định riêng và được audit.
-- khi Terms thay đổi, thao tác re-review phải atomically pause source, đặt `review-needed`, tăng policy version và ghi durable pending reconciliation marker trên source; Step 9 mới materialize marker thành bounded jobs; browser không tự gửi `reviewedAt/reviewedBy`.
+- khi Terms thay đổi, thao tác re-review phải atomically pause source, đặt `review-needed`, tăng policy version và ghi durable pending reconciliation marker trên source; Step 9 mới materialize marker thành bounded jobs; mọi marker mutation CAS exact version/status/cursor để worker N không ghi lên N+1; browser không tự gửi `reviewedAt/reviewedBy`.
 
 #### 5.8.4. Quản lý ingestion
 
@@ -318,7 +319,7 @@ Admin có thể:
 - hủy job đang chờ và yêu cầu dừng an toàn đối với job đang chạy nếu worker hỗ trợ;
 - tạm dừng lịch chạy của nguồn gặp lỗi liên tiếp.
 
-Mỗi lần chạy phải lấy lock theo connector/source, lưu actor-scoped idempotency key + request hash và giới hạn số item. Queued work có `availableAt`; coordinator xử lý theo budget. Mỗi lần lấy lease tăng generation và stale worker không được ghi checkpoint/artifact. Vercel Cron gọi protected GET adapter; trigger admin là POST nhưng dùng chung service và không bỏ qua lock/policy.
+Mỗi lần chạy phải lấy canonical lock `ingestion:source:<sourceId>`, lưu actor-scoped idempotency key + request hash và giới hạn số item. Cron/admin/retry cùng source phải contend trên key này, không derive key từ job/invocation/actor. Job capture source policy/config version trước fetch; final article/checkpoint transaction match current source ID/version/active/eligible/config, mismatch thì discard candidate và không advance checkpoint. Queued work có `availableAt`; coordinator dùng priority trong từng queue, reserved progress cho mỗi registered due queue rồi mới spill budget. Mỗi lần lấy lease tăng generation và stale worker không được ghi checkpoint/artifact.
 
 Admin không được nhìn thấy API key, access token hoặc secret trong dashboard và log. Lỗi hiển thị cho admin cần đủ để xử lý nhưng phải redact secret và dữ liệu nhạy cảm.
 
@@ -365,6 +366,8 @@ Hai workflow không được trộn:
 
 - content takedown chỉ áp dụng cho source/article và duyệt toàn bộ hoặc từ chối toàn bộ requested metadata/media/summary/embedding scope;
 - account deletion là automatic durable workflow riêng: revoke session trước, xóa saved/chat/quota data, anonymize identity và chỉ `completed` khi mọi completion flag đã được xác minh;
+- expired/admin retry account deletion requeue cùng stable request, tăng attempt và giữ completion flags; không tạo linked child;
+- takedown chỉ completed sau khi historical chat citations được chuyển thành `unavailable` không còn URL/title; delayed Q&A phải match active user/session version và article lifecycle ở final persistence;
 - admin chỉ theo dõi safe progress/error và retry item còn thiếu; không đọc deleted email/chat hoặc phê duyệt yêu cầu xóa tài khoản.
 
 Admin không được xem mật khẩu, auth token hoặc secret của user; không mặc nhiên được đọc lịch sử chat riêng tư; và không được mạo danh user.
@@ -444,7 +447,8 @@ Ràng buộc triển khai Vercel:
 - không dùng rate-limit/quota counter theo process; login, AI Q&A, admin trigger và source test dùng shared Mongo bucket hoặc platform limiter tương đương;
 - protected `GET /api/internal/cron/due-work` recover expired jobs rồi xử lý ingestion/indexing/account-deletion queues và trả aggregate; admin POST trigger gọi chung runner nhưng dùng trust boundary riêng;
 - mỗi job có actor/key/request-hash idempotency, `availableAt`, lease generation, batch size và trạng thái bền vững trong MongoDB;
-- mỗi logical lease key giữ persistent `generationHighWater` và nullable active owner, không dùng TTL; crash-after-claim phải terminal parent + linked retry trước reacquire và stale worker không commit được;
+- mỗi canonical logical lease key giữ persistent `generationHighWater` và nullable active owner, không dùng TTL; ingestion/indexing crash recovery terminal parent + linked retry, account deletion requeue same request; exact owner/generation heartbeat không được resurrect expired lease;
+- coordinator đăng ký ingestion/indexing/account-deletion adapters, cấp reserved progress cho mỗi due queue rồi spill capacity; unregistered queue trả zero counter mà không query collection;
 - ứng dụng tự quản lý retry vì Vercel không tự retry cron thất bại;
 - code phải chịu được việc cùng một cron event được gửi nhiều lần;
 - summary chạy non-streaming; Q&A có thể streaming nhưng phải fallback sang non-streaming khi cần;
@@ -782,8 +786,8 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Admin đầu tiên được tạo bằng seed script; không cho đăng ký hoặc tự nâng role admin qua UI/API.
 - Pipeline tự xuất bản bản ghi hợp lệ; admin chỉ xử lý cấu hình, lỗi và các bản ghi `review-needed`, không duyệt từng bài trong luồng bình thường.
 - Mọi thao tác quản trị thay đổi trạng thái phải có safe structured audit với action-specific `reasonCode`; chỉ bài `published` và artifact `ready` ở current source policy version được xuất hiện trong feed, search và AI retrieval.
-- Content takedown all-or-nothing tách khỏi automatic account deletion; cả hai có machine-readable completion evidence.
+- Content takedown all-or-nothing tách khỏi automatic account deletion; takedown có historical-citation redaction evidence, account deletion có same-request completion evidence và delayed-write fence.
 - Grounded answer dùng hai contract state loại trừ nhau: answered bắt buộc paragraph/citation, refused bắt buộc reason và không có factual paragraph.
 - Xem quản trị nguồn và responsible AI là năng lực cốt lõi của sản phẩm.
 - Không xây sản phẩm dựa trên việc “lách luật” hoặc giả định rằng phi thương mại đồng nghĩa với được phép sử dụng mọi nội dung.
-- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh baseline JavaScript/JSX, media policy và ADR-0010 persistent fencing/recovery.
+- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh Plan-of-Record baseline v1.5: JavaScript/JSX, media browser boundary, ADR-0010 persistent fencing và ADR-0011 canonical coordination/recovery/fairness.
