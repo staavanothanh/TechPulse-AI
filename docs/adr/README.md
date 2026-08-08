@@ -15,6 +15,7 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0009](0009-display-permitted-external-media-without-rehosting.md) | Display permitted external media without rehosting | accepted | 2026-08-08 |
 | [0010](0010-preserve-durable-fencing-and-recover-expired-jobs.md) | Preserve durable fencing and recover expired serverless jobs | accepted | 2026-08-08 |
 | [0011](0011-coordinate-durable-work-scopes-recovery-and-fairness.md) | Coordinate durable work scopes, recovery and queue fairness | accepted | 2026-08-08 |
+| [0012](0012-separate-privacy-cleanup-and-retention-boundaries.md) | Separate privacy cleanup and retention boundaries | accepted | 2026-08-08 |
 
 ## Lifecycle
 

@@ -7,7 +7,7 @@
 
 ## 1. Kết luận product-lens
 
-**Khuyến nghị: GO — Plan-of-Record baseline v1.5 đã khóa source-policy fence cho ingestion/reconciliation, canonical work coordination, bounded queue fairness, workflow-specific recovery và delayed-write/takedown lifecycle; bắt đầu Step 1 trong strict scaffold scope.**
+**Khuyến nghị: GO WITH CONDITIONS — Plan-of-Record baseline v1.6 cho phép bắt đầu Step 1, nhưng không cho Step 2 bắt đầu cho tới khi contract classification/400/503 lint và generated contract fixtures cho session-delete evidence, user-quota boundary, decision-reason đều pass.**
 
 TechPulse AI có một vấn đề đủ rõ để làm đồ án: người đọc công nghệ phải theo dõi nhiều nguồn, khó loại tin trùng và khó kiểm chứng câu trả lời AI. Điểm chứng minh giá trị không phải số lượng nguồn mà là một luồng hoàn chỉnh từ nguồn đã duyệt đến summary tiếng Việt và AI Q&A có citation.
 
@@ -123,6 +123,7 @@ Phạm vi cố định:
 - Search vẫn hoạt động khi embedding provider lỗi.
 - Mọi admin mutation có audit record.
 - Ingestion/indexing/account-deletion backlog đều tiến triển hữu hạn; account deletion và takedown không bị delayed Q&A tái tạo dữ liệu đã gỡ.
+- Account deletion phân biệt revoke với direct session-document delete; chỉ user Q&A quota bị xóa, shared IP anti-abuse state được giữ riêng.
 
 Các ngưỡng trên là tiêu chí đánh giá đồ án, không phải số liệu product-market fit đã được chứng minh.
 

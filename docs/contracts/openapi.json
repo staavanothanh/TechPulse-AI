@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "TechPulse AI API",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "description": "Canonical HTTP contract for the Vietnamese-first TechPulse AI MVP. External content is untrusted data; no response contains source full text or media binary."
   },
   "servers": [
@@ -289,16 +289,6 @@
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AccountDeletionRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "202": {
             "description": "Automatic deletion workflow accepted; all current sessions are revoked and the session cookie is cleared",
@@ -3284,33 +3274,24 @@
           }
         }
       },
-      "AccountDeletionRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "reason"
-        ],
-        "properties": {
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
-          }
-        }
-      },
       "AccountDeletionCompletion": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "sessionsRevoked",
+          "sessionsDeleted",
           "savedArticlesDeleted",
           "chatSessionsDeleted",
-          "rateLimitDataDeleted",
+          "userQuotaDataDeleted",
           "identityAnonymized"
         ],
         "properties": {
           "sessionsRevoked": {
             "type": "boolean"
+          },
+          "sessionsDeleted": {
+            "type": "boolean",
+            "description": "True only after a direct indexed delete and zero-match verification for all session documents owned by the deleted user. TTL cleanup is not evidence."
           },
           "savedArticlesDeleted": {
             "type": "boolean"
@@ -3318,8 +3299,9 @@
           "chatSessionsDeleted": {
             "type": "boolean"
           },
-          "rateLimitDataDeleted": {
-            "type": "boolean"
+          "userQuotaDataDeleted": {
+            "type": "boolean",
+            "description": "True only after user-scoped Q&A quota buckets are deleted and verified. Shared IP anti-abuse buckets are deliberately excluded."
           },
           "identityAnonymized": {
             "type": "boolean"
@@ -3417,9 +3399,10 @@
                   "type": "object",
                   "properties": {
                     "sessionsRevoked": { "const": true },
+                    "sessionsDeleted": { "const": true },
                     "savedArticlesDeleted": { "const": true },
                     "chatSessionsDeleted": { "const": true },
-                    "rateLimitDataDeleted": { "const": true },
+                    "userQuotaDataDeleted": { "const": true },
                     "identityAnonymized": { "const": true }
                   }
                 },
@@ -3434,7 +3417,7 @@
             }
           }
         ],
-        "description": "Automatic durable account deletion. It is separate from publisher/content takedown and completes only after every cleanup flag is verified."
+        "description": "Automatic durable account deletion. It is separate from publisher/content takedown and completes only after direct session deletion, user-quota cleanup and every other cleanup flag are verified."
       },
       "AccountDeletionResponse": {
         "type": "object",
@@ -3466,7 +3449,7 @@
             }
           }
         ],
-        "description": "The deletion request is durable and all sessions are revoked before the 202 response is serialized."
+        "description": "The deletion request is durable and all sessions are revoked before the 202 response is serialized; physical session-document deletion is asynchronous cleanup and remains false until verified."
       },
       "AccountDeletionAcceptedResponse": {
         "type": "object",
@@ -6015,6 +5998,7 @@
           "targetIds",
           "reason",
           "requestedScope",
+          "decisionReasonCode",
           "completion",
           "completedAt",
           "createdAt",
@@ -6071,11 +6055,12 @@
             "uniqueItems": true,
             "minItems": 1
           },
-          "decisionReason": {
-            "type": [
-              "string",
-              "null"
-            ]
+          "decisionReasonCode": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/AdminReasonCode" },
+              { "type": "null" }
+            ],
+            "description": "Allowlisted administrative transition reason. Free-form administrative decision text is not persisted or serialized."
           },
           "completion": {
             "$ref": "#/components/schemas/TakedownCompletion"

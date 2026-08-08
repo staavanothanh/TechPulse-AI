@@ -65,7 +65,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - Error code là stable machine value; message dành cho người đọc và có thể thay đổi.
 - `401` nghĩa session thiếu/hỏng; `403` nghĩa actor đã xác thực nhưng thiếu quyền.
 - `409` dùng cho duplicate/idempotency/state conflict; `422` cho payload đúng JSON nhưng sai semantic.
-- Mọi operation có JSON request body phải declare `400`; operation phụ thuộc MongoDB phải declare `503`, không dùng undocumented `500` thay thế.
+- Step 1 phải gắn mọi operation với extension đóng `x-persistence: none|mongo`; lint fail nếu thiếu classification. Mọi operation có JSON request body phải declare `400`; `x-persistence=mongo` bắt buộc declare `503`, không dùng undocumented `500` thay thế.
 - State-changing cookie-auth request gửi `X-CSRF-Token`.
 - `GET /api/v1/me` trả `{ user, csrfToken }` cho session còn hiệu lực; CSRF token không persist ở `localStorage`.
 - Manual ingestion/deletion/retry gửi `Idempotency-Key`; identity là actor scope + key + canonical request hash. Cùng intent trả cùng logical result, khác intent trả `409 idempotency_mismatch`.
@@ -74,6 +74,8 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - Ingestion/indexing job expose server-captured `expectedSourcePolicyVersion`; article/checkpoint/artifact commit phải match current source version/state/config hoặc discard output mà không advance checkpoint.
 - `answered` và `refused` là hai schema loại trừ nhau. Runtime còn phải kiểm tra citation ID resolve tới retrieved article đang visible.
 - Historical chat citation có discriminated `available|unavailable` shape; unavailable không có URL/title/publishedAt. Takedown completion luôn có `historicalChatCitationsRedacted=true`.
+- Account deletion response phân biệt `sessionsRevoked` với `sessionsDeleted`; completion chỉ đạt sau direct delete/zero-match session documents. `userQuotaDataDeleted` chỉ bao phủ user-scoped Q&A quota, không bao giờ là shared IP anti-abuse bucket.
+- Account deletion POST không nhận free-form reason; server derive safe category `user-request`. Takedown response dùng nullable `decisionReasonCode`, không có `decisionReason` free-form.
 - Source response enforce `attributionRequired=true` thì `attributionText` bắt buộc non-empty; reconciliation terminal state enforce timestamp/version/error shape, còn equality completed/required version được runtime domain validation kiểm tra.
 - Audit response chỉ có changed field names và safe state transition; `actorType=user` dùng opaque ID cho user-initiated workflow. Raw before/after document không thuộc HTTP contract.
 
@@ -92,7 +94,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 | Account-deletion retry | `account_deletion_retry_requested` |
 | User suspend/restore | `user_suspended`, `user_restored` khớp target status |
 
-Code ngoài subset của operation trả `422`; OpenAPI const/conditional schema reject phần lớn mismatch trước domain layer, còn multi-field patch được domain validator đối chiếu changed-field set. Free-form `reason` chỉ còn ở user account-deletion request và restricted takedown requester case; hai field này không được copy sang audit.
+Code ngoài subset của operation trả `422`; OpenAPI const/conditional schema reject phần lớn mismatch trước domain layer, còn multi-field patch được domain validator đối chiếu changed-field set. Free-form `reason` chỉ còn ở restricted takedown requester case; field này không được copy sang audit.
 
 Audit event dùng `AuditReasonCode`: union của admin code ở trên và system-derived code như `source_created`, `ingestion_trigger_requested`, `lease_expired_recovered`, `policy_version_mismatch` hoặc workflow terminal state. System-derived code không được chấp nhận từ browser payload.
 
@@ -170,14 +172,14 @@ Expected behavior:
 
 Generator chạy không network/secret và generated diff phải được review. Cho đến khi scaffold tồn tại, JSON parse và local `$ref` audit là validation tối thiểu.
 
-Residual TP-M01: contract hiện chưa chứng minh đầy đủ `400` cho mọi JSON-body operation và `503` cho mọi Mongo-backed operation. Step 1 sở hữu deterministic audit + negative fixtures và không được báo contract toolchain hoàn tất khi hai tập thiếu này chưa về zero.
+Residual TP-M01: current document baseline chưa có per-operation `x-persistence` và chưa chứng minh `400/503` về zero. Step 1 phải bắt đầu bằng RED completeness audit, thêm classification cho mọi operation, thêm negative fixtures (missing classification, mongo without `503`, JSON body without `400`) rồi repair canonical OpenAPI về zero trước `contract:generate` hoặc Step 2 handoff.
 
 ## 10. Contract acceptance gate
 
 - [ ] OpenAPI parse được và không có remote `$ref`.
 - [ ] Mọi P0 consumer job có operation.
 - [ ] Required/nullability/enum/error được khai báo rõ.
-- [ ] Contract lint không còn JSON-body operation thiếu `400` hoặc Mongo-backed operation thiếu `503`.
+- [ ] Mọi operation có `x-persistence=none|mongo`; contract lint reject missing/unknown classification, JSON-body thiếu `400` và mongo thiếu `503`.
 - [ ] User/admin/cron security scheme không bị trộn.
 - [ ] Empty collection và refusal answer có fixture hợp lệ.
 - [ ] Invalid answer fixtures bị reject: answered rỗng/không citation, refused có paragraph hoặc thiếu refusal reason.
@@ -187,7 +189,7 @@ Residual TP-M01: contract hiện chưa chứng minh đầy đủ `400` cho mọi
 - [ ] Rendered/fetched URL fixture dùng `javascript:`, `data:`, `file:` hoặc HTTPS credential bị reject.
 - [ ] Cron response có recovery summary và đúng ba per-queue summaries; không trả `IngestionJob[]` như generic work result.
 - [ ] Ingestion/indexing job có `expectedSourcePolicyVersion`; stale-policy article/checkpoint/artifact commit path bị reject.
-- [ ] Content takedown không nhận `user-data/account-data`; completed thiếu `historicalChatCitationsRedacted=true` bị reject; unavailable citation có URL/title bị reject; account deletion chỉ completed khi mọi cleanup flag true.
+- [ ] Content takedown không nhận `user-data/account-data`; `decisionReason` free-form không còn; completed thiếu `historicalChatCitationsRedacted=true` bị reject; unavailable citation có URL/title bị reject; account deletion chỉ completed khi revoke, direct session delete, user quota cleanup và mọi cleanup flag true.
 - [ ] Frontend client/JSDoc/mock được derive, không copy tay.
 - [ ] `leadMedia` nullable, `leadMediaStatus` và `mediaPolicy` được kiểm thử với remote-preview, link-only, hide/restore, canonical public hostname, IP literal/private host bị chặn và fallback.
 - [ ] `leadMedia.attribution` luôn non-empty và do server resolve; UI không phụ thuộc nullable `credit`.

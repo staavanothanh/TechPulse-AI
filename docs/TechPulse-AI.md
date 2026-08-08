@@ -365,7 +365,8 @@ Admin có thể:
 Hai workflow không được trộn:
 
 - content takedown chỉ áp dụng cho source/article và duyệt toàn bộ hoặc từ chối toàn bộ requested metadata/media/summary/embedding scope;
-- account deletion là automatic durable workflow riêng: revoke session trước, xóa saved/chat/quota data, anonymize identity và chỉ `completed` khi mọi completion flag đã được xác minh;
+- account deletion là automatic durable workflow riêng: revoke session trước, sau đó direct-delete và zero-match session document, xóa saved/chat/user Q&A quota data, anonymize identity và chỉ `completed` khi các flag `sessionsRevoked`, `sessionsDeleted`, `userQuotaDataDeleted` cùng mọi cleanup flag khác đã được xác minh; shared IP anti-abuse bucket không thuộc cleanup;
+- API xóa tài khoản không nhận free-form reason; server tự derive category an toàn `user-request`. TTL chỉ là cleanup best-effort, không phải bằng chứng hoàn tất workflow;
 - expired/admin retry account deletion requeue cùng stable request, tăng attempt và giữ completion flags; không tạo linked child;
 - takedown chỉ completed sau khi historical chat citations được chuyển thành `unavailable` không còn URL/title; delayed Q&A phải match active user/session version và article lifecycle ở final persistence;
 - admin chỉ theo dõi safe progress/error và retry item còn thiếu; không đọc deleted email/chat hoặc phê duyệt yêu cầu xóa tài khoản.
@@ -790,4 +791,4 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Grounded answer dùng hai contract state loại trừ nhau: answered bắt buộc paragraph/citation, refused bắt buộc reason và không có factual paragraph.
 - Xem quản trị nguồn và responsible AI là năng lực cốt lõi của sản phẩm.
 - Không xây sản phẩm dựa trên việc “lách luật” hoặc giả định rằng phi thương mại đồng nghĩa với được phép sử dụng mọi nội dung.
-- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh Plan-of-Record baseline v1.5: JavaScript/JSX, media browser boundary, ADR-0010 persistent fencing và ADR-0011 canonical coordination/recovery/fairness.
+- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh Plan-of-Record baseline v1.6: JavaScript/JSX, media browser boundary, ADR-0010 persistent fencing, ADR-0011 canonical coordination/recovery/fairness và ADR-0012 privacy cleanup/retention boundary. Step 1 phải đóng contract classification/400/503 trước Step 2.

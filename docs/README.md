@@ -1,6 +1,6 @@
 # TechPulse AI — Documentation Index
 
-> Trạng thái: Plan-of-Record baseline v1.5 đã repair và sẵn sàng cho Step 1
+> Trạng thái: Plan-of-Record baseline v1.6 — GO WITH CONDITIONS cho Step 1; Step 2 chờ contract gates
 > Cập nhật: 08/08/2026  
 > Phạm vi: MVP solo-owner + coding-agent, React (JavaScript/JSX) + Node.js/Express (JavaScript) + MongoDB + AI; bốn tuần là planning horizon
 
@@ -50,7 +50,7 @@ docs/
 ├── adr/
 │   ├── README.md
 │   ├── template.md
-│   └── 0001..0011
+│   └── 0001..0012
 └── plans/
     └── techpulse-ai-mvp.md
 ```
@@ -73,7 +73,9 @@ docs/
 - Ingestion/indexing crash recovery tạo linked retry; account deletion requeue cùng stable request và giữ completion flags. Queue-local priority + reserved slot bảo đảm mỗi registered due queue tiến triển hữu hạn.
 - Source re-review atomically ghi reconciliation marker; mọi marker mutation CAS exact version/status/cursor. Ingestion/AI job capture expected policy version và stale-policy output/candidate không được commit hoặc advance checkpoint.
 - Mọi rendered/fetched external URL là canonical HTTPS không credential; safe-fetch pin actual connection vào validated public IP để chặn DNS rebinding.
-- Content takedown all-or-nothing tách khỏi automatic account deletion; takedown phải redact historical citation URL/title, còn delayed Q&A phải match user session/article lifecycle trước persistence.
+- Content takedown all-or-nothing tách khỏi automatic account deletion; takedown dùng bounded per-chat cleanup + zero-match citation evidence, còn delayed Q&A phải match user session/article lifecycle trước persistence.
+- Account deletion tách `sessionsRevoked` khỏi direct `sessionsDeleted`; chỉ user Q&A quota bị xóa, shared IP anti-abuse bucket có `subjectType=ip` và không thuộc cleanup.
+- Retention schedule cho session/quota/chat/job/governance đã khóa theo ADR-0012; TTL không là deletion-completion hoặc fencing evidence.
 - Audit chỉ lưu safe changed fields/state transition/action-specific `reasonCode`; không snapshot arbitrary document hoặc free-form case text.
 - Blueprint có 12 step, direct mode và milestone cutline Day 5/10/15; coding-agent support không hạ verification gate.
 
@@ -92,7 +94,7 @@ docs/
 
 Điểm bắt đầu duy nhất là [Step 1 — Scaffold application and contract toolchain](./plans/techpulse-ai-mvp.md#step-1). Không paste toàn bộ batch orchestration cùng lúc; chỉ chạy step tiếp theo khi dependency có verification evidence và handoff.
 
-Plan-of-Record baseline v1.5 trước Step 1 đã hoàn tất ở ADR/PRD/OpenAPI/Data Model/Technical Design/blueprint: canonical resource fencing, ingestion + reconciliation policy CAS, workflow-specific recovery, bounded cross-queue fairness, delayed user-write/takedown fences, historical citation redaction, media browser boundary và operation-specific reason contracts đều có authority/owner/test gate.
+Plan-of-Record baseline v1.6 trước Step 1 đã hoàn tất ở ADR/PRD/OpenAPI/Data Model/Technical Design/blueprint: canonical resource fencing, privacy cleanup/retention boundary, ingestion + reconciliation policy CAS, bounded fairness, delayed user-write/takedown fences, historical citation redaction, media browser boundary và operation-specific reason contracts đều có authority/owner/test gate. Step 1 phải đóng `x-persistence` classification và 400/503 completeness trước khi handoff Step 2.
 
 Các item execution chưa chặn Step 1:
 

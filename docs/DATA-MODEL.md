@@ -1,7 +1,7 @@
 # TechPulse AI — MongoDB Data Model
 
 > Trạng thái: Plan-of-Record persistence contract
-> Phiên bản: 1.5
+> Phiên bản: 1.6
 > Cập nhật: 08/08/2026  
 > Architecture: [TECHNICAL-DESIGN.md](./TECHNICAL-DESIGN.md)  
 > Product contract: [PRD.md](./PRD.md)
@@ -26,7 +26,7 @@ Các block `type ...` dưới đây là ký pháp tài liệu trung lập để 
 |---|---|---|
 | `users` | Account, role, topic preferences, lifecycle | Auth/account module |
 | `sessions` | Server-side session và CSRF state | Auth module |
-| `rateLimitBuckets` | Shared rate-limit/quota counters có TTL | HTTP/AI operations |
+| `rateLimitBuckets` | Subject-classified rate-limit/quota counters có TTL | HTTP/AI operations |
 | `sources` | Connector config, publisher/rights policy, health | Source Registry |
 | `articles` | Normalized metadata, summary, vector, provenance | Content module |
 | `savedArticles` | Quan hệ user–article | User library module |
@@ -126,6 +126,7 @@ type SessionDocument = {
   userSessionVersion: number;
   csrfSecretHash: string;
   status: "active" | "revoked";
+  absoluteExpiresAt: Date;
   expiresAt: Date;
   lastSeenAt: Date;
   createdIpHmac?: string;
@@ -146,12 +147,19 @@ TTL { expiresAt: 1 } expireAfterSeconds: 0
 
 Cookie token chỉ xuất hiện một lần ở response; database chỉ giữ hash.
 
+Rules:
+
+- Session active có idle window 24 giờ và absolute lifetime 7 ngày; `expiresAt` là thời điểm sớm hơn giữa idle renewal và `absoluteExpiresAt`.
+- Revoke thông thường đặt `status=revoked`, `revokedAt` và rút `expiresAt` xuống tối đa 24 giờ sau revoke để TTL cleanup; request path vẫn kiểm tra status/expiry ngay lập tức.
+- Account deletion không dùng TTL làm bằng chứng: sau revoke/session-version bump, worker trực tiếp xóa mọi session theo `userId` và xác minh zero match trước khi set `sessionsDeleted=true`.
+
 ## 6. `rateLimitBuckets`
 
 ```text
 type RateLimitBucketDocument = {
   _id: ObjectId;
   scope: "login" | "answer-minute" | "answer-daily" | "admin-trigger" | "source-test";
+  subjectType: "user" | "ip" | "admin" | "source";
   keyHash: string;
   keyVersion: number;
   windowStart: Date;
@@ -165,17 +173,19 @@ type RateLimitBucketDocument = {
 Indexes:
 
 ```text
-unique { scope: 1, keyHash: 1, windowStart: 1 }
+unique { scope: 1, subjectType: 1, keyHash: 1, windowStart: 1 }
 TTL { expiresAt: 1 } expireAfterSeconds: 0
 ```
 
 Rules:
 
 - Increment/check dùng atomic upsert; không dùng counter trong process memory.
-- IP key bắt buộc dùng keyed HMAC và lưu `keyVersion`; không dùng plain hash vì không gian IPv4 có thể brute-force. User/actor identifier cũng không lưu raw email.
+- `subjectType` là source of truth cho ownership: `login→ip`, `answer-minute|answer-daily→user`, `admin-trigger→admin`, `source-test→source`. Validator/key-derivation helper từ chối scope/subject pair khác mapping này.
+- `keyHash` luôn là keyed HMAC + `keyVersion` của subject opaque: canonical IP cho `ip`, opaque `userId` cho user quota, opaque admin ID cho admin và opaque source ID cho source. Không dùng raw email hoặc plain hash.
 - `Retry-After` tính từ window hiện tại, không từ thời điểm TTL document thực sự bị cleanup.
 - Daily AI quota dùng cùng collection với window dài hơn; provider call chỉ chạy sau khi reserve quota thành công.
 - TTL chỉ cleanup; correctness dựa vào `windowStart`/`expiresAt` trong query.
+- Account deletion chỉ xóa/verify `subjectType=user` cho hai scope answer; shared `subjectType=ip` anti-abuse bucket không thuộc user data và không bị broad-delete.
 
 ## 7. `sources`
 
@@ -451,6 +461,7 @@ type IngestionJobDocument = {
   startedAt?: Date;
   heartbeatAt?: Date;
   finishedAt?: Date;
+  purgeAfter?: Date;
   updatedAt: Date;
 };
 ```
@@ -494,6 +505,7 @@ type IndexingJobDocument = {
   startedAt?: Date;
   heartbeatAt?: Date;
   finishedAt?: Date;
+  purgeAfter?: Date;
   updatedAt: Date;
 };
 ```
@@ -596,6 +608,7 @@ type ChatSessionDocument = {
     createdAt: Date;
   }>;
   messageCount: number;
+  expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -617,6 +630,7 @@ Indexes:
 ```text
 { userId: 1, updatedAt: -1, _id: -1 }
 { "messages.citations.articleId": 1, userId: 1 }
+TTL { expiresAt: 1 } expireAfterSeconds: 0
 ```
 
 ## 14. `takedownRequests`
@@ -636,6 +650,8 @@ type TakedownRequestDocument = {
   reviewedBy?: ObjectId;
   reviewedAt?: Date;
   completedAt?: Date;
+  piiPurgeAfter?: Date;
+  workflowPurgeAfter?: Date;
   completion: {
     hidden: boolean;
     metadataRemoved: boolean;
@@ -658,7 +674,7 @@ Indexes:
 
 Requester contact là dữ liệu cá nhân; không đưa vào provider/log và chỉ admin đọc.
 
-MVP duyệt toàn bộ hoặc từ chối toàn bộ `requestedScope`; không có partial approval. `status=completed` luôn yêu cầu `hidden=true` và `historicalChatCitationsRedacted=true`, kể cả khi scan xác nhận không có citation lịch sử; từng scope còn yêu cầu cleanup flag tương ứng. Takedown hide/redaction và delayed chat append serialize bằng article/takedown lifecycle fence để Q&A cũ không thể ghi lại URL/title sau cleanup. List query chỉ project thành takedown summary không chứa requester contact, reason hoặc evidence. Detail endpoint mới được hydrate các field PII này.
+MVP duyệt toàn bộ hoặc từ chối toàn bộ `requestedScope`; không có partial approval. `status=completed` luôn yêu cầu `hidden=true` và `historicalChatCitationsRedacted=true`, kể cả khi scan xác nhận không có citation lịch sử; từng scope còn yêu cầu cleanup flag tương ứng. Takedown hide/redaction và delayed chat append serialize bằng article/takedown lifecycle fence để Q&A cũ không thể ghi lại URL/title sau cleanup. `piiPurgeAfter` là terminal time +90 ngày để bounded worker unset requester contact/reason/evidence; `workflowPurgeAfter` là terminal time +180 ngày cho non-PII lifecycle record. List query chỉ project thành takedown summary không chứa requester contact, reason hoặc evidence. Detail endpoint mới được hydrate các field PII này.
 
 ## 15. `accountDeletionRequests`
 
@@ -677,15 +693,17 @@ type AccountDeletionRequestDocument = {
   safeReasonCategory: "user-request";
   completion: {
     sessionsRevoked: boolean;
+    sessionsDeleted: boolean;
     savedArticlesDeleted: boolean;
     chatSessionsDeleted: boolean;
-    rateLimitDataDeleted: boolean;
+    userQuotaDataDeleted: boolean;
     identityAnonymized: boolean;
   };
   error?: SafeError;
   requestedAt: Date;
   startedAt?: Date;
   completedAt?: Date;
+  purgeAfter?: Date;
   updatedAt: Date;
 };
 ```
@@ -693,11 +711,11 @@ type AccountDeletionRequestDocument = {
 Rules:
 
 - Đây là automatic workflow riêng, không phải `takedownRequests` và không cần admin approval.
-- Tạo request atomically chuyển user sang `deletion-pending`, tăng `sessionVersion`, revoke sessions và ghi audit intent; response xóa session cookie.
-- Cleanup idempotent theo từng flag. `completed` chỉ khi năm flag đều true; retry chỉ chạy item còn false và không restore identity/session.
+- Deletion API không nhận/persist free-form reason; server ghi `safeReasonCategory=user-request`, atomically chuyển user sang `deletion-pending`, tăng `sessionVersion`, revoke sessions và ghi audit intent; response xóa session cookie.
+- Cleanup idempotent theo từng flag. `sessionsRevoked` có thể true ở response `202`, nhưng `sessionsDeleted` chỉ true sau direct indexed delete + zero-match verification. `userQuotaDataDeleted` chỉ xóa `subjectType=user` answer quota; shared IP bucket không bị xóa. `completed` chỉ khi sáu flag đều true; retry chỉ chạy item còn false và không restore identity/session.
 - Crash/expired lease recovery dùng exact owner/generation CAS để requeue cùng request document, tăng `attempt`, đặt lại `availableAt`, clear transient running/error timestamps nhưng giữ mọi completion flag. Không tạo `parentJobId` hoặc child request; admin retry dùng cùng model.
 - Account deletion có queue-local priority allowlisted và aging; safety work quá hạn được nâng priority nhưng vẫn đi qua bounded fairness coordinator.
-- User tombstone giữ opaque `_id`, role/status/deletedAt/deletionRequestId; email/password/chat/saved/quota data không còn.
+- Completed request đặt `purgeAfter=completedAt+90 ngày`; failed/running request không có `purgeAfter` và giữ tới khi resolve. User tombstone giữ opaque `_id`, role/status/deletedAt/deletionRequestId; email/password/chat/saved/user quota data không còn.
 - Admin API chỉ expose request ID, status, priority/attempt/availableAt, safe completion/error/timestamps; không expose email hoặc deleted content.
 
 Indexes:
@@ -726,6 +744,8 @@ type AdminAuditLogDocument = {
   reasonCode: AuditReasonCode;
   ipAddressHmac?: string;
   ipHmacKeyVersion?: number;
+  ipHmacPurgeAfter?: Date;
+  purgeAfter?: Date;
   requestId: string;
   result: "pending" | "succeeded" | "failed";
   createdAt: Date;
@@ -786,20 +806,29 @@ MVP dùng transaction ngắn đúng chỗ và idempotent workflow cho work dài:
 
 MongoDB transaction chỉ bao quanh nhóm document nhỏ, không chứa fetch/provider call và phải retry write conflict/transient transaction error. Không dựa vào transaction để che workflow thiếu idempotency hoặc fencing.
 
-## 19. Retention baseline
+## 19. Retention schedule
 
-Thời lượng cụ thể được chốt lúc triển khai, nhưng hành vi MVP phải có:
+Mỗi owner phải tạo index/script retention cùng migration của collection; TTL là best-effort physical cleanup và request/worker path vẫn kiểm tra expiry/cutoff độc lập.
 
-- expired session tự xóa bằng TTL; revoked session có thể cleanup sau khoảng audit vận hành ngắn;
-- expired rate-limit bucket tự cleanup bằng TTL nhưng request path luôn kiểm tra window, không chờ TTL;
-- chat/saved data xóa theo yêu cầu user;
-- account deletion xóa sessions/saved/chat/quota, anonymize identity và chỉ giữ opaque tombstone/audit evidence;
-- full text tạm giải phóng ngay sau job/request và không xuất hiện trong log/cache;
-- media nguồn chỉ giữ metadata/URL khi policy còn hợp lệ; binary không được tải vào persistence và metadata bị unset theo takedown/media-policy change;
-- summary/vector xóa cùng takedown scope;
-- jobs giữ đủ lâu cho demo/debug rồi cleanup bằng script/policy;
-- lease record giữ `generationHighWater` theo logical resource key và không TTL; chỉ garbage-collect bằng migration sau khi chứng minh không còn job/worker tham chiếu;
-- audit và rights evidence không bị xóa từ dashboard.
+| Data | Duration | Enforcement | Owner |
+|---|---|---|---|
+| Active session | idle 24 giờ, absolute 7 ngày | `expiresAt` TTL + request-path check | Step 2 |
+| Revoked session | tối đa 24 giờ sau `revokedAt` | rút `expiresAt`; TTL | Step 2 |
+| Session của deleted user | xóa/verify ngay | direct indexed delete, không chờ TTL | Steps 2, 11 |
+| Shared IP anti-abuse bucket | 24 giờ sau window end | TTL + query window check | Step 2 |
+| User Q&A minute/daily quota | 2 giờ / 48 giờ sau window end | TTL; direct delete khi account deletion | Steps 2, 10, 11 |
+| Chat session | 30 ngày sau `updatedAt` | derive `expiresAt`, TTL + read-time cutoff | Step 10 |
+| Succeeded/cancelled ingestion/indexing job | 14 ngày sau `finishedAt` | bounded cleanup script | Steps 4, 9 |
+| Failed/partial ingestion/indexing job | 30 ngày sau `finishedAt` | bounded cleanup script | Steps 4, 9 |
+| Completed account-deletion workflow | 90 ngày sau `completedAt` | state-aware cleanup script | Step 11 |
+| Failed/running deletion workflow | tới khi resolve | không TTL | Step 11 |
+| Takedown requester PII | 90 ngày sau terminal state | bounded field-unset script | Step 11 |
+| Non-PII takedown lifecycle evidence | 180 ngày sau terminal state | state-aware cleanup/manual review | Step 11 |
+| Audit IP HMAC | 30 ngày | bounded field-unset script | Steps 2, 3, 11 |
+| Minimized audit event | 180 ngày | bounded cleanup/manual review | Steps 2, 3, 11 |
+| `jobLeases` high-water | project lifetime | no TTL; controlled GC migration after proof | Step 4 |
+
+Full text tạm giải phóng ngay sau job/request và không xuất hiện trong log/cache. Media metadata/URL chỉ giữ khi policy còn hợp lệ; summary/vector bị xóa theo takedown scope. Bounded cleanup phải indexed, idempotent, có dry-run, chạy được qua cron/manual và không dựa vào timing chính xác của Vercel Cron hoặc MongoDB TTL.
 
 ## 20. Schema/index migration
 

@@ -1,7 +1,7 @@
 # TechPulse AI — Product Requirements & Capability Contract
 
 > Trạng thái: Plan-of-Record repair locked for implementation
-> Phiên bản: 1.5
+> Phiên bản: 1.6
 > Cập nhật: 08/08/2026  
 > Product rationale: [PRODUCT-BRIEF.md](./PRODUCT-BRIEF.md)  
 > Nguồn quyết định chi tiết: [TechPulse-AI.md](./TechPulse-AI.md)
@@ -109,7 +109,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AUTH-003 | Backend phân biệt unauthenticated và unauthorized | Trả `401` và `403` đúng trường hợp |
 | AUTH-004 | Admin đầu tiên được tạo bằng seed/deployment operation | Không có public admin registration |
 | AUTH-005 | Khóa user làm mất hiệu lực mọi session hiện có | Request tiếp theo bị từ chối |
-| AUTH-006 | User có thể yêu cầu xóa account bằng durable automatic workflow | Session bị revoke trước; saved/chat/quota/identity có completion evidence và audit |
+| AUTH-006 | User có thể yêu cầu xóa account bằng durable automatic workflow | Session bị revoke rồi direct-delete/verify; chỉ user Q&A quota bị xóa, shared IP security bucket giữ riêng; mọi cleanup có completion evidence và audit |
 
 ### 4.2. User preferences và saved articles
 
@@ -340,24 +340,28 @@ approved → completed
 16. Public serializer chỉ trả summary khi `summaryStatus=ready`; artifact `removed` phải unset content/model/hash và không xuất hiện ở feed/detail/retrieval.
 17. Direct admin mutation và audit record commit atomically; workflow dài ghi audit intent trước và terminal result idempotently.
 18. Idempotency identity gồm actor scope, key và canonical request hash; reuse key cho intent khác trả conflict.
-19. Account deletion completion độc lập content takedown và có machine-readable evidence cho từng cleanup item.
+19. Account deletion completion độc lập content takedown và có machine-readable evidence riêng cho session revoke, session delete, user quota cleanup và từng cleanup item còn lại.
 20. Delayed user-owned write chỉ commit khi user còn `active` và `sessionVersion` đúng snapshot; account deletion thắng race thì không persist chat/quota.
 21. Reconciliation marker mutation và ingestion article/checkpoint commit đều fence bằng current source policy/config version.
 22. Mỗi registered due queue đang có work phải tiến triển trong số invocation hữu hạn dù queue khác backlog liên tục.
+23. Shared IP anti-abuse bucket không phải user-owned data; account deletion chỉ xóa bucket `subjectType=user` cho Q&A quota.
+24. TTL không là bằng chứng authorization, account deletion completion hoặc lease fencing; retention/cutoff được enforce tại query/worker path.
 
 ## 7. Data ownership và implications
 
 | Data | Owner/system of record | Retention rule |
 |---|---|---|
-| Account/session | TechPulse AI / MongoDB | Xóa/revoke theo user lifecycle |
+| Account/session | TechPulse AI / MongoDB | Idle 24h, absolute 7d; direct delete/verify khi account deletion |
 | Source policy/evidence | TechPulse AI / MongoDB | Giữ audit history |
 | Article metadata | Publisher-originated, TechPulse stores record | Gỡ theo policy/takedown |
 | Media metadata/remote URL | Publisher-originated, TechPulse stores reference | Không lưu binary; ẩn/xóa theo media policy hoặc takedown |
 | Full text temporary | Publisher-originated, memory only | Discard sau request/job |
 | SummaryVi | TechPulse AI generated artifact | Gắn source/model/basis; xóa cùng article nếu cần |
 | Embedding | TechPulse AI derived index | Rebuildable; xóa cùng article |
-| Chat history | User/TechPulse AI | User có thể xóa; không đưa vào model training |
-| Audit log | TechPulse AI governance record | Append-only ở application layer |
+| Chat history | User/TechPulse AI | User xóa trực tiếp; tự hết hạn 30 ngày sau hoạt động cuối |
+| User Q&A quota | TechPulse AI / MongoDB | TTL theo window; direct delete khi account deletion |
+| Shared IP anti-abuse state | TechPulse AI / MongoDB | TTL 24h; không bị xóa theo user |
+| Audit log | TechPulse AI governance record | Minimized event 180 ngày; IP HMAC bị unset sau 30 ngày |
 
 ## 8. Security, privacy và policy requirements
 
@@ -365,7 +369,7 @@ approved → completed
 - Session ID chỉ ở secure cookie; session record trong MongoDB.
 - CSRF protection phù hợp session cookie; CORS/rewrite policy tối thiểu.
 - Rate limit login, AI Q&A, admin triggers và source tests.
-- Rate-limit/quota state dùng shared Mongo bucket hoặc platform-native shared limiter; không dùng per-process counter trên Vercel.
+- Rate-limit/quota state dùng shared Mongo bucket hoặc platform-native shared limiter; không dùng per-process counter trên Vercel. Mỗi bucket có `subjectType`; user Q&A quota dùng keyed HMAC của opaque user ID, còn shared IP anti-abuse state không thuộc account-deletion cleanup.
 - SSRF defense cho source URL: chỉ HTTPS không credential; normalize IPv4-mapped IPv6, validate toàn bộ A/AAAA và reject cả answer set nếu có private/loopback/link-local/unspecified/multicast/reserved IP; actual connection pin vào validated public IP trong khi giữ hostname/SNI; mỗi redirect tự resolve/validate/pin lại; có timeout và response-size limit.
 - External source/citation/media/admin link dùng canonical `HttpsUrl`; browser anchor dùng `rel="noopener noreferrer external"`.
 - Media URL phải là HTTPS, thuộc exact canonical public-host allowlist của source; wildcard/IP literal/localhost/private resolution bị cấm. Client dùng `referrerPolicy=no-referrer`, không gửi credential và CSP `img-src` chỉ allow `'self'` + reviewed hosts, không blanket `https:`; backend không làm arbitrary media proxy.
@@ -393,6 +397,7 @@ approved → completed
 | NFR-011 | Media safety | Preview có attribution/alt/fallback; host không được duyệt hoặc media lỗi không làm hỏng core flow |
 | NFR-012 | Durable fencing | Lease generation high-water không bị TTL/reset; stale worker không commit sau recovery/reacquire |
 | NFR-013 | Audit minimization | Audit chỉ lưu allowlisted reasonCode; requester/account case text có access/retention riêng và không được copy |
+| NFR-014 | Privacy retention | Retention duration được khóa trước migration của collection owner; TTL chỉ cleanup best-effort, không thay correctness check |
 
 Canonical media attribution do server resolve theo thứ tự media credit → source `attributionText` → source name và luôn trả non-empty `leadMedia.attribution`; frontend không tự dựng attribution từ field nullable.
 
@@ -446,7 +451,7 @@ Evaluation protocol được version-control cùng fixture:
 - Database scan không có binary/base64 ảnh/video; host media ngoài policy/IP literal không được serialize ra user API và CSP không mở blanket `https:`.
 - Takedown xóa/ẩn đúng metadata, media reference, summary/vector và redacts historical citation URL/title trước `completed`.
 - Mọi admin mutation có audit record với action-specific `reasonCode`, không có free-form admin reason.
-- Account deletion test chứng minh session/saved/chat/quota cleanup và identity anonymization trước `completed`; fake delayed Q&A resume sau deletion không tạo lại dữ liệu.
+- Account deletion test chứng minh session revoke rồi direct session-document delete/zero-match, saved/chat/user-quota cleanup và identity anonymization trước `completed`; shared IP bucket không bị xóa; fake delayed Q&A resume sau deletion không tạo lại dữ liệu.
 
 ### Deployment gate
 

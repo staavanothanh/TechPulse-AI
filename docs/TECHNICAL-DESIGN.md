@@ -1,7 +1,7 @@
 # TechPulse AI — Technical Design
 
 > Trạng thái: Plan-of-Record architecture contract
-> Phiên bản: 1.5
+> Phiên bản: 1.6
 > Cập nhật: 08/08/2026  
 > Product contract: [PRD.md](./PRD.md)  
 > Persistence contract: [DATA-MODEL.md](./DATA-MODEL.md)  
@@ -276,14 +276,16 @@ Provider không được cấp tool. Model không được tự tạo URL; seria
 Admin approves complete requestedScope
 → mark target hidden/removed first
 → remove media reference/summary/vector from user and retrieval surfaces
+→ query affected chat sessions by indexed citation target in bounded batches
+→ atomically convert each chat document citation to unavailable shape without URL/title
+→ zero-match scan confirms no available citation remains for target
 → delete fields/documents required by the complete requestedScope
-→ convert every historical chat citation to explicit unavailable shape without URL/title
 → revoke related cached/generated artifacts
 → mark completed only after historical citation redaction and requested-scope verification
 → append audit record
 ```
 
-Visibility bị tắt trước thao tác xóa để tránh race làm dữ liệu tiếp tục xuất hiện. MVP content takedown chỉ có source/article và all-or-nothing approval; không có `user-data`, `account-data` hoặc partial approval. Historical citation có hai branch: `available` giữ source metadata, `unavailable` cấm `originalUrl/titleOriginal/publishedAt` và có reason allowlisted. `completed` luôn yêu cầu `historicalChatCitationsRedacted=true`; delayed Q&A append dùng cùng article/takedown lifecycle fence nên không thể ghi lại metadata sau cleanup.
+Visibility bị tắt trước thao tác xóa để tránh race làm dữ liệu tiếp tục xuất hiện. MVP content takedown chỉ có source/article và all-or-nothing approval; không có `user-data`, `account-data` hoặc partial approval. Historical citation có hai branch: `available` giữ source metadata, `unavailable` cấm `originalUrl/titleOriginal/publishedAt` và có reason allowlisted. “Atomic” nghĩa là update một `chatSessions` document trong một write/transaction ngắn, không phải transaction xuyên toàn corpus. Worker resume theo bounded indexed batch, re-run idempotently và chỉ set `historicalChatCitationsRedacted=true` sau zero-match scan; delayed Q&A append dùng cùng article/takedown lifecycle fence nên không thể ghi lại metadata sau cleanup.
 
 ### 6.9. Automatic account deletion
 
@@ -292,13 +294,14 @@ User POSTs deletion request with CSRF + idempotency key
 → transaction creates deletion workflow + audit intent
 → user becomes deletion-pending; sessionVersion increments
 → revoke all sessions and clear current cookie
-→ due-work coordinator deletes saved/chat/quota data idempotently
+→ due-work coordinator directly deletes/zero-verifies session documents
+→ deletes saved/chat and user-scoped Q&A quota data idempotently
 → anonymize email/password identity into opaque tombstone
 → verify every completion flag
 → mark completed and append terminal audit event
 ```
 
-Account deletion không cần admin approval và không dùng content takedown state machine. Admin chỉ xem safe progress/error và retry remaining steps; retry không restore session hoặc identity. Request document có stable unique user identity: expired-run recovery và admin retry exact-fence CAS chính request về `queued`, tăng attempt, giữ completion flags và không tạo linked child.
+Account deletion không cần admin approval và không dùng content takedown state machine. API không nhận free-form reason; server derive `user-request`. Admin chỉ xem safe progress/error và retry remaining steps; retry không restore session hoặc identity. Request acceptance chứng minh `sessionsRevoked=true`, còn `sessionsDeleted=true` chỉ sau direct indexed delete + zero-match verification. `userQuotaDataDeleted=true` chỉ áp dụng bucket `subjectType=user` cho Q&A; shared IP anti-abuse buckets không bị xóa. Request document có stable unique user identity: expired-run recovery và admin retry exact-fence CAS chính request về `queued`, tăng attempt, giữ completion flags và không tạo linked child.
 
 ## 7. Job execution model
 
@@ -445,7 +448,7 @@ Safe-fetch không được validate hostname rồi để HTTP client tự resolv
 
 Password dùng password hashing library được duy trì với cost cấu hình. Session token và reset-like token chỉ lưu hash. Log structured luôn có `requestId`; job log thêm `jobId`/`sourceId` nhưng không chứa credential, session ID, source body hoặc private chat.
 
-Login, AI Q&A, admin trigger và source technical check dùng atomic Mongo-backed rate-limit/quota buckets. Counter theo process không được dùng vì Vercel có thể cold start hoặc chạy nhiều instance; `Retry-After` được tính từ bucket window chứ không chờ TTL cleanup.
+Login, AI Q&A, admin trigger và source technical check dùng atomic Mongo-backed rate-limit/quota buckets. `subjectType`/scope mapping là `login→ip`, `answer-*→user`, `admin-trigger→admin`, `source-test→source`; `keyHash` là keyed HMAC của opaque subject thích hợp, không là email/raw IP. Counter theo process không được dùng vì Vercel có thể cold start hoặc chạy nhiều instance; `Retry-After` được tính từ bucket window chứ không chờ TTL cleanup. Account deletion chỉ direct-delete user Q&A buckets, không đụng shared IP anti-abuse state.
 
 ## 12. Observability
 
@@ -483,7 +486,7 @@ Admin dashboard đọc dữ liệu tổng hợp từ collection nghiệp vụ; l
 
 Test quan trọng nhất là negative invariant: một article hidden/removed/review-needed hoặc source bị blocked tuyệt đối không xuất hiện trong feed, search hay evidence context. Tương tự, media từ host/mode không được duyệt không được serialize và media `not-analyzed` không được dùng để hỗ trợ factual claim. Contract test còn phải reject answered rỗng/không citation, refused có factual paragraph, policy/connector combination mâu thuẫn, technical check passed thiếu evidence, Source response `attributionRequired=true` thiếu/null/rỗng text, reconciliation terminal state thiếu version/error, unavailable citation còn URL/title, completed takedown thiếu chat-redaction evidence, rendered URL dùng `javascript:|data:|file:`/credential, IP-literal media host và operation-specific reason code sai.
 
-Integration/security suite phải có: crash-after-claim ingestion/indexing → linked retry → stale commit fail; account deletion crash → same-request requeue giữ flags; heartbeat exact owner/generation và expired lease không resurrect; cron/manual cùng source contend canonical key; sustained backlog cho cả ba due queues tiến triển hữu hạn; source policy/block/config đổi giữa ingestion fetch → no article/checkpoint advance; reconciliation worker N không mutate marker N+1; policy đổi lúc fake provider pending → artifact commit fail; delayed Q&A → account deletion completed/takedown completed → provider resume không persist chat/quota/available citation; DNS resolver đổi public→private giữa server validation/connect → request server-side vẫn pin public hoặc reject; mixed A/AAAA và IPv4-mapped IPv6 private đều bị chặn.
+Integration/security suite phải có: crash-after-claim ingestion/indexing → linked retry → stale commit fail; account deletion crash sau revoke/trước delete hoặc sau delete/trước flag → same-request requeue giữ flags; direct session zero-match/user quota delete không đụng shared IP bucket; heartbeat exact owner/generation và expired lease không resurrect; cron/manual cùng source contend canonical key; Step 4 fake three-adapter fairness, Step 9 actual ingestion/indexing backlog, Step 11 actual three-queue proof; source connector-config update tăng đúng một policy version + marker/audit rồi mid-fetch candidate bị discard; reconciliation worker N không mutate marker N+1; policy đổi lúc fake provider pending → artifact commit fail; delayed Q&A → account deletion completed/takedown completed → provider resume không persist chat/quota/available citation; bounded per-chat takedown cleanup → zero-match → completion; DNS resolver đổi public→private giữa server validation/connect → request server-side vẫn pin public hoặc reject; mixed A/AAAA và IPv4-mapped IPv6 private đều bị chặn.
 
 ## 14. Failure/degradation behavior
 
@@ -516,7 +519,8 @@ Integration/security suite phải có: crash-after-claim ingestion/indexing → 
 - [ ] Text search hoạt động khi embedding adapter bị tắt.
 - [ ] Citation serializer không nhận URL do model tạo.
 - [ ] Takedown ẩn trước, redacts historical citation URL/title, xóa/index cleanup sau và chỉ completed khi chat evidence true.
-- [ ] Account deletion revoke session trước, hoàn thành mọi cleanup flag rồi mới `completed`; delayed Q&A không tái tạo user data.
+- [ ] Account deletion revoke session trước, direct-delete/zero-verify session document và user quota trước `completed`; shared IP bucket không bị xóa, delayed Q&A không tái tạo user data.
+- [ ] Retention owner tạo TTL/indexed cleanup cùng migration; TTL không được dùng làm authorization, completion evidence hoặc fencing.
 - [ ] Direct admin mutation không thể commit nếu safe audit event không commit.
 - [ ] Không có raw HTML/full text/secret trong MongoDB hoặc log fixture.
 - [ ] Không có binary/base64/GridFS media; media ngoài policy bị loại và broken image có fallback.
