@@ -1,7 +1,7 @@
 # TechPulse AI — Technical Design
 
 > Trạng thái: Plan-of-Record architecture contract
-> Phiên bản: 1.2
+> Phiên bản: 1.3
 > Cập nhật: 08/08/2026  
 > Product contract: [PRD.md](./PRD.md)  
 > Persistence contract: [DATA-MODEL.md](./DATA-MODEL.md)  
@@ -164,44 +164,55 @@ Admin creates draft source
 → admin activates source
 ```
 
-Technical check không được tự phê duyệt rights và `passed` phải có server timestamp/host/content-type/sample evidence. Source activation là state transition có audit; source `blocked` hoặc `review-needed` không thể active. Terms change dùng dedicated re-review operation: pause → review-needed → policyVersion++ → enqueue reconciliation.
+Technical check không được tự phê duyệt rights và `passed` phải có server timestamp/host/content-type/sample evidence. Source activation là state transition có audit; source `blocked` hoặc `review-needed` không thể active. Terms change dùng dedicated re-review operation: pause → review-needed → policyVersion++ → atomically persist a pending reconciliation marker on the source. Query-time policy fail-closed ngay; Step 9 mới materialize marker thành bounded reconciliation jobs.
 
-### 6.3. Daily/manual ingestion
+### 6.3. Cron due-work và manual ingestion
 
 ```text
-Vercel Cron GET adapter or admin POST trigger
+Vercel Cron GET /api/internal/cron/due-work
 → authenticate separate trust boundary
+→ idempotently materialize scheduled ingestion intents for active sources
+→ recover a bounded batch of expired active leases/running jobs
+→ select due work across ingestion/indexing/account-deletion queues
+→ return aggregate recovery + per-queue counters
+
+Admin POST ingestion trigger
+→ authenticate cookie + admin role + CSRF
 → derive/validate actor-scoped idempotency key + request hash
 → create or reuse job record
-→ coordinator selects due work by priority/availableAt/createdAt and request budget
-→ acquire Mongo lease; increment leaseGeneration
+→ invoke the same queue runner through a separate adapter
+
+Selected job
+→ acquire persistent lease ownership; increment generationHighWater
 → connector fetches bounded batch
 → normalize + canonicalize + dedupe
-→ upsert article with provenance/rights snapshot
+→ transactionally fence and upsert article with current provenance/rights snapshot
 → run allowed summary/index work within request budget
-→ checkpoint cursor/counters only with current leaseGeneration
-→ release lease; mark succeeded/partial/failed
+→ checkpoint cursor/counters only after exact fence touch
+→ atomically mark succeeded/partial/failed + clear active ownership; preserve generationHighWater
 ```
 
-Job runner dừng trước execution deadline bằng safety margin. Phần còn lại tồn tại với `availableAt` và checkpoint để due-work coordinator resume qua manual run hoặc lần cron sau. Coordinator dùng chung cho ingestion, summary, embedding, visibility reconciliation và account deletion; không có queued work chỉ phụ thuộc process memory. `partial` không rollback dữ liệu đã ghi; mỗi item operation idempotent và stale worker không commit được sau khi mất generation.
+Job runner dừng trước execution deadline bằng safety margin. Phần còn lại tồn tại với `availableAt` và checkpoint để due-work coordinator resume qua manual run hoặc lần cron sau. Coordinator queue-agnostic nhưng response chỉ trả aggregate counters; chi tiết job đọc qua admin queue endpoints. `partial` không rollback dữ liệu đã ghi; mỗi item operation idempotent và stale worker không commit được sau khi mất generation.
 
 ### 6.4. Summary và embedding
 
 ```text
 One article + one artifact task pending
-→ load current source policy
+→ capture expectedSourcePolicyVersion and load current source policy
 → policy gate selects metadata/excerpt/fulltext-temporary/none
 → optional safe fetch + main-content extraction in memory
 → LLM summary schema validation
-→ persist short summary + basis + model + input hash
+→ transactionally re-check fence + current policy version
+→ persist short summary + basis + model + input hash + source policy version
 → embedding gate selects allowed derived text
 → BGE-M3 request
 → validate 1024 dimensions
-→ persist vector + model/version/hash
+→ transactionally re-check fence + current policy version
+→ persist vector + model/version/hash + source policy version
 → discard temporary text
 ```
 
-Mỗi indexing job chỉ sở hữu một task để summary và embedding có state/retry độc lập. Nếu policy là `none`, provider không được gọi. Nếu summary lỗi, article có thể vẫn publish với summary state rõ ràng nếu metadata hợp lệ; UI không giả vờ summary đã sẵn sàng. Nếu embedding lỗi, text search tiếp tục hoạt động. Artifact chuyển `removed` phải unset content/model/hash/error; public serializer chỉ trả summary khi `ready`.
+Mỗi indexing job chỉ sở hữu một task để summary và embedding có state/retry độc lập. Nếu policy là `none`, provider không được gọi. Nếu source policy đổi sau provider call, commit phải fail với safe `policy_version_mismatch`, discard output và để current reconciliation tạo work phù hợp; không persist artifact sinh dưới policy cũ. Nếu summary lỗi, article có thể vẫn publish với summary state rõ ràng nếu metadata hợp lệ; UI không giả vờ summary đã sẵn sàng. Nếu embedding lỗi, text search tiếp tục hoạt động. Artifact chuyển `removed` phải unset content/model/hash/error/policy-version; public serializer chỉ trả summary khi `ready`.
 
 ### 6.5. Feed/search/detail
 
@@ -213,7 +224,7 @@ AND current source.operationalStatus == active
 AND current source.licenseStatus IN [permitted, metadata-only]
 ```
 
-Rights snapshot trên article phục vụ audit, còn Source Registry hiện tại quyết định có tiếp tục được hiển thị/xử lý hay không. Source transition đồng thời enqueue reconciliation; query-time predicate là lớp bảo vệ trong khoảng thời gian reconciliation chưa hoàn tất.
+Rights snapshot trên article phục vụ audit, còn Source Registry hiện tại quyết định có tiếp tục được hiển thị/xử lý hay không. Source transition đồng thời ghi durable reconciliation marker; query-time predicate là lớp bảo vệ tức thời trong khoảng thời gian Step 9 chưa materialize/hoàn tất cleanup jobs.
 
 Keyword search chạy trước hoặc độc lập. Hybrid search chỉ thêm embedding score cho candidates có cùng model/dimensions/version; khi provider hoặc vector thiếu, response ghi `fallbackUsed=true` và dùng text score.
 
@@ -295,22 +306,24 @@ Mỗi job có:
 - opaque ID và identity `(actorScope, idempotencyKey, canonicalRequestHash)`;
 - `type`, target source/article và trigger actor;
 - state/attempt/checkpoint/counters, priority và `availableAt`;
-- monotonically increasing `leaseGeneration`;
+- `leaseGeneration` được cấp từ persistent `generationHighWater` không bị TTL/reset;
 - `createdAt`, `startedAt`, `heartbeatAt`, `finishedAt`;
 - retry classification và error đã redact;
 - link tới parent job khi retry.
 
-Lease được lấy bằng atomic conditional update, có owner token, `leaseGeneration` và `expiresAt`. Acquire mới tăng generation. Worker chỉ heartbeat/release/update job/checkpoint/artifact khi owner token + generation còn khớp. Recovery coi job `running` với lease hết hạn là failed/recoverable trước attempt mới; response provider từ stale worker bị bỏ.
+Mỗi bounded logical resource key có persistent lease record gồm `generationHighWater` và nullable active owner. Lease không dùng TTL. Acquire chỉ match record không có active owner, atomically tăng high-water rồi ghi owner token hash, job ID, generation và expiry. Heartbeat match exact owner + generation. Normal completion transactionally ghi terminal/partial job state và clear owner bằng cùng fence; không release trước state transition.
+
+Job/checkpoint/article/artifact commit chạy trong transaction ngắn và phải conditionally touch lease record với exact active owner + generation + unexpired timestamp trước target write. Reacquire tạo write conflict/conditional miss nên stale worker abort. AI artifact commit trong cùng transaction còn match `sources.policyVersion == job.expectedSourcePolicyVersion`; provider output bị bỏ nếu policy đã đổi.
 
 ### 7.3. Due-work coordinator
 
-Cron và admin manual run gọi cùng coordinator service nhưng qua adapter/auth riêng. Mỗi invocation:
+Cron và admin manual run gọi cùng coordinator service nhưng qua adapter/auth riêng. Mỗi invocation có hai bounded phase:
 
-1. lấy tối đa `maxJobs` có `status=queued` và `availableAt<=now`;
-2. sort ổn định theo priority giảm dần, `availableAt`, `createdAt`, `_id`;
-3. dừng trước function deadline và không nhận work mới sau safety margin;
-4. checkpoint/requeue remaining item với `availableAt` mới;
-5. ghi stale-ingestion/backlog signal để admin có thể manual recovery.
+1. **Recovery:** lấy tối đa `maxRecoveries` lease có active owner hết hạn. Với exact owner/generation transaction, chuyển parent `running` thành terminal `failed/lease_expired`, tạo tối đa một linked retry nếu eligible bằng deterministic key `system-recovery:<parentJobId>:<nextAttempt>`, tính `availableAt`, rồi clear ownership nhưng giữ high-water. Acquire không được tự chiếm một expired owner chưa recovery.
+2. **Due work:** lấy tối đa `maxJobs` có `status=queued` và `availableAt<=now`, sort ổn định theo priority giảm dần, `availableAt`, `createdAt`, `_id`, rồi claim/execute trong budget.
+3. Dừng nhận work trước safety margin; item dở dang được checkpoint/`partial` hoặc crash-recovery ở invocation sau.
+4. Cron response trả recovery counts và counters cho đúng ba queue `ingestion|indexing|account-deletion`, cùng `nextAvailableAt`; không serialize heterogeneous job documents.
+5. Backlog/stale signal dùng để admin manual recovery nhưng không thay thế durable state.
 
 ### 7.4. Retry policy
 
@@ -388,9 +401,9 @@ Canonical observable contract nằm ở [contracts/openapi.json](./contracts/ope
 - `401` cho thiếu/hỏng session, `403` cho thiếu role/object permission;
 - `409` cho duplicate/state conflict, `422` cho semantic validation;
 - `GET /api/v1/me` bootstrap session-bound CSRF token; mutation cookie-auth yêu cầu header và không dùng localStorage;
-- admin mutation yêu cầu CSRF và `reason` khi operation nhạy cảm;
+- admin mutation yêu cầu CSRF và action-specific allowlisted `reasonCode` khi operation nhạy cảm; requester/account case text không được copy vào audit;
 - manual job/deletion/retry hỗ trợ `Idempotency-Key`; reuse khác request hash trả `409 idempotency_mismatch`;
-- Vercel Cron dùng protected GET adapter; manual admin trigger vẫn là POST;
+- Vercel Cron dùng protected `GET /api/internal/cron/due-work`; manual admin trigger vẫn là POST;
 - stable error code dùng enum trong OpenAPI; client không branch theo message;
 - rate-limit trả `429` và `Retry-After`.
 
@@ -403,11 +416,13 @@ OpenAPI là authority cho payload/nullability/enum/error. Prose trong file này 
 | Browser → API | schema validation, session, CSRF, Origin/CORS policy, rate limit |
 | Admin route | session + role + transition validation + atomic safe audit |
 | Cron → API | GET + Bearer `CRON_SECRET`, no cookie/CSRF, idempotency |
-| API → source URL | HTTPS allowlist khi có thể, DNS/IP/redirect revalidation, timeout, size/content-type limit |
+| API → source URL | canonical HTTPS không credential; normalize mapped address, validate mọi A/AAAA, reject answer set có bất kỳ private/loopback/link-local/unspecified/multicast/reserved IP, pin connection vào validated public IP, manual redirect validation, timeout/size/content-type limit |
 | Browser → media host | current media policy, HTTPS host allowlist, CSP `img-src`, referrer policy, no arbitrary backend proxy |
 | Source text → AI | policy gate, sanitize/extract, delimit untrusted evidence, no tools |
 | API → provider | scoped input, timeout, redaction, ZDR/logging config khi hỗ trợ |
 | API → MongoDB | least-privilege connection, indexed queries, no raw secret/full text |
+
+Safe-fetch không được validate hostname rồi để HTTP client tự resolve lại. IPv4-mapped IPv6 phải normalize về IPv4 trước CIDR classification; nếu một answer không public thì reject toàn bộ mixed answer set. Adapter chọn một IP từ tập A/AAAA đã validate và pin actual connection tới IP đó trong khi giữ original hostname cho HTTP Host/TLS SNI/certificate verification. Redirect dùng `redirect=manual`, tối đa cấu hình nhỏ; mỗi `Location` được resolve/canonicalize/validate/pin lại. URL rendered ra browser cũng phải qua canonical `HttpsUrl`, cấm username/password; external anchor dùng `rel="noopener noreferrer external"`.
 
 Password dùng password hashing library được duy trì với cost cấu hình. Session token và reset-like token chỉ lưu hash. Log structured luôn có `requestId`; job log thêm `jobId`/`sourceId` nhưng không chứa credential, session ID, source body hoặc private chat.
 
@@ -432,13 +447,13 @@ Các event P0:
 - AI refusal/citation validation failure;
 - admin mutation/content takedown/account-deletion step/session revocation.
 
-Admin dashboard đọc dữ liệu tổng hợp từ collection nghiệp vụ; log platform không phải system of record cho audit. Audit document không có raw before/after snapshot: chỉ actor, action, target, changedFields, allowlisted state transition, reason/result/request/time. Direct mutation + audit commit trong transaction ngắn; workflow dài có pending intent và terminal event.
+Admin dashboard đọc dữ liệu tổng hợp từ collection nghiệp vụ; log platform không phải system of record cho audit. Audit document không có raw before/after snapshot: chỉ actor, action, target, changedFields, allowlisted state transition, action-specific `reasonCode`, result/request/time. Direct mutation + audit commit trong transaction ngắn; workflow dài có pending intent và terminal event. Free-form requester reason/evidence chỉ nằm trong restricted workflow document với retention/access riêng và không được copy sang audit.
 
 ## 13. Testing strategy
 
 | Layer | Mục tiêu | Requirement tiêu biểu |
 |---|---|---|
-| Unit | state transition, scope gate, URL normalization, dedupe, score | SRC-004..007, ING-007..009, SEARCH-004 |
+| Unit | state transition, scope gate, HTTPS canonicalization, dedupe, score | SRC-004..007, ING-007..009, SEARCH-004 |
 | Contract | request/response và invalid conditional fixtures validate cùng OpenAPI | AUTH/USER/ART/ADMIN endpoints |
 | Integration | Mongo indexes/repository predicates, fencing/idempotency, session/deletion | AUTH-002..006, ING-004, ART-002 |
 | Connector | fixture RSS/arXiv/HN → normalized candidate | ING-001, ING-007 |
@@ -447,7 +462,9 @@ Admin dashboard đọc dữ liệu tổng hợp từ collection nghiệp vụ; l
 | Retrieval eval | top-5 relevance, refusal, hidden-content exclusion, citation precision | SEARCH-005..006, QA-002..007 |
 | E2E | login → feed → detail → source; admin source → job → audit | MVP gates |
 
-Test quan trọng nhất là negative invariant: một article hidden/removed/review-needed hoặc source bị blocked tuyệt đối không xuất hiện trong feed, search hay evidence context. Tương tự, media từ host/mode không được duyệt không được serialize và media `not-analyzed` không được dùng để hỗ trợ factual claim. Contract test còn phải reject answered rỗng/không citation, refused có factual paragraph, policy/connector combination mâu thuẫn, technical check passed thiếu evidence và audit có arbitrary snapshot.
+Test quan trọng nhất là negative invariant: một article hidden/removed/review-needed hoặc source bị blocked tuyệt đối không xuất hiện trong feed, search hay evidence context. Tương tự, media từ host/mode không được duyệt không được serialize và media `not-analyzed` không được dùng để hỗ trợ factual claim. Contract test còn phải reject answered rỗng/không citation, refused có factual paragraph, policy/connector combination mâu thuẫn, technical check passed thiếu evidence, rendered URL dùng `javascript:|data:|file:`/credential, attribution patch `true + null` và audit có arbitrary snapshot/free-form reason.
+
+Integration/security suite phải có crash-after-claim → recovery → linked retry → reacquire generation mới → stale commit fail; policy đổi trong lúc fake provider pending → artifact commit fail; DNS resolver đổi public→private giữa validation/connect → request vẫn chỉ dùng pinned public address hoặc bị reject; mixed A/AAAA và IPv4-mapped IPv6 private đều bị chặn.
 
 ## 14. Failure/degradation behavior
 
@@ -459,7 +476,7 @@ Test quan trọng nhất là negative invariant: một article hidden/removed/re
 | Cả hai LLM | Summary/Q&A unavailable rõ ràng | Feed/detail/citation nguồn vẫn dùng được |
 | Embedding | Search fallback text | Vector cũ chỉ dùng nếu version/input còn hợp lệ |
 | Ảnh remote lỗi/bị chặn | Visual fallback, link bài gốc vẫn hoạt động | Không backend-proxy hoặc lưu bản sao để che lỗi |
-| Cron không chạy | Admin overview cảnh báo stale ingestion | Manual trigger dùng cùng service |
+| Cron due-work không chạy | Admin overview cảnh báo stale queues/ingestion | Manual trigger dùng cùng service; durable queued/running state không mất |
 | Audit write lỗi trong direct admin mutation | Mutation thất bại với request ID | Mongo transaction abort; không có state change không audit |
 | Account deletion cleanup lỗi | Admin thấy failed item an toàn | Session vẫn revoked; retry chỉ item chưa hoàn tất, không restore identity |
 
@@ -469,7 +486,10 @@ Test quan trọng nhất là negative invariant: một article hidden/removed/re
 - [ ] Frontend JavaScript client/JSDoc và mock được derive từ OpenAPI.
 - [ ] Repository user-facing dùng visibility predicate chung.
 - [ ] Source scope được kiểm tra ngay trước mọi provider call.
-- [ ] Job/lease/idempotency test vượt qua duplicate, request-hash mismatch và stale lease-generation case.
+- [ ] Job/lease/idempotency test vượt qua duplicate, request-hash mismatch, crash recovery, generation high-water persistence và stale lease-generation case.
+- [ ] AI artifact commit thất bại nếu current source policy version khác job expectation.
+- [ ] Safe-fetch pin actual connection tới validated public IP; DNS rebinding/mixed/mapped/redirect-to-private fixtures đều bị chặn.
+- [ ] Mọi rendered external URL là HTTPS không credential và external anchor có rel an toàn.
 - [ ] Text search hoạt động khi embedding adapter bị tắt.
 - [ ] Citation serializer không nhận URL do model tạo.
 - [ ] Takedown ẩn trước, xóa/index cleanup sau và có audit.

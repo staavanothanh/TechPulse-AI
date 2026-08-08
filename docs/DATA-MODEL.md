@@ -1,7 +1,7 @@
 # TechPulse AI — MongoDB Data Model
 
 > Trạng thái: Plan-of-Record persistence contract
-> Phiên bản: 1.2
+> Phiên bản: 1.3
 > Cập nhật: 08/08/2026  
 > Architecture: [TECHNICAL-DESIGN.md](./TECHNICAL-DESIGN.md)  
 > Product contract: [PRD.md](./PRD.md)
@@ -32,7 +32,7 @@ Các block `type ...` dưới đây là ký pháp tài liệu trung lập để 
 | `savedArticles` | Quan hệ user–article | User library module |
 | `ingestionJobs` | Durable connector run/checkpoint/counters | Job module |
 | `indexingJobs` | Summary/embedding/re-index work | Job/AI module |
-| `jobLeases` | Distributed lock có TTL | Job module |
+| `jobLeases` | Persistent fencing high-water + active distributed ownership | Job module |
 | `chatSessions` | Question/answer/citation history tối thiểu | Q&A module |
 | `takedownRequests` | Quy trình gỡ source/article do publisher/rights request | Governance module |
 | `accountDeletionRequests` | Durable automatic user-data cleanup | Account/governance module |
@@ -74,7 +74,11 @@ type LlmInputScope = "metadata" | "excerpt" | "fulltext-temporary" | "none";
 type AuthorityTier = "primary" | "editorial" | "community-signal";
 type ImageDisplayMode = "none" | "remote-preview";
 type VideoDisplayMode = "none" | "link-only";
+type AdminReasonCode = canonical enum from `contracts/openapi.json#/components/schemas/AdminReasonCode`;
+type AuditReasonCode = canonical enum from `contracts/openapi.json#/components/schemas/AuditReasonCode`;
 ```
+
+Persistence validator dùng cùng allowlist với OpenAPI và domain còn giới hạn code theo action. Không duy trì enum thứ hai có thể drift trong prose/data migration.
 
 ## 4. `users`
 
@@ -216,6 +220,14 @@ type SourceDocument = {
   reviewedAt?: Date;
   reviewedBy?: ObjectId;
   policyVersion: number;
+  reconciliation: {
+    status: "idle" | "pending" | "processing" | "completed" | "failed";
+    requiredPolicyVersion: number;
+    completedPolicyVersion?: number;
+    requestedAt?: Date;
+    cursorArticleId?: ObjectId;
+    error?: SafeError;
+  };
   technicalCheck: {
     status: "not-run" | "passed" | "failed";
     checkedAt?: Date;
@@ -246,7 +258,8 @@ Rules:
 - `allowedHosts` chỉ chứa hostname chính xác đã review; wildcard và URL có credential bị từ chối.
 - Mongo validator và domain validator cùng enforce Source Policy compatibility matrix trong PRD; `licenseStatus`, `llmInputScope` và `storageScope` không được validate độc lập.
 - `blocked` yêu cầu `llmInputScope=none`, mọi storage flag false và media mode none. `metadata-only` yêu cầu metadata true, excerpt false và input chỉ `none|metadata`.
-- `reviewedAt`/`reviewedBy` chỉ do server ghi. Re-review atomically pause source, đặt `review-needed`, tăng policyVersion và enqueue reconciliation.
+- `reviewedAt`/`reviewedBy` chỉ do server ghi. Re-review atomically pause source, đặt `review-needed`, tăng policyVersion và đặt `reconciliation.status=pending`/`requiredPolicyVersion` trong cùng source document.
+- Step 3 sở hữu durable reconciliation marker; Step 9 materialize marker thành bounded `visibility-reconcile` jobs và chỉ đặt `completed` khi đã quét hết article của source ở đúng policy version.
 - Connector discriminant phải khớp config/access/authority; HN luôn `community-signal`, arXiv luôn `api` + `primary`.
 - `health` được expose cho admin ở dạng redact; `rightsHolderNote` chỉ là persistence evidence nội bộ và không thuộc HTTP DTO trong MVP.
 
@@ -256,6 +269,7 @@ Indexes:
 unique { sourceKey: 1 }
 { connectorType: 1, operationalStatus: 1 }
 { licenseStatus: 1, reviewedAt: 1 }
+{ "reconciliation.status": 1, "reconciliation.requiredPolicyVersion": 1 }
 { "health.lastIngestSucceededAt": 1 }
 ```
 
@@ -303,6 +317,7 @@ type ArticleDocument = {
   summaryBasis?: "metadata" | "excerpt" | "fulltext-temporary";
   summaryModel?: string;
   summaryInputHash?: string;
+  summarySourcePolicyVersion?: number;
   summaryGeneratedAt?: Date;
   summaryError?: SafeError;
 
@@ -320,6 +335,7 @@ type ArticleDocument = {
   embeddingDimensions?: number;
   embeddingInputHash?: string;
   embeddingVersion?: number;
+  embeddingSourcePolicyVersion?: number;
   embeddedAt?: Date;
   embeddingError?: SafeError;
 
@@ -343,7 +359,8 @@ Rules:
 - Không có field `rawHtml`, `body`, `fullText`, `translatedFullText`, media binary/base64 hoặc GridFS reference.
 - `published` yêu cầu provenance tối thiểu, source policy snapshot và metadata hợp lệ.
 - `summaryStatus=ready` yêu cầu summary, basis, model, hash và timestamp.
-- `embeddingStatus=ready` yêu cầu vector length khớp dimensions và đủ model/version/hash.
+- `summaryStatus=ready` còn yêu cầu `summarySourcePolicyVersion` khớp policy đã kiểm tra tại commit.
+- `embeddingStatus=ready` yêu cầu vector length khớp dimensions, đủ model/version/hash và có `embeddingSourcePolicyVersion` hợp lệ.
 - Khi merge duplicate, canonical document giữ union provenance; document phụ trỏ `duplicateOfId` và không published.
 - User query phải kết hợp status article với current source policy, không chỉ dựa vào snapshot.
 - `leadMedia` chỉ giữ remote metadata. Ảnh yêu cầu `displayMode=remote-preview`; video yêu cầu `displayMode=link-only`; URL HTTPS và host phải còn nằm trong current source policy.
@@ -444,7 +461,7 @@ unique { actorScope: 1, idempotencyKey: 1 }
 { status: 1, availableAt: 1, priority: -1, createdAt: 1 }
 ```
 
-Retry tạo job mới với idempotency key/attempt mới và `parentJobId`; không mutate failed history thành queued. Reuse cùng actor/key nhưng `requestHash` khác là conflict, không trả generic duplicate.
+Retry tạo job mới với idempotency key/attempt mới và `parentJobId`; không mutate failed history thành queued. Automatic crash recovery derive deterministic identity `system-recovery:<parentJobId>:<nextAttempt>` nên transaction/retry lặp chỉ tạo một child job. Reuse cùng actor/key nhưng `requestHash` khác là conflict, không trả generic duplicate.
 
 ## 11. `indexingJobs`
 
@@ -456,6 +473,7 @@ type IndexingJobDocument = {
   requestHash: string;
   articleId: ObjectId;
   sourceId: ObjectId;
+  expectedSourcePolicyVersion: number;
   task: "summary" | "embedding" | "visibility-reconcile";
   trigger: "ingestion" | "admin" | "policy-change" | "model-change" | "retry";
   requestedBy?: ObjectId;
@@ -485,7 +503,7 @@ unique { actorScope: 1, idempotencyKey: 1 }
 { status: 1, availableAt: 1, priority: -1, createdAt: 1 }
 ```
 
-Một indexing job chỉ sở hữu một task. Summary thành công và embedding thất bại là hai job có state độc lập; retry không phải suy luận partial state bên trong một task array.
+Một indexing job chỉ sở hữu một task. Summary thành công và embedding thất bại là hai job có state độc lập; retry không phải suy luận partial state bên trong một task array. Worker capture `expectedSourcePolicyVersion` khi tạo job và phải đối chiếu current source policy ngay tại commit; mismatch kết thúc job bằng safe `policy_version_mismatch`, discard output và để reconciliation/current policy quyết định work thay thế.
 
 ## 12. `jobLeases`
 
@@ -493,12 +511,19 @@ Một indexing job chỉ sở hữu một task. Summary thành công và embeddi
 type JobLeaseDocument = {
   _id: ObjectId;
   key: string;
-  ownerTokenHash: string;
-  jobId: ObjectId;
-  leaseGeneration: number;
-  acquiredAt: Date;
-  heartbeatAt: Date;
-  expiresAt: Date;
+  generationHighWater: number;
+  activeOwner?: {
+    ownerTokenHash: string;
+    jobId: ObjectId;
+    leaseGeneration: number;
+    acquiredAt: Date;
+    heartbeatAt: Date;
+    expiresAt: Date;
+  };
+  lastFenceValidatedAt?: Date;
+  lastReleasedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
 };
 ```
 
@@ -506,10 +531,12 @@ Indexes:
 
 ```text
 unique { key: 1 }
-TTL { expiresAt: 1 } expireAfterSeconds: 0
+{ "activeOwner.expiresAt": 1 }
 ```
 
-Acquire là atomic insert/update có điều kiện `expiresAt <= now` và tăng `leaseGeneration` monotonically; release/heartbeat yêu cầu owner token + generation khớp. Mọi job transition, checkpoint, counter và artifact commit cũng conditional theo generation hiện hành. TTL chỉ cleanup document, không thay thế fencing/correctness vì TTL monitor không chạy tức thời.
+Lease record không dùng TTL và không bị xóa khi release. Bounded recovery phải clear expired ownership trước; acquire chỉ match record không có `activeOwner`, atomically tăng `generationHighWater` rồi gán generation mới. Heartbeat yêu cầu owner token + generation khớp. Normal completion transactionally ghi terminal/partial job state và unset `activeOwner` bằng cùng exact fence; không clear owner trước job transition.
+
+Mọi job transition, checkpoint, counter, article và artifact commit chạy trong transaction ngắn: conditionally touch lease record với exact owner token hash + generation + `expiresAt > now`, sau đó mới ghi target document. Recovery transaction match exact expired owner/generation, terminalize parent, insert deterministic linked retry nếu eligible và clear owner. AI artifact commit còn match `sources.policyVersion == indexingJobs.expectedSourcePolicyVersion`; lease reacquire hoặc policy change gây conditional miss/write conflict và toàn transaction abort.
 
 ## 13. `chatSessions`
 
@@ -579,7 +606,7 @@ type TakedownRequestDocument = {
   reason: string;
   evidenceNote?: string;
   requestedScope: Array<"metadata" | "media-metadata" | "summary" | "embedding">;
-  decisionReason?: string;
+  decisionReasonCode?: AdminReasonCode;
   reviewedBy?: ObjectId;
   reviewedAt?: Date;
   completedAt?: Date;
@@ -666,7 +693,7 @@ type AdminAuditLogDocument = {
     from?: string;
     to?: string;
   };
-  reason: string;
+  reasonCode: AuditReasonCode;
   ipAddressHmac?: string;
   ipHmacKeyVersion?: number;
   requestId: string;
@@ -679,6 +706,7 @@ Rules:
 
 - Không có update/delete endpoint cho audit log.
 - Không có raw `before/after` snapshot hoặc arbitrary object. `changedFields` và lifecycle state value đều qua allowlist theo action/target trước persistence.
+- `reasonCode` là category allowlist và còn bị giới hạn theo action; free-form admin note không tồn tại trong audit. Requester/account case text ở workflow document không được copy sang audit.
 - Cấm email, requester contact, secret, passwordHash, session/token, connector credential, full text, provider payload và private chat.
 - Failed mutation cũng có record nếu actor đã được xác thực và action đủ xa để audit.
 - Direct admin mutation commit state + audit event trong một Mongo transaction ngắn. Workflow dài ghi `pending` intent trước side effect và append terminal event idempotently.
@@ -695,16 +723,16 @@ Indexes:
 
 1. `savedArticles.userId` và `chatSessions.userId` chỉ thuộc user đang tồn tại; account deletion cleanup/anonymize theo workflow.
 2. Article user-visible cần source hiện tại `active` và license `permitted|metadata-only`.
-3. Source chuyển blocked/review-needed tạo visibility reconciliation cho toàn bộ article liên quan.
+3. Source chuyển blocked/review-needed atomically ghi durable reconciliation marker; query-time visibility fail-closed ngay và Step 9 materialize bounded reconciliation jobs.
 4. Article hidden/removed đặt summary/embedding visibility thành removed hoặc bị loại bởi query ngay lập tức.
 5. Provider call luôn reload current source policy; không chỉ tin rights snapshot cũ.
 6. Vector comparison yêu cầu cùng model, dimensions, version.
-7. Job mutation, checkpoint, artifact commit và lease acquisition dùng atomic conditional operation với current lease generation.
+7. Job/checkpoint/article/artifact commit conditionally touch persistent lease record với exact active owner/generation trong cùng transaction; `generationHighWater` không giảm hoặc bị TTL xóa.
 8. Direct admin mutation và audit event cùng transaction; long workflow có durable audit intent trước side effect và terminal event idempotent.
 9. Takedown `completed` chỉ khi completion flags khớp toàn bộ requested scope; account deletion dùng collection/completion model riêng.
-10. Hard delete không được làm mất audit trail cần thiết; audit chỉ giữ opaque target và non-sensitive reason.
+10. Hard delete không được làm mất audit trail cần thiết; audit chỉ giữ opaque target và allowlisted non-sensitive `reasonCode`.
 11. Rate-limit/quota check dùng shared Mongo bucket; nhiều Vercel instance không có counter riêng.
-12. Media serializer reload current `mediaPolicy`; mode/host không còn hợp lệ trả `leadMedia=null` và enqueue reconciliation.
+12. Media serializer reload current `mediaPolicy`; mode/host không còn hợp lệ trả `leadMedia=null` và giữ/đặt durable reconciliation marker cho current policy version.
 13. Media `not-analyzed` không đi vào summary/embedding/Q&A input và không hỗ trợ citation claim.
 14. `answered` không persist nếu paragraph citation ID không resolve tới visible evidence set; `refused` không persist factual paragraph.
 15. `accountDeletionRequests.status=completed` yêu cầu mọi completion flag true và user tombstone không còn identity credential.
@@ -716,6 +744,7 @@ MVP dùng transaction ngắn đúng chỗ và idempotent workflow cho work dài:
 - single-document state transition dùng atomic `findOneAndUpdate` với expected current state;
 - direct admin state mutation + safe audit event commit trong cùng Mongo transaction; audit lỗi làm mutation abort;
 - workflow dài tạo job/request + audit intent atomically, sau đó cleanup/reconcile và append terminal event;
+- fenced job commit conditionally touch exact unexpired `jobLeases.activeOwner` trong cùng transaction với target write; AI artifact transaction còn match expected/current source policy version;
 - unique index là lớp cuối chống duplicate;
 - mỗi side effect lưu input hash/idempotency key;
 - takedown/blocked source tắt visibility trước khi cleanup;
@@ -735,6 +764,7 @@ Thời lượng cụ thể được chốt lúc triển khai, nhưng hành vi MV
 - media nguồn chỉ giữ metadata/URL khi policy còn hợp lệ; binary không được tải vào persistence và metadata bị unset theo takedown/media-policy change;
 - summary/vector xóa cùng takedown scope;
 - jobs giữ đủ lâu cho demo/debug rồi cleanup bằng script/policy;
+- lease record giữ `generationHighWater` theo logical resource key và không TTL; chỉ garbage-collect bằng migration sau khi chứng minh không còn job/worker tham chiếu;
 - audit và rights evidence không bị xóa từ dashboard.
 
 ## 20. Schema/index migration
@@ -760,12 +790,13 @@ Script phải:
 - [ ] Mongo validator và indexes được tạo bằng migration idempotent.
 - [ ] Duplicate source/external article/save/idempotency key bị unique index chặn.
 - [ ] Query visibility kiểm thử current source state.
-- [ ] TTL hoạt động cho session/lease nhưng code không phụ thuộc TTL chạy tức thời.
+- [ ] TTL chỉ cleanup session/rate-limit data; `jobLeases` không có TTL và high-water còn nguyên sau release/recovery.
 - [ ] Rate-limit dùng atomic shared bucket và trả `Retry-After` đúng window.
 - [ ] Sample database scan không tìm thấy raw HTML/full text/token/API key.
 - [ ] Sample database scan không tìm thấy binary/base64/GridFS media nguồn.
 - [ ] `leadMedia` chỉ tồn tại với HTTPS allowlisted host/current policy; video luôn link-only và `not-analyzed`.
 - [ ] Content takedown và automatic account deletion có completion evidence riêng, đúng retention policy.
 - [ ] Audit không có raw snapshot/arbitrary object/PII và không có update/delete route.
-- [ ] Stale worker với lease generation cũ không cập nhật job/checkpoint/artifact.
+- [ ] Crash-after-claim được recovery thành terminal parent + linked retry đúng một lần; stale worker generation cũ không cập nhật job/checkpoint/article/artifact.
+- [ ] Policy đổi khi provider đang chạy làm artifact commit cũ thất bại và không persist provider output.
 - [ ] Embedding length/hash/model/version được kiểm tra trước khi `ready`.

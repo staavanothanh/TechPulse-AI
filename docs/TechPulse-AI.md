@@ -302,10 +302,10 @@ Ràng buộc:
 - `licenseStatus`, `llmInputScope`, `storageScope` và media policy phải qua compatibility matrix; payload đúng cú pháp nhưng nâng scope vẫn bị từ chối;
 - không tìm thấy quyền rõ ràng thì admin phải chọn `metadata-only`, không tự suy diễn thành `permitted`;
 - `robots.txt` được xem như tín hiệu kỹ thuật, không được ghi nhận như bằng chứng license;
-- URL do admin nhập vẫn phải được validate; backend chỉ cho phép protocol và host phù hợp, đồng thời chặn truy cập địa chỉ nội bộ để giảm nguy cơ SSRF;
+- URL do admin nhập chỉ chấp nhận canonical HTTPS không credential. Backend validate toàn bộ A/AAAA, chặn mixed public/private/link-local/IPv4-mapped private, pin actual connection vào IP đã kiểm tra và tự revalidate/pin từng redirect để chặn DNS rebinding/SSRF;
 - credential của connector, nếu có, được cấu hình bằng biến môi trường hoặc hệ thống secret khi triển khai; admin không nhập hoặc đọc secret trực tiếp trên dashboard;
 - tắt nguồn chỉ dừng lần ingest tiếp theo, không tự động xóa dữ liệu cũ. Việc giữ, ẩn hoặc xóa dữ liệu đã có phải là quyết định riêng và được audit.
-- khi Terms thay đổi, thao tác re-review phải pause source, đặt `review-needed`, tăng policy version và enqueue reconciliation; browser không tự gửi `reviewedAt/reviewedBy`.
+- khi Terms thay đổi, thao tác re-review phải atomically pause source, đặt `review-needed`, tăng policy version và ghi durable pending reconciliation marker trên source; Step 9 mới materialize marker thành bounded jobs; browser không tự gửi `reviewedAt/reviewedBy`.
 
 #### 5.8.4. Quản lý ingestion
 
@@ -381,15 +381,15 @@ targetType
 targetId
 changedFields
 stateTransition
-reason
+reasonCode
 requestId
 result
 createdAt
 ```
 
-- Các thao tác tắt nguồn, hủy job, ẩn/xóa bài, xóa index và khóa user phải yêu cầu xác nhận cùng lý do.
+- Các thao tác tắt nguồn, hủy job, ẩn/xóa bài, xóa index và khóa user phải yêu cầu xác nhận cùng action-specific `reasonCode`; UI hiển thị label dễ hiểu nhưng không nhận free-form audit reason.
 - Audit log chỉ được đọc bởi admin và không được chỉnh sửa qua dashboard.
-- Audit không lưu raw before/after document, requester PII, email, password/session, private chat, provider payload hoặc source content. Direct mutation và audit commit atomically; workflow dài có intent và terminal event.
+- Audit không lưu raw before/after document, free-form requester/account case text, requester PII, email, password/session, private chat, provider payload hoặc source content. Direct mutation và audit commit atomically; workflow dài có intent và terminal event.
 - Dashboard không hiển thị password hash, session ID, API key, LLM key hoặc stack trace chứa secret.
 
 #### 5.8.8. Bề mặt dashboard MVP
@@ -442,8 +442,9 @@ Ràng buộc triển khai Vercel:
 
 - không dùng `node-cron`, queue trong memory hoặc giả định có một process chạy liên tục;
 - không dùng rate-limit/quota counter theo process; login, AI Q&A, admin trigger và source test dùng shared Mongo bucket hoặc platform limiter tương đương;
-- protected cron GET adapter và admin POST trigger gọi chung một coordinator service nhưng dùng trust boundary riêng;
+- protected `GET /api/internal/cron/due-work` recover expired jobs rồi xử lý ingestion/indexing/account-deletion queues và trả aggregate; admin POST trigger gọi chung runner nhưng dùng trust boundary riêng;
 - mỗi job có actor/key/request-hash idempotency, `availableAt`, lease generation, batch size và trạng thái bền vững trong MongoDB;
+- mỗi logical lease key giữ persistent `generationHighWater` và nullable active owner, không dùng TTL; crash-after-claim phải terminal parent + linked retry trước reacquire và stale worker không commit được;
 - ứng dụng tự quản lý retry vì Vercel không tự retry cron thất bại;
 - code phải chịu được việc cùng một cron event được gửi nhiều lần;
 - summary chạy non-streaming; Q&A có thể streaming nhưng phải fallback sang non-streaming khi cần;
@@ -467,7 +468,7 @@ accountDeletionRequests
 adminAuditLogs
 ```
 
-Mỗi embedding phải lưu kèm `embeddingModel`, `embeddingDimensions`, `embeddingInputHash`, `embeddingVersion` và `embeddedAt`. Document và query phải dùng cùng model/version; đổi model bắt buộc tạo lại toàn bộ vector liên quan.
+Mỗi embedding phải lưu kèm `embeddingModel`, `embeddingDimensions`, `embeddingInputHash`, `embeddingVersion`, `embeddingSourcePolicyVersion` và `embeddedAt`. Indexing job capture `expectedSourcePolicyVersion`; document/query phải dùng cùng model/version và artifact commit phải match current source policy. Đổi model bắt buộc tạo lại toàn bộ vector liên quan.
 
 `nvidia/nemotron-3-embed-1b` là ứng viên thay thế nếu benchmark tiếng Việt tốt hơn hoặc BGE-M3 không khả dụng. Đây không phải runtime fallback: chuyển sang model khác phải tăng `embeddingVersion` và re-index toàn bộ corpus.
 
@@ -741,9 +742,9 @@ Trước khi mở công khai cho mọi người hoặc thêm quảng cáo, affil
 | AI suy diễn từ media chưa xử lý | `mediaEvidenceStatus=not-analyzed`; loại media khỏi summary/embedding/Q&A input |
 | Dịch/tóm tắt sai nguồn ngoại ngữ | Giữ title/ngôn ngữ/URL gốc, gắn nhãn AI, đưa lỗi chất lượng vào `review-needed` |
 | User chiếm quyền hoặc gọi trực tiếp admin API | Kiểm tra role tại backend, session an toàn, CSRF protection, rate limiting và test `401/403` |
-| Source URL độc hại truy cập mạng nội bộ | Validate URL/host, chặn private IP và redirect không an toàn trước khi worker fetch |
+| Source URL độc hại truy cập mạng nội bộ | Chỉ HTTPS/no credential; validate toàn bộ DNS answers, reject mixed/mapped/private, pin socket vào IP đã duyệt và tự xử lý redirect |
 | Bài chưa duyệt hoặc đã ẩn vẫn còn trong AI index | Chỉ index trạng thái `published`, đồng bộ article/index và kiểm thử các invariant trạng thái |
-| Admin thao tác nhầm hoặc khó truy vết | Ưu tiên soft delete, yêu cầu xác nhận/lý do và ghi audit log theo kiểu append-only ở tầng ứng dụng |
+| Admin thao tác nhầm hoặc khó truy vết | Ưu tiên soft delete, yêu cầu xác nhận/action-specific reasonCode và ghi audit log append-only không chứa free-form case text |
 
 ## 12. Việc cần xác nhận khi triển khai
 
@@ -768,7 +769,7 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Implementation dùng JavaScript/JSX (`.js`, `.jsx`), không dùng TypeScript/TSX trong MVP; contract được bảo vệ bằng OpenAPI/runtime validation/JSDoc và test.
 - Ingestion chạy một lần mỗi ngày bằng protected Vercel Cron GET adapter và có admin POST trigger; job có actor/key/request-hash idempotency, due-time coordinator, lease-generation fencing và batch giới hạn.
 - Keyword search dùng MongoDB text index và trường bỏ dấu; không phụ thuộc MongoDB Atlas Search/Vector Search trong MVP.
-- Semantic retrieval dùng `baai/bge-m3` qua OpenRouter, lưu vector 1024 chiều trong MongoDB và tính cosine similarity trong Node.js; text search là fallback.
+- Semantic retrieval dùng `baai/bge-m3` qua OpenRouter, lưu vector 1024 chiều trong MongoDB và tính cosine similarity trong Node.js; đây là planned-MVP release gate của grounded Q&A, còn text search là degradation fallback.
 - LLM ưu tiên `deepseek-v4-flash-free` qua OpenCode Zen và có fallback cấu hình sang `deepseek-v4-flash` trả phí thấp.
 - UI, summary và AI Q&A dùng tiếng Việt; giữ nguyên title, ngôn ngữ và URL nguồn; chỉ dịch/tạo summary, không dịch toàn văn.
 - Citation cấp bài được dùng ở trang chi tiết/summary; citation cấp đoạn được dùng trong AI Q&A; citation cấp từng claim là hậu MVP.
@@ -780,9 +781,9 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Admin dùng authentication backend chung, giao diện `/admin` riêng và server-side session; role luôn được kiểm tra ở backend.
 - Admin đầu tiên được tạo bằng seed script; không cho đăng ký hoặc tự nâng role admin qua UI/API.
 - Pipeline tự xuất bản bản ghi hợp lệ; admin chỉ xử lý cấu hình, lỗi và các bản ghi `review-needed`, không duyệt từng bài trong luồng bình thường.
-- Mọi thao tác quản trị thay đổi trạng thái phải có safe structured audit; chỉ bài `published` và artifact `ready` được xuất hiện trong feed, search và AI retrieval.
+- Mọi thao tác quản trị thay đổi trạng thái phải có safe structured audit với action-specific `reasonCode`; chỉ bài `published` và artifact `ready` ở current source policy version được xuất hiện trong feed, search và AI retrieval.
 - Content takedown all-or-nothing tách khỏi automatic account deletion; cả hai có machine-readable completion evidence.
 - Grounded answer dùng hai contract state loại trừ nhau: answered bắt buộc paragraph/citation, refused bắt buộc reason và không có factual paragraph.
 - Xem quản trị nguồn và responsible AI là năng lực cốt lõi của sản phẩm.
 - Không xây sản phẩm dựa trên việc “lách luật” hoặc giả định rằng phi thương mại đồng nghĩa với được phép sử dụng mọi nội dung.
-- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh baseline JavaScript/JSX cùng media policy này.
+- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh baseline JavaScript/JSX, media policy và ADR-0010 persistent fencing/recovery.

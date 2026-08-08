@@ -52,7 +52,8 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - gọi đúng một protected operation hằng ngày;
 - dùng HTTP GET theo Vercel Cron; không dùng cookie/CSRF hoặc admin POST trust boundary;
 - gửi bearer cron secret;
-- nhận job result có thể là queued/running/succeeded/partial thay vì giả định request luôn hoàn tất toàn bộ backlog.
+- gọi `/api/internal/cron/due-work`, chạy bounded expired-work recovery trước due selection;
+- nhận aggregate recovery và counters cho `ingestion|indexing|account-deletion`; job detail đọc qua admin endpoint tương ứng.
 
 ## 4. Contract conventions
 
@@ -68,9 +69,30 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - State-changing cookie-auth request gửi `X-CSRF-Token`.
 - `GET /api/v1/me` trả `{ user, csrfToken }` cho session còn hiệu lực; CSRF token không persist ở `localStorage`.
 - Manual ingestion/deletion/retry gửi `Idempotency-Key`; identity là actor scope + key + canonical request hash. Cùng intent trả cùng logical result, khác intent trả `409 idempotency_mismatch`.
-- Sensitive mutation có `reason`; UI không tự tạo reason rỗng.
+- Sensitive admin mutation có action-specific allowlisted `reasonCode`; không nhận free-form admin reason và không copy requester/account case text vào audit.
+- Mọi external URL được serialize/render dùng canonical `HttpsUrl`: HTTPS, không username/password credential; runtime parse URL thay vì chỉ tin `format: uri`/regex.
+- Indexing job expose server-captured `expectedSourcePolicyVersion`; artifact commit phải match current policy version hoặc discard output.
 - `answered` và `refused` là hai schema loại trừ nhau. Runtime còn phải kiểm tra citation ID resolve tới retrieved article đang visible.
 - Audit response chỉ có changed field names và safe state transition; raw before/after document không thuộc HTTP contract.
+
+### 4.1. Admin reason-code matrix
+
+| Operation intent | Allowed `reasonCode` |
+|---|---|
+| Source config/status update | `source_configuration_changed`, `source_status_changed` |
+| Source technical check | `source_technical_check_requested` |
+| Source policy review/re-review | `source_policy_reviewed`, `source_policy_re_review_requested` theo operation |
+| Job retry/cancel | `job_retry_requested`, `job_cancel_requested` theo operation |
+| Summary/index request | `artifact_regeneration_requested` |
+| Article status/topics/media patch | Code tương ứng `article_status_changed`, `article_topics_changed`, `article_media_visibility_changed`; payload nhiều field phải match ít nhất một changed category |
+| Duplicate merge | `duplicate_merge_confirmed` |
+| Takedown decision | `takedown_approved`, `takedown_rejected`, `takedown_completed` khớp target status |
+| Account-deletion retry | `account_deletion_retry_requested` |
+| User suspend/restore | `user_suspended`, `user_restored` khớp target status |
+
+Code ngoài subset của operation trả `422`. Free-form `reason` chỉ còn ở user account-deletion request và restricted takedown requester case; hai field này không được copy sang audit.
+
+Audit event dùng `AuditReasonCode`: union của admin code ở trên và system-derived code như `source_created`, `ingestion_trigger_requested`, `lease_expired_recovered`, `policy_version_mismatch` hoặc workflow terminal state. System-derived code không được chấp nhận từ browser payload.
 
 ## 5. Endpoint inventory
 
@@ -83,7 +105,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 | Jobs | create/list/read/retry/cancel ingestion và indexing jobs; account-deletion progress/retry |
 | Admin articles | list/update, summary job, indexing job, duplicate merge |
 | Governance | content takedown list/create/update; account-deletion list/detail/retry; user list/update; audit list |
-| Internal | protected GET daily cron adapter gọi bounded coordinator |
+| Internal | protected `GET /api/internal/cron/due-work` gọi bounded recovery + cross-queue coordinator |
 
 Exact method/path/status nằm trong OpenAPI, không lặp lại ở đây để tránh drift.
 
@@ -156,6 +178,10 @@ Generator chạy không network/secret và generated diff phải được review
 - [ ] Empty collection và refusal answer có fixture hợp lệ.
 - [ ] Invalid answer fixtures bị reject: answered rỗng/không citation, refused có paragraph hoặc thiếu refusal reason.
 - [ ] Source policy/connector fixture mâu thuẫn bị reject; technical check `passed` thiếu evidence bị reject.
+- [ ] Source patch có `attributionRequired=true` và `attributionText=null|missing` bị reject; merged-state domain validation cũng chạy.
+- [ ] Rendered/fetched URL fixture dùng `javascript:`, `data:`, `file:` hoặc HTTPS credential bị reject.
+- [ ] Cron response có recovery summary và đúng ba per-queue summaries; không trả `IngestionJob[]` như generic work result.
+- [ ] Indexing job có `expectedSourcePolicyVersion`; stale-policy artifact response/commit path bị reject.
 - [ ] Content takedown không nhận `user-data/account-data`; account deletion chỉ completed khi mọi cleanup flag true.
 - [ ] Frontend client/JSDoc/mock được derive, không copy tay.
 - [ ] `leadMedia` nullable, `leadMediaStatus` và `mediaPolicy` được kiểm thử với remote-preview, link-only, hide/restore, host bị chặn và fallback.
@@ -163,3 +189,4 @@ Generator chạy không network/secret và generated diff phải được review
 - [ ] Express response thực được runtime-validate trong test.
 - [ ] Không response nào leak password hash, session token, secret, full text hoặc private chat cho admin.
 - [ ] Audit response không có arbitrary object; takedown list không trả requester contact/reason/evidence.
+- [ ] Audit chỉ có `reasonCode` từ allowlist; không schema nào cho admin mutation có free-form `reason`.

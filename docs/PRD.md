@@ -1,7 +1,7 @@
 # TechPulse AI — Product Requirements & Capability Contract
 
 > Trạng thái: Plan-of-Record repair locked for implementation
-> Phiên bản: 1.2
+> Phiên bản: 1.3
 > Cập nhật: 08/08/2026  
 > Product rationale: [PRODUCT-BRIEF.md](./PRODUCT-BRIEF.md)  
 > Nguồn quyết định chi tiết: [TechPulse-AI.md](./TechPulse-AI.md)
@@ -125,7 +125,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ID | Requirement | Acceptance summary |
 |---|---|---|
 | SRC-001 | Admin tạo/sửa source definition | Validate connector-specific config |
-| SRC-002 | System chạy technical check | Kiểm tra protocol, URL, redirect, host, content type, parse |
+| SRC-002 | System chạy technical check | HTTPS/no-credential URL; validate mọi A/AAAA, pin actual connection và kiểm tra từng redirect/content type/parse |
 | SRC-003 | Admin ghi nhận publisher, Terms/License và evidence | Có reviewedBy/reviewedAt |
 | SRC-004 | Source có rights status độc lập operational status | Không trộn `paused` với `metadata-only` |
 | SRC-005 | Không rõ quyền thì mặc định `metadata-only` | Không có implicit `permitted` |
@@ -134,14 +134,14 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | SRC-008 | Admin pause/archive source | Không tự xóa historical article |
 | SRC-009 | Source có `mediaPolicy` độc lập với quyền dùng text | Ảnh/video chỉ hiển thị theo mode và host đã duyệt |
 | SRC-010 | Policy fields tuân theo compatibility matrix | Contract-valid payload không thể nâng quyền xử lý |
-| SRC-011 | Terms change đưa source về re-review fail-closed | Source tự pause, tăng policyVersion và enqueue reconciliation |
+| SRC-011 | Terms change đưa source về re-review fail-closed | Source tự pause, tăng policyVersion và atomically persist pending reconciliation marker |
 
 ### 4.4. Ingestion và normalization
 
 | ID | Requirement | Acceptance summary |
 |---|---|---|
 | ING-001 | Ba connector hoạt động qua common interface | Output normalize về common article schema |
-| ING-002 | Cron tạo bounded ingestion run mỗi ngày | Có job record và kết quả |
+| ING-002 | Protected cron chạy bounded cross-queue due work | Materialize daily ingestion intent idempotently; trả recovery + per-queue aggregate, không trả heterogeneous jobs |
 | ING-003 | Admin có thể trigger cùng job service | Không bypass policy/lock |
 | ING-004 | Job có idempotency key và distributed lock | Duplicate invocation không duplicate article |
 | ING-005 | Job ghi new/duplicate/skipped/error counts | Admin xem được lỗi đã redact |
@@ -149,6 +149,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ING-007 | Canonicalize URL/time/language/topic | Output nhất quán giữa connector |
 | ING-008 | Deduplicate bằng URL, external ID, normalized title/hash | Ambiguous merge vào review queue |
 | ING-009 | Raw HTML không đi thẳng vào AI | Main content được extract/sanitize/chunk |
+| ING-010 | Lease fencing high-water tồn tại qua expire/release | Lease không TTL; crash-after-claim recovery parent trước linked retry và stale worker không commit |
 
 ### 4.5. Article lifecycle, feed và detail
 
@@ -161,6 +162,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ART-005 | Admin hide/restore article theo invariant | Index được đồng bộ |
 | ART-006 | Admin merge duplicate nhưng giữ mọi source link | Provenance không mất |
 | ART-007 | Article có thể có `leadMedia` đã qua policy | Ảnh được preview hoặc fallback; video chỉ là link và ghi `not-analyzed` |
+| ART-008 | Mọi external link render cho user/admin là canonical HTTPS không credential | `javascript:`, `data:`, `file:` và credential-bearing URL bị reject trước serialization |
 
 ### 4.6. Keyword và semantic search
 
@@ -184,6 +186,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AI-005 | Summary lỗi có retry/review flow | Không publish summary hỏng như thành công |
 | AI-006 | UI gắn nhãn AI dịch/tổng hợp | Người dùng biết giới hạn |
 | AI-007 | AI không dùng chi tiết chỉ tồn tại trong media chưa xử lý | Không claim từ ảnh/video có `mediaEvidenceStatus=not-analyzed` |
+| AI-008 | AI artifact commit match current Source Policy version | Policy đổi trong lúc provider chạy làm output cũ bị discard, không persist |
 
 ### 4.8. AI Q&A và citation
 
@@ -207,9 +210,9 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ADMIN-003 | Admin regenerate summary/re-index article | Respect source policy và version |
 | ADMIN-004 | Admin xử lý takedown end-to-end | Metadata/media reference/summary/vector bị loại đúng scope |
 | ADMIN-005 | Admin suspend/restore user | Session revocation hoạt động |
-| ADMIN-006 | Mọi state-changing admin action có safe structured audit | Actor/target/changedFields/safe transition/reason/result/time; không snapshot document |
+| ADMIN-006 | Mọi state-changing admin action có safe structured audit | Actor/target/changedFields/safe transition/action-specific reasonCode/result/time; không snapshot hoặc free-form case text |
 | ADMIN-007 | Dashboard không hiển thị secret/private chat/password hash | Redaction được kiểm thử |
-| ADMIN-008 | Admin review/đổi media policy và ẩn media độc lập | Thay đổi có reason, policyVersion và audit |
+| ADMIN-008 | Admin review/đổi media policy và ẩn media độc lập | Thay đổi có allowlisted reasonCode, policyVersion và audit |
 | ADMIN-009 | Admin xem safe article provenance/artifact diagnostics | Không expose excerpt/full text/vector/provider payload/private data |
 
 ## 5. States và transitions
@@ -263,9 +266,10 @@ failed | partial → queued (retry mới)
 ```
 
 - Retry tạo attempt mới, giữ link tới original job.
-- `running` quá timeout được recovery process đánh dấu `failed` trước khi retry.
+- `running` quá timeout được bounded recovery transaction đánh dấu `failed/lease_expired` trước khi tạo tối đa một linked retry.
 - `queued` có `availableAt`; coordinator lấy due work theo priority, `availableAt`, `createdAt` và request budget ổn định.
-- Mỗi lease acquisition tăng `leaseGeneration`; mọi checkpoint, transition và artifact commit phải match generation hiện hành.
+- Mỗi logical lease key giữ persistent `generationHighWater` không TTL; acquisition sau recovery tăng generation, release chỉ clear active owner.
+- Mọi checkpoint, transition, article/artifact commit conditionally touch exact active owner + generation + unexpired lease trong cùng transaction.
 
 ### 5.4. Summary/embedding
 
@@ -342,7 +346,8 @@ approved → completed
 - CSRF protection phù hợp session cookie; CORS/rewrite policy tối thiểu.
 - Rate limit login, AI Q&A, admin triggers và source tests.
 - Rate-limit/quota state dùng shared Mongo bucket hoặc platform-native shared limiter; không dùng per-process counter trên Vercel.
-- SSRF defense cho source URL: protocol allowlist, DNS/IP validation, redirect validation, timeout và response-size limit.
+- SSRF defense cho source URL: chỉ HTTPS không credential; normalize IPv4-mapped IPv6, validate toàn bộ A/AAAA và reject cả answer set nếu có private/loopback/link-local/unspecified/multicast/reserved IP; actual connection pin vào validated public IP trong khi giữ hostname/SNI; mỗi redirect tự resolve/validate/pin lại; có timeout và response-size limit.
+- External source/citation/media/admin link dùng canonical `HttpsUrl`; browser anchor dùng `rel="noopener noreferrer external"`.
 - Media URL phải là HTTPS, thuộc host allowlist của source; client áp dụng CSP/referrer policy, backend không làm arbitrary media proxy.
 - CRON_SECRET/service secret tách khỏi admin/user credential.
 - Provider API key chỉ ở Vercel Environment Variables.
@@ -365,6 +370,8 @@ approved → completed
 | NFR-009 | Testability | Connector, policy gate, retrieval và provider adapter có dependency injection |
 | NFR-010 | Legal safety | Từng source có evidence và review date trước khi active |
 | NFR-011 | Media safety | Preview có attribution/alt/fallback; host không được duyệt hoặc media lỗi không làm hỏng core flow |
+| NFR-012 | Durable fencing | Lease generation high-water không bị TTL/reset; stale worker không commit sau recovery/reacquire |
+| NFR-013 | Audit minimization | Audit chỉ lưu allowlisted reasonCode; requester/account case text có access/retention riêng và không được copy |
 
 Canonical media attribution do server resolve theo thứ tự media credit → source `attributionText` → source name và luôn trả non-empty `leadMedia.attribution`; frontend không tự dựng attribution từ field nullable.
 
@@ -407,13 +414,15 @@ Evaluation protocol được version-control cùng fixture:
 ### Operations/security gate
 
 - User không gọi được admin endpoint.
-- Cron/manual job dùng lock và idempotency.
-- Vercel Cron gọi protected GET adapter; admin manual POST dùng cùng coordinator nhưng trust boundary riêng.
-- Due work không nằm queued vô hạn; stale worker không commit được sau khi mất lease generation.
+- Cron/manual job dùng persistent fencing và actor-scoped idempotency.
+- Vercel Cron gọi protected `GET /api/internal/cron/due-work`, recover expired work rồi trả aggregate cho ingestion/indexing/account-deletion; admin manual POST dùng cùng runner nhưng trust boundary riêng.
+- Crash-after-claim tạo terminal parent + linked retry đúng một lần; lease generation mới lớn hơn generation cũ và stale worker không commit.
+- Policy đổi trong lúc fake provider đang chạy làm artifact commit cũ thất bại.
+- DNS rebinding/mixed A/AAAA/mapped-private/redirect-to-private và rendered `javascript:|data:|file:`/credential URL đều bị chặn.
 - Secret/full text không xuất hiện trong logs/dashboard/database.
 - Database scan không có binary/base64 ảnh/video; host media ngoài policy không được serialize ra user API.
 - Takedown xóa/ẩn đúng metadata, media reference, summary và vector.
-- Mọi admin mutation có audit record.
+- Mọi admin mutation có audit record với action-specific `reasonCode`, không có free-form admin reason.
 - Account deletion test chứng minh session/saved/chat/quota cleanup và identity anonymization trước `completed`.
 
 ### Deployment gate

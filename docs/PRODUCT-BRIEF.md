@@ -7,7 +7,7 @@
 
 ## 1. Kết luận product-lens
 
-**Khuyến nghị: GO WITH CONDITIONS — sửa contract fence trước Step 1, sau đó triển khai phạm vi MVP đã khóa.**
+**Khuyến nghị: GO — Plan-of-Record repair v1.4 đã khóa persistent fencing, recovery, policy-version commit và các security contract còn thiếu; bắt đầu Step 1 trong strict scaffold scope.**
 
 TechPulse AI có một vấn đề đủ rõ để làm đồ án: người đọc công nghệ phải theo dõi nhiều nguồn, khó loại tin trùng và khó kiểm chứng câu trả lời AI. Điểm chứng minh giá trị không phải số lượng nguồn mà là một luồng hoàn chỉnh từ nguồn đã duyệt đến summary tiếng Việt và AI Q&A có citation.
 
@@ -151,15 +151,15 @@ Các session với 3–5 người là **learning/demo evidence ở Step 12**, kh
 - authentication, admin operations, safe audit, hide-first takedown và automatic account-deletion completion;
 - Vercel deployment với demo dataset.
 
-### P1 — nằm trong target MVP nhưng chỉ làm sau P0 ổn định
+### MVP-P1 — bắt buộc trong planned MVP nhưng chỉ làm sau P0 ổn định
 
-- embedding/cosine retrieval nếu text retrieval đã hoạt động;
+- embedding/cosine retrieval; text retrieval phải hoạt động trước và luôn là degradation fallback;
 - saved articles và topic preference;
 - streaming Q&A;
 - full admin takedown UI sau khi hide-first backend workflow đã an toàn;
 - product-validation session và UX polish phục vụ demo.
 
-P1 là thứ tự ưu tiên, không phải quyền âm thầm bỏ acceptance gate. Plan of Record hiện nhắm P0 + các P1 trên; nếu tiến độ thực tế trượt thì project owner tạo PRD mutation rõ ràng. Không pre-cut chỉ vì estimate bốn tuần khi implementation có coding-agent support.
+`MVP-P1` là lane triển khai sau P0, không phải optional backlog. Semantic retrieval vẫn là predecessor/release gate của grounded Q&A; text retrieval chỉ giữ hệ thống hoạt động khi embedding lỗi. Nếu tiến độ thực tế trượt thì project owner tạo PRD mutation rõ ràng, không âm thầm bỏ acceptance gate.
 
 ### P2 — hậu MVP
 
@@ -181,7 +181,7 @@ P1 là thứ tự ưu tiên, không phải quyền âm thầm bỏ acceptance ga
 | URL ảnh nguồn hỏng hoặc bị chặn hotlink | Lazy-load, error fallback do TechPulse sở hữu; không proxy tùy ý qua backend |
 | Nguồn nhiều nhưng chất lượng thấp | Authority tier và allowlist; HN chỉ là community signal |
 | License không rõ | Mặc định `metadata-only`; admin phê duyệt scope |
-| Scope/verification trượt dù có coding agent | Giữ safety/contract/thesis; chỉ cắt streaming, polish hoặc P1 bằng PRD mutation có ghi nhận |
+| Scope/verification trượt dù có coding agent | Giữ safety/contract/thesis; streaming/polish hoặc bất kỳ MVP-P1 nào chỉ được cắt bằng PRD mutation có ghi nhận; semantic retrieval/citation gate không tự biến thành optional |
 | Free AI provider không ổn định | Provider abstraction, fallback trả phí thấp và text-search fallback |
 
 ## 6. Handoff

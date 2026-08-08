@@ -1,6 +1,6 @@
 # TechPulse AI — Documentation Index
 
-> Trạng thái: Plan-of-Record v1.3 đã repair và sẵn sàng cho Step 1
+> Trạng thái: Plan-of-Record v1.4 đã repair và sẵn sàng cho Step 1
 > Cập nhật: 08/08/2026  
 > Phạm vi: MVP solo-owner + coding-agent, React (JavaScript/JSX) + Node.js/Express (JavaScript) + MongoDB + AI; bốn tuần là planning horizon
 
@@ -50,7 +50,7 @@ docs/
 ├── adr/
 │   ├── README.md
 │   ├── template.md
-│   └── 0001..0009
+│   └── 0001..0010
 └── plans/
     └── techpulse-ai-mvp.md
 ```
@@ -64,14 +64,16 @@ docs/
 - Không lưu full text; chỉ xử lý tạm khi source policy cho phép.
 - Ảnh nguồn chỉ được remote-preview khi Source Registry cho phép; video quan trọng là link-only và phải ghi rõ AI chưa phân tích video. Không tải về/rehost binary ảnh hoặc video trong MongoDB.
 - Vercel Hobby host React/Express/cron; MongoDB Atlas giữ mọi state bền vững.
-- Text search là baseline; BGE-M3/cosine là semantic path có fallback.
+- Text search là degradation baseline; BGE-M3/cosine là planned-MVP predecessor/release gate của grounded Q&A.
 - Admin/user dùng server-side session; system worker không phải login account.
 - `/me` bootstrap lại CSRF token sau reload; token chỉ ở memory, không ở localStorage.
 - Source text/media rights là executable policy, không phải ghi chú tùy chọn.
-- Vercel Cron dùng protected GET adapter; admin manual POST gọi cùng due-work coordinator qua trust boundary riêng.
-- Job có `availableAt`, actor-scoped idempotency/request hash và lease-generation fencing; indexing job observable/retry/cancel được.
+- Vercel Cron dùng protected `GET /api/internal/cron/due-work`, recover expired work rồi trả aggregate cho ingestion/indexing/account-deletion; admin manual POST gọi cùng runner qua trust boundary riêng.
+- Job có `availableAt`, actor-scoped idempotency/request hash và persistent lease high-water không TTL; crash recovery tạo linked retry trước reacquire.
+- Source re-review atomically ghi reconciliation marker; AI job capture expected policy version và stale-policy output không được commit.
+- Mọi rendered/fetched external URL là canonical HTTPS không credential; safe-fetch pin actual connection vào validated public IP để chặn DNS rebinding.
 - Content takedown all-or-nothing tách khỏi automatic account deletion; cả hai có completion evidence riêng.
-- Audit chỉ lưu safe changed fields/state transition; không snapshot arbitrary document.
+- Audit chỉ lưu safe changed fields/state transition/action-specific `reasonCode`; không snapshot arbitrary document hoặc free-form case text.
 - Blueprint có 12 step, direct mode và milestone cutline Day 5/10/15; coding-agent support không hạ verification gate.
 
 ## 5. Change routing
@@ -89,7 +91,7 @@ docs/
 
 Điểm bắt đầu duy nhất là [Step 1 — Scaffold application and contract toolchain](./plans/techpulse-ai-mvp.md#step-1). Không paste toàn bộ batch orchestration cùng lúc; chỉ chạy step tiếp theo khi dependency có verification evidence và handoff.
 
-Plan-of-Record repair trước Step 1 đã hoàn tất ở PRD/OpenAPI/Data Model/Technical Design/blueprint: cron transport, answer conditional, Source Policy matrix, CSRF bootstrap, due work/fencing, indexing controls, account deletion/takedown và audit no-leak đều có authority/owner/test gate.
+Plan-of-Record repair v1.4 trước Step 1 đã hoàn tất ở ADR/PRD/OpenAPI/Data Model/Technical Design/blueprint: queue-agnostic cron response, persistent fencing/recovery, DNS-pinned safe fetch, HTTPS external links, Source Policy commit fence/reconciliation ownership, action-specific audit reason code, answer conditional, account deletion/takedown và contract completeness đều có authority/owner/test gate.
 
 Các item execution chưa chặn Step 1:
 

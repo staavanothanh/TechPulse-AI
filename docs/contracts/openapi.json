@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "TechPulse AI API",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Canonical HTTP contract for the Vietnamese-first TechPulse AI MVP. External content is untrusted data; no response contains source full text or media binary."
   },
   "servers": [
@@ -1235,7 +1235,7 @@
         },
         "responses": {
           "202": {
-            "description": "Source paused, policy moved to review-needed, policyVersion increased and reconciliation enqueued",
+            "description": "Source paused, policy moved to review-needed, policyVersion increased and a durable pending reconciliation marker persisted",
             "content": {
               "application/json": {
                 "schema": {
@@ -2614,13 +2614,13 @@
         }
       }
     },
-    "/api/internal/cron/daily-ingestion": {
+    "/api/internal/cron/due-work": {
       "get": {
         "tags": [
           "Internal"
         ],
-        "operationId": "runDailyIngestion",
-        "summary": "Run the bounded daily ingestion coordinator",
+        "operationId": "runDueWork",
+        "summary": "Recover expired work and run the bounded cross-queue coordinator",
         "security": [
           {
             "cronBearer": []
@@ -2628,7 +2628,7 @@
         ],
         "responses": {
           "202": {
-            "description": "Daily run accepted and bounded work attempted",
+            "description": "Due-work run accepted; bounded recovery and queue work were attempted",
             "content": {
               "application/json": {
                 "schema": {
@@ -2951,6 +2951,64 @@
       }
     },
     "schemas": {
+      "HttpsUrl": {
+        "type": "string",
+        "format": "uri",
+        "maxLength": 2048,
+        "pattern": "^https://(?![^/?#]*@)[^\\s]+$",
+        "description": "Canonical HTTPS URL without username/password credentials. Runtime validation must parse with URL semantics; pattern matching alone is not sufficient."
+      },
+      "NullableHttpsUrl": {
+        "anyOf": [
+          { "$ref": "#/components/schemas/HttpsUrl" },
+          { "type": "null" }
+        ]
+      },
+      "AdminReasonCode": {
+        "type": "string",
+        "enum": [
+          "source_configuration_changed",
+          "source_technical_check_requested",
+          "source_policy_reviewed",
+          "source_policy_re_review_requested",
+          "source_status_changed",
+          "job_retry_requested",
+          "job_cancel_requested",
+          "artifact_regeneration_requested",
+          "article_status_changed",
+          "article_topics_changed",
+          "article_media_visibility_changed",
+          "duplicate_merge_confirmed",
+          "takedown_approved",
+          "takedown_rejected",
+          "takedown_completed",
+          "account_deletion_retry_requested",
+          "user_suspended",
+          "user_restored"
+        ],
+        "description": "Non-sensitive allowlisted category. Each operation accepts only its documented/domain-allowed subset; free-form case text is never copied into audit logs."
+      },
+      "AuditReasonCode": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/AdminReasonCode" },
+          {
+            "type": "string",
+            "enum": [
+              "source_created",
+              "ingestion_trigger_requested",
+              "takedown_received",
+              "account_deletion_requested",
+              "reconciliation_requested",
+              "reconciliation_completed",
+              "lease_expired_recovered",
+              "policy_version_mismatch",
+              "workflow_completed",
+              "workflow_failed"
+            ]
+          }
+        ],
+        "description": "Safe audit category. System-derived values are never accepted from browser admin-reason inputs."
+      },
       "OperationalStatus": {
         "type": "string",
         "enum": [
@@ -3445,8 +3503,7 @@
             "type": "string"
           },
           "originalUrl": {
-            "type": "string",
-            "format": "uri"
+            "$ref": "#/components/schemas/HttpsUrl"
           },
           "author": {
             "type": [
@@ -3487,14 +3544,10 @@
             "enum": ["remote-preview", "link-only"]
           },
           "url": {
-            "type": "string",
-            "format": "uri",
-            "pattern": "^https://"
+            "$ref": "#/components/schemas/HttpsUrl"
           },
           "sourcePageUrl": {
-            "type": "string",
-            "format": "uri",
-            "pattern": "^https://"
+            "$ref": "#/components/schemas/HttpsUrl"
           },
           "altText": {
             "type": ["string", "null"]
@@ -3701,7 +3754,7 @@
             ]
           },
           "isSaved": { "type": "boolean" },
-          "originalUrl": { "type": "string", "format": "uri" },
+          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
           "author": { "type": ["string", "null"] },
           "retrievedAt": { "type": "string", "format": "date-time" },
           "citation": { "$ref": "#/components/schemas/SourceCitation" },
@@ -3982,7 +4035,7 @@
           "sourceId": { "type": "string" },
           "sourceName": { "type": "string" },
           "titleOriginal": { "type": "string" },
-          "originalUrl": { "type": "string", "format": "uri" },
+          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
           "author": { "type": ["string", "null"] },
           "publishedAt": { "type": "string", "format": "date-time" },
           "sourceLanguage": { "type": "string" }
@@ -4225,8 +4278,7 @@
             "const": "rss"
           },
           "feedUrl": {
-            "type": "string",
-            "format": "uri"
+            "$ref": "#/components/schemas/HttpsUrl"
           },
           "batchSize": {
             "type": "integer",
@@ -4394,6 +4446,27 @@
         ],
         "description": "Server-owned technical evidence. passed requires timestamp, host, content type, a positive sample count and no error."
       },
+      "SourceReconciliation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "requiredPolicyVersion", "completedPolicyVersion", "requestedAt", "error"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["idle", "pending", "processing", "completed", "failed"]
+          },
+          "requiredPolicyVersion": { "type": "integer", "minimum": 1 },
+          "completedPolicyVersion": { "type": ["integer", "null"], "minimum": 1 },
+          "requestedAt": { "type": ["string", "null"], "format": "date-time" },
+          "error": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/SafeError" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "description": "Durable source-owned marker. Step 3 persists pending state atomically with policy change; Step 9 materializes and completes bounded reconciliation work."
+      },
       "Source": {
         "type": "object",
         "additionalProperties": false,
@@ -4414,6 +4487,7 @@
           "mediaPolicy",
           "attributionRequired",
           "policyVersion",
+          "reconciliation",
           "technicalCheck",
           "health",
           "createdAt",
@@ -4477,18 +4551,10 @@
             ]
           },
           "termsUrl": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uri"
+            "$ref": "#/components/schemas/NullableHttpsUrl"
           },
           "licenseUrl": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uri"
+            "$ref": "#/components/schemas/NullableHttpsUrl"
           },
           "evidenceNote": {
             "type": [
@@ -4512,6 +4578,9 @@
           "policyVersion": {
             "type": "integer",
             "minimum": 1
+          },
+          "reconciliation": {
+            "$ref": "#/components/schemas/SourceReconciliation"
           },
           "technicalCheck": {
             "$ref": "#/components/schemas/TechnicalCheck"
@@ -4650,7 +4719,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "reason"
+          "reasonCode"
         ],
         "properties": {
           "name": {
@@ -4690,10 +4759,8 @@
             ],
             "maxLength": 500
           },
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         },
         "anyOf": [
@@ -4707,19 +4774,31 @@
           { "required": ["attributionRequired"] },
           { "required": ["attributionText"] }
         ],
-        "description": "At least one mutable field besides reason is required. Activating a source is rejected unless technical and policy preconditions pass."
+        "allOf": [
+          {
+            "if": {
+              "properties": { "attributionRequired": { "const": true } },
+              "required": ["attributionRequired"]
+            },
+            "then": {
+              "required": ["attributionText"],
+              "properties": {
+                "attributionText": { "type": "string", "minLength": 1, "maxLength": 500 }
+              }
+            }
+          }
+        ],
+        "description": "At least one mutable field besides reasonCode is required. The server must merge this patch with current source state and validate the complete Source Policy; activating a source is rejected unless technical and policy preconditions pass."
       },
       "TechnicalCheckRequest": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "reason"
+          "reasonCode"
         ],
         "properties": {
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         }
       },
@@ -4761,7 +4840,7 @@
           "mediaPolicy",
           "attributionRequired",
           "evidenceNote",
-          "reason"
+          "reasonCode"
         ],
         "properties": {
           "licenseStatus": {
@@ -4792,28 +4871,18 @@
             "maxLength": 500
           },
           "termsUrl": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uri"
+            "$ref": "#/components/schemas/NullableHttpsUrl"
           },
           "licenseUrl": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uri"
+            "$ref": "#/components/schemas/NullableHttpsUrl"
           },
           "evidenceNote": {
             "type": "string",
             "minLength": 3,
             "maxLength": 4000
           },
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         },
         "allOf": [
@@ -5112,15 +5181,14 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "reason"
+          "reasonCode"
         ],
         "properties": {
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
-        }
+        },
+        "description": "Administrative reason category only. Operation-specific domain validation rejects unrelated codes."
       },
       "IngestionJobResponse": {
         "type": "object",
@@ -5161,6 +5229,7 @@
           "idempotencyKey",
           "articleId",
           "sourceId",
+          "expectedSourcePolicyVersion",
           "task",
           "trigger",
           "status",
@@ -5184,6 +5253,11 @@
           },
           "sourceId": {
             "type": "string"
+          },
+          "expectedSourcePolicyVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Server-captured Source Policy version that must still match when an AI artifact or reconciliation result commits."
           },
           "task": {
             "type": "string",
@@ -5259,7 +5333,7 @@
         "additionalProperties": false,
         "required": [
           "task",
-          "reason"
+          "reasonCode"
         ],
         "properties": {
           "task": {
@@ -5269,10 +5343,8 @@
               "visibility-reconcile"
             ]
           },
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         }
       },
@@ -5311,20 +5383,69 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "runDate",
-          "jobs"
+          "runId",
+          "startedAt",
+          "finishedAt",
+          "recovery",
+          "queues",
+          "nextAvailableAt"
         ],
         "properties": {
-          "runDate": {
-            "type": "string",
-            "format": "date"
+          "runId": {
+            "type": "string"
           },
-          "jobs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IngestionJob"
-            }
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/CronRecoverySummary"
+          },
+          "queues": {
+            "$ref": "#/components/schemas/CronQueueSummaries"
+          },
+          "nextAvailableAt": {
+            "type": ["string", "null"],
+            "format": "date-time"
           }
+        },
+        "description": "Aggregate bounded-run result. Detailed jobs remain available through their admin queue endpoints."
+      },
+      "CronRecoverySummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inspected", "recovered", "retriesCreated", "failed"],
+        "properties": {
+          "inspected": { "type": "integer", "minimum": 0 },
+          "recovered": { "type": "integer", "minimum": 0 },
+          "retriesCreated": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "CronQueueSummaries": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ingestion", "indexing", "accountDeletion"],
+        "properties": {
+          "ingestion": { "$ref": "#/components/schemas/CronQueueCounters" },
+          "indexing": { "$ref": "#/components/schemas/CronQueueCounters" },
+          "accountDeletion": { "$ref": "#/components/schemas/CronQueueCounters" }
+        }
+      },
+      "CronQueueCounters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claimed", "succeeded", "partial", "failed", "deferred"],
+        "properties": {
+          "claimed": { "type": "integer", "minimum": 0 },
+          "succeeded": { "type": "integer", "minimum": 0 },
+          "partial": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "integer", "minimum": 0 },
+          "deferred": { "type": "integer", "minimum": 0 }
         }
       },
       "CronRunResponse": {
@@ -5499,11 +5620,13 @@
           "leadMediaStatus",
           "summaryStatus",
           "summaryModel",
+          "summarySourcePolicyVersion",
           "summaryGeneratedAt",
           "summaryError",
           "embeddingStatus",
           "embeddingModel",
           "embeddingVersion",
+          "embeddingSourcePolicyVersion",
           "embeddedAt",
           "embeddingError",
           "updatedAt"
@@ -5512,7 +5635,7 @@
           "id": { "type": "string" },
           "sourceId": { "type": "string" },
           "titleOriginal": { "type": "string" },
-          "originalUrl": { "type": "string", "format": "uri" },
+          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
           "status": { "$ref": "#/components/schemas/ArticleStatus" },
           "topics": {
             "type": "array",
@@ -5527,7 +5650,7 @@
               "required": ["sourceId", "originalUrl", "observedAt"],
               "properties": {
                 "sourceId": { "type": "string" },
-                "originalUrl": { "type": "string", "format": "uri" },
+                "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
                 "observedAt": { "type": "string", "format": "date-time" }
               }
             },
@@ -5554,6 +5677,7 @@
           "leadMediaStatus": { "type": "string", "enum": ["none", "available", "hidden"] },
           "summaryStatus": { "$ref": "#/components/schemas/ArtifactStatus" },
           "summaryModel": { "type": ["string", "null"] },
+          "summarySourcePolicyVersion": { "type": ["integer", "null"], "minimum": 1 },
           "summaryGeneratedAt": { "type": ["string", "null"], "format": "date-time" },
           "summaryError": {
             "anyOf": [
@@ -5564,6 +5688,7 @@
           "embeddingStatus": { "$ref": "#/components/schemas/ArtifactStatus" },
           "embeddingModel": { "type": ["string", "null"] },
           "embeddingVersion": { "type": ["integer", "null"], "minimum": 1 },
+          "embeddingSourcePolicyVersion": { "type": ["integer", "null"], "minimum": 1 },
           "embeddedAt": { "type": ["string", "null"], "format": "date-time" },
           "embeddingError": {
             "anyOf": [
@@ -5587,7 +5712,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "reason"
+          "reasonCode"
         ],
         "properties": {
           "status": {
@@ -5607,10 +5732,8 @@
             "type": "string",
             "enum": ["available", "hidden"]
           },
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         },
         "anyOf": [
@@ -5657,7 +5780,7 @@
         "required": [
           "canonicalArticleId",
           "duplicateArticleIds",
-          "reason"
+          "reasonCode"
         ],
         "properties": {
           "canonicalArticleId": {
@@ -5672,10 +5795,8 @@
             "minItems": 1,
             "maxItems": 20
           },
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         }
       },
@@ -5938,16 +6059,14 @@
         "additionalProperties": false,
         "required": [
           "status",
-          "reason"
+          "reasonCode"
         ],
         "properties": {
           "status": {
             "$ref": "#/components/schemas/TakedownStatus"
           },
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 4000
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         },
         "description": "MVP decisions are all-or-nothing. approved covers the complete requestedScope; completed requires every corresponding cleanup check. Account deletion is a separate workflow."
@@ -6066,7 +6185,7 @@
         "additionalProperties": false,
         "required": [
           "status",
-          "reason"
+          "reasonCode"
         ],
         "properties": {
           "status": {
@@ -6076,10 +6195,8 @@
               "suspended"
             ]
           },
-          "reason": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 500
+          "reasonCode": {
+            "$ref": "#/components/schemas/AdminReasonCode"
           }
         }
       },
@@ -6145,7 +6262,7 @@
           "targetId",
           "changedFields",
           "stateTransition",
-          "reason",
+          "reasonCode",
           "requestId",
           "result",
           "createdAt"
@@ -6192,8 +6309,8 @@
               }
             ]
           },
-          "reason": {
-            "type": "string"
+          "reasonCode": {
+            "$ref": "#/components/schemas/AuditReasonCode"
           },
           "requestId": {
             "type": "string"

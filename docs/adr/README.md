@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Các ADR này backfill những quyết định đã được project owner chốt trong [TechPulse-AI.md](../TechPulse-AI.md) ngày 08/08/2026. Mỗi ADR ghi lý do và trade-off; contract triển khai nằm ở [TECHNICAL-DESIGN.md](../TECHNICAL-DESIGN.md), [DATA-MODEL.md](../DATA-MODEL.md) và [contracts/openapi.json](../contracts/openapi.json).
+ADR-0001..0009 backfill những quyết định đã được project owner chốt trong [TechPulse-AI.md](../TechPulse-AI.md); ADR mới hơn được ghi khi decision draft được phê duyệt. Mỗi ADR ghi lý do và trade-off; contract triển khai nằm ở [TECHNICAL-DESIGN.md](../TECHNICAL-DESIGN.md), [DATA-MODEL.md](../DATA-MODEL.md) và [contracts/openapi.json](../contracts/openapi.json).
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -13,6 +13,7 @@ Các ADR này backfill những quyết định đã được project owner chố
 | [0007](0007-isolate-ai-providers-behind-adapters.md) | Isolate AI providers behind controlled adapters | accepted | 2026-08-08 |
 | [0008](0008-use-javascript-and-jsx-for-implementation.md) | Use JavaScript and JSX for implementation | accepted | 2026-08-08 |
 | [0009](0009-display-permitted-external-media-without-rehosting.md) | Display permitted external media without rehosting | accepted | 2026-08-08 |
+| [0010](0010-preserve-durable-fencing-and-recover-expired-jobs.md) | Preserve durable fencing and recover expired serverless jobs | accepted | 2026-08-08 |
 
 ## Lifecycle
 
