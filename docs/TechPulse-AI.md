@@ -263,7 +263,7 @@ Trang quản trị là bề mặt vận hành nội bộ của TechPulse AI. Ph�
 | Xem feed, tìm kiếm, lưu bài và hỏi AI | Có | Có | Không |
 | Quản lý nguồn và chính sách sử dụng | Không | Có | Chỉ đọc cấu hình đã duyệt |
 | Yêu cầu chạy hoặc retry ingestion/indexing | Không | Có | Không |
-| Thực thi ingestion, summary và indexing job | Không | Không | Có |
+| Thực thi ingestion, summary, indexing và account-deletion job | Không | Không | Có |
 | Ẩn bài, sửa topic, hợp nhất bản trùng | Không | Có | Không |
 | Xử lý yêu cầu gỡ nội dung và khóa user | Không | Có | Không |
 | Ghi audit/operational log | Không | Tạo qua thao tác | Tạo qua quá trình chạy job |
@@ -281,6 +281,7 @@ Trang quản trị là bề mặt vận hành nội bộ của TechPulse AI. Ph�
 - Chưa đăng nhập trả về `401`; đã đăng nhập nhưng không phải admin trả về `403`.
 - Tài khoản admin đầu tiên được tạo bằng seed script hoặc thao tác triển khai có kiểm soát; không có API đăng ký admin công khai và không có giao diện đổi role trong MVP.
 - Login và các thao tác tốn tài nguyên phải có input validation, rate limiting và bảo vệ CSRF phù hợp với cơ chế session.
+- Sau reload, browser gọi `/api/v1/me` để nhận lại CSRF token gắn với session vào memory; không lưu token ở `localStorage`.
 
 #### 5.8.3. Quản lý nguồn
 
@@ -298,11 +299,13 @@ Ràng buộc:
 
 - nguồn `review-needed` hoặc `blocked` không được tạo production ingestion job mới; thao tác test connection chỉ lấy mẫu tối thiểu;
 - `metadata-only` chỉ được xử lý trong phạm vi metadata được phép;
+- `licenseStatus`, `llmInputScope`, `storageScope` và media policy phải qua compatibility matrix; payload đúng cú pháp nhưng nâng scope vẫn bị từ chối;
 - không tìm thấy quyền rõ ràng thì admin phải chọn `metadata-only`, không tự suy diễn thành `permitted`;
 - `robots.txt` được xem như tín hiệu kỹ thuật, không được ghi nhận như bằng chứng license;
 - URL do admin nhập vẫn phải được validate; backend chỉ cho phép protocol và host phù hợp, đồng thời chặn truy cập địa chỉ nội bộ để giảm nguy cơ SSRF;
 - credential của connector, nếu có, được cấu hình bằng biến môi trường hoặc hệ thống secret khi triển khai; admin không nhập hoặc đọc secret trực tiếp trên dashboard;
 - tắt nguồn chỉ dừng lần ingest tiếp theo, không tự động xóa dữ liệu cũ. Việc giữ, ẩn hoặc xóa dữ liệu đã có phải là quyết định riêng và được audit.
+- khi Terms thay đổi, thao tác re-review phải pause source, đặt `review-needed`, tăng policy version và enqueue reconciliation; browser không tự gửi `reviewedAt/reviewedBy`.
 
 #### 5.8.4. Quản lý ingestion
 
@@ -315,7 +318,7 @@ Admin có thể:
 - hủy job đang chờ và yêu cầu dừng an toàn đối với job đang chạy nếu worker hỗ trợ;
 - tạm dừng lịch chạy của nguồn gặp lỗi liên tiếp.
 
-Mỗi lần chạy phải lấy lock theo connector/source, lưu idempotency key và giới hạn số item. Cron chạy một lần mỗi ngày; trigger thủ công dùng chung logic job và không được bỏ qua lock hoặc policy nguồn.
+Mỗi lần chạy phải lấy lock theo connector/source, lưu actor-scoped idempotency key + request hash và giới hạn số item. Queued work có `availableAt`; coordinator xử lý theo budget. Mỗi lần lấy lease tăng generation và stale worker không được ghi checkpoint/artifact. Vercel Cron gọi protected GET adapter; trigger admin là POST nhưng dùng chung service và không bỏ qua lock/policy.
 
 Admin không được nhìn thấy API key, access token hoặc secret trong dashboard và log. Lỗi hiển thị cho admin cần đủ để xử lý nhưng phải redact secret và dữ liệu nhạy cảm.
 
@@ -358,6 +361,12 @@ Admin có thể:
 - khóa hoặc mở khóa tài khoản user vi phạm quy định sử dụng; khi khóa phải vô hiệu hóa các session hiện có;
 - xử lý yêu cầu xóa tài khoản và dữ liệu liên quan theo chính sách lưu giữ dữ liệu của dự án.
 
+Hai workflow không được trộn:
+
+- content takedown chỉ áp dụng cho source/article và duyệt toàn bộ hoặc từ chối toàn bộ requested metadata/media/summary/embedding scope;
+- account deletion là automatic durable workflow riêng: revoke session trước, xóa saved/chat/quota data, anonymize identity và chỉ `completed` khi mọi completion flag đã được xác minh;
+- admin chỉ theo dõi safe progress/error và retry item còn thiếu; không đọc deleted email/chat hoặc phê duyệt yêu cầu xóa tài khoản.
+
 Admin không được xem mật khẩu, auth token hoặc secret của user; không mặc nhiên được đọc lịch sử chat riêng tư; và không được mạo danh user.
 
 #### 5.8.7. Audit log và thao tác nguy hiểm
@@ -365,20 +374,22 @@ Admin không được xem mật khẩu, auth token hoặc secret của user; kh�
 Mỗi thao tác quản trị làm thay đổi trạng thái phải tạo audit log tối thiểu gồm:
 
 ```text
-adminId
+actorType
+actorId
 action
 targetType
 targetId
-before
-after
+changedFields
+stateTransition
 reason
-ipAddress
+requestId
 result
 createdAt
 ```
 
 - Các thao tác tắt nguồn, hủy job, ẩn/xóa bài, xóa index và khóa user phải yêu cầu xác nhận cùng lý do.
 - Audit log chỉ được đọc bởi admin và không được chỉnh sửa qua dashboard.
+- Audit không lưu raw before/after document, requester PII, email, password/session, private chat, provider payload hoặc source content. Direct mutation và audit commit atomically; workflow dài có intent và terminal event.
 - Dashboard không hiển thị password hash, session ID, API key, LLM key hoặc stack trace chứa secret.
 
 #### 5.8.8. Bề mặt dashboard MVP
@@ -390,11 +401,12 @@ Admin Dashboard
 ├── Ingestion Jobs
 ├── Articles & AI Index
 ├── Takedown Requests
+├── Account Deletions
 ├── Users
 └── Audit Logs
 ```
 
-`Overview` chỉ cần hiển thị các số liệu giúp admin biết việc nào cần xử lý: nguồn đang bật/tạm dừng/chờ duyệt quyền, job đang chờ/thất bại, bài `review-needed`, index thất bại và yêu cầu gỡ chưa hoàn tất.
+`Overview` chỉ cần hiển thị các số liệu giúp admin biết việc nào cần xử lý: nguồn đang bật/tạm dừng/chờ duyệt quyền, job đang chờ/thất bại, bài `review-needed`, index thất bại, yêu cầu gỡ chưa hoàn tất và account deletion bị lỗi cần retry.
 
 MVP không cần `superadmin`, phân quyền chi tiết cho từng admin, SSO hoặc workflow nhiều người phê duyệt. Dashboard cũng không cho sửa system prompt, chọn tùy ý model/API endpoint, xem API key hoặc tải lên mã connector; các cấu hình này thuộc lớp triển khai của backend.
 
@@ -430,8 +442,8 @@ Ràng buộc triển khai Vercel:
 
 - không dùng `node-cron`, queue trong memory hoặc giả định có một process chạy liên tục;
 - không dùng rate-limit/quota counter theo process; login, AI Q&A, admin trigger và source test dùng shared Mongo bucket hoặc platform limiter tương đương;
-- cron và trigger thủ công gọi chung một service xử lý job;
-- mỗi job có idempotency key, distributed lock, batch size và trạng thái bền vững trong MongoDB;
+- protected cron GET adapter và admin POST trigger gọi chung một coordinator service nhưng dùng trust boundary riêng;
+- mỗi job có actor/key/request-hash idempotency, `availableAt`, lease generation, batch size và trạng thái bền vững trong MongoDB;
 - ứng dụng tự quản lý retry vì Vercel không tự retry cron thất bại;
 - code phải chịu được việc cùng một cron event được gửi nhiều lần;
 - summary chạy non-streaming; Q&A có thể streaming nhưng phải fallback sang non-streaming khi cần;
@@ -451,6 +463,7 @@ indexingJobs
 jobLeases
 chatSessions
 takedownRequests
+accountDeletionRequests
 adminAuditLogs
 ```
 
@@ -745,7 +758,7 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 ## 13. Quyết định hiện tại
 
 - **Go** với ý tưởng TechPulse AI.
-- Thời gian thực hiện là 4 tuần; nhóm danh nghĩa có 4 thành viên nhưng phạm vi kỹ thuật phải đủ để một người hoàn thành.
+- Thời gian dự kiến là 4 tuần; project owner thực hiện theo solo-owner nhưng làm cùng coding agent, vì vậy không pre-cut scope chỉ từ estimate. Milestone thực tế mới kích hoạt mutation; safety/contract gate không hạ.
 - Ưu tiên một MVP nhỏ, khoảng 250–400 bài, có nguồn rõ ràng và luồng AI có citation.
 - Chốt ba nhóm nguồn cho MVP: RSS/Atom, arXiv và Hacker News.
 - GitHub, YouTube, X, Facebook, Instagram và các nền tảng khác được chuyển sang giai đoạn hoàn thiện sau MVP.
@@ -753,7 +766,7 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Số lượng source definition có thể tăng qua Source Registry mà không cần thêm connector mới.
 - Triển khai React + Node.js/Express trên Vercel Hobby; MongoDB Atlas lưu toàn bộ state bền vững.
 - Implementation dùng JavaScript/JSX (`.js`, `.jsx`), không dùng TypeScript/TSX trong MVP; contract được bảo vệ bằng OpenAPI/runtime validation/JSDoc và test.
-- Ingestion chạy một lần mỗi ngày bằng Vercel Cron và có trigger thủ công cho admin; job phải idempotent, có distributed lock và batch giới hạn.
+- Ingestion chạy một lần mỗi ngày bằng protected Vercel Cron GET adapter và có admin POST trigger; job có actor/key/request-hash idempotency, due-time coordinator, lease-generation fencing và batch giới hạn.
 - Keyword search dùng MongoDB text index và trường bỏ dấu; không phụ thuộc MongoDB Atlas Search/Vector Search trong MVP.
 - Semantic retrieval dùng `baai/bge-m3` qua OpenRouter, lưu vector 1024 chiều trong MongoDB và tính cosine similarity trong Node.js; text search là fallback.
 - LLM ưu tiên `deepseek-v4-flash-free` qua OpenCode Zen và có fallback cấu hình sang `deepseek-v4-flash` trả phí thấp.
@@ -767,7 +780,9 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Admin dùng authentication backend chung, giao diện `/admin` riêng và server-side session; role luôn được kiểm tra ở backend.
 - Admin đầu tiên được tạo bằng seed script; không cho đăng ký hoặc tự nâng role admin qua UI/API.
 - Pipeline tự xuất bản bản ghi hợp lệ; admin chỉ xử lý cấu hình, lỗi và các bản ghi `review-needed`, không duyệt từng bài trong luồng bình thường.
-- Mọi thao tác quản trị thay đổi trạng thái phải có audit log; chỉ bài `published` được xuất hiện trong feed, search và AI retrieval.
+- Mọi thao tác quản trị thay đổi trạng thái phải có safe structured audit; chỉ bài `published` và artifact `ready` được xuất hiện trong feed, search và AI retrieval.
+- Content takedown all-or-nothing tách khỏi automatic account deletion; cả hai có machine-readable completion evidence.
+- Grounded answer dùng hai contract state loại trừ nhau: answered bắt buộc paragraph/citation, refused bắt buộc reason và không có factual paragraph.
 - Xem quản trị nguồn và responsible AI là năng lực cốt lõi của sản phẩm.
 - Không xây sản phẩm dựa trên việc “lách luật” hoặc giả định rằng phi thương mại đồng nghĩa với được phép sử dụng mọi nội dung.
 - Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh baseline JavaScript/JSX cùng media policy này.

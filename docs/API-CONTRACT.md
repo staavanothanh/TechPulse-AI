@@ -31,24 +31,26 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 ### 3.1. User client
 
 - đăng ký/login/logout và khôi phục session;
+- bootstrap lại CSRF token từ `GET /api/v1/me` sau reload; token chỉ giữ trong memory;
 - cập nhật topic preferences và quản lý saved articles;
 - xem feed/filter/detail với cursor ổn định;
 - render ảnh remote-preview hoặc video link-only đúng `leadMedia`; dùng fallback khi field null/lỗi;
 - search text/hybrid và biết khi hệ thống fallback;
 - gửi câu hỏi theo article/topic/time, render paragraph-level citations hoặc refusal;
-- xóa chat/account data thuộc phạm vi user.
+- xóa chat và tạo automatic account-deletion workflow; request thành công revoke session, không đi qua content takedown.
 
 ### 3.2. Admin client
 
 - xem exception overview;
 - tạo/sửa/test/review/activate/pause source;
-- trigger, xem, retry hoặc cancel bounded ingestion job;
-- xem/đổi trạng thái article, sửa topic, ẩn/khôi phục lead media theo current policy, regenerate summary/re-index và merge duplicate;
-- xử lý takedown, suspend/restore user và đọc audit log.
+- trigger ingestion; xem, retry hoặc cancel bounded ingestion/indexing job trong cùng operational UI;
+- xem safe article provenance/artifact diagnostics; đổi trạng thái/topic, ẩn/khôi phục lead media, regenerate summary/re-index và merge duplicate;
+- xử lý content takedown all-or-nothing, theo dõi/retry account deletion, suspend/restore user và đọc safe structured audit log.
 
 ### 3.3. Cron caller
 
 - gọi đúng một protected operation hằng ngày;
+- dùng HTTP GET theo Vercel Cron; không dùng cookie/CSRF hoặc admin POST trust boundary;
 - gửi bearer cron secret;
 - nhận job result có thể là queued/running/succeeded/partial thay vì giả định request luôn hoàn tất toàn bộ backlog.
 
@@ -62,9 +64,13 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - Error code là stable machine value; message dành cho người đọc và có thể thay đổi.
 - `401` nghĩa session thiếu/hỏng; `403` nghĩa actor đã xác thực nhưng thiếu quyền.
 - `409` dùng cho duplicate/idempotency/state conflict; `422` cho payload đúng JSON nhưng sai semantic.
+- Mọi operation có JSON request body phải declare `400`; operation phụ thuộc MongoDB phải declare `503`, không dùng undocumented `500` thay thế.
 - State-changing cookie-auth request gửi `X-CSRF-Token`.
-- Manual ingestion gửi `Idempotency-Key`; cùng key và cùng actor intent phải trả cùng logical job.
+- `GET /api/v1/me` trả `{ user, csrfToken }` cho session còn hiệu lực; CSRF token không persist ở `localStorage`.
+- Manual ingestion/deletion/retry gửi `Idempotency-Key`; identity là actor scope + key + canonical request hash. Cùng intent trả cùng logical result, khác intent trả `409 idempotency_mismatch`.
 - Sensitive mutation có `reason`; UI không tự tạo reason rỗng.
+- `answered` và `refused` là hai schema loại trừ nhau. Runtime còn phải kiểm tra citation ID resolve tới retrieved article đang visible.
+- Audit response chỉ có changed field names và safe state transition; raw before/after document không thuộc HTTP contract.
 
 ## 5. Endpoint inventory
 
@@ -74,10 +80,10 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 | Saved/chat | list/save/unsave saved article; list/delete chat session |
 | Content | article list/detail, search results, grounded answers |
 | Sources | list/create/read/update, technical check, policy review |
-| Jobs | list/create/read/retry/cancel ingestion jobs |
+| Jobs | create/list/read/retry/cancel ingestion và indexing jobs; account-deletion progress/retry |
 | Admin articles | list/update, summary job, indexing job, duplicate merge |
-| Governance | takedown list/create/update; user list/update; audit list |
-| Internal | daily cron ingestion trigger |
+| Governance | content takedown list/create/update; account-deletion list/detail/retry; user list/update; audit list |
+| Internal | protected GET daily cron adapter gọi bounded coordinator |
 
 Exact method/path/status nằm trong OpenAPI, không lặp lại ở đây để tránh drift.
 
@@ -85,6 +91,7 @@ Exact method/path/status nằm trong OpenAPI, không lặp lại ở đây để
 
 - Session cookie tên triển khai có thể đổi mà không breaking nếu browser behavior không đổi; contract dùng security scheme `cookieAuth`.
 - Login/register kiểm tra Origin và rate limit; mutation sau login thêm CSRF header.
+- Session cookie sống qua reload nhưng CSRF token được bootstrap lại từ `/me`; không yêu cầu login lại và không hạ protection.
 - Admin operation dùng session thường cộng role check server-side.
 - Cron route không nhận cookie và chỉ dùng `cronBearer`.
 - `429` phải có `Retry-After`; client hiển thị trạng thái retry được thay vì lặp request ngay.
@@ -144,9 +151,15 @@ Generator chạy không network/secret và generated diff phải được review
 - [ ] OpenAPI parse được và không có remote `$ref`.
 - [ ] Mọi P0 consumer job có operation.
 - [ ] Required/nullability/enum/error được khai báo rõ.
+- [ ] Contract lint không còn JSON-body operation thiếu `400` hoặc Mongo-backed operation thiếu `503`.
 - [ ] User/admin/cron security scheme không bị trộn.
 - [ ] Empty collection và refusal answer có fixture hợp lệ.
+- [ ] Invalid answer fixtures bị reject: answered rỗng/không citation, refused có paragraph hoặc thiếu refusal reason.
+- [ ] Source policy/connector fixture mâu thuẫn bị reject; technical check `passed` thiếu evidence bị reject.
+- [ ] Content takedown không nhận `user-data/account-data`; account deletion chỉ completed khi mọi cleanup flag true.
 - [ ] Frontend client/JSDoc/mock được derive, không copy tay.
 - [ ] `leadMedia` nullable, `leadMediaStatus` và `mediaPolicy` được kiểm thử với remote-preview, link-only, hide/restore, host bị chặn và fallback.
+- [ ] `leadMedia.attribution` luôn non-empty và do server resolve; UI không phụ thuộc nullable `credit`.
 - [ ] Express response thực được runtime-validate trong test.
 - [ ] Không response nào leak password hash, session token, secret, full text hoặc private chat cho admin.
+- [ ] Audit response không có arbitrary object; takedown list không trả requester contact/reason/evidence.

@@ -1,7 +1,7 @@
 # TechPulse AI — MongoDB Data Model
 
-> Trạng thái: Persistence contract cho MVP  
-> Phiên bản: 1.1  
+> Trạng thái: Plan-of-Record persistence contract
+> Phiên bản: 1.2
 > Cập nhật: 08/08/2026  
 > Architecture: [TECHNICAL-DESIGN.md](./TECHNICAL-DESIGN.md)  
 > Product contract: [PRD.md](./PRD.md)
@@ -34,8 +34,9 @@ Các block `type ...` dưới đây là ký pháp tài liệu trung lập để 
 | `indexingJobs` | Summary/embedding/re-index work | Job/AI module |
 | `jobLeases` | Distributed lock có TTL | Job module |
 | `chatSessions` | Question/answer/citation history tối thiểu | Q&A module |
-| `takedownRequests` | Quy trình gỡ nội dung/dữ liệu | Governance module |
-| `adminAuditLogs` | Append-only admin mutation evidence | Audit module |
+| `takedownRequests` | Quy trình gỡ source/article do publisher/rights request | Governance module |
+| `accountDeletionRequests` | Durable automatic user-data cleanup | Account/governance module |
+| `adminAuditLogs` | Append-only safe mutation/workflow evidence | Audit module |
 
 ## 3. Shared conventions
 
@@ -80,15 +81,16 @@ type VideoDisplayMode = "none" | "link-only";
 ```text
 type UserDocument = {
   _id: ObjectId;
-  emailNormalized: string;
-  emailDisplay: string;
-  passwordHash: string;
+  emailNormalized?: string;
+  emailDisplay?: string;
+  passwordHash?: string;
   role: "user" | "admin";
   status: "active" | "suspended" | "deletion-pending" | "deleted";
   topicPreferences: string[];
   suspendedAt?: Date;
   suspensionReason?: string;
   deletionRequestedAt?: Date;
+  deletionRequestId?: ObjectId;
   deletedAt?: Date;
   sessionVersion: number;
   createdAt: Date;
@@ -101,11 +103,12 @@ Rules:
 - Public registration hard-code `role=user`; request schema không có `role`.
 - `sessionVersion` tăng khi suspend, password/security change hoặc revoke-all.
 - Deleted account xóa/anonymize email/password theo privacy policy nhưng giữ opaque reference cần cho audit.
+- `status=deleted` yêu cầu không còn `emailNormalized`, `emailDisplay`, `passwordHash`; admin serializer trả `email=null`.
 
 Indexes:
 
 ```text
-unique { emailNormalized: 1 }
+unique partial { emailNormalized: 1 } where emailNormalized exists
 { status: 1, createdAt: -1 }
 ```
 
@@ -121,7 +124,8 @@ type SessionDocument = {
   status: "active" | "revoked";
   expiresAt: Date;
   lastSeenAt: Date;
-  createdIpHash?: string;
+  createdIpHmac?: string;
+  ipHmacKeyVersion?: number;
   userAgentSummary?: string;
   createdAt: Date;
   revokedAt?: Date;
@@ -145,6 +149,7 @@ type RateLimitBucketDocument = {
   _id: ObjectId;
   scope: "login" | "answer-minute" | "answer-daily" | "admin-trigger" | "source-test";
   keyHash: string;
+  keyVersion: number;
   windowStart: Date;
   count: number;
   limit: number;
@@ -163,7 +168,7 @@ TTL { expiresAt: 1 } expireAfterSeconds: 0
 Rules:
 
 - Increment/check dùng atomic upsert; không dùng counter trong process memory.
-- `keyHash` là HMAC/hash ổn định của IP, user ID hoặc actor key theo scope; không lưu raw IP/email.
+- IP key bắt buộc dùng keyed HMAC và lưu `keyVersion`; không dùng plain hash vì không gian IPv4 có thể brute-force. User/actor identifier cũng không lưu raw email.
 - `Retry-After` tính từ window hiện tại, không từ thời điểm TTL document thực sự bị cleanup.
 - Daily AI quota dùng cùng collection với window dài hơn; provider call chỉ chạy sau khi reserve quota thành công.
 - TTL chỉ cleanup; correctness dựa vào `windowStart`/`expiresAt` trong query.
@@ -239,6 +244,11 @@ Rules:
 - Policy/connector change quan trọng tăng `policyVersion` và tạo reconciliation/index work.
 - `mediaPolicy` độc lập với `llmInputScope`/`storageScope`; nguồn mới mặc định `imageMode=none`, `videoMode=none`, `allowedHosts=[]`.
 - `allowedHosts` chỉ chứa hostname chính xác đã review; wildcard và URL có credential bị từ chối.
+- Mongo validator và domain validator cùng enforce Source Policy compatibility matrix trong PRD; `licenseStatus`, `llmInputScope` và `storageScope` không được validate độc lập.
+- `blocked` yêu cầu `llmInputScope=none`, mọi storage flag false và media mode none. `metadata-only` yêu cầu metadata true, excerpt false và input chỉ `none|metadata`.
+- `reviewedAt`/`reviewedBy` chỉ do server ghi. Re-review atomically pause source, đặt `review-needed`, tăng policyVersion và enqueue reconciliation.
+- Connector discriminant phải khớp config/access/authority; HN luôn `community-signal`, arXiv luôn `api` + `primary`.
+- `health` được expose cho admin ở dạng redact; `rightsHolderNote` chỉ là persistence evidence nội bộ và không thuộc HTTP DTO trong MVP.
 
 Indexes:
 
@@ -281,6 +291,7 @@ type ArticleDocument = {
     sourcePageUrl: string;
     altText?: string;
     credit?: string;
+    attribution: string;
     mediaEvidenceStatus: "not-analyzed";
     sourcePolicyVersion: number;
   };
@@ -336,9 +347,12 @@ Rules:
 - Khi merge duplicate, canonical document giữ union provenance; document phụ trỏ `duplicateOfId` và không published.
 - User query phải kết hợp status article với current source policy, không chỉ dựa vào snapshot.
 - `leadMedia` chỉ giữ remote metadata. Ảnh yêu cầu `displayMode=remote-preview`; video yêu cầu `displayMode=link-only`; URL HTTPS và host phải còn nằm trong current source policy.
+- `leadMedia.attribution` luôn là sanitized canonical display value: media credit → source `attributionText` → source name. UI không tự suy luận từ nullable `credit`.
 - `leadMediaStatus=available` yêu cầu có `leadMedia`; `hidden` giữ metadata phục vụ audit/khôi phục nhưng user serializer phải trả `leadMedia=null`; `none` nghĩa connector không có candidate hợp lệ.
 - `sourcePageUrl` là trang nguồn để user kiểm chứng; `mediaEvidenceStatus=not-analyzed` ngăn summary/Q&A dùng media như evidence.
 - Policy thay đổi hoặc takedown có thể unset `leadMedia` mà không cần ẩn toàn article.
+- `summaryStatus=removed` bắt buộc unset `summaryVi`, basis/model/hash/generatedAt/error`; `embeddingStatus=removed` bắt buộc unset vector/model/dimensions/hash/version/embeddedAt/error.
+- Public serializer chỉ trả summary khi status `ready`; `removed` không phải public artifact status ngay cả khi article document chưa cleanup xong.
 
 Indexes:
 
@@ -375,6 +389,7 @@ Indexes:
 ```text
 unique { userId: 1, articleId: 1 }
 { userId: 1, createdAt: -1, _id: -1 }
+{ articleId: 1, userId: 1 }
 ```
 
 Save dùng upsert; unsave là idempotent delete. Khi article không còn visible, saved list không trả content nhưng có thể cho biết item unavailable hoặc cleanup theo policy.
@@ -385,6 +400,8 @@ Save dùng upsert; unsave là idempotent delete. Khi article không còn visible
 type IngestionJobDocument = {
   _id: ObjectId;
   idempotencyKey: string;
+  actorScope: string;
+  requestHash: string;
   sourceId: ObjectId;
   connectorType: "rss" | "arxiv" | "hacker-news";
   trigger: "cron" | "admin" | "retry";
@@ -392,6 +409,9 @@ type IngestionJobDocument = {
   parentJobId?: ObjectId;
   status: "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
   attempt: number;
+  priority: number;
+  availableAt: Date;
+  leaseGeneration: number;
   batchSize: number;
   checkpoint?: {
     cursor?: string;
@@ -419,12 +439,12 @@ type IngestionJobDocument = {
 Indexes:
 
 ```text
-unique { idempotencyKey: 1 }
+unique { actorScope: 1, idempotencyKey: 1 }
 { sourceId: 1, createdAt: -1 }
-{ status: 1, createdAt: 1 }
+{ status: 1, availableAt: 1, priority: -1, createdAt: 1 }
 ```
 
-Retry tạo job mới với idempotency key/attempt mới và `parentJobId`; không mutate failed history thành queued.
+Retry tạo job mới với idempotency key/attempt mới và `parentJobId`; không mutate failed history thành queued. Reuse cùng actor/key nhưng `requestHash` khác là conflict, không trả generic duplicate.
 
 ## 11. `indexingJobs`
 
@@ -432,14 +452,19 @@ Retry tạo job mới với idempotency key/attempt mới và `parentJobId`; kh�
 type IndexingJobDocument = {
   _id: ObjectId;
   idempotencyKey: string;
+  actorScope: string;
+  requestHash: string;
   articleId: ObjectId;
   sourceId: ObjectId;
-  tasks: Array<"summary" | "embedding" | "visibility-reconcile">;
+  task: "summary" | "embedding" | "visibility-reconcile";
   trigger: "ingestion" | "admin" | "policy-change" | "model-change" | "retry";
   requestedBy?: ObjectId;
   parentJobId?: ObjectId;
   status: "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
   attempt: number;
+  priority: number;
+  availableAt: Date;
+  leaseGeneration: number;
   targetEmbeddingVersion?: number;
   inputHash?: string;
   error?: SafeError;
@@ -454,12 +479,13 @@ type IndexingJobDocument = {
 Indexes:
 
 ```text
-unique { idempotencyKey: 1 }
+unique { actorScope: 1, idempotencyKey: 1 }
 { articleId: 1, createdAt: -1 }
-{ status: 1, createdAt: 1 }
+{ sourceId: 1, status: 1, availableAt: 1 }
+{ status: 1, availableAt: 1, priority: -1, createdAt: 1 }
 ```
 
-Một job có thể hoàn thành summary nhưng lỗi embedding và kết thúc `partial`. Retry chỉ chạy task chưa hoàn thành hoặc có input/version thay đổi.
+Một indexing job chỉ sở hữu một task. Summary thành công và embedding thất bại là hai job có state độc lập; retry không phải suy luận partial state bên trong một task array.
 
 ## 12. `jobLeases`
 
@@ -469,6 +495,7 @@ type JobLeaseDocument = {
   key: string;
   ownerTokenHash: string;
   jobId: ObjectId;
+  leaseGeneration: number;
   acquiredAt: Date;
   heartbeatAt: Date;
   expiresAt: Date;
@@ -482,7 +509,7 @@ unique { key: 1 }
 TTL { expiresAt: 1 } expireAfterSeconds: 0
 ```
 
-Acquire là atomic insert/update có điều kiện `expiresAt <= now`; release/heartbeat yêu cầu owner token khớp. TTL chỉ cleanup document, không thay thế điều kiện expiry trong code vì TTL monitor không chạy tức thời.
+Acquire là atomic insert/update có điều kiện `expiresAt <= now` và tăng `leaseGeneration` monotonically; release/heartbeat yêu cầu owner token + generation khớp. Mọi job transition, checkpoint, counter và artifact commit cũng conditional theo generation hiện hành. TTL chỉ cleanup document, không thay thế fencing/correctness vì TTL monitor không chạy tức thời.
 
 ## 13. `chatSessions`
 
@@ -516,6 +543,7 @@ type ChatSessionDocument = {
     refusalReason?: "insufficient-evidence" | "policy-blocked" | "provider-unavailable";
     createdAt: Date;
   }>;
+  messageCount: number;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -523,10 +551,19 @@ type ChatSessionDocument = {
 
 Không lưu retrieved full text/evidence body. User chỉ truy cập/xóa session của mình. Admin không có endpoint đọc nội dung chat trong MVP.
 
+Bounds bắt buộc:
+
+- tối đa 30 messages/session; request tiếp theo tạo rollover session mới có cùng scope;
+- user question tối đa 1.000 ký tự, assistant paragraph tối đa 2.000 ký tự;
+- tối đa 12 paragraphs, 50 citations/answer và 10 citation IDs/paragraph;
+- `messageCount` cập nhật atomically và không được vượt bound trước append;
+- citation tới article bị takedown bị xóa/anonymize trong historical chat: bỏ `originalUrl/titleOriginal`, giữ opaque citation ID với trạng thái unavailable; answer text không được dùng lại trong retrieval.
+
 Indexes:
 
 ```text
 { userId: 1, updatedAt: -1, _id: -1 }
+{ "messages.citations.articleId": 1, userId: 1 }
 ```
 
 ## 14. `takedownRequests`
@@ -537,11 +574,11 @@ type TakedownRequestDocument = {
   status: "received" | "reviewing" | "approved" | "rejected" | "completed";
   requesterName: string;
   requesterContact: string;
-  targetType: "source" | "article" | "user-data";
+  targetType: "source" | "article";
   targetIds: ObjectId[];
   reason: string;
   evidenceNote?: string;
-  requestedScope: Array<"metadata" | "media-metadata" | "summary" | "embedding" | "account-data">;
+  requestedScope: Array<"metadata" | "media-metadata" | "summary" | "embedding">;
   decisionReason?: string;
   reviewedBy?: ObjectId;
   reviewedAt?: Date;
@@ -567,21 +604,73 @@ Indexes:
 
 Requester contact là dữ liệu cá nhân; không đưa vào provider/log và chỉ admin đọc.
 
-## 15. `adminAuditLogs`
+MVP duyệt toàn bộ hoặc từ chối toàn bộ `requestedScope`; không có partial approval. List query chỉ project thành takedown summary không chứa requester contact, reason hoặc evidence. Detail endpoint mới được hydrate các field PII này.
+
+## 15. `accountDeletionRequests`
+
+```text
+type AccountDeletionRequestDocument = {
+  _id: ObjectId;
+  userId: ObjectId;
+  actorScope: string;
+  idempotencyKey: string;
+  requestHash: string;
+  status: "queued" | "running" | "completed" | "failed";
+  attempt: number;
+  availableAt: Date;
+  leaseGeneration: number;
+  safeReasonCategory: "user-request";
+  completion: {
+    sessionsRevoked: boolean;
+    savedArticlesDeleted: boolean;
+    chatSessionsDeleted: boolean;
+    rateLimitDataDeleted: boolean;
+    identityAnonymized: boolean;
+  };
+  error?: SafeError;
+  requestedAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  updatedAt: Date;
+};
+```
+
+Rules:
+
+- Đây là automatic workflow riêng, không phải `takedownRequests` và không cần admin approval.
+- Tạo request atomically chuyển user sang `deletion-pending`, tăng `sessionVersion`, revoke sessions và ghi audit intent; response xóa session cookie.
+- Cleanup idempotent theo từng flag. `completed` chỉ khi năm flag đều true; retry chỉ chạy item còn false và không restore identity/session.
+- User tombstone giữ opaque `_id`, role/status/deletedAt/deletionRequestId; email/password/chat/saved/quota data không còn.
+- Admin API chỉ expose request ID, status, safe completion/error/timestamps; không expose email hoặc deleted content.
+
+Indexes:
+
+```text
+unique { userId: 1 }
+unique { actorScope: 1, idempotencyKey: 1 }
+{ status: 1, availableAt: 1, requestedAt: 1 }
+```
+
+## 16. `adminAuditLogs`
 
 ```text
 type AdminAuditLogDocument = {
   _id: ObjectId;
-  adminId: ObjectId;
+  actorType: "admin" | "system-worker";
+  actorId: string;
   action: string;
   targetType: string;
   targetId: string;
-  before?: Record<string, unknown>;
-  after?: Record<string, unknown>;
+  changedFields: string[];
+  stateTransition?: {
+    from?: string;
+    to?: string;
+  };
   reason: string;
-  ipAddressHash?: string;
+  ipAddressHmac?: string;
+  ipHmacKeyVersion?: number;
   requestId: string;
-  result: "succeeded" | "failed";
+  result: "pending" | "succeeded" | "failed";
   createdAt: Date;
 };
 ```
@@ -589,18 +678,20 @@ type AdminAuditLogDocument = {
 Rules:
 
 - Không có update/delete endpoint cho audit log.
-- Snapshot dùng allowlist field và redact secret, passwordHash, session/token, connector credential, full text và private chat.
+- Không có raw `before/after` snapshot hoặc arbitrary object. `changedFields` và lifecycle state value đều qua allowlist theo action/target trước persistence.
+- Cấm email, requester contact, secret, passwordHash, session/token, connector credential, full text, provider payload và private chat.
 - Failed mutation cũng có record nếu actor đã được xác thực và action đủ xa để audit.
+- Direct admin mutation commit state + audit event trong một Mongo transaction ngắn. Workflow dài ghi `pending` intent trước side effect và append terminal event idempotently.
 
 Indexes:
 
 ```text
 { createdAt: -1, _id: -1 }
-{ adminId: 1, createdAt: -1 }
+{ actorType: 1, actorId: 1, createdAt: -1 }
 { targetType: 1, targetId: 1, createdAt: -1 }
 ```
 
-## 16. Cross-collection invariants
+## 17. Cross-collection invariants
 
 1. `savedArticles.userId` và `chatSessions.userId` chỉ thuộc user đang tồn tại; account deletion cleanup/anonymize theo workflow.
 2. Article user-visible cần source hiện tại `active` và license `permitted|metadata-only`.
@@ -608,41 +699,45 @@ Indexes:
 4. Article hidden/removed đặt summary/embedding visibility thành removed hoặc bị loại bởi query ngay lập tức.
 5. Provider call luôn reload current source policy; không chỉ tin rights snapshot cũ.
 6. Vector comparison yêu cầu cùng model, dimensions, version.
-7. Job mutation và lease acquisition dùng atomic conditional operation.
-8. Admin mutation tạo audit record với cùng request ID; nếu không thể đảm bảo atomic multi-document write, service ghi rõ failed audit và reconcile.
-9. Takedown `completed` chỉ khi completion flags khớp approved scope.
+7. Job mutation, checkpoint, artifact commit và lease acquisition dùng atomic conditional operation với current lease generation.
+8. Direct admin mutation và audit event cùng transaction; long workflow có durable audit intent trước side effect và terminal event idempotent.
+9. Takedown `completed` chỉ khi completion flags khớp toàn bộ requested scope; account deletion dùng collection/completion model riêng.
 10. Hard delete không được làm mất audit trail cần thiết; audit chỉ giữ opaque target và non-sensitive reason.
 11. Rate-limit/quota check dùng shared Mongo bucket; nhiều Vercel instance không có counter riêng.
 12. Media serializer reload current `mediaPolicy`; mode/host không còn hợp lệ trả `leadMedia=null` và enqueue reconciliation.
 13. Media `not-analyzed` không đi vào summary/embedding/Q&A input và không hỗ trợ citation claim.
+14. `answered` không persist nếu paragraph citation ID không resolve tới visible evidence set; `refused` không persist factual paragraph.
+15. `accountDeletionRequests.status=completed` yêu cầu mọi completion flag true và user tombstone không còn identity credential.
 
-## 17. Transaction và consistency strategy
+## 18. Transaction và consistency strategy
 
-MVP tránh distributed transaction và dùng idempotent workflow:
+MVP dùng transaction ngắn đúng chỗ và idempotent workflow cho work dài:
 
 - single-document state transition dùng atomic `findOneAndUpdate` với expected current state;
-- multi-document workflow ghi trạng thái chính trước theo hướng fail-closed, sau đó cleanup/reconcile;
+- direct admin state mutation + safe audit event commit trong cùng Mongo transaction; audit lỗi làm mutation abort;
+- workflow dài tạo job/request + audit intent atomically, sau đó cleanup/reconcile và append terminal event;
 - unique index là lớp cuối chống duplicate;
 - mỗi side effect lưu input hash/idempotency key;
 - takedown/blocked source tắt visibility trước khi cleanup;
 - retry đọc checkpoint và không lặp provider call khi output hash/model/version đã hợp lệ.
 
-MongoDB transaction chỉ dùng khi thật sự cần cập nhật một nhóm document nhỏ trong cùng cluster và test chứng minh giá trị; không dựa vào transaction để che workflow thiếu idempotency.
+MongoDB transaction chỉ bao quanh nhóm document nhỏ, không chứa fetch/provider call và phải retry write conflict/transient transaction error. Không dựa vào transaction để che workflow thiếu idempotency hoặc fencing.
 
-## 18. Retention baseline
+## 19. Retention baseline
 
 Thời lượng cụ thể được chốt lúc triển khai, nhưng hành vi MVP phải có:
 
 - expired session tự xóa bằng TTL; revoked session có thể cleanup sau khoảng audit vận hành ngắn;
 - expired rate-limit bucket tự cleanup bằng TTL nhưng request path luôn kiểm tra window, không chờ TTL;
 - chat/saved data xóa theo yêu cầu user;
+- account deletion xóa sessions/saved/chat/quota, anonymize identity và chỉ giữ opaque tombstone/audit evidence;
 - full text tạm giải phóng ngay sau job/request và không xuất hiện trong log/cache;
 - media nguồn chỉ giữ metadata/URL khi policy còn hợp lệ; binary không được tải vào persistence và metadata bị unset theo takedown/media-policy change;
 - summary/vector xóa cùng takedown scope;
 - jobs giữ đủ lâu cho demo/debug rồi cleanup bằng script/policy;
 - audit và rights evidence không bị xóa từ dashboard.
 
-## 19. Schema/index migration
+## 20. Schema/index migration
 
 Mỗi thay đổi schema/index dùng script versioned và idempotent:
 
@@ -660,7 +755,7 @@ Script phải:
 - có dry-run khi update/delete dữ liệu;
 - được chạy và xác minh trên database demo trước deployment.
 
-## 20. Data acceptance checklist
+## 21. Data acceptance checklist
 
 - [ ] Mongo validator và indexes được tạo bằng migration idempotent.
 - [ ] Duplicate source/external article/save/idempotency key bị unique index chặn.
@@ -670,6 +765,7 @@ Script phải:
 - [ ] Sample database scan không tìm thấy raw HTML/full text/token/API key.
 - [ ] Sample database scan không tìm thấy binary/base64/GridFS media nguồn.
 - [ ] `leadMedia` chỉ tồn tại với HTTPS allowlisted host/current policy; video luôn link-only và `not-analyzed`.
-- [ ] Takedown và account deletion test đúng retention policy.
-- [ ] Audit snapshot đã redact và không có update/delete route.
+- [ ] Content takedown và automatic account deletion có completion evidence riêng, đúng retention policy.
+- [ ] Audit không có raw snapshot/arbitrary object/PII và không có update/delete route.
+- [ ] Stale worker với lease generation cũ không cập nhật job/checkpoint/artifact.
 - [ ] Embedding length/hash/model/version được kiểm tra trước khi `ready`.

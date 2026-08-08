@@ -7,7 +7,7 @@
 
 ## 1. Kết luận product-lens
 
-**Khuyến nghị: GO, với phạm vi MVP được khóa trong 4 tuần.**
+**Khuyến nghị: GO WITH CONDITIONS — sửa contract fence trước Step 1, sau đó triển khai phạm vi MVP đã khóa.**
 
 TechPulse AI có một vấn đề đủ rõ để làm đồ án: người đọc công nghệ phải theo dõi nhiều nguồn, khó loại tin trùng và khó kiểm chứng câu trả lời AI. Điểm chứng minh giá trị không phải số lượng nguồn mà là một luồng hoàn chỉnh từ nguồn đã duyệt đến summary tiếng Việt và AI Q&A có citation.
 
@@ -15,7 +15,7 @@ Rủi ro lớn nhất không phải kỹ thuật giao diện mà là:
 
 1. phạm vi nguồn và quyền xử lý không được thực thi nhất quán;
 2. citation tồn tại nhưng không thực sự hỗ trợ phát biểu;
-3. phạm vi 4 tuần bị mở rộng bởi crawler, social connector hoặc search infrastructure quá lớn;
+3. phạm vi bị mở rộng bởi crawler, social connector hoặc search infrastructure quá lớn; coding agent tăng tốc implementation nhưng không thay thế verification/policy review;
 4. người dùng không thấy giá trị quay lại sau lần demo đầu tiên.
 
 ## 2. Product diagnostic
@@ -127,13 +127,15 @@ Các ngưỡng trên là tiêu chí đánh giá đồ án, không phải số li
 
 ## 3. Giả thuyết cần kiểm chứng
 
-| Giả thuyết | Cách kiểm chứng trong 4 tuần | Tín hiệu đạt |
+| Giả thuyết | Cách kiểm chứng trong MVP | Tín hiệu đạt |
 |---|---|---|
 | Summary tiếng Việt làm giảm thời gian chọn bài | Cho 3–5 người thử feed và phỏng vấn ngắn | Đa số chọn được bài muốn đọc trong vài phút |
 | Citation tạo niềm tin hơn chatbot thông thường | So sánh một câu trả lời có/không citation | Người thử biết cách mở và đối chiếu nguồn |
 | Ba connector đủ tạo cảm giác đa dạng | Seed 8–10 RSS, 3 arXiv query và HN | Feed không bị một nguồn/chủ đề chi phối |
 | Search + Q&A giải quyết nhu cầu khác feed | Cho người thử hoàn thành task theo chủ đề/thời gian | Tìm được câu trả lời và nguồn hỗ trợ |
 | Source governance có thể demo mà không gây cản trở | Thực hiện onboarding ít nhất 3 loại source | Admin hiểu vì sao nguồn được permitted/metadata-only |
+
+Các session với 3–5 người là **learning/demo evidence ở Step 12**, không chặn Step 1. Technical release gate vẫn dựa vào contract, invariant, integration/security test và evaluation fixture; kết quả phỏng vấn không được dùng để bỏ qua lỗi safety.
 
 ## 4. Ưu tiên feature
 
@@ -146,15 +148,18 @@ Các ngưỡng trên là tiêu chí đánh giá đồ án, không phải số li
 - ảnh preview có kiểm soát, visual fallback và link nguồn cho video quan trọng;
 - summary tiếng Việt;
 - AI Q&A với citation;
-- authentication, admin operations và audit;
+- authentication, admin operations, safe audit, hide-first takedown và automatic account-deletion completion;
 - Vercel deployment với demo dataset.
 
-### P1 — chỉ làm sau P0 ổn định
+### P1 — nằm trong target MVP nhưng chỉ làm sau P0 ổn định
 
 - embedding/cosine retrieval nếu text retrieval đã hoạt động;
 - saved articles và topic preference;
 - streaming Q&A;
-- review queue và takedown flow hoàn chỉnh.
+- full admin takedown UI sau khi hide-first backend workflow đã an toàn;
+- product-validation session và UX polish phục vụ demo.
+
+P1 là thứ tự ưu tiên, không phải quyền âm thầm bỏ acceptance gate. Plan of Record hiện nhắm P0 + các P1 trên; nếu tiến độ thực tế trượt thì project owner tạo PRD mutation rõ ràng. Không pre-cut chỉ vì estimate bốn tuần khi implementation có coding-agent support.
 
 ### P2 — hậu MVP
 
@@ -176,7 +181,7 @@ Các ngưỡng trên là tiêu chí đánh giá đồ án, không phải số li
 | URL ảnh nguồn hỏng hoặc bị chặn hotlink | Lazy-load, error fallback do TechPulse sở hữu; không proxy tùy ý qua backend |
 | Nguồn nhiều nhưng chất lượng thấp | Authority tier và allowlist; HN chỉ là community signal |
 | License không rõ | Mặc định `metadata-only`; admin phê duyệt scope |
-| Scope vượt 4 tuần | Khóa ba connector; mọi social/GitHub chuyển P2 |
+| Scope/verification trượt dù có coding agent | Giữ safety/contract/thesis; chỉ cắt streaming, polish hoặc P1 bằng PRD mutation có ghi nhận |
 | Free AI provider không ổn định | Provider abstraction, fallback trả phí thấp và text-search fallback |
 
 ## 6. Handoff

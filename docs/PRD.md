@@ -1,7 +1,7 @@
 # TechPulse AI — Product Requirements & Capability Contract
 
-> Trạng thái: Baseline locked for implementation  
-> Phiên bản: 1.1  
+> Trạng thái: Plan-of-Record repair locked for implementation
+> Phiên bản: 1.2
 > Cập nhật: 08/08/2026  
 > Product rationale: [PRODUCT-BRIEF.md](./PRODUCT-BRIEF.md)  
 > Nguồn quyết định chi tiết: [TechPulse-AI.md](./TechPulse-AI.md)
@@ -109,7 +109,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AUTH-003 | Backend phân biệt unauthenticated và unauthorized | Trả `401` và `403` đúng trường hợp |
 | AUTH-004 | Admin đầu tiên được tạo bằng seed/deployment operation | Không có public admin registration |
 | AUTH-005 | Khóa user làm mất hiệu lực mọi session hiện có | Request tiếp theo bị từ chối |
-| AUTH-006 | User có thể yêu cầu xóa account và dữ liệu cá nhân thuộc phạm vi | Trạng thái deletion được theo dõi/audit |
+| AUTH-006 | User có thể yêu cầu xóa account bằng durable automatic workflow | Session bị revoke trước; saved/chat/quota/identity có completion evidence và audit |
 
 ### 4.2. User preferences và saved articles
 
@@ -133,6 +133,8 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | SRC-007 | Source `blocked`/`review-needed` không chạy production ingest | Technical sample là ngoại lệ có giới hạn |
 | SRC-008 | Admin pause/archive source | Không tự xóa historical article |
 | SRC-009 | Source có `mediaPolicy` độc lập với quyền dùng text | Ảnh/video chỉ hiển thị theo mode và host đã duyệt |
+| SRC-010 | Policy fields tuân theo compatibility matrix | Contract-valid payload không thể nâng quyền xử lý |
+| SRC-011 | Terms change đưa source về re-review fail-closed | Source tự pause, tăng policyVersion và enqueue reconciliation |
 
 ### 4.4. Ingestion và normalization
 
@@ -200,14 +202,15 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 
 | ID | Requirement | Acceptance summary |
 |---|---|---|
-| ADMIN-001 | Overview hiển thị exceptions cần xử lý | Counts phản ánh source/job/article/index/takedown |
-| ADMIN-002 | Admin xem/retry/cancel bounded jobs | Mutation có confirmation/reason khi cần |
+| ADMIN-001 | Overview hiển thị exceptions cần xử lý | Counts phản ánh source/job/article/index/takedown/account deletion |
+| ADMIN-002 | Admin xem/retry/cancel mọi bounded job qua một operational view | Ingestion/indexing/reconciliation/deletion đều poll và recovery được |
 | ADMIN-003 | Admin regenerate summary/re-index article | Respect source policy và version |
 | ADMIN-004 | Admin xử lý takedown end-to-end | Metadata/media reference/summary/vector bị loại đúng scope |
 | ADMIN-005 | Admin suspend/restore user | Session revocation hoạt động |
-| ADMIN-006 | Mọi state-changing admin action có audit | Actor/target/before/after/reason/result/time |
+| ADMIN-006 | Mọi state-changing admin action có safe structured audit | Actor/target/changedFields/safe transition/reason/result/time; không snapshot document |
 | ADMIN-007 | Dashboard không hiển thị secret/private chat/password hash | Redaction được kiểm thử |
 | ADMIN-008 | Admin review/đổi media policy và ẩn media độc lập | Thay đổi có reason, policyVersion và audit |
+| ADMIN-009 | Admin xem safe article provenance/artifact diagnostics | Không expose excerpt/full text/vector/provider payload/private data |
 
 ## 5. States và transitions
 
@@ -222,7 +225,24 @@ Rules:
 
 - `active` chỉ hợp lệ khi license là `permitted` hoặc `metadata-only`.
 - `blocked` luôn vô hiệu production ingestion.
-- Terms change có thể chuyển license về `review-needed` và pause source.
+- Terms change chuyển license về `review-needed`, pause source, tăng `policyVersion` và enqueue visibility/artifact reconciliation trong cùng application workflow.
+- `reviewedBy` và `reviewedAt` do server lấy từ session/time hiện tại; browser không được khai báo hai field này.
+
+#### 5.1.1. Source Policy compatibility matrix
+
+| `licenseStatus` | `llmInputScope` hợp lệ | Ràng buộc `storageScope` | Media/user visibility |
+|---|---|---|---|
+| `review-needed` | `none` | Không tạo artifact mới; dữ liệu hiện hữu fail-closed và chờ reconciliation | Source không active; media không serialize |
+| `blocked` | `none` | `metadata/excerpt/summary/embedding=false` cho processing mới | Source không active; media mode `none` |
+| `metadata-only` | `none` hoặc `metadata` | `metadata=true`, `excerpt=false`; `summary/embedding` chỉ được true khi input là metadata | Chỉ field metadata đã duyệt; media theo policy độc lập |
+| `permitted` | `none`, `metadata`, `excerpt` hoặc `fulltext-temporary` | Không có full-text storage; `summary/embedding=true` yêu cầu input scope khác `none` | Media vẫn phải qua policy/host riêng |
+
+Các ràng buộc bổ sung:
+
+- `llmInputScope=none` bắt buộc `summary=false` và `embedding=false`.
+- `attributionRequired=true` bắt buộc có `attributionText` đã sanitize.
+- Hacker News luôn có `authorityTier=community-signal`; arXiv luôn dùng API và `authorityTier=primary`.
+- Connector kind, access method và authority tier phải được validate như một discriminated unit, không phải các field độc lập.
 
 ### 5.2. Article
 
@@ -244,6 +264,8 @@ failed | partial → queued (retry mới)
 
 - Retry tạo attempt mới, giữ link tới original job.
 - `running` quá timeout được recovery process đánh dấu `failed` trước khi retry.
+- `queued` có `availableAt`; coordinator lấy due work theo priority, `availableAt`, `createdAt` và request budget ổn định.
+- Mỗi lease acquisition tăng `leaseGeneration`; mọi checkpoint, transition và artifact commit phải match generation hiện hành.
 
 ### 5.4. Summary/embedding
 
@@ -260,12 +282,22 @@ active ↔ suspended
 active | suspended → deletion-pending → deleted
 ```
 
+- Account deletion là workflow riêng, tự động và idempotent; không đi qua content takedown hoặc admin approval.
+- Tạo deletion request phải revoke toàn bộ session và chuyển user sang `deletion-pending` trước khi cleanup tiếp tục.
+- `deleted` chỉ hợp lệ khi sessions, saved articles, chats và quota/rate-limit data đã được xóa, identity đã anonymize và các completion flag đều được xác minh.
+- Audit chỉ giữ opaque user/request ID và safe reason category; không giữ email hoặc nội dung chat đã xóa.
+
 ### 5.6. Takedown
 
 ```text
 received → reviewing → approved | rejected
 approved → completed
 ```
+
+- Takedown MVP chỉ áp dụng cho target `source|article` và scope `metadata|media-metadata|summary|embedding`.
+- Quyết định là all-or-nothing: `approved` nghĩa toàn bộ `requestedScope` được duyệt; MVP không có partial approval hoặc `approvedScope` riêng.
+- `completed` chỉ hợp lệ khi mọi completion flag tương ứng `requestedScope` đã được xác minh.
+- Account deletion không được biểu diễn bằng `targetType=user-data` hoặc `scope=account-data`.
 
 ## 6. Capability invariants
 
@@ -283,6 +315,11 @@ approved → completed
 12. Deleting/hiding article phải đồng bộ summary, search và embedding visibility.
 13. MongoDB không lưu binary/base64/GridFS của ảnh/video nguồn; chỉ lưu metadata, URL và policy snapshot cần thiết.
 14. Media chỉ hiển thị khi current source `mediaPolicy` cho phép; video MVP luôn link-only và không được xem là AI evidence.
+15. `answered` luôn có paragraph/citation không rỗng và mọi citation ID resolve tới article đang visible; `refused` không chứa factual paragraph và có refusal reason.
+16. Public serializer chỉ trả summary khi `summaryStatus=ready`; artifact `removed` phải unset content/model/hash và không xuất hiện ở feed/detail/retrieval.
+17. Direct admin mutation và audit record commit atomically; workflow dài ghi audit intent trước và terminal result idempotently.
+18. Idempotency identity gồm actor scope, key và canonical request hash; reuse key cho intent khác trả conflict.
+19. Account deletion completion độc lập content takedown và có machine-readable evidence cho từng cleanup item.
 
 ## 7. Data ownership và implications
 
@@ -329,6 +366,8 @@ approved → completed
 | NFR-010 | Legal safety | Từng source có evidence và review date trước khi active |
 | NFR-011 | Media safety | Preview có attribution/alt/fallback; host không được duyệt hoặc media lỗi không làm hỏng core flow |
 
+Canonical media attribution do server resolve theo thứ tự media credit → source `attributionText` → source name và luôn trả non-empty `leadMedia.attribution`; frontend không tự dựng attribution từ field nullable.
+
 ## 10. MVP acceptance gate
 
 MVP chỉ được xem là hoàn thành khi tất cả gate sau đạt:
@@ -355,14 +394,27 @@ MVP chỉ được xem là hoàn thành khi tất cả gate sau đạt:
 - Refusal cases không tạo unsupported claim.
 - Hidden/removed/review-needed article không xuất hiện trong context.
 
+Evaluation protocol được version-control cùng fixture:
+
+- tối thiểu 30 prompt gồm grounded, insufficient-evidence, conflicting-source, hidden/policy-blocked, prompt-injection và media-only cases;
+- factual paragraph được tách thành atomic claims trước khi chấm; dataset version và adjudication note không đổi giữa các lần so sánh;
+- citation precision = số claim-citation pair thực sự hỗ trợ claim / tổng pair được trích;
+- claim coverage = số factual claim có ít nhất một citation hỗ trợ / tổng factual claim;
+- unsupported-claim rate = số factual claim không được evidence hỗ trợ / tổng factual claim;
+- refusal accuracy = số case cần refuse được refuse đúng / tổng refusal-required case;
+- release target: citation precision và claim coverage ≥90%, unsupported-claim rate ≤5%, refusal accuracy ≥90%.
+
 ### Operations/security gate
 
 - User không gọi được admin endpoint.
 - Cron/manual job dùng lock và idempotency.
+- Vercel Cron gọi protected GET adapter; admin manual POST dùng cùng coordinator nhưng trust boundary riêng.
+- Due work không nằm queued vô hạn; stale worker không commit được sau khi mất lease generation.
 - Secret/full text không xuất hiện trong logs/dashboard/database.
 - Database scan không có binary/base64 ảnh/video; host media ngoài policy không được serialize ra user API.
 - Takedown xóa/ẩn đúng metadata, media reference, summary và vector.
 - Mọi admin mutation có audit record.
+- Account deletion test chứng minh session/saved/chat/quota cleanup và identity anonymization trước `completed`.
 
 ### Deployment gate
 
@@ -384,9 +436,9 @@ MVP chỉ được xem là hoàn thành khi tất cả gate sau đạt:
 - Fine-tuning proprietary model.
 - Production SLA hoặc unrestricted public launch.
 
-## 12. Open questions
+## 12. Execution questions không chặn Step 1
 
-Không còn blocking product question. Các item cần xác nhận trong execution:
+Các semantics account deletion, takedown all-or-nothing, audit atomicity và scope MVP đã được chốt. Các item sau chỉ cần xác nhận gần step sở hữu:
 
 1. Danh sách cuối cùng của 8–10 RSS feed và evidence đi kèm.
 2. Benchmark retrieval để chốt BGE-M3 version/dimensions cho corpus tiếng Việt.

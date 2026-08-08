@@ -1,8 +1,8 @@
 # TechPulse AI — Documentation Index
 
-> Trạng thái: Product/architecture package đã sẵn sàng cho implementation  
+> Trạng thái: Plan-of-Record v1.3 đã repair và sẵn sàng cho Step 1
 > Cập nhật: 08/08/2026  
-> Phạm vi: MVP bốn tuần, solo-first, React (JavaScript/JSX) + Node.js/Express (JavaScript) + MongoDB + AI
+> Phạm vi: MVP solo-owner + coding-agent, React (JavaScript/JSX) + Node.js/Express (JavaScript) + MongoDB + AI; bốn tuần là planning horizon
 
 ## 1. Đọc theo thứ tự nào?
 
@@ -66,8 +66,13 @@ docs/
 - Vercel Hobby host React/Express/cron; MongoDB Atlas giữ mọi state bền vững.
 - Text search là baseline; BGE-M3/cosine là semantic path có fallback.
 - Admin/user dùng server-side session; system worker không phải login account.
+- `/me` bootstrap lại CSRF token sau reload; token chỉ ở memory, không ở localStorage.
 - Source text/media rights là executable policy, không phải ghi chú tùy chọn.
-- Blueprint có 12 step, direct mode và hard cutline Day 5/10/15 cho solo schedule.
+- Vercel Cron dùng protected GET adapter; admin manual POST gọi cùng due-work coordinator qua trust boundary riêng.
+- Job có `availableAt`, actor-scoped idempotency/request hash và lease-generation fencing; indexing job observable/retry/cancel được.
+- Content takedown all-or-nothing tách khỏi automatic account deletion; cả hai có completion evidence riêng.
+- Audit chỉ lưu safe changed fields/state transition; không snapshot arbitrary document.
+- Blueprint có 12 step, direct mode và milestone cutline Day 5/10/15; coding-agent support không hạ verification gate.
 
 ## 5. Change routing
 
@@ -83,6 +88,8 @@ docs/
 ## 6. Bắt đầu implementation
 
 Điểm bắt đầu duy nhất là [Step 1 — Scaffold application and contract toolchain](./plans/techpulse-ai-mvp.md#step-1). Không paste toàn bộ batch orchestration cùng lúc; chỉ chạy step tiếp theo khi dependency có verification evidence và handoff.
+
+Plan-of-Record repair trước Step 1 đã hoàn tất ở PRD/OpenAPI/Data Model/Technical Design/blueprint: cron transport, answer conditional, Source Policy matrix, CSRF bootstrap, due work/fencing, indexing controls, account deletion/takedown và audit no-leak đều có authority/owner/test gate.
 
 Các item execution chưa chặn Step 1:
 
