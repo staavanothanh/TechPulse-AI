@@ -138,6 +138,84 @@ a {
   box-shadow: var(--shadow);
 }
 
+.auth-card {
+  min-height: 420px;
+  margin-bottom: 18px;
+  padding: clamp(24px, 5vw, 56px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.auth-form,
+.auth-card>label {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+  margin-top: 24px;
+}
+
+.auth-form label,
+.auth-card>label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.auth-form input,
+.auth-card input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.primary-button,
+.text-button {
+  width: fit-content;
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: var(--control-radius);
+  cursor: pointer;
+}
+
+.primary-button {
+  color: var(--surface);
+  background: var(--fg);
+}
+
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.text-button {
+  padding-inline: 0;
+  color: var(--fg);
+  background: transparent;
+  text-decoration: underline;
+}
+
+.form-error {
+  color: var(--warning);
+}
+
+.form-success {
+  color: var(--accent);
+}
+
+.account-actions {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  margin-top: 18px;
+}
+
 .side-nav {
   display: grid;
   align-content: start;
@@ -251,6 +329,7 @@ h2 {
 }
 
 @media (max-width: 600px) {
+
   .site-header,
   .app-layout {
     width: min(100% - 20px, 1180px);
@@ -278,6 +357,7 @@ h2 {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {

@@ -1,0 +1,59 @@
+import { validateRuntimeConfiguration } from '../config/runtime.js'
+import { createClientIpAdapter } from '../http/middleware/client-ip.js'
+import { createAuthService } from '../application/auth/service.js'
+import { createHmacKeyring } from '../security/hmac-keyring.js'
+import { reconcileQuotaHmacLifecycle } from '../security/hmac-lifecycle.js'
+import { MongoAuthRepository } from '../repositories/mongo/auth-repository.js'
+import { getMongoContext } from '../repositories/mongo/connection.js'
+import { AUTH_CORE_COLLECTIONS, AUTH_CORE_INDEXES } from '../../scripts/migrations/auth-core.js'
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+  return JSON.stringify(value)
+}
+
+export async function assertAuthCoreReady(context) {
+  const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
+  const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
+  for (const name of Object.keys(AUTH_CORE_COLLECTIONS)) {
+    const collection = collectionMap.get(name)
+    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || stableJson(collection.options.validator) !== stableJson(AUTH_CORE_COLLECTIONS[name].validator)) {
+      throw new Error('auth-core validator is not ready')
+    }
+    const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
+    for (const expected of AUTH_CORE_INDEXES[name]) {
+      const actual = actualByName.get(expected.name)
+      if (!actual || stableJson(actual.key) !== stableJson(expected.key)) throw new Error('auth-core indexes are not ready')
+      for (const option of ['unique', 'expireAfterSeconds']) if (expected.options?.[option] !== undefined && actual[option] !== expected.options[option]) throw new Error('auth-core indexes are not ready')
+      if (expected.options?.partialFilterExpression && stableJson(actual.partialFilterExpression) !== stableJson(expected.options.partialFilterExpression)) throw new Error('auth-core indexes are not ready')
+    }
+  }
+}
+
+export async function createConfiguredAuthService({ environment = process.env } = {}) {
+  const runtime = validateRuntimeConfiguration(environment)
+  const context = await getMongoContext(runtime, environment)
+  const repository = new MongoAuthRepository(context)
+  await assertAuthCoreReady(context)
+  const quotaKeyring = createHmacKeyring({
+    currentEnv: runtime.quotaKeyring.currentEnv,
+    retiringEnvs: runtime.quotaKeyring.retiringEnvs,
+    currentVersion: runtime.quotaKeyring.currentVersion,
+    retiringVersions: runtime.quotaKeyring.retiringVersions,
+    values: environment,
+  })
+  await reconcileQuotaHmacLifecycle({ repository, keyring: quotaKeyring })
+  const unknownRateLimitVersions = await repository.countUnknownRateLimitKeyVersions(quotaKeyring.versions)
+  if (unknownRateLimitVersions > 0) throw new Error('quota HMAC retirement gate failed: dependent rate-limit records remain')
+  const rateLimitFingerprintMismatches = await repository.countRateLimitFingerprintMismatches(quotaKeyring)
+  if (rateLimitFingerprintMismatches > 0) throw new Error('rate-limit key fingerprint continuity check failed')
+  const unknownIpHmacVersions = await repository.countUnknownIpHmacKeyVersions(quotaKeyring.versions)
+  if (unknownIpHmacVersions > 0) throw new Error('quota HMAC retirement gate failed: dependent IP HMAC records remain')
+  const mode = environment.VERCEL === '1' || environment.VERCEL === 'true' ? 'production' : environment.NODE_ENV === 'test' ? 'test' : 'local'
+  return {
+    authService: createAuthService({ repository, runtime, quotaKeyring, clientIpAdapter: createClientIpAdapter({ mode }) }),
+    context,
+    runtime,
+  }
+}

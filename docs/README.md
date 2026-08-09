@@ -59,6 +59,9 @@ docs/
 
 - MVP có ba connector: RSS/Atom, arXiv và Hacker News; GitHub/social nằm hậu MVP.
 - Implementation dùng JavaScript/JSX (`.js`, `.jsx`), không dùng TypeScript/TSX trong MVP; OpenAPI, runtime validation, JSDoc tùy chọn và test bù cho việc không có static type checker.
+- Step 2 dùng MongoDB Node driver `7.5.0`, MongoDB là SoR; migration `auth-core` tạo validator/index/TTL cho users, sessions, rateLimitBuckets, savedArticles, adminAuditLogs và append-only hmacKeyLifecycleSnapshots. Password dùng built-in `node:crypto` scrypt, không thêm password-hashing package.
+- Quota HMAC ghi stable `currentVersion`/`retiringVersions` qua runtime env; bucket lưu `keyFingerprint` để phát hiện đổi secret cùng version. Mongo snapshot revision/hash-chain giữ mọi predecessor đã quan sát; startup chỉ append transition và retire từng version sau successor >=30 ngày cùng zero rate-limit/session/audit dependents. Runtime role không update/delete lifecycle history.
+- Auth HTTP đã có register/login/logout/current-user/preferences và admin user foundation; session token chỉ lưu hash, CSRF giữ trong memory, public register luôn role `user`.
 - UI, summary và Q&A dùng tiếng Việt; giữ title/language/URL nguồn nguyên bản.
 - Citation cấp bài ở detail/summary và cấp đoạn ở Q&A.
 - Không lưu full text; chỉ xử lý tạm khi source policy cho phép.
@@ -66,7 +69,7 @@ docs/
 - Vercel Hobby host React/Express/cron; MongoDB Atlas là SoR duy nhất với `techpulse_app` runtime DB và `techpulse_governance` signed restore/audit boundary DB.
 - Text search là degradation baseline; BGE-M3/cosine là planned-MVP predecessor/release gate của grounded Q&A.
 - Admin/user dùng server-side session; system worker không phải login account.
-- `/me` bootstrap lại CSRF token sau reload; token chỉ ở memory, không ở localStorage.
+- `/me` bootstrap CSRF token gắn ổn định với session sau reload; token chỉ ở memory, không ở localStorage và bootstrap ở tab khác không revoke token đang hợp lệ.
 - Source text/media rights là executable policy, không phải ghi chú tùy chọn.
 - Vercel Cron dùng protected `GET /api/internal/cron/due-work`, recover expired work rồi trả aggregate cho ingestion/indexing/account-deletion; admin manual POST gọi cùng runner qua trust boundary riêng.
 - Job có `availableAt`, actor-scoped idempotency/request hash và persistent lease high-water không TTL; canonical resource key làm cron/admin/retry cùng target tranh chấp đúng fence.
@@ -106,6 +109,6 @@ Các item execution chưa chặn Step 1:
 - kiểm tra quota/availability Vercel, OpenCode Zen, DeepSeek và OpenRouter gần ngày demo;
 - chốt ngày tắt public deployment sau khi chấm.
 
-### Step 1 scaffold status
+### Step 1–2 implementation status
 
-Step 1 đã tạo scaffold JavaScript/JSX với React/Vite, Express/Vercel entrypoint, generated OpenAPI client/schema, strict ingress boundary, health route và contract/test/lint/build scripts. Local command baseline là Node.js `24.14.1` + npm `11`; chạy `npm ci`, sau đó `npm run dev` trên port 3000. Database, authentication persistence, connector, provider và business UI vẫn thuộc các step sau.
+Step 1 đã tạo scaffold JavaScript/JSX với React/Vite, Express/Vercel entrypoint, generated OpenAPI client/schema, strict ingress boundary, health route và contract/test/lint/build scripts. Step 2 đã thêm Mongo connection/migration/repository, auth/session/RBAC boundary và account surface; source/content/provider vẫn thuộc các step sau. Local command baseline là Node.js `24.14.1` + npm `11`; chạy `npm ci`, `npm run db:migrate -- --to auth-core`, rồi `npm run dev` trên port 3000.

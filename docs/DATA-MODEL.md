@@ -39,6 +39,7 @@ Các block `type ...` dưới đây là ký pháp tài liệu trung lập để 
 | `takedownRequests` | Quy trình gỡ source/article do publisher/rights request | Governance module |
 | `accountDeletionRequests` | Durable automatic user-data cleanup | Account/governance module |
 | `adminAuditLogs` | Append-only safe mutation/workflow evidence | Audit module |
+| `hmacKeyLifecycleSnapshots` | Append-only quota-HMAC version history và retirement evidence | Auth/security bootstrap |
 
 Các collection trên thuộc `techpulse_app`. Logical database `techpulse_governance` có ba collection nhỏ: `governanceSuppressions`, `governanceCheckpoints`, `auditRetentionManifests`. Cả hai database phải ở cùng Atlas deployment, được tạo/index trước traffic để terminal transaction có thể ghi cross-database bằng cùng Mongo client/session.
 
@@ -141,6 +142,8 @@ type SessionDocument = {
 };
 ```
 
+`csrfSecretHash` chỉ lưu hash của token CSRF gắn ổn định với opaque session. Browser nhận token qua response auth hoặc `/me` và chỉ giữ nó trong memory; `/me` đồng thời ở tab khác không thay thế hash/token đang hợp lệ.
+
 Indexes:
 
 ```text
@@ -166,6 +169,7 @@ type RateLimitBucketDocument = {
   subjectType: "user" | "ip" | "admin" | "source";
   keyHash: string;
   keyVersion: number;
+  keyFingerprint: string;
   windowStart: Date;
   count: number;
   limit: number;
@@ -178,6 +182,7 @@ Indexes:
 
 ```text
 unique { scope: 1, subjectType: 1, keyHash: 1, windowStart: 1 }
+{ keyVersion: 1 } // startup continuity scan
 TTL { expiresAt: 1 } expireAfterSeconds: 0
 ```
 
@@ -186,13 +191,15 @@ Rules:
 - Increment/check dùng atomic upsert; không dùng counter trong process memory.
 - `subjectType` là source of truth cho ownership: `login|register→ip`, `answer-minute|answer-daily→user`, `admin-trigger→admin`, `source-test→source`. Validator/key-derivation helper từ chối scope/subject pair khác mapping này.
 - MVP fixed bounds: login tối đa 10 attempt/15 phút/IP; register tối đa 5 attempt/60 phút/IP. Check + increment atomically trước password hashing, user insert hoặc session creation; registration bị reject không tạo user/session.
-- `keyHash` luôn là keyed HMAC + `keyVersion` của subject opaque: canonical IP cho `ip`, opaque `userId` cho user quota, opaque admin ID cho admin và opaque source ID cho source. Không dùng raw email hoặc plain hash.
+- `keyHash` luôn là keyed HMAC + `keyVersion` của subject opaque: canonical IP cho `ip`, opaque `userId` cho user quota, opaque admin ID cho admin và opaque source ID cho source. `keyFingerprint` là SHA-256 fingerprint của key material tương ứng, dùng để phát hiện đổi secret khi vẫn giữ nguyên version; không dùng raw email hoặc plain hash.
 - `Retry-After` tính từ window hiện tại, không từ thời điểm TTL document thực sự bị cleanup.
 - Daily AI quota dùng cùng collection với window dài hơn; provider call chỉ chạy sau khi reserve quota thành công.
 - TTL chỉ cleanup; correctness dựa vào `windowStart`/`expiresAt` trong query.
 - Account deletion chỉ xóa/verify `subjectType=user` cho hai scope answer; shared `subjectType=ip` anti-abuse bucket không thuộc user data và không bị broad-delete.
-- HMAC keyring là config đóng gồm exactly một `current` version và tối đa hai `retiring` versions; secret chỉ đến từ environment. New write dùng current version. Read/quota/deletion derive candidate hash cho mọi non-retired version và transactionally migrate/consolidate về current, nên rotation không reset quota và deletion zero-verify được old+current bucket.
-- Startup fail nếu document dùng unknown/retired key version, keyring trùng version hoặc thiếu current key. Old key chỉ retire sau ít nhất 30 ngày kể từ successor activation và query zero dependent session/rate-limit/audit record; không bao giờ lưu raw IP/email/user identifier để hỗ trợ rotation.
+- HMAC keyring env gồm exactly một `current` version và tối đa hai `retiring` versions; secret chỉ đến từ environment. Env không giữ lifecycle history. New write dùng current version; read/quota/deletion derive candidate hash cho mọi non-retired version và transactionally migrate/consolidate về current, nên rotation không reset quota và deletion zero-verify được old+current bucket.
+- `hmacKeyLifecycleSnapshots` là append-only full inventory có `inventoryId=quota-hmac`, monotonic `revision`, `previousSnapshotHash`, `snapshotHash`, `currentVersion`, sorted `versions[]` và `recordedAt`. Version entry giữ `version`, `state=current|retiring|retired`, one-way `keyFingerprint`, `firstObservedAt`; retiring/retired giữ immutable `successorVersion` + Mongo-recorded `successorActivatedAt`; retired thêm `retiredAt` và exact-zero evidence cho `rateLimitBuckets`, `sessions`, `adminAuditLogs`. Không lưu secret/key material hoặc raw subject.
+- Mỗi snapshot mới phải giữ mọi version cũ và chỉ cho transition `current→retiring→retired`; missing revision/hash, removed version, reactivated retired version, current rollback, changed fingerprint/successor đều fail closed. Từng predecessor retire độc lập, kể cả predecessor khác còn retiring: successor phải được durable inventory quan sát ít nhất 30 ngày và transaction phải đếm zero dependent exact-version record trước khi append retirement snapshot.
+- Runtime role chỉ `find/insert` lifecycle snapshots; `update/delete` bị deny và probe riêng. Startup verify validator/index/hash-chain, reconcile config với latest durable snapshot trước traffic, rồi vẫn fail nếu document dùng unknown/retired key version hoặc fingerprint không khớp.
 
 ## 7. `sources`
 
@@ -863,7 +870,7 @@ Rules:
 - Cấm email, requester contact, secret, passwordHash, session/token, connector credential, full text, provider payload và private chat.
 - Failed mutation cũng có record nếu actor đã được xác thực và action đủ xa để audit.
 - Direct admin mutation commit state + audit event trong một Mongo transaction ngắn. Workflow dài ghi `pending` intent trước side effect và append terminal event idempotently.
-- `eventId` là deterministic identity theo request/workflow phase và bị unique index chặn duplicate. Một runtime Mongo client/credential/session có domain privileges nhưng chỉ `insert/find` trên `adminAuditLogs`; cùng session commit domain mutation + audit insert. IP-HMAC field-unset dùng maintenance credential riêng và đúng fixed HTTP task, còn full event purge chỉ dùng owner-only offline signed-manifest path ở §19.1.
+- `eventId` là deterministic identity theo request/workflow phase và bị unique index chặn duplicate. Một runtime Mongo client/credential/session có domain privileges nhưng chỉ `insert/find` trên `adminAuditLogs`; cùng session commit domain mutation + audit insert. Cùng role chỉ `insert/find` append-only HMAC lifecycle snapshots; audit/lifecycle update-delete đều bị deny. IP-HMAC field-unset dùng maintenance credential riêng và đúng fixed HTTP task, còn full event purge chỉ dùng owner-only offline signed-manifest path ở §19.1.
 - Step 12 tính ordered digest `(eventId, createdAt, _id)` bằng offline key rồi operator ghi signed checkpoint vào `techpulse_governance.governanceCheckpoints`. Verifier phải phát hiện modified/missing/reordered hoặc restored-old app state trước khi target serve.
 
 Indexes:
@@ -925,7 +932,7 @@ type AuditRetentionManifestDocument = {
 Rules:
 
 - Terminal account deletion/takedown tạo minimized suppression payload, ký HMAC bằng dedicated governance signing key từ Vercel environment rồi insert cùng domain/audit mutation trong **cùng client/session transaction** qua hai pre-created database. Insert fail làm terminal mutation rollback; không có eventual best-effort gap.
-- Runtime custom role chỉ `insert/find` suppression và `insert/find` audit; không update/delete các collection này. Maintenance credential chỉ làm fixed IP-HMAC field-unset; owner operator credential ghi checkpoint/retention manifest và chạy offline purge.
+- Runtime custom role chỉ `insert/find` suppression, audit và HMAC lifecycle snapshots; không update/delete các collection này. Maintenance credential chỉ làm fixed IP-HMAC field-unset; owner operator credential ghi checkpoint/retention manifest và chạy offline purge.
 - Governance runtime signing keyring tách quota/IP HMAC: đúng một current + tối đa một retiring version; DB chỉ giữ version/signature. Key chỉ retire khi mọi suppression dùng version đó đã nằm dưới verified offline checkpoint và sidecar backup có continuity. Offline checkpoint HMAC keyring do owner giữ riêng: một current + tối đa hai verify-only retiring keys; secret không vào repo/Vercel/Mongo, inventory chỉ ghi keyId/activatedAt/retireAfter. Old offline key chỉ hủy sau khi mọi checkpoint/manifest/sidecar còn retention đã hết hạn hoặc được re-anchor bằng current key.
 - Governance database unavailable/signature invalid làm terminal deletion/takedown hoặc restore serving gate fail closed. Backup inventory luôn có signed read-only governance sidecar; sidecar chỉ là recovery copy và không ghi đè live governance database trong app-only restore.
 - Step 11 phải probe transaction thật trên Atlas deployment đã cấu hình: cùng runtime client/session/credential ghi rồi rollback/commit qua pre-created collection ở `techpulse_app` và `techpulse_governance`. Capability/role probe fail thì block handoff; không fallback sang eventual write, best-effort export hoặc persistence technology khác.

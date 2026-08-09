@@ -45,7 +45,7 @@ Execution order: blueprint này
 | GitHub CLI | Không cài | Direct mode; không dùng `gh` |
 | Existing code/package | Chưa có | Step 1 sở hữu toàn bộ scaffold |
 | Existing plan/memory | Không có | File này là execution index đầu tiên |
-| ECC plugin marker | Có | Orchestration guide dùng `/ecc:orchestrate` và `ecc:*` |
+| ECC plugin marker | Có | Orchestration guide chỉ giữ reference chain `ecc:*`, không ghi custom command không tồn tại |
 | Language marker | Đã chốt | JavaScript/JSX theo ADR-0008; Step 1 tạo `.js`/`.jsx` và `jsconfig.json` |
 
 JavaScript/JSX là quyết định đã duyệt, không còn là assumption. Đổi sang TypeScript/TSX sau này phải tạo ADR/plan mutation và migration plan riêng; không trộn hai baseline âm thầm.
@@ -245,23 +245,23 @@ Public registration không nhận role; admin đầu tiên do seed script tạo.
 server/config/**, server/repositories/mongo/**
 server/domain/user/**, server/application/auth/**, server/http/auth/**
 server/http/middleware/{session,csrf,require-role,client-ip}.js
-server/security/hmac-keyring/**, server/audit/writer/**
+server/security/{hmac-keyring,hmac-lifecycle}/**, server/audit/writer/**
 scripts/migrations/**, scripts/seed-admin.*
 client/features/auth/**, client/features/account/**
-tests/integration/{mongo,auth,authorization}/**
+test/integration/{mongo,auth,authorization}/**
 ```
 
 ### Tasks
 
 1. Implement validated environment config, reusable serverless Mongo connection và HMAC keyring startup validation: exactly one current, tối đa hai retiring versions, unknown/retired document version fail closed; secret chỉ qua env name.
-2. Tạo idempotent migrations/indexes/validators cho `users`, `sessions`, `rateLimitBuckets`, `savedArticles`, `adminAuditLogs` foundation. User validator conditional reject role/preferences/moderation fields khi deleted; scopes map `login|register→ip`, `answer-*→user`, `admin-trigger→admin`, `source-test→source`; deadline/audit event indexes đúng Data Model. `db:verify` assert definition + explain.
+2. Tạo idempotent migrations/indexes/validators cho `users`, `sessions`, `rateLimitBuckets`, `savedArticles`, `adminAuditLogs` và append-only `hmacKeyLifecycleSnapshots`. User validator conditional reject role/preferences/moderation fields khi deleted; scopes map `login|register→ip`, `answer-*→user`, `admin-trigger→admin`, `source-test→source`; deadline/audit/lifecycle indexes đúng Data Model. `db:verify` assert definition + explain.
 3. Implement register/login/logout/current-user/preferences theo OpenAPI và Step-1 cookie/Origin/CORS/cache boundary; `/me` bootstrap CSRF. Logout expire exact cookie tuple. Account-deletion route thuộc Step 11.
 4. Hash password và opaque session token; TTL/revocation/session-version checks. Expose repository primitive direct-delete + zero-match mọi session theo userId để Step 11 gọi, nhưng không tạo deletion workflow ở Step 2.
 5. Implement trusted client-IP adapter: production chỉ đọc platform-overwritten `x-forwarded-for`, canonicalize một public IP; local/test adapter explicit. Atomic fixed bounds login=10/15 phút và register=5/60 phút chạy trước expensive/auth writes; generic auth failure tránh enumeration.
-6. Implement keyring-aware bucket access: derive all non-retired hashes, transactionally consolidate old→current without quota reset/double count; expose direct all-version user-quota delete/zero-match primitive cho Step 11. Old key retirement requires 30 ngày + zero dependent records.
-7. Dùng cùng transaction-capable runtime Mongo client/credential/session cho domain mutation + audit; Step 2 custom role cấp domain privileges cần thiết nhưng chỉ insert/find trên audit collection, đồng thời khóa role-extension contract để Step 11 thêm suppression insert/find sau migration. Maintenance/offline credential tách riêng. Test credential thật: audit insert fail rollback domain mutation; audit update/delete bị deny.
+6. Implement keyring-aware bucket access: derive all non-retired hashes, transactionally consolidate old→current without quota reset/double count; expose direct all-version user-quota delete/zero-match primitive cho Step 11. Stable env config không giữ lifecycle history: startup reconcile append-only Mongo snapshot, giữ mọi predecessor qua revision/hash-chain và enforce riêng từng `retiring→retired` bằng successor >=30 ngày + zero exact-version rate-limit/session/audit records.
+7. Dùng cùng transaction-capable runtime Mongo client/credential/session cho domain mutation + audit; Step 2 custom role cấp domain privileges cần thiết nhưng chỉ insert/find trên audit và HMAC lifecycle snapshot collections, đồng thời khóa role-extension contract để Step 11 thêm suppression insert/find sau migration. Maintenance/offline credential tách riêng. Test credential thật: audit insert fail rollback domain mutation; audit/lifecycle update/delete bị deny.
 8. Seed admin bằng explicit deployment script; không có role mutation API.
-9. Tạo React auth/account state không lưu session/CSRF token trong `localStorage`; reload gọi `/me` để nhận token mới vào memory.
+9. Tạo React auth/account state không lưu session/CSRF token trong `localStorage`; reload gọi `/me` để bootstrap token session-bound vào memory mà không revoke token hợp lệ ở tab/StrictMode request đồng thời.
 10. Viết integration/security tests cho exact cookie/cache/Origin/CORS, role injection, session expiry/revoke/delete, concurrent register/login 429+Retry-After, spoofed forwarding headers, rejected register no user/session, scope/subject mismatch, old-key rotation/consolidation, CSRF, suspended/cross-user và deleted-user validator.
 11. Validate serialized success/error responses của auth/account operations bằng OpenAPI fixtures.
 
@@ -286,7 +286,7 @@ npm run test:integration -- auth authorization mongo
 - Seed admin idempotent và không in credential.
 - Session/quota retention/index/mapping được verify cùng migration; không có route/cleanup nào broad-delete IP bucket theo user.
 - Fixed login/register bounds chạy trước password hash/write; caller-controlled forwarding headers không thay đổi canonical bucket.
-- HMAC old-version fixture không reset quota; all-version deletion primitive zero-match và startup reject invalid keyring.
+- HMAC old-version fixture không reset quota; all-version deletion primitive zero-match; startup reject invalid keyring và config không thể quên predecessor đã có trong durable lifecycle history.
 - Raw deleted-user fixture có role/preferences/suspension context bị validator reject; same-session audit insert failure rollback mutation và runtime role không arbitrary update/delete audit.
 
 ### Rollback

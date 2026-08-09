@@ -364,7 +364,7 @@ approved → completed
 26. Request vượt ingress bounds hoặc có unknown/duplicate/operator/prototype query bị reject trước route/repository.
 27. Q&A privacy/idempotency/provider admission/support gate áp dụng giống nhau cho primary và fallback; không route nào được bypass gate.
 28. `community-signal` chỉ discovery, không là Q&A evidence trong MVP.
-29. HMAC rotation không reset quota; deletion derive mọi non-retired key version và old key chỉ retire sau zero dependent records.
+29. HMAC rotation không reset quota; append-only Mongo lifecycle không được quên predecessor khi env bỏ key, deletion derive mọi non-retired key version và old key chỉ retire sau successor >=30 ngày cùng zero dependent records.
 30. Restored app database không overwrite `techpulse_governance` và không serve trước current signed suppression replay, ephemeral auth/quota cleanup, secret rotation và audit checkpoint verification.
 
 ## 7. Data ownership và implications
@@ -403,7 +403,7 @@ approved → completed
 - Không gửi credential/high-risk identifier, email, token, private chat hoặc unapproved full text tới provider. Raw Q&A chỉ dùng current `zdr-verified` route; không có route phù hợp thì fail closed.
 - OpenRouter logging/opt-in tắt; ZDR evidence có reviewed/expiry và fallback không được hạ capability.
 - RSS/Atom XML parser không network/DOCTYPE/entity/XInclude và có wire/decoded/depth/node/field/deadline bounds.
-- Quota/IP HMAC keyring có một current + tối đa hai retiring versions; governance runtime signer dùng keyring tách biệt; offline checkpoint keys chỉ owner giữ ngoài repo/runtime/DB và retire theo checkpoint/manifest/sidecar retention. Không lưu raw subject/secret.
+- Quota/IP HMAC keyring có một current + tối đa hai retiring versions; rate-limit bucket lưu fingerprint để phát hiện đổi secret khi giữ nguyên version. Stable version config không làm lifecycle authority: append-only Mongo snapshot revision/hash-chain giữ history và runtime role chỉ được find/insert. Governance runtime signer dùng keyring tách biệt; offline checkpoint keys chỉ owner giữ ngoài repo/runtime/DB và retire theo checkpoint/manifest/sidecar retention. Không lưu raw subject/secret/key material.
 - Direct domain mutation/audit dùng một transaction-capable runtime Mongo identity/session với per-collection role: domain mutation cần thiết nhưng audit/suppression chỉ insert/find. Separate maintenance/offline credentials không tham gia direct transaction.
 - Retention maintenance là machine-only fixed task; full audit-event purge chỉ là owner-offline fixed task có signed retention manifest trong governance DB. Checkpoint phát hiện rollback/tamper ngoài manifest hợp lệ.
 - Backup dùng credential tách runtime, private encrypted app dump + signed governance sidecar và isolated app restore; phục vụ traffic chỉ sau governance reconciliation + session invalidation + secret rotation.

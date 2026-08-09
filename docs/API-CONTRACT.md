@@ -31,7 +31,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 ### 3.1. User client
 
 - đăng ký/login/logout và khôi phục session;
-- bootstrap lại CSRF token từ `GET /api/v1/me` sau reload; token chỉ giữ trong memory;
+- bootstrap CSRF token gắn với session từ `GET /api/v1/me` sau reload; token chỉ giữ trong memory và bootstrap đồng thời không làm token ở tab khác mất hiệu lực;
 - cập nhật topic preferences và quản lý saved articles;
 - xem feed/filter/detail với cursor ổn định;
 - render ảnh remote-preview hoặc video link-only đúng `leadMedia`; dùng fallback khi field null/lỗi;
@@ -124,7 +124,7 @@ Exact method/path/status nằm trong OpenAPI, không lặp lại ở đây để
 - Register/login và mọi cookie-authenticated mutation fail closed khi browser `Origin` thiếu, malformed hoặc không exact match. Production không có non-browser bypass; test harness chỉ dùng exact configured loopback/test origin.
 - Register/login/`GET /me` trả `Cache-Control: no-store, private`; response phụ thuộc session thêm `Vary: Cookie`.
 - Login/register dùng atomic IP bucket riêng trước password hashing/account/session creation. Vercel adapter lấy canonical public IP từ platform-overwritten `x-forwarded-for`; local/test adapter phải explicit, và application không đọc caller-controlled forwarding chain trực tiếp.
-- Session cookie sống qua reload nhưng CSRF token được bootstrap lại từ `/me`; không yêu cầu login lại và không hạ protection.
+- Session cookie sống qua reload nhưng CSRF token được bootstrap từ `/me`; token ổn định trong cùng session để concurrent tab/StrictMode không revoke token hợp lệ khác, không yêu cầu login lại và không hạ protection.
 - Admin operation dùng session thường cộng role check server-side.
 - Cron route không nhận cookie và chỉ dùng `cronBearer`.
 - `429` phải có `Retry-After`; client hiển thị trạng thái retry được thay vì lặp request ngay.

@@ -11,6 +11,7 @@ export function createRequestIdMiddleware() {
     const candidate = req.get('X-Request-Id')
     const requestId = candidate && REQUEST_ID_PATTERN.test(candidate) ? candidate : createRequestId()
     req.requestId = requestId
+    req.serverRequestId = createRequestId()
     res.set('X-Request-Id', requestId)
     next()
   }

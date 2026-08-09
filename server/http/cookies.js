@@ -15,4 +15,20 @@ export function serializeClearSessionCookie() {
   return `${COOKIE_NAME}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax`
 }
 
+export function parseSessionCookie(header) {
+  if (typeof header !== 'string') return null
+  for (const part of header.split(';')) {
+    const [name, ...valueParts] = part.trim().split('=')
+    if (name !== COOKIE_NAME) continue
+    const value = valueParts.join('=')
+    try {
+      const decoded = decodeURIComponent(value)
+      return TOKEN_PATTERN.test(decoded) ? decoded : null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
 export { COOKIE_NAME }

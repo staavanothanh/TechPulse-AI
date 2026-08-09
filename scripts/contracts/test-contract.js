@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { loadOpenApi, runContractChecks } from './openapi-utils.js'
+import { runAuthAccountContractFixtures } from './auth-account-fixtures.js'
 
 const document = loadOpenApi()
 const result = runContractChecks(document)
@@ -41,4 +42,8 @@ if (!validateHealth(healthFixture)) {
   process.exit(1)
 }
 
-console.log(`Contract artifacts valid: ${result.operations.length} operations and health fixture`)
+const selection = process.argv.slice(2)
+const shouldRunAuthAccount = selection.length === 0 || selection.some((value) => ['auth', 'account'].includes(value))
+const authAccountResult = shouldRunAuthAccount ? await runAuthAccountContractFixtures({ document }) : { cases: 0 }
+
+console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}`)

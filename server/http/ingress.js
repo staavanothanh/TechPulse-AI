@@ -99,6 +99,12 @@ function validateQuery(req, operationRecord, res) {
     }
     const maxLength = schemaMaxLength(OPENAPI, parameter)
     if (maxLength && value.length > maxLength) return reject(res, 400, 'bad_request', 'Query parameter is too long')
+    if (parameterSchema.type === 'integer' && (!/^-?\d+$/.test(value) || !Number.isInteger(Number(value)))) return reject(res, 400, 'bad_request', 'Query parameter must be an integer')
+    if (parameterSchema.type === 'integer' && parameterSchema.minimum !== undefined && Number(value) < parameterSchema.minimum) return reject(res, 400, 'bad_request', 'Query parameter is below minimum')
+    if (parameterSchema.type === 'integer' && parameterSchema.maximum !== undefined && Number(value) > parameterSchema.maximum) return reject(res, 400, 'bad_request', 'Query parameter is above maximum')
+    if (Array.isArray(parameterSchema.enum) && !parameterSchema.enum.includes(value)) return reject(res, 400, 'bad_request', 'Query parameter enum is invalid')
+    if (parameterSchema.format === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return reject(res, 400, 'bad_request', 'Query parameter email is invalid')
+    if (typeof parameterSchema.pattern === 'string' && !new RegExp(parameterSchema.pattern).test(value)) return reject(res, 400, 'bad_request', 'Query parameter pattern is invalid')
   }
 }
 
@@ -156,6 +162,8 @@ export function createIngressMiddleware(options = {}) {
     const isApi = req.path.startsWith('/api/')
     const isMutation = MUTATING_METHODS.has(req.method)
     const hasBody = req.headers['content-length'] !== undefined || req.headers['transfer-encoding'] !== undefined
+    const declaredLength = Number(req.get('Content-Length'))
+    const hasPayload = hasBody && (req.headers['transfer-encoding'] !== undefined || !Number.isFinite(declaredLength) || declaredLength > 0)
 
     if (isApi && isMutation) {
       if (!isExactOriginAllowed(req.get('Origin'), allowedOrigins(options))) return reject(res, 403, 'forbidden', 'Origin is not allowed')
@@ -164,15 +172,14 @@ export function createIngressMiddleware(options = {}) {
       }
     }
 
-    if (hasBody && req.headers['content-encoding'] && req.headers['content-encoding'].toLowerCase() !== 'identity') {
+    if (hasPayload && req.headers['content-encoding'] && req.headers['content-encoding'].toLowerCase() !== 'identity') {
       return reject(res, 415, 'unsupported_media_type', 'Compressed request bodies are not supported')
     }
-    if (hasBody && isApi) {
+    if (hasPayload && isApi) {
       const contentType = req.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase()
       if (contentType !== 'application/json') return reject(res, 415, 'unsupported_media_type', 'application/json is required')
     }
     if (hasBody && operation && routeHasJsonBody(operation.operation)) {
-      const declaredLength = Number(req.get('Content-Length'))
       if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BYTES) return reject(res, 413, 'payload_too_large', 'Request body is too large')
     }
 

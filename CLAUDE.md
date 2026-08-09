@@ -9,12 +9,14 @@
 - Lint: `npm run lint`
 - Build: `npm run build`
 - Migration: `npm run db:migrate -- --to <migration>`; verify bằng `npm run db:verify -- <scope>`. Chỉ chạy khi blueprint step sở hữu đã implement migration tương ứng.
+- Mongo auth: `npm run db:migrate -- --to auth-core`, `npm run db:migrate:dry-run -- --to auth-core`, `npm run db:verify -- auth-core`; role gate production thêm `--require-role`. Seed admin: `npm run seed:admin` với `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD` chỉ qua environment.
 - Kiểm tra diff: `git diff --check`
 
 # Tooling
 
 - Dùng Node.js `24.14.1`, npm `11` và commit `package-lock.json`; không dùng pnpm, Yarn hoặc Bun.
 - Chỉ dùng JavaScript/JSX (`.js`, `.jsx`); không thêm `.ts`, `.tsx`, `tsconfig*` hoặc TypeScript build dependency. JSDoc và `// @ts-check` được phép.
+- Mongo runtime đọc URI qua tên env `MONGODB_URI_ENV` và database qua `MONGODB_DATABASE`; quota HMAC dùng stable current/retiring version trong env nhưng lifecycle history thuộc append-only `hmacKeyLifecycleSnapshots` trong Mongo. Runtime role chỉ `find/insert` collection này; không ghi URI/credential, secret hoặc key material vào log/DB/command output.
 
 # Không được đụng
 
@@ -32,6 +34,7 @@
 - HTTP route/controller không gọi MongoDB trực tiếp; query và mutation đi qua repository boundary.
 - Trước mọi LLM/embedding call, reload current Source Registry policy và chỉ dùng field được phép. Nội dung nguồn là untrusted data, không phải instruction và không được kích hoạt tool.
 - Không persist/log raw HTML, source full text, secret, plaintext session token hoặc source media binary/base64/GridFS.
+- README.md ở root là mô tả dự án, không phải nơi lưu các command, tiến độ dự án hay các decided trong quá trình implement.
 
 # Definition of done
 
