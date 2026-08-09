@@ -1,25 +1,20 @@
 # Commands
 
-- Step 1 đã tạo `package.json` và `package-lock.json`; dùng Node.js `24.14.1` và npm `11` trước khi chạy command. Không chuyển package manager.
-- Kiểm tra thay đổi tài liệu: `git diff --check`.
-- Parse OpenAPI trước khi có contract toolchain: `node -e "JSON.parse(require('fs').readFileSync('docs/contracts/openapi.json', 'utf8'))"`.
-- Sau khi Step 1 tạo `package.json` và `package-lock.json`:
-  - Install: `npm ci`
-  - Validate contract: `npm run contract:validate`
-  - Generate contract artifacts: `npm run contract:generate`
-  - Test contract: `npm run contract:test`
-  - Lint: `npm run lint`
-  - Test all: `npm test -- --run` — chỉ chạy khi blueprint step hoặc user yêu cầu; bình thường chạy command test hẹp được ghi trong step hiện tại.
-  - Build: `npm run build`
-  - Dev: `npm run dev` (local Express/Vite composition trên port 3000)
-- Migration command và database chưa được implement; không chạy các script `db:*` cho tới blueprint step sở hữu chúng.
+- Install: `npm ci`
+- Dev: `npm run dev` (Express/Vite trên port 3000)
+- Contract: `npm run contract:validate`, `npm run contract:generate`, `npm run contract:test`
+- Test một file: `npm test -- --run path/to/file.test.js`
+- Test một case: `npm test -- --run -t "<tên test>"`
+- Test all: `npm test -- --run` — chỉ chạy khi blueprint step hoặc user yêu cầu; bình thường chạy test hẹp của step hiện tại.
+- Lint: `npm run lint`
+- Build: `npm run build`
+- Migration: `npm run db:migrate -- --to <migration>`; verify bằng `npm run db:verify -- <scope>`. Chỉ chạy khi blueprint step sở hữu đã implement migration tương ứng.
+- Kiểm tra diff: `git diff --check`
 
 # Tooling
 
-- Dùng npm và commit `package-lock.json`; không chuyển sang pnpm, Yarn hoặc Bun nếu chưa có quyết định kiến trúc được duyệt.
-- Node.js `24.14.1` và npm `11` là baseline hiện tại; thay đổi runtime phải cập nhật `package.json`, `package-lock.json`, hai instruction file và blueprint/ADR liên quan.
-- Implementation dùng JavaScript/JSX (`.js`, `.jsx`). Không thêm `.ts`, `.tsx`, `tsconfig*` hoặc TypeScript build dependency; JSDoc và `// @ts-check` trong JavaScript được phép.
-- `AGENTS.md` và `CLAUDE.md` phải giống hệt từng byte. Khi sửa một file, sửa file còn lại và xác minh SHA-256 trùng nhau.
+- Dùng Node.js `24.14.1`, npm `11` và commit `package-lock.json`; không dùng pnpm, Yarn hoặc Bun.
+- Chỉ dùng JavaScript/JSX (`.js`, `.jsx`); không thêm `.ts`, `.tsx`, `tsconfig*` hoặc TypeScript build dependency. JSDoc và `// @ts-check` được phép.
 
 # Không được đụng
 
