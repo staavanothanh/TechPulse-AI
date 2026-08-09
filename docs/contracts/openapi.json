@@ -2,13 +2,13 @@
   "openapi": "3.1.0",
   "info": {
     "title": "TechPulse AI API",
-    "version": "1.6.0",
-    "description": "Canonical HTTP contract for the Vietnamese-first TechPulse AI MVP. External content is untrusted data; no response contains source full text or media binary."
+    "version": "1.7.0",
+    "description": "Canonical HTTP contract for the Vietnamese-first TechPulse AI MVP. Browser API access is same-origin only; external content is untrusted data; no response contains source full text or media binary."
   },
   "servers": [
     {
       "url": "/",
-      "description": "Same-origin API"
+      "description": "Same-origin API. Production sends no CORS allow-origin/credentials headers; any future exception requires an exact reviewed scheme+host allowlist."
     }
   ],
   "tags": [
@@ -79,6 +79,11 @@
         "operationId": "registerUser",
         "summary": "Register a user account",
         "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -92,6 +97,14 @@
         "responses": {
           "201": {
             "description": "Account and session created",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -105,6 +118,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -126,6 +145,11 @@
         "operationId": "login",
         "summary": "Create a server-side session",
         "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -139,6 +163,14 @@
         "responses": {
           "200": {
             "description": "Session created",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -152,6 +184,12 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -175,11 +213,22 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "responses": {
           "204": {
-            "description": "Session revoked"
+            "description": "Session revoked",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/ClearSessionCookie"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -206,6 +255,14 @@
         "responses": {
           "200": {
             "description": "Successful response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/VaryCookie"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -233,6 +290,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -262,6 +322,12 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -286,12 +352,23 @@
             "$ref": "#/components/parameters/CsrfTokenHeader"
           },
           {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
         "responses": {
           "202": {
             "description": "Automatic deletion workflow accepted; all current sessions are revoked and the session cookie is cleared",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/ClearSessionCookie"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -370,6 +447,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "responses": {
@@ -406,6 +486,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "responses": {
@@ -441,6 +524,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "responses": {
@@ -508,6 +594,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "responses": {
@@ -542,6 +631,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "responses": {
@@ -590,7 +682,8 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -723,7 +816,8 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -782,6 +876,12 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
         "requestBody": {
@@ -810,6 +910,15 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -929,6 +1038,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -960,6 +1072,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -1022,6 +1140,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -1057,6 +1178,12 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -1082,6 +1209,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -1117,6 +1247,12 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -1145,6 +1281,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -1180,6 +1319,12 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -1208,6 +1353,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           },
           {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
@@ -1245,6 +1393,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -1286,7 +1440,8 @@
             "name": "sourceId",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 128
             }
           }
         ],
@@ -1326,6 +1481,9 @@
             "$ref": "#/components/parameters/CsrfTokenHeader"
           },
           {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
@@ -1361,6 +1519,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -1430,6 +1594,9 @@
             "$ref": "#/components/parameters/CsrfTokenHeader"
           },
           {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
@@ -1466,6 +1633,12 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -1494,6 +1667,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -1528,6 +1704,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -1566,7 +1748,8 @@
             "name": "sourceId",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 128
             }
           },
           {
@@ -1652,6 +1835,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -1687,6 +1873,12 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -1712,6 +1904,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           },
           {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
@@ -1750,6 +1945,12 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -1778,6 +1979,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           },
           {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
@@ -1815,6 +2019,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -1856,14 +2066,16 @@
             "name": "articleId",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 128
             }
           },
           {
             "name": "sourceId",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 128
             }
           },
           {
@@ -1939,6 +2151,7 @@
         "parameters": [
           { "$ref": "#/components/parameters/JobIdPath" },
           { "$ref": "#/components/parameters/CsrfTokenHeader" },
+          { "$ref": "#/components/parameters/BrowserOriginHeader" },
           { "$ref": "#/components/parameters/IdempotencyKeyHeader" }
         ],
         "requestBody": {
@@ -1966,6 +2179,12 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "429": { "$ref": "#/components/responses/RateLimited" },
           "500": { "$ref": "#/components/responses/InternalError" },
@@ -1982,7 +2201,8 @@
         "summary": "Request cooperative cancellation of an indexing job",
         "parameters": [
           { "$ref": "#/components/parameters/JobIdPath" },
-          { "$ref": "#/components/parameters/CsrfTokenHeader" }
+          { "$ref": "#/components/parameters/CsrfTokenHeader" },
+          { "$ref": "#/components/parameters/BrowserOriginHeader" }
         ],
         "requestBody": {
           "required": true,
@@ -2009,6 +2229,12 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "500": { "$ref": "#/components/responses/InternalError" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
@@ -2025,6 +2251,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           },
           {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
@@ -2062,6 +2291,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -2131,6 +2366,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -2159,6 +2397,12 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -2221,6 +2465,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -2255,6 +2502,12 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -2345,6 +2598,7 @@
         "parameters": [
           { "$ref": "#/components/parameters/DeletionRequestIdPath" },
           { "$ref": "#/components/parameters/CsrfTokenHeader" },
+          { "$ref": "#/components/parameters/BrowserOriginHeader" },
           { "$ref": "#/components/parameters/IdempotencyKeyHeader" }
         ],
         "requestBody": {
@@ -2372,6 +2626,12 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "429": { "$ref": "#/components/responses/RateLimited" },
           "500": { "$ref": "#/components/responses/InternalError" },
@@ -2405,7 +2665,8 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "format": "email"
+              "format": "email",
+              "maxLength": 254
             }
           }
         ],
@@ -2484,6 +2745,9 @@
           },
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
           }
         ],
         "requestBody": {
@@ -2519,6 +2783,12 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -2550,7 +2820,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["admin", "system-worker"]
+              "enum": ["admin", "user", "system-worker"]
             }
           },
           {
@@ -2604,6 +2874,53 @@
         }
       }
     },
+    "/api/internal/maintenance/{taskName}": {
+      "get": {
+        "tags": [
+          "Internal"
+        ],
+        "operationId": "runMaintenanceTask",
+        "summary": "Run one fixed-scope bounded retention task",
+        "security": [
+          {
+            "cronBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MaintenanceTaskNamePath"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Fixed task executed for one server-derived deadline and bounded batch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "description": "Machine-only route. Browser/admin sessions are never accepted; caller cannot provide collection, filter, cutoff, cursor or batch size."
+      }
+    },
     "/api/internal/cron/due-work": {
       "get": {
         "tags": [
@@ -2651,8 +2968,8 @@
       "cookieAuth": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "techpulse_session",
-        "description": "Opaque server-side session token."
+        "name": "__Host-techpulse_session",
+        "description": "Opaque server-side session token. The cookie is host-only and always emitted with Secure, HttpOnly, Path=/ and SameSite=Lax; Domain is forbidden. Every cookie-authenticated mutation also passes the exact same-origin browser Origin gate and CSRF validation."
       },
       "cronBearer": {
         "type": "http",
@@ -2661,15 +2978,56 @@
         "description": "Vercel CRON_SECRET; never accepted from a browser session."
       }
     },
+    "headers": {
+      "SetSessionCookie": {
+        "description": "Exactly __Host-techpulse_session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Lax. Domain is absent and Max-Age never exceeds the session absolute expiry.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ClearSessionCookie": {
+        "description": "Expires __Host-techpulse_session with the same host-only Path=/, Secure, HttpOnly and SameSite=Lax tuple using Max-Age=0. Domain remains absent.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "PrivateNoStore": {
+        "description": "Authenticated/session-bearing responses must not be stored by browser or shared caches.",
+        "schema": {
+          "type": "string",
+          "const": "no-store, private"
+        }
+      },
+      "VaryCookie": {
+        "description": "Response representation depends on the session cookie.",
+        "schema": {
+          "type": "string",
+          "const": "Cookie"
+        }
+      }
+    },
     "parameters": {
+      "BrowserOriginHeader": {
+        "name": "Origin",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        },
+        "description": "Browser origin. Production requires an exact normalized scheme+host+effective-port match with the configured public application origin; suffix, wildcard and reflected matching are forbidden."
+      },
       "CsrfTokenHeader": {
         "name": "X-CSRF-Token",
         "in": "header",
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 32
-        }
+          "minLength": 32,
+          "maxLength": 256
+        },
+        "description": "Session-bound CSRF token. The common browser ingress also requires an exact same-origin Origin value on every cookie-authenticated mutation."
       },
       "IdempotencyKeyHeader": {
         "name": "Idempotency-Key",
@@ -2678,9 +3036,10 @@
         "schema": {
           "type": "string",
           "minLength": 8,
-          "maxLength": 128
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
         },
-        "description": "Scoped by authenticated actor/service and canonical request hash. Reusing a key for a different intent returns 409 idempotency_mismatch."
+        "description": "Scoped by authenticated actor/session and canonical request hash. Reusing a key for a different intent returns 409 idempotency_mismatch. The guarantee is 24 hours for grounded answers and at least 14 days for manual job/governance mutations; scheduled identities remain deterministic by target and period."
       },
       "CursorQuery": {
         "name": "cursor",
@@ -2709,7 +3068,8 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "SourceIdPath": {
@@ -2718,7 +3078,8 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "JobIdPath": {
@@ -2727,7 +3088,8 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "UserIdPath": {
@@ -2736,7 +3098,8 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "ChatSessionIdPath": {
@@ -2745,7 +3108,8 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "TakedownRequestIdPath": {
@@ -2754,7 +3118,8 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "DeletionRequestIdPath": {
@@ -2763,8 +3128,18 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
+      },
+      "MaintenanceTaskNamePath": {
+        "name": "taskName",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/MaintenanceTaskName"
+        },
+        "description": "Closed server-owned task name. It maps to one collection/state/deadline predicate and a maximum batch of 100."
       }
     },
     "responses": {
@@ -2890,6 +3265,40 @@
               "error": {
                 "code": "rate_limit_exceeded",
                 "message": "Rate limit exceeded",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "Request target or JSON payload exceeds the global ingress limit",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "payload_too_large",
+                "message": "Request exceeds the allowed size",
+                "requestId": "req_01HXYZ"
+              }
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "JSON route requires application/json with identity content encoding",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "error": {
+                "code": "unsupported_media_type",
+                "message": "Unsupported request content type or encoding",
                 "requestId": "req_01HXYZ"
               }
             }
@@ -3282,6 +3691,7 @@
           "sessionsDeleted",
           "savedArticlesDeleted",
           "chatSessionsDeleted",
+          "answerAttemptsDeleted",
           "userQuotaDataDeleted",
           "identityAnonymized"
         ],
@@ -3299,12 +3709,17 @@
           "chatSessionsDeleted": {
             "type": "boolean"
           },
+          "answerAttemptsDeleted": {
+            "type": "boolean",
+            "description": "True only after every PII-safe grounded-answer attempt receipt owned by the user is directly deleted and zero-match verified."
+          },
           "userQuotaDataDeleted": {
             "type": "boolean",
             "description": "True only after user-scoped Q&A quota buckets are deleted and verified. Shared IP anti-abuse buckets are deliberately excluded."
           },
           "identityAnonymized": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True only after the raw user tombstone contains no identity, role, preference or moderation fields outside the closed lifecycle allowlist."
           }
         }
       },
@@ -3402,6 +3817,7 @@
                     "sessionsDeleted": { "const": true },
                     "savedArticlesDeleted": { "const": true },
                     "chatSessionsDeleted": { "const": true },
+                    "answerAttemptsDeleted": { "const": true },
                     "userQuotaDataDeleted": { "const": true },
                     "identityAnonymized": { "const": true }
                   }
@@ -3944,7 +4360,8 @@
         "required": [],
         "properties": {
           "articleId": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 128
           },
           "topics": {
             "type": "array",
@@ -3988,7 +4405,8 @@
             "$ref": "#/components/schemas/AnswerScope"
           },
           "chatSessionId": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 128
           }
         }
       },
@@ -4087,7 +4505,7 @@
             "format": "date-time"
           }
         },
-        "description": "Every paragraph has at least one citation ID. The server resolves IDs against the visible retrieved evidence set."
+        "description": "Every paragraph has at least one citation ID. Before persistence, the server resolves IDs against the visible retrieved evidence set and requires a conservative support verdict for the exact internal evidence-block IDs; those internal block IDs are not part of the public response."
       },
       "RefusedAnswer": {
         "type": "object",
@@ -4121,6 +4539,7 @@
             "enum": [
               "insufficient-evidence",
               "policy-blocked",
+              "sensitive-input",
               "provider-unavailable"
             ]
           },
@@ -5570,6 +5989,62 @@
           }
         }
       },
+      "MaintenanceRunResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "taskName",
+              "inspected",
+              "affected",
+              "hasMore",
+              "completedAt"
+            ],
+            "properties": {
+              "taskName": {
+                "$ref": "#/components/schemas/MaintenanceTaskName"
+              },
+              "inspected": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "affected": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "hasMore": {
+                "type": "boolean"
+              },
+              "completedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        "description": "Safe aggregate only; no document payload, caller-supplied predicate or internal cursor is serialized."
+      },
+      "MaintenanceTaskName": {
+        "type": "string",
+        "enum": [
+          "purge-ingestion-jobs",
+          "purge-indexing-jobs",
+          "purge-answer-attempts",
+          "purge-takedown-pii",
+          "purge-takedown-workflows",
+          "purge-account-deletion-workflows",
+          "purge-audit-ip-hmac"
+        ],
+        "description": "Fixed server-owned maintenance action; it never carries a collection, filter, cutoff, cursor or batch-size override."
+      },
       "AdminOverview": {
         "type": "object",
         "additionalProperties": false,
@@ -6344,10 +6819,17 @@
             "format": "email"
           },
           "role": {
-            "type": "string",
-            "enum": [
-              "user",
-              "admin"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "admin"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "status": {
@@ -6361,7 +6843,47 @@
             "type": "string",
             "format": "date-time"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "deleted"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "email": {
+                  "type": "null"
+                },
+                "role": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "admin"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "description": "Deleted users serialize only opaque lifecycle identity; email and role are null because the persisted tombstone removes identity, preference and moderation fields."
       },
       "AdminUserUpdateRequest": {
         "type": "object",
@@ -6578,6 +7100,8 @@
           "invalid_state_transition",
           "source_policy_blocked",
           "rate_limit_exceeded",
+          "payload_too_large",
+          "unsupported_media_type",
           "provider_unavailable",
           "database_unavailable",
           "service_unavailable",

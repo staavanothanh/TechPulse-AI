@@ -1,8 +1,8 @@
 # TechPulse AI — Product Requirements & Capability Contract
 
 > Trạng thái: Plan-of-Record repair locked for implementation
-> Phiên bản: 1.6
-> Cập nhật: 08/08/2026  
+> Phiên bản: 1.7
+> Cập nhật: 09/08/2026
 > Product rationale: [PRODUCT-BRIEF.md](./PRODUCT-BRIEF.md)  
 > Nguồn quyết định chi tiết: [TechPulse-AI.md](./TechPulse-AI.md)
 
@@ -50,8 +50,9 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | Keyword search | MongoDB text index | Có thể chuyển Atlas Search khi scale tăng |
 | Embedding | OpenRouter `baai/bge-m3` | Đổi model phải re-index toàn corpus |
 | Semantic search | Cosine similarity trong Node.js | Chuyển Vector Search khi dataset lớn |
-| LLM primary | OpenCode Zen `deepseek-v4-flash-free` | Phụ thuộc availability/quota |
-| LLM fallback | `deepseek-v4-flash` | Kích hoạt khi lỗi retryable hoặc primary unavailable |
+| LLM primary | OpenCode Zen `deepseek-v4-flash-free` cho source-derived input được phép; mặc định nonconfidential | Phụ thuộc availability/quota và current provider capability evidence |
+| LLM fallback | `deepseek-v4-flash` qua configured route | Chỉ lỗi retryable; không được hạ privacy capability hoặc bypass admission/support gate |
+| Q&A provider route | Chỉ route có current `zdr-verified` evidence | Không có route phù hợp thì refuse/unavailable, không gửi raw question |
 | Scheduler | Vercel Cron + admin trigger | Có thể chuyển durable worker hậu MVP |
 
 ### 2.3. Trust boundaries
@@ -61,7 +62,8 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 - RSS/API/article body là untrusted content và có thể chứa prompt injection.
 - Vercel Cron request chỉ được tin cậy sau khi xác thực `CRON_SECRET`.
 - LLM/embedding provider là third party; input phải qua policy gate và redaction.
-- MongoDB là system of record cho user, session, job, source policy, article và audit.
+- MongoDB Atlas là system of record duy nhất: `techpulse_app` giữ runtime state; `techpulse_governance` giữ signed suppression/checkpoint/retention state ngoài app restore boundary.
+- `techpulse_governance` logical Mongo database, backup sidecar và restore target là trust boundaries riêng; app restore không overwrite governance state và không được serve chỉ vì restore kỹ thuật thành công.
 
 ## 3. Implementation contract
 
@@ -74,6 +76,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | Admin | Vận hành và xử lý ngoại lệ | Sources, jobs, articles/index, users, takedowns, audit |
 | System worker | Thực thi bounded job | Ingest, normalize, summarize, embed, index |
 | Cron caller | Kích hoạt lịch | Gọi protected ingestion endpoint |
+| Maintenance caller | Chạy retention task cố định | Machine bearer + fixed task name; không có caller filter/cutoff |
 | Publisher/source | Cung cấp dữ liệu ngoài | Không có quyền trong hệ thống; bị giới hạn bởi Source Registry |
 | AI provider | Tạo summary/answer/vector | Chỉ nhận input đã được policy gate cho phép |
 
@@ -109,7 +112,9 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AUTH-003 | Backend phân biệt unauthenticated và unauthorized | Trả `401` và `403` đúng trường hợp |
 | AUTH-004 | Admin đầu tiên được tạo bằng seed/deployment operation | Không có public admin registration |
 | AUTH-005 | Khóa user làm mất hiệu lực mọi session hiện có | Request tiếp theo bị từ chối |
-| AUTH-006 | User có thể yêu cầu xóa account bằng durable automatic workflow | Session bị revoke rồi direct-delete/verify; chỉ user Q&A quota bị xóa, shared IP security bucket giữ riêng; mọi cleanup có completion evidence và audit |
+| AUTH-006 | User có thể yêu cầu xóa account bằng durable automatic workflow | Session bị revoke rồi direct-delete/verify; chat/saved/answer-attempt và mọi user Q&A quota bucket theo key version còn hiệu lực bị xóa, shared IP security bucket giữ riêng; mọi cleanup có completion evidence và audit |
+| AUTH-007 | Browser auth/API là same-origin với cookie contract đóng | `__Host-techpulse_session`, Secure/HttpOnly/Path=/SameSite=Lax/no Domain; exact Origin, no credentialed CORS, no-store auth responses |
+| AUTH-008 | Login/register chống abuse bằng trusted client-IP bucket | Fixed atomic limits chạy trước password hash/write; arbitrary forwarding header không tạo bucket mới |
 
 ### 4.2. User preferences và saved articles
 
@@ -153,6 +158,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ING-010 | Lease fencing high-water tồn tại qua expire/release | Lease không TTL; crash-after-claim recovery parent trước linked retry và stale worker không commit |
 | ING-011 | Ingestion candidate/checkpoint commit theo current source policy/config | Capture version trước fetch; state/version/config đổi thì discard candidate và không advance checkpoint |
 | ING-012 | Cross-queue due work có bounded fairness | Canonical resource keys; mỗi registered due queue có reserved progress trước spill capacity |
+| ING-013 | RSS/Atom parse fail closed dưới hostile XML/compression | No DOCTYPE/entity/XInclude/network resolver; wire/decoded/depth/node/field/time bounds và typed redacted error |
 
 ### 4.5. Article lifecycle, feed và detail
 
@@ -190,6 +196,8 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AI-006 | UI gắn nhãn AI dịch/tổng hợp | Người dùng biết giới hạn |
 | AI-007 | AI không dùng chi tiết chỉ tồn tại trong media chưa xử lý | Không claim từ ảnh/video có `mediaEvidenceStatus=not-analyzed` |
 | AI-008 | AI artifact commit match current Source Policy version | Policy đổi trong lúc provider chạy làm output cũ bị discard, không persist |
+| AI-009 | Provider route có capability evidence và expiry | Q&A raw question chỉ đi `zdr-verified`; nonconfidential route không được chọn/fallback |
+| AI-010 | Provider-account-wide admission/circuit bảo vệ cost và availability | Routes dùng cùng credential tranh chung Mongo admission-domain concurrency/budget; circuit per route; một logical request tối đa một fallback |
 
 ### 4.8. AI Q&A và citation
 
@@ -204,6 +212,10 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | QA-007 | Prompt injection trong evidence không thay đổi instruction/tool use | External text chỉ là quoted data |
 | QA-008 | Primary provider lỗi retryable có thể dùng configured fallback | Không fallback khi lỗi policy/validation |
 | QA-009 | Delayed Q&A không tái tạo dữ liệu sau deletion/takedown | Final write match active user + exact sessionVersion + current article lifecycle; CAS miss discard output |
+| QA-010 | Grounded answer có actor/session-scoped idempotency | Same key/hash chỉ reserve một quota/provider/chat result; khác hash trả `409` |
+| QA-011 | Community signal chỉ dùng discovery | HN vẫn ở feed/search nhưng không eligible cho Q&A evidence/citation |
+| QA-012 | Citation runtime kiểm tra support trên exact evidence blocks | Paragraph trả internal block IDs; unsupported/uncertain deterministic refuse trong MVP |
+| QA-013 | User question qua privacy admission trước provider routing | Credential/high-risk identifier trả `sensitive-input`; primary/fallback dùng cùng admitted input và metadata-only log |
 
 ### 4.9. Admin operations và governance
 
@@ -219,6 +231,8 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ADMIN-008 | Admin review/đổi media policy và ẩn media độc lập | Thay đổi có allowlisted reasonCode, policyVersion và audit |
 | ADMIN-009 | Admin xem safe article provenance/artifact diagnostics | Không expose excerpt/full text/vector/provider payload/private data |
 | ADMIN-010 | Takedown redacts historical chat citations trước completion | Citation unavailable cấm URL/title; completion có machine-readable chat cleanup evidence |
+| ADMIN-011 | Retention cleanup dùng fixed authorized indexed task | Machine-only enum, batch<=100, caller không chọn collection/filter/cutoff; deadline query có stable `_id` |
+| ADMIN-012 | Governance/audit survives app restore without resurrecting deleted data | Separate `techpulse_governance` Mongo DB + signed sidecar; terminal suppression insert atomic với workflow, isolated app restore replay trước serving |
 
 ## 5. States và transitions
 
@@ -304,7 +318,7 @@ active | suspended → deletion-pending → deleted
 
 - Account deletion là workflow riêng, tự động và idempotent; không đi qua content takedown hoặc admin approval.
 - Tạo deletion request phải revoke toàn bộ session và chuyển user sang `deletion-pending` trước khi cleanup tiếp tục.
-- `deleted` chỉ hợp lệ khi sessions, saved articles, chats và quota/rate-limit data đã được xóa, identity đã anonymize và các completion flag đều được xác minh.
+- `deleted` chỉ hợp lệ khi sessions, saved articles, chats, answer-attempt receipts và user-scoped quota data đã được xóa/zero-verify; raw document khớp closed tombstone allowlist và mọi completion flag đều được xác minh. Shared IP anti-abuse state không thuộc điều kiện này.
 - Audit chỉ giữ opaque user/request ID và safe reason category; không giữ email hoặc nội dung chat đã xóa.
 
 ### 5.6. Takedown
@@ -336,16 +350,22 @@ approved → completed
 12. Deleting/hiding article phải đồng bộ summary, search và embedding visibility.
 13. MongoDB không lưu binary/base64/GridFS của ảnh/video nguồn; chỉ lưu metadata, URL và policy snapshot cần thiết.
 14. Media chỉ hiển thị khi current source `mediaPolicy` cho phép; video MVP luôn link-only và không được xem là AI evidence.
-15. `answered` luôn có paragraph/citation không rỗng và mọi citation ID resolve tới article đang visible; `refused` không chứa factual paragraph và có refusal reason.
+15. `answered` luôn có paragraph/citation không rỗng, citation resolve tới visible primary/editorial evidence và internal block support verdict là `supported`; `refused` không chứa factual paragraph và có refusal reason.
 16. Public serializer chỉ trả summary khi `summaryStatus=ready`; artifact `removed` phải unset content/model/hash và không xuất hiện ở feed/detail/retrieval.
 17. Direct admin mutation và audit record commit atomically; workflow dài ghi audit intent trước và terminal result idempotently.
 18. Idempotency identity gồm actor scope, key và canonical request hash; reuse key cho intent khác trả conflict.
-19. Account deletion completion độc lập content takedown và có machine-readable evidence riêng cho session revoke, session delete, user quota cleanup và từng cleanup item còn lại.
-20. Delayed user-owned write chỉ commit khi user còn `active` và `sessionVersion` đúng snapshot; account deletion thắng race thì không persist chat/quota.
+19. Account deletion completion độc lập content takedown và có machine-readable evidence riêng cho session revoke/delete, answer-attempt delete, mọi-version user quota cleanup, closed tombstone và từng cleanup item còn lại.
+20. Delayed user-owned write chỉ commit khi user còn `active` và `sessionVersion` đúng snapshot; account deletion thắng race thì không persist answer-attempt/chat/quota.
 21. Reconciliation marker mutation và ingestion article/checkpoint commit đều fence bằng current source policy/config version.
 22. Mỗi registered due queue đang có work phải tiến triển trong số invocation hữu hạn dù queue khác backlog liên tục.
 23. Shared IP anti-abuse bucket không phải user-owned data; account deletion chỉ xóa bucket `subjectType=user` cho Q&A quota.
 24. TTL không là bằng chứng authorization, account deletion completion hoặc lease fencing; retention/cutoff được enforce tại query/worker path.
+25. Browser mutation không dựa vào CORS/cookie default mơ hồ: exact Origin, `__Host-` tuple và no-store auth response là invariant.
+26. Request vượt ingress bounds hoặc có unknown/duplicate/operator/prototype query bị reject trước route/repository.
+27. Q&A privacy/idempotency/provider admission/support gate áp dụng giống nhau cho primary và fallback; không route nào được bypass gate.
+28. `community-signal` chỉ discovery, không là Q&A evidence trong MVP.
+29. HMAC rotation không reset quota; deletion derive mọi non-retired key version và old key chỉ retire sau zero dependent records.
+30. Restored app database không overwrite `techpulse_governance` và không serve trước current signed suppression replay, ephemeral auth/quota cleanup, secret rotation và audit checkpoint verification.
 
 ## 7. Data ownership và implications
 
@@ -360,15 +380,19 @@ approved → completed
 | Embedding | TechPulse AI derived index | Rebuildable; xóa cùng article |
 | Chat history | User/TechPulse AI | User xóa trực tiếp; tự hết hạn 30 ngày sau hoạt động cuối |
 | User Q&A quota | TechPulse AI / MongoDB | TTL theo window; direct delete khi account deletion |
+| Q&A answer-attempt receipt | TechPulse AI / MongoDB | Không raw question; 24 giờ; direct delete khi account deletion |
+| Provider admission/circuit | TechPulse AI / `techpulse_app` MongoDB | Per provider-account admission domain; no raw input; project lifetime |
 | Shared IP anti-abuse state | TechPulse AI / MongoDB | TTL 24h; không bị xóa theo user |
-| Audit log | TechPulse AI governance record | Minimized event 180 ngày; IP HMAC bị unset sau 30 ngày |
+| Audit log | TechPulse AI / `techpulse_app` MongoDB | Minimized event 180 ngày; IP HMAC unset sau 30 ngày; digest anchored vào signed governance checkpoint |
+| Suppression/checkpoint/manifest | TechPulse AI / `techpulse_governance` MongoDB | Signed actionable opaque targets + continuity; app dump/restore không overwrite; không case text/PII trực tiếp |
+| Backup copy | Project owner private encrypted storage | App dump + signed read-only governance sidecar tối đa 7 ngày; copy phục hồi, không là live SoR |
 
 ## 8. Security, privacy và policy requirements
 
 - Password hash bằng algorithm phù hợp; không log credential.
-- Session ID chỉ ở secure cookie; session record trong MongoDB.
-- CSRF protection phù hợp session cookie; CORS/rewrite policy tối thiểu.
-- Rate limit login, AI Q&A, admin triggers và source tests.
+- Browser API same-origin only; production không credentialed CORS. Session chỉ ở host-only `__Host-techpulse_session` với Secure/HttpOnly/Path=/SameSite=Lax/no Domain, auth responses no-store/private và exact Origin + CSRF trên mutation.
+- Global ingress: request target<=8 KiB, JSON<=64 KiB, `application/json` + identity encoding only; flat allowlisted query parser reject unknown/duplicate/nested/operator/prototype key và oversized IDs.
+- Rate limit login, register, AI Q&A, admin triggers và source tests; Vercel-aware IP adapter không tin arbitrary forwarded chain.
 - Rate-limit/quota state dùng shared Mongo bucket hoặc platform-native shared limiter; không dùng per-process counter trên Vercel. Mỗi bucket có `subjectType`; user Q&A quota dùng keyed HMAC của opaque user ID, còn shared IP anti-abuse state không thuộc account-deletion cleanup.
 - SSRF defense cho source URL: chỉ HTTPS không credential; normalize IPv4-mapped IPv6, validate toàn bộ A/AAAA và reject cả answer set nếu có private/loopback/link-local/unspecified/multicast/reserved IP; actual connection pin vào validated public IP trong khi giữ hostname/SNI; mỗi redirect tự resolve/validate/pin lại; có timeout và response-size limit.
 - External source/citation/media/admin link dùng canonical `HttpsUrl`; browser anchor dùng `rel="noopener noreferrer external"`.
@@ -376,8 +400,13 @@ approved → completed
 - Server-side DNS pinning chỉ bảo vệ server safe-fetch, không bảo vệ direct browser preview; remote media không được coi là trusted evidence và luôn có visual fallback.
 - CRON_SECRET/service secret tách khỏi admin/user credential.
 - Provider API key chỉ ở Vercel Environment Variables.
-- Không gửi email, token, private chat hoặc unapproved full text tới provider.
-- OpenRouter logging/opt-in tắt; ưu tiên ZDR endpoint khi khả dụng.
+- Không gửi credential/high-risk identifier, email, token, private chat hoặc unapproved full text tới provider. Raw Q&A chỉ dùng current `zdr-verified` route; không có route phù hợp thì fail closed.
+- OpenRouter logging/opt-in tắt; ZDR evidence có reviewed/expiry và fallback không được hạ capability.
+- RSS/Atom XML parser không network/DOCTYPE/entity/XInclude và có wire/decoded/depth/node/field/deadline bounds.
+- Quota/IP HMAC keyring có một current + tối đa hai retiring versions; governance runtime signer dùng keyring tách biệt; offline checkpoint keys chỉ owner giữ ngoài repo/runtime/DB và retire theo checkpoint/manifest/sidecar retention. Không lưu raw subject/secret.
+- Direct domain mutation/audit dùng một transaction-capable runtime Mongo identity/session với per-collection role: domain mutation cần thiết nhưng audit/suppression chỉ insert/find. Separate maintenance/offline credentials không tham gia direct transaction.
+- Retention maintenance là machine-only fixed task; full audit-event purge chỉ là owner-offline fixed task có signed retention manifest trong governance DB. Checkpoint phát hiện rollback/tamper ngoài manifest hợp lệ.
+- Backup dùng credential tách runtime, private encrypted app dump + signed governance sidecar và isolated app restore; phục vụ traffic chỉ sau governance reconciliation + session invalidation + secret rotation.
 - Takedown và account deletion có audit nhưng audit không lưu deleted secret/content.
 
 ## 9. Non-functional requirements
@@ -398,6 +427,9 @@ approved → completed
 | NFR-012 | Durable fencing | Lease generation high-water không bị TTL/reset; stale worker không commit sau recovery/reacquire |
 | NFR-013 | Audit minimization | Audit chỉ lưu allowlisted reasonCode; requester/account case text có access/retention riêng và không được copy |
 | NFR-014 | Privacy retention | Retention duration được khóa trước migration của collection owner; TTL chỉ cleanup best-effort, không thay correctness check |
+| NFR-015 | Secure ingress | Cookie/CORS/Origin/cache, target/body/query parser và 413/415 được test như common boundary trước business route |
+| NFR-016 | Provider safety | Privacy capability, provider-account admission domain/circuit, idempotency và evidence-block support fail closed trên mọi route |
+| NFR-017 | Recoverable governance | Indexed cleanup, HMAC rotation, tamper-evident audit và restore reconciliation không resurrect deleted/taken-down data |
 
 Canonical media attribution do server resolve theo thứ tự media credit → source `attributionText` → source name và luôn trả non-empty `leadMedia.attribution`; frontend không tự dựng attribution từ field nullable.
 
@@ -426,6 +458,8 @@ MVP chỉ được xem là hoàn thành khi tất cả gate sau đạt:
 - Citation precision mục tiêu ≥90% trên evaluation set.
 - Refusal cases không tạo unsupported claim.
 - Hidden/removed/review-needed article không xuất hiện trong context.
+- HN/community-only scope refuse `insufficient-evidence`; irrelevant visible evidence block không pass support gate.
+- Sensitive-input sentinel không tới nonconfidential provider; route-specific primary/fallback cùng pass privacy/support evaluation.
 
 Evaluation protocol được version-control cùng fixture:
 
@@ -440,24 +474,31 @@ Evaluation protocol được version-control cùng fixture:
 ### Operations/security gate
 
 - User không gọi được admin endpoint.
+- Hostile/missing Origin, credentialed CORS, sai cookie/cache tuple, oversized/compressed/non-JSON body và query pollution đều bị reject trước repository.
+- Concurrent register/login dùng trusted-IP atomic buckets; spoofed forwarding header không mint bucket.
 - Cron/manual job dùng persistent fencing, actor-scoped idempotency và cùng canonical source lease key.
 - Vercel Cron gọi protected `GET /api/internal/cron/due-work`, recover expired work rồi trả aggregate cho ingestion/indexing/account-deletion; admin manual POST dùng cùng runner nhưng trust boundary riêng.
 - Crash-after-claim ingestion/indexing tạo terminal parent + linked retry đúng một lần; account deletion requeue cùng request và giữ completion flags. Lease generation mới lớn hơn generation cũ, expired heartbeat/stale worker không commit.
 - Sustained backlog test chứng minh ingestion, indexing và account deletion due queue đều tiến triển hữu hạn; unregistered adapter không query collection và trả zero counter.
+- Aged/normal due lanes, retention deadlines và source/article citation cleanup dùng intended index + `_id`; `explain` không COLLSCAN/blocking sort.
 - Source bị block/policy/config đổi giữa ingestion fetch làm candidate bị discard, checkpoint không advance; reconciliation N không mutate marker N+1.
 - Policy đổi trong lúc fake provider đang chạy làm artifact commit cũ thất bại.
 - DNS rebinding/mixed A/AAAA/mapped-private/redirect-to-private và rendered `javascript:|data:|file:`/credential URL đều bị chặn.
+- XXE/entity/XInclude/extreme nesting/source decompression bị chặn với zero secondary network call.
 - Secret/full text không xuất hiện trong logs/dashboard/database.
 - Database scan không có binary/base64 ảnh/video; host media ngoài policy/IP literal không được serialize ra user API và CSP không mở blanket `https:`.
 - Takedown xóa/ẩn đúng metadata, media reference, summary/vector và redacts historical citation URL/title trước `completed`.
 - Mọi admin mutation có audit record với action-specific `reasonCode`, không có free-form admin reason.
-- Account deletion test chứng minh session revoke rồi direct session-document delete/zero-match, saved/chat/user-quota cleanup và identity anonymization trước `completed`; shared IP bucket không bị xóa; fake delayed Q&A resume sau deletion không tạo lại dữ liệu.
+- Same-key Q&A concurrency chỉ reserve/call/append một lần; hai route dùng cùng provider credential tranh một aggregate domain cap/budget; circuit storm chặn thêm primary/fallback và trả retry hint an toàn.
+- Account deletion test chứng minh session/answer-attempt direct-delete/zero-match, user quota zero-match theo mọi HMAC version còn hiệu lực và closed tombstone trước `completed`; shared IP bucket không bị xóa; fake delayed Q&A không tạo lại dữ liệu.
+- Fixed maintenance task không nhận caller predicate; full audit-event purge không có HTTP route. Real Mongo-role test chứng minh audit insert fail rollback domain mutation và runtime role không update/delete audit; verifier phát hiện mutation/missing/reorder/old restore ngoài signed manifest hợp lệ.
 
 ### Deployment gate
 
 - Production build deploy thành công trên Vercel Hobby.
 - MongoDB Atlas connection/config được lấy từ environment.
 - Có local fallback và seed/demo script hoặc documented demo steps.
+- Backup rehearsal restore app DB vào isolated target mà không overwrite governance DB; nếu Atlas mất thì governance sidecar phải restore/verify trước. Snapshot trước deletion/takedown không serve tới khi current suppression replay, restored session/quota/attempt/provider-admission state bị xóa, deleted-user saved/chat/tombstone và takedown citation cleanup zero-verify, secrets/credential rotate và checkpoint verified.
 
 ## 11. Non-goals
 

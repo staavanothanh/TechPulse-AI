@@ -1,7 +1,7 @@
 # TechPulse AI — Documentation Index
 
-> Trạng thái: Plan-of-Record baseline v1.6 — GO WITH CONDITIONS cho Step 1; Step 2 chờ contract gates
-> Cập nhật: 08/08/2026  
+> Trạng thái: Plan-of-Record baseline v1.7 — GO WITH CONDITIONS cho Step 1; Step 2 chờ extended contract/security gates
+> Cập nhật: 09/08/2026
 > Phạm vi: MVP solo-owner + coding-agent, React (JavaScript/JSX) + Node.js/Express (JavaScript) + MongoDB + AI; bốn tuần là planning horizon
 
 ## 1. Đọc theo thứ tự nào?
@@ -63,7 +63,7 @@ docs/
 - Citation cấp bài ở detail/summary và cấp đoạn ở Q&A.
 - Không lưu full text; chỉ xử lý tạm khi source policy cho phép.
 - Ảnh nguồn chỉ được remote-preview khi Source Registry cho phép; video quan trọng là link-only và phải ghi rõ AI chưa phân tích video. Không tải về/rehost binary ảnh hoặc video trong MongoDB.
-- Vercel Hobby host React/Express/cron; MongoDB Atlas giữ mọi state bền vững.
+- Vercel Hobby host React/Express/cron; MongoDB Atlas là SoR duy nhất với `techpulse_app` runtime DB và `techpulse_governance` signed restore/audit boundary DB.
 - Text search là degradation baseline; BGE-M3/cosine là planned-MVP predecessor/release gate của grounded Q&A.
 - Admin/user dùng server-side session; system worker không phải login account.
 - `/me` bootstrap lại CSRF token sau reload; token chỉ ở memory, không ở localStorage.
@@ -74,8 +74,11 @@ docs/
 - Source re-review atomically ghi reconciliation marker; mọi marker mutation CAS exact version/status/cursor. Ingestion/AI job capture expected policy version và stale-policy output/candidate không được commit hoặc advance checkpoint.
 - Mọi rendered/fetched external URL là canonical HTTPS không credential; safe-fetch pin actual connection vào validated public IP để chặn DNS rebinding.
 - Content takedown all-or-nothing tách khỏi automatic account deletion; takedown dùng bounded per-chat cleanup + zero-match citation evidence, còn delayed Q&A phải match user session/article lifecycle trước persistence.
-- Account deletion tách `sessionsRevoked` khỏi direct `sessionsDeleted`; chỉ user Q&A quota bị xóa, shared IP anti-abuse bucket có `subjectType=ip` và không thuộc cleanup.
+- Account deletion tách `sessionsRevoked` khỏi direct `sessionsDeleted`; xóa direct user-owned chat/saved/answer-attempt data và mọi user Q&A quota bucket theo các HMAC key version còn hiệu lực, còn shared IP anti-abuse bucket có `subjectType=ip` và không thuộc cleanup.
 - Retention schedule cho session/quota/chat/job/governance đã khóa theo ADR-0012; TTL không là deletion-completion hoặc fencing evidence.
+- Browser API same-origin với exact Origin, `__Host-` cookie, no-store auth response và strict target/JSON/query ingress; RSS XML parser fail closed dưới entity/decompression input.
+- Q&A dùng 24h idempotent attempt, privacy-verified route, aggregate provider-account admission domain + per-route circuit và exact evidence-block support; `community-signal` chỉ feed/search.
+- Cleanup có fixed machine-only task table + deadline/source-citation indexes; HMAC keyring, closed tombstone và signed `techpulse_governance` checkpoint/suppression state ngăn app restore làm dữ liệu đã xóa xuất hiện lại.
 - Audit chỉ lưu safe changed fields/state transition/action-specific `reasonCode`; không snapshot arbitrary document hoặc free-form case text.
 - Blueprint có 12 step, direct mode và milestone cutline Day 5/10/15; coding-agent support không hạ verification gate.
 
@@ -94,7 +97,7 @@ docs/
 
 Điểm bắt đầu duy nhất là [Step 1 — Scaffold application and contract toolchain](./plans/techpulse-ai-mvp.md#step-1). Không paste toàn bộ batch orchestration cùng lúc; chỉ chạy step tiếp theo khi dependency có verification evidence và handoff.
 
-Plan-of-Record baseline v1.6 trước Step 1 đã hoàn tất ở ADR/PRD/OpenAPI/Data Model/Technical Design/blueprint: canonical resource fencing, privacy cleanup/retention boundary, ingestion + reconciliation policy CAS, bounded fairness, delayed user-write/takedown fences, historical citation redaction, media browser boundary và operation-specific reason contracts đều có authority/owner/test gate. Step 1 phải đóng `x-persistence` classification và 400/503 completeness trước khi handoff Step 2.
+Plan-of-Record baseline v1.7 trước Step 1 đã hoàn tất security-boundary authority cho browser/API/XML/provider/Mongo maintenance/backup cùng các control v1.6. OpenAPI hiện có 54 operations và 413/415 cho mọi JSON-body operation; Step 1 phải đóng `x-persistence`, 400/503 completeness và generated ingress/auth/idempotency fixtures trước handoff Step 2.
 
 Các item execution chưa chặn Step 1:
 

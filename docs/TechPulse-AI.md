@@ -2,7 +2,7 @@
 
 > Trạng thái: Phạm vi MVP đã chốt / tài liệu sống
 > Cập nhật lần đầu: 07/08/2026
-> Cập nhật gần nhất: 08/08/2026
+> Cập nhật gần nhất: 09/08/2026
 > Mục đích: Lưu định hướng sản phẩm, phạm vi MVP, hướng phát triển và các ràng buộc quan trọng trước khi viết PRD hoặc thiết kế kỹ thuật chi tiết.
 > Bộ tài liệu triển khai: [README.md](./README.md)
 
@@ -139,7 +139,7 @@ active ↔ paused → archived
   - **arXiv Connector:** nhận metadata và abstract theo category hoặc truy vấn được cấu hình; chỉ xử lý full text khi giấy phép của paper cho phép;
   - **Hacker News Connector:** nhận các item từ API chính thức như `topstories`, `newstories` và `beststories` để phát hiện xu hướng cộng đồng.
 - Phạm vi demo dự kiến gồm 8–10 RSS/Atom feed, 3 arXiv category/query và 3 luồng Hacker News kể trên.
-- Hacker News được xem là nguồn `community-signal`. Bài viết được liên kết từ HN phải được kiểm tra như một nguồn độc lập; không mặc nhiên được lưu toàn văn hoặc dùng làm bằng chứng duy nhất.
+- Hacker News được xem là nguồn `community-signal`: vẫn xuất hiện ở feed/search discovery nhưng bị loại khỏi AI Q&A evidence/citation trong MVP. Bài liên kết từ HN chỉ trở thành evidence khi được onboard thành source primary/editorial độc lập.
 - Chỉ dùng API chính thức, RSS/Atom hoặc phương thức truy cập được nguồn cho phép.
 - Chạy một lần mỗi ngày bằng Vercel Cron và cho phép admin yêu cầu chạy thủ công.
 - Mỗi lần chạy xử lý một batch có giới hạn; trạng thái và lock của job phải lưu trong MongoDB.
@@ -276,7 +276,7 @@ Trang quản trị là bề mặt vận hành nội bộ của TechPulse AI. Ph�
 
 - Admin đăng nhập bằng tài khoản có role `admin` thông qua cùng authentication backend với user.
 - Có thể dùng giao diện riêng `/admin/login` và `/admin`, nhưng URL riêng không được xem là biện pháp bảo mật.
-- Phương án mặc định cho MVP là server-side session lưu trong MongoDB, với session ID trong cookie `HttpOnly`, `SameSite` và `Secure` khi chạy HTTPS; không lưu auth token trong `localStorage` hoặc memory của Vercel Function.
+- Phương án mặc định cho MVP là server-side session lưu trong MongoDB, cookie host-only `__Host-techpulse_session; Secure; HttpOnly; Path=/; SameSite=Lax`, không `Domain` và không lưu auth token trong `localStorage`/memory của Vercel Function. Browser API same-origin only, mutation yêu cầu exact Origin + CSRF, auth response `no-store, private`.
 - Mọi endpoint `/api/admin/*` phải kiểm tra authentication và role tại backend. Chỉ ẩn nút hoặc route ở React là không đủ.
 - Chưa đăng nhập trả về `401`; đã đăng nhập nhưng không phải admin trả về `403`.
 - Tài khoản admin đầu tiên được tạo bằng seed script hoặc thao tác triển khai có kiểm soát; không có API đăng ký admin công khai và không có giao diện đổi role trong MVP.
@@ -393,7 +393,7 @@ createdAt
 
 - Các thao tác tắt nguồn, hủy job, ẩn/xóa bài, xóa index và khóa user phải yêu cầu xác nhận cùng action-specific `reasonCode`; UI hiển thị label dễ hiểu nhưng không nhận free-form audit reason.
 - Audit log chỉ được đọc bởi admin và không được chỉnh sửa qua dashboard.
-- Audit không lưu raw before/after document, free-form requester/account case text, requester PII, email, password/session, private chat, provider payload hoặc source content. Direct mutation và audit commit atomically; workflow dài có intent và terminal event.
+- Audit không lưu raw before/after document, free-form requester/account case text, requester PII, email, password/session, private chat, provider payload hoặc source content. Direct mutation và audit dùng cùng transaction-capable Mongo client/session; role chỉ cho insert/find trên audit/suppression collections. Terminal deletion/takedown atomically ghi signed minimized target vào logical `techpulse_governance` DB; app restore không overwrite DB này.
 - Dashboard không hiển thị password hash, session ID, API key, LLM key hoặc stack trace chứa secret.
 
 #### 5.8.8. Bề mặt dashboard MVP
@@ -432,7 +432,7 @@ MVP không cần `superadmin`, phân quyền chi tiết cho từng admin, SSO ho
 - **Keyword search:** MongoDB text index với `default_language: "none"`, trường `searchTextNormalized` và index cho status/source/topic/time.
 - **Embedding:** OpenRouter Embeddings API với model `baai/bge-m3`, 1024 dimensions; input gồm title, `summaryVi` và topics.
 - **Semantic retrieval:** lưu vector trong MongoDB và tính cosine similarity trong Node.js cho tập dữ liệu khoảng 250–400 bài; MongoDB Atlas Vector Search chưa phải dependency của MVP.
-- **LLM:** ưu tiên `deepseek-v4-flash-free` qua OpenCode Zen; fallback sang `deepseek-v4-flash` trả phí thấp qua cấu hình provider riêng.
+- **LLM:** OpenCode Zen free mặc định là `nonconfidential`, chỉ dùng source-derived input được Source Policy cho phép. Raw Q&A chỉ đi route có current `zdr-verified` evidence; fallback `deepseek-v4-flash` không được hạ privacy capability hoặc bypass admission/support gate.
 - **Scheduler:** Vercel Cron một lần mỗi ngày và endpoint chạy thủ công có bảo vệ cho admin.
 - **MVP connectors:** RSS/Atom, arXiv API và Hacker News API.
 
@@ -448,6 +448,7 @@ Ràng buộc triển khai Vercel:
 - không dùng rate-limit/quota counter theo process; login, AI Q&A, admin trigger và source test dùng shared Mongo bucket hoặc platform limiter tương đương;
 - protected `GET /api/internal/cron/due-work` recover expired jobs rồi xử lý ingestion/indexing/account-deletion queues và trả aggregate; admin POST trigger gọi chung runner nhưng dùng trust boundary riêng;
 - mỗi job có actor/key/request-hash idempotency, `availableAt`, lease generation, batch size và trạng thái bền vững trong MongoDB;
+- Q&A có actor/session-scoped idempotency receipt 24 giờ, một quota reservation và Mongo admission domain: mọi route dùng cùng provider credential tranh chung concurrency/budget, circuit vẫn per-route; cùng key/hash không gọi provider hoặc append chat lần hai;
 - mỗi canonical logical lease key giữ persistent `generationHighWater` và nullable active owner, không dùng TTL; ingestion/indexing crash recovery terminal parent + linked retry, account deletion requeue same request; exact owner/generation heartbeat không được resurrect expired lease;
 - coordinator đăng ký ingestion/indexing/account-deletion adapters, cấp reserved progress cho mỗi due queue rồi spill capacity; unregistered queue trả zero counter mà không query collection;
 - ứng dụng tự quản lý retry vì Vercel không tự retry cron thất bại;
@@ -689,6 +690,7 @@ Gửi dữ liệu đến LLM hoặc embedding API là một hình thức xử l�
 Quy tắc vận hành:
 
 - Không gửi raw HTML hoặc phần không liên quan tới provider.
+- User question qua privacy admission trước routing: credential/high-risk identifier bị từ chối, raw question chỉ dùng current `zdr-verified` route và primary/fallback nhận cùng admitted input.
 - Nguồn `metadata-only` chỉ được gửi metadata; nguồn `blocked`, `review-needed` hoặc `llmInputScope: none` không được gửi dữ liệu nguồn tới provider.
 - `fulltext-temporary` chỉ dùng cho nguồn có bằng chứng quyền xử lý rõ ràng, được làm sạch/chia chunk, không lưu lâu dài và không được dùng để thay thế bài gốc.
 - Embedding không tạo thêm quyền sử dụng dữ liệu; input embedding phải tuân cùng Source Registry policy như input LLM.
@@ -740,7 +742,7 @@ Trước khi mở công khai cho mọi người hoặc thêm quảng cáo, affil
 | Vercel Cron chạy trùng, lỗi hoặc hết thời gian | Idempotency key, distributed lock, batch nhỏ, app-level retry và nút chạy thủ công |
 | Embedding provider lỗi | Fallback về MongoDB text search; đánh dấu `embeddingStatus: failed` để retry sau |
 | Đổi embedding model làm vector không tương thích | Pin model/dimension/version và re-index toàn bộ document khi thay đổi |
-| Nội dung cộng đồng bị nhầm là thông tin đã xác thực | Gắn Hacker News là `community-signal`; yêu cầu nguồn primary hoặc editorial xác nhận |
+| Nội dung cộng đồng bị nhầm là thông tin đã xác thực | Gắn Hacker News là `community-signal`, chỉ feed/search và loại khỏi Q&A evidence trong MVP |
 | Bản tóm tắt thay thế bài gốc | Tóm tắt ngắn, không dùng toàn văn/media làm evidence; nút đọc nguồn nổi bật |
 | Ảnh/video công khai bị dùng vượt quyền | Media policy độc lập, allowlisted HTTPS host, remote-preview/link-only, attribution và không rehost |
 | Ảnh hotlink hỏng hoặc publisher chặn | Lazy-load và TechPulse-owned fallback; không proxy tùy ý để che lỗi |
@@ -791,4 +793,4 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Grounded answer dùng hai contract state loại trừ nhau: answered bắt buộc paragraph/citation, refused bắt buộc reason và không có factual paragraph.
 - Xem quản trị nguồn và responsible AI là năng lực cốt lõi của sản phẩm.
 - Không xây sản phẩm dựa trên việc “lách luật” hoặc giả định rằng phi thương mại đồng nghĩa với được phép sử dụng mọi nội dung.
-- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh Plan-of-Record baseline v1.6: JavaScript/JSX, media browser boundary, ADR-0010 persistent fencing, ADR-0011 canonical coordination/recovery/fairness và ADR-0012 privacy cleanup/retention boundary. Step 1 phải đóng contract classification/400/503 trước Step 2.
+- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh Plan-of-Record baseline v1.7: JavaScript/JSX, strict browser/API/XML/provider boundaries, indexed governance cleanup/restore gate, ADR-0010 persistent fencing, ADR-0011 canonical coordination/recovery/fairness và ADR-0012 privacy cleanup/retention boundary. Step 1 phải đóng contract classification/400/503 cùng ingress fixtures trước Step 2.

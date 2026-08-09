@@ -1,8 +1,8 @@
 # TechPulse AI — Technical Design
 
 > Trạng thái: Plan-of-Record architecture contract
-> Phiên bản: 1.6
-> Cập nhật: 08/08/2026  
+> Phiên bản: 1.7
+> Cập nhật: 09/08/2026
 > Product contract: [PRD.md](./PRD.md)  
 > Persistence contract: [DATA-MODEL.md](./DATA-MODEL.md)  
 > HTTP contract: [contracts/openapi.json](./contracts/openapi.json)  
@@ -16,7 +16,7 @@ Các thuộc tính bắt buộc:
 
 1. provenance và source policy không bị mất từ ingestion đến citation;
 2. browser, nguồn ngoài và AI provider đều nằm ngoài trust boundary;
-3. mọi state bền vững nằm trong MongoDB, không nằm trong memory/filesystem của Vercel Function;
+3. mọi state bền vững nằm trong MongoDB Atlas; `techpulse_app` giữ runtime state, `techpulse_governance` giữ signed suppression/checkpoint state ngoài app dump boundary; Vercel memory/filesystem không là state store;
 4. cron hoặc request bị gửi lặp không tạo side effect trùng;
 5. text search vẫn hoạt động khi embedding/LLM provider lỗi;
 6. chỉ article `published` từ source hiện còn hợp lệ được đi vào user surface hoặc AI context;
@@ -73,10 +73,11 @@ Vercel project
 ├── static React/Vite build
 └── Node.js Express Function
     ├── /api/v1/*
-    └── /api/internal/cron/*
+    ├── /api/internal/cron/*
+    └── /api/internal/maintenance/<fixed-task>
 ```
 
-MongoDB Atlas giữ users, sessions, shared rate-limit buckets, source registry, articles, jobs, leases, chat, content takedown, account-deletion workflow và audit. Vercel Environment Variables giữ Mongo URI, session/CSRF/HMAC secret, cron secret và provider keys. Không có secret trong React bundle.
+Một MongoDB Atlas deployment vẫn là system of record duy nhất nhưng có hai logical database. `techpulse_app` giữ users, sessions, shared rate-limit buckets, answer-attempt receipts, provider admission state, source registry, articles, jobs, leases, chat, takedown, account-deletion workflow và audit. `techpulse_governance` giữ signed suppression entries, audit checkpoints và audit-retention manifests; database này không bị overwrite khi restore `techpulse_app`. Vercel Environment Variables giữ Mongo URI/database names, session/CSRF/HMAC keyrings, cron secret và provider keys. Không có secret trong React bundle.
 
 Local development dùng cùng Express application và Mongo repository; chỉ entrypoint khác production. Mục tiêu layout khi scaffold:
 
@@ -107,7 +108,7 @@ docs/contracts/openapi.json   # canonical HTTP contract
 | Component | Trách nhiệm | Không được làm |
 |---|---|---|
 | React client | Render feed/admin, giữ UI state, gọi generated JavaScript client | Tự suy role, gọi source/provider trực tiếp |
-| HTTP layer | Parse/validate request, auth, CSRF, rate-limit, serialize contract | Chứa business rule hoặc Mongo query rải rác |
+| HTTP ingress/layer | Same-origin/CORS-cookie policy, strict target/body/query parser, auth, CSRF, rate-limit, serialize contract | Chứa business rule, tin caller forwarding header hoặc Mongo query rải rác |
 | Application services | Điều phối use case và transaction boundary | Phụ thuộc Express object |
 | Domain policy | State transition, visibility, rights scope, dedupe decision | Network hoặc database I/O |
 | Repositories | Truy cập MongoDB và enforce query predicate chung | Trả document thô ra HTTP |
@@ -115,9 +116,12 @@ docs/contracts/openapi.json   # canonical HTTP contract
 | Content policy gate | Tạo allowed provider input từ source/article policy | Dùng text ngoài scope hoặc bỏ qua blocked state |
 | Media policy gate | Kiểm tra mode/host/current policy, tạo `leadMedia` DTO hoặc null | Fetch binary, proxy URL tùy ý hoặc biến media chưa xử lý thành evidence |
 | LLM adapter | Summary/answer theo schema, timeout và fallback hợp lệ | Fallback cho policy/validation error, bật tool |
+| Provider admission/router | Privacy-capability gate, idempotent route claim, concurrency/budget/circuit | Hạ capability khi fallback hoặc log raw input |
+| Answer support verifier | Kiểm tra paragraph với exact internal evidence blocks | Tự tạo citation URL hoặc biến community content thành evidence |
 | Embedding adapter | Vector theo pinned model/version/dimensions | Trộn vector khác version |
 | Job runner | Lease, checkpoint, bounded work, counter, retry classification | Queue trong memory hoặc chạy vô hạn |
 | Audit service | Ghi admin mutation append-only | Lưu secret/full text/private chat |
+| Maintenance runner | Chạy fixed task table bằng machine auth, bounded indexed batch | Nhận caller collection/filter/cutoff/batch |
 
 ### 5.1. Dependency direction
 
@@ -137,9 +141,10 @@ Domain không import Express, MongoDB SDK hoặc provider SDK. Chỉ các bounda
 
 ```text
 Browser → POST /auth/login
-API → validate + rate limit + verify password hash
+API → exact Origin + strict ingress + trusted-IP rate limit
+API → verify password hash
 API → create hashed session record in MongoDB
-API → Set-Cookie HttpOnly/Secure/SameSite
+API → Set-Cookie __Host-techpulse_session; Secure; HttpOnly; Path=/; SameSite=Lax
 API → return User + CSRF token
 Browser reload → GET /api/v1/me + cookie
 API → return User + session-bound CSRF token
@@ -148,6 +153,8 @@ API → session lookup → status/role/CSRF authorization
 ```
 
 - Cookie chứa opaque session token; MongoDB chỉ lưu hash của token.
+- Browser API same-origin only và production không phát credentialed CORS. Register/login cùng mọi cookie mutation fail closed nếu `Origin` thiếu/malformed/không exact scheme+host+effective-port; test harness chỉ dùng exact configured test origin.
+- Cookie không có `Domain`; `Max-Age<=absoluteExpiresAt`. Logout/account deletion clear đúng cùng cookie tuple. Register/login/`GET /me` trả `Cache-Control: no-store, private`; session-dependent response thêm `Vary: Cookie`.
 - CSRF token chỉ giữ trong memory của React và được bootstrap lại qua `/me`; không lưu localStorage và không yêu cầu login lại sau reload.
 - Khi user bị suspend/deleted, session lookup kiểm tra user state và mọi session được revoke.
 - Route admin dùng cùng session nhưng thêm `role=admin` ở backend.
@@ -225,6 +232,8 @@ AND current source.operationalStatus == active
 AND current source.licenseStatus IN [permitted, metadata-only]
 ```
 
+Q&A evidence thêm predicate `current source.authorityTier IN [primary, editorial]`; `community-signal` vẫn được feed/search discovery nhưng bị loại trước evidence block construction và không được serialize thành answer citation.
+
 Rights snapshot trên article phục vụ audit, còn Source Registry hiện tại quyết định có tiếp tục được hiển thị/xử lý hay không. Source transition đồng thời ghi durable reconciliation marker; query-time predicate là lớp bảo vệ tức thời trong khoảng thời gian Step 9 chưa materialize/hoàn tất cleanup jobs.
 
 Worker reconciliation capture `requiredPolicyVersion` rồi mọi claim, cursor, error, retry và completion CAS exact source policy version + marker version + expected status/cursor. Fan-out identity gồm `sourceId/articleId/task/policyVersion`; worker N gặp marker N+1 phải dừng mà không mutate marker mới. Runtime chỉ chấp nhận completion khi `completedPolicyVersion == requiredPolicyVersion`.
@@ -256,19 +265,23 @@ Connector returns candidate media metadata only
 
 ```text
 Question + article/topic/time scope
-→ validate + quota
-→ capture userId + expectedSessionVersion
-→ retrieve only visible/allowed candidates
-→ build evidence blocks with stable citation IDs
+→ strict validate + privacy admission
+→ capture userId + opaque sessionId + expectedSessionVersion
+→ atomically create/reuse 24h answer attempt + reserve one quota unit
+→ retrieve only visible primary/editorial candidates
+→ build evidence blocks with stable citation IDs + internal block IDs
 → system instruction separates evidence as untrusted data
-→ LLM returns structured paragraphs + cited evidence IDs
-→ server validates every cited ID and coverage
-→ invalid/insufficient output becomes refusal or one bounded retry
+→ every answer/support provider call passes privacy capability + admission/circuit claim
+→ LLM returns structured paragraphs + citation IDs + supporting block IDs
+→ server validates IDs/coverage and runs one bounded support verification
+→ unsupported/uncertain output becomes deterministic refusal in MVP
 → final transaction rechecks active user/session version + article/takedown lifecycle
 → persist/return answer without copied full text, or discard provider result on CAS miss
 ```
 
-Provider không được cấp tool. Model không được tự tạo URL; serializer lấy citation metadata từ MongoDB bằng evidence ID đã kiểm tra. Contract dùng hai shape loại trừ nhau: `answered` có paragraph/citation không rỗng và `refusalReason=null`; `refused` có arrays rỗng và reason code. Runtime kiểm tra mọi paragraph citation ID resolve tới retrieved article đang visible trước persistence/response. Final chat/quota write conditionally touch `users._id`, `status=active`, exact captured `sessionVersion` và current article/takedown visibility trong cùng transaction; account deletion hoặc takedown thắng race thì output provider bị bỏ và không được tái tạo user data/citation.
+Provider không được cấp tool. Model không được tự tạo URL; serializer lấy citation metadata từ MongoDB bằng evidence ID đã kiểm tra. Privacy gate từ chối obvious credential/high-risk identifier bằng `sensitive-input`, không silently redact rồi giả vờ giữ nguyên nghĩa. Raw question chỉ đi tới route có current `zdr-verified` evidence; route không phù hợp trả `provider-unavailable`, và fallback không được bypass capability.
+
+Contract dùng hai shape loại trừ nhau: `answered` có paragraph/citation không rỗng và `refusalReason=null`; `refused` có arrays rỗng và reason code. Public citation vẫn cấp đoạn. Internal provider contract buộc từng paragraph trả supporting block IDs; verifier chạy một constrained check cho toàn answer trên đúng blocks và trả `supported|unsupported|uncertain`. Chỉ `supported` được persist; MVP chuyển hai verdict còn lại thành refusal, không gọi repair. Primary/fallback generation và support verifier đều dùng route-specific capability/admission/circuit/eval. Final chat/attempt/quota write conditionally touch `users._id`, `status=active`, exact captured `sessionVersion` và current article/takedown visibility trong cùng transaction; account deletion hoặc takedown thắng race thì output provider bị bỏ và không được tái tạo user data/citation.
 
 ### 6.8. Takedown
 
@@ -295,13 +308,14 @@ User POSTs deletion request with CSRF + idempotency key
 → user becomes deletion-pending; sessionVersion increments
 → revoke all sessions and clear current cookie
 → due-work coordinator directly deletes/zero-verifies session documents
-→ deletes saved/chat and user-scoped Q&A quota data idempotently
-→ anonymize email/password identity into opaque tombstone
+→ deletes saved/chat/answer-attempt receipts idempotently
+→ derives every non-retired HMAC version and deletes/zero-verifies user Q&A quota
+→ unset every user field outside the closed lifecycle tombstone allowlist
 → verify every completion flag
 → mark completed and append terminal audit event
 ```
 
-Account deletion không cần admin approval và không dùng content takedown state machine. API không nhận free-form reason; server derive `user-request`. Admin chỉ xem safe progress/error và retry remaining steps; retry không restore session hoặc identity. Request acceptance chứng minh `sessionsRevoked=true`, còn `sessionsDeleted=true` chỉ sau direct indexed delete + zero-match verification. `userQuotaDataDeleted=true` chỉ áp dụng bucket `subjectType=user` cho Q&A; shared IP anti-abuse buckets không bị xóa. Request document có stable unique user identity: expired-run recovery và admin retry exact-fence CAS chính request về `queued`, tăng attempt, giữ completion flags và không tạo linked child.
+Account deletion không cần admin approval và không dùng content takedown state machine. API không nhận free-form reason; server derive `user-request`. Admin chỉ xem safe progress/error và retry remaining steps; retry không restore session hoặc identity. Request acceptance chứng minh `sessionsRevoked=true`; `sessionsDeleted`/`answerAttemptsDeleted`/`userQuotaDataDeleted` chỉ true sau direct delete + zero-match. Shared IP anti-abuse buckets không bị xóa. `identityAnonymized=true` yêu cầu raw user document chỉ còn `_id`, deleted lifecycle timestamps/reference, `sessionVersion`, `createdAt`, `updatedAt`; role/preferences/suspension context đều bị unset. Request document có stable unique user identity: expired-run recovery và admin retry exact-fence CAS chính request về `queued`, tăng attempt, giữ completion flags và không tạo linked child.
 
 ## 7. Job execution model
 
@@ -334,18 +348,20 @@ Lease key chỉ do server derive; raw caller key bị reject. Canonical table l�
 
 Suffix là lowercase opaque ID 1–128 ký tự chỉ gồm `[a-z0-9_-]`; cấm email, actor, invocation, random job ID và namespace tùy ý. Job/checkpoint/article/artifact commit chạy trong transaction ngắn và phải conditionally touch lease record với exact active owner + generation + unexpired authoritative timestamp trước target write. Reacquire tạo write conflict/conditional miss nên stale worker abort. Ingestion commit còn match exact source ID + current policy/config version + active/eligible state + connector config/discriminant; AI artifact commit match `sources.policyVersion == job.expectedSourcePolicyVersion`. Output/candidate bị bỏ nếu conditional touch thất bại.
 
-Step 4 cung cấp queue adapter/registry contract: `queueName`, `selectDue`, `claimAndExecute`, `recoverExpired` và `recoveryStrategy`. Step 4 đăng ký ingestion; Step 9 đăng ký indexing; Step 11 đăng ký account deletion. Unregistered queue phải trả zero counters mà không query collection; HTTP response luôn giữ đúng ba summary keys.
+Step 4 cung cấp queue adapter/registry contract: `queueName`, `selectDue`, `claimAndExecute`, `recoverExpired` và `recoveryStrategy`. Step 4 đăng ký ingestion; Step 9 đăng ký indexing; Step 11 đăng ký account deletion. Maintenance task registry dùng cùng fixed-scope adapter nhưng ownership riêng: Step 4 ingestion, Step 9 indexing, Step 10 answer-attempt, Step 11 governance/audit-IP. Unregistered queue phải trả zero counters mà không query collection; HTTP response luôn giữ đúng ba summary keys.
 
 ### 7.3. Due-work coordinator
 
 Cron và admin manual run gọi cùng coordinator service nhưng qua adapter/auth riêng. Mỗi invocation có hai bounded phase:
 
 1. **Recovery:** lấy tối đa `maxRecoveries` lease có active owner hết hạn. Ingestion/indexing exact owner/generation transaction terminalize immutable parent thành `failed/lease_expired`, tạo tối đa một deterministic linked retry và clear ownership. Account deletion dùng registered `same-request` strategy: CAS chính request từ expired `running` về `queued`, tăng attempt, giữ completion flags, clear transient error/running timestamps rồi clear lease; không tạo child. Acquire không được tự chiếm expired owner chưa recovery.
-2. **Reserved due work:** mỗi registered queue tự sort theo effective priority giảm dần, `availableAt`, stable creation timestamp, `_id`; overdue aging nâng item lên queue-local max. `maxJobs` phải >= số registered queue và invocation phải reserve deadline/claim margin cho toàn bộ reserved phase trước recovery/execution; budget thiếu thì fail safe và không spill. Canonical order `account-deletion → indexing → ingestion` thử claim tối đa một due item/queue trước để mọi sustained due queue tiến triển hữu hạn.
+2. **Reserved due work:** mỗi registered queue chạy hai query đóng. Aged lane trước: `status=queued`, `availableAt<=now`, `agingEligibleAt<=now`, sort `agingEligibleAt → availableAt → created/requestedAt → _id`. Nếu không có, normal lane sort `priority desc → availableAt → created/requestedAt → _id`. `agingEligibleAt` server derive (account deletion 5 phút; ingestion/indexing 30 phút), caller không set. `maxJobs` phải >= số registered queue và invocation reserve deadline/claim margin cho toàn reserved phase trước recovery/execution; budget thiếu thì fail safe, không spill. Canonical order `account-deletion → indexing → ingestion` thử claim tối đa một due item/queue trước.
 3. **Spill capacity:** slot reserved không dùng và slot còn lại chọn oldest due head giữa registered queues; tie-break theo canonical order, priority không so trực tiếp xuyên queue. `nextAvailableAt` là minimum queued `availableAt` còn lại, và chỉ `null` khi không còn queued item.
 4. Dừng nhận work trước safety margin; item dở dang được checkpoint/`partial` hoặc crash-recovery ở invocation sau.
 5. Cron response trả recovery counts và counters cho đúng ba queue `ingestion|indexing|account-deletion`, cùng `nextAvailableAt`; không serialize heterogeneous job documents.
 6. Backlog/stale signal dùng để admin manual recovery nhưng không thay thế durable state.
+
+Mỗi lane có exact compound index kết thúc bằng `_id`; `db:verify` dùng `explain("executionStats")` để reject `COLLSCAN` và blocking sort trên mixed due/not-due fixture. Priority không được so xuyên queue. Manual idempotency key được giữ tối thiểu 14 ngày; job cleanup không chạy trước `idempotencyExpiresAt`.
 
 ### 7.4. Retry policy
 
@@ -408,7 +424,23 @@ Application chỉ nhận result đã qua runtime schema validation; provider ada
 
 Mỗi generated artifact lưu provider/model/version/input hash và thời điểm tạo. Log chỉ giữ metadata vận hành, không giữ prompt chứa full text.
 
-Provider request chỉ nhận field Source Policy hiện hành cho phép và không bao giờ nhận email, session, private chat history hoặc requester PII. OpenCode Zen free được coi là non-confidential route cho tới khi current policy được xác minh; nếu dùng OpenRouter cho request cần privacy, adapter bật provider ZDR/data-collection restriction cụ thể và fail closed khi không có endpoint phù hợp. ZDR không thay thế quyền publisher/source policy.
+Provider config gồm hai static server-owned table, không phải admin input:
+
+```text
+Admission domain: admissionDomainId, provider, credentialEnvName,
+maxConcurrency<=8, budgetLimit, budgetWindow
+
+Route: routeId, admissionDomainId, model,
+capability: zdr-verified|nonconfidential,
+evidenceUrl, reviewedAt, evidenceExpiresAt, enabled,
+retryableFailureThreshold=3, cooldownSeconds=60
+```
+
+`admissionDomainId` đại diện một provider account/billing/concurrency pool. Mọi route dùng cùng `credentialEnvName` bắt buộc map cùng domain; startup fail nếu một credential bị tách thành nhiều domain, route trỏ domain lạ, evidence thiếu/hết hạn, route/model trùng hoặc capability sai. OpenCode Zen free mặc định `nonconfidential`; chỉ route có current verified privacy evidence mới là `zdr-verified`. Source-derived summary có thể dùng nonconfidential route khi Source Policy cho phép; raw user Q&A chỉ dùng `zdr-verified`. ZDR không thay thế quyền publisher/source policy.
+
+Mongo `providerAdmissionStates` có một document cho mỗi `admissionDomainId`: mọi route cùng provider account tranh chung atomic concurrency/cost budget, còn circuit state nằm per-route trong document đó. Claim atomically prune expired reservations, check domain cap/budget và route circuit trước mọi summary, embedding, answer-generation hoặc answer-support network call. Ba retryable failure liên tiếp mở circuit route 60 giây; chỉ một half-open probe/route. Một logical answer có tối đa một primary, một fallback generation và một support call; generation routes nhận exact same admitted input, mọi call pass capability/admission, và chỉ support=`supported` mới persist. Admission/circuit rejection không gọi provider và trả safe retry hint/refusal. Log chỉ có domain/route/model/call-kind/latency/result/error code, không raw question/evidence/payload.
+
+Q&A idempotency ưu tiên không duplicate side effect hơn transparent retry: duplicate cùng key/hash poll/reuse attempt. `provider-running` quá reservation deadline chuyển bằng CAS sang terminal safe `ambiguous_provider_outcome`; cùng key không được phát thêm provider call vì hệ thống không chứng minh call cũ chưa ra ngoài. User có thể chủ động retry bằng intent/key mới và quota mới sau khi UI giải thích outcome không chắc chắn.
 
 ## 10. API conventions
 
@@ -422,10 +454,12 @@ Canonical observable contract nằm ở [contracts/openapi.json](./contracts/ope
 - feed/list dùng opaque cursor; không parse cursor ở client;
 - `401` cho thiếu/hỏng session, `403` cho thiếu role/object permission;
 - `409` cho duplicate/state conflict, `422` cho semantic validation;
+- `413` cho request target/body vượt bound; `415` cho non-JSON hoặc non-identity content encoding;
 - `GET /api/v1/me` bootstrap session-bound CSRF token; mutation cookie-auth yêu cầu header và không dùng localStorage;
 - admin mutation yêu cầu CSRF và action-specific allowlisted `reasonCode` khi operation nhạy cảm; requester/account case text không được copy vào audit;
-- manual job/deletion/retry hỗ trợ `Idempotency-Key`; reuse khác request hash trả `409 idempotency_mismatch`;
+- grounded answer và manual job/deletion/retry hỗ trợ `Idempotency-Key`; reuse khác request hash trả `409 idempotency_mismatch`; answer window 24 giờ, job/governance tối thiểu 14 ngày;
 - Vercel Cron dùng protected `GET /api/internal/cron/due-work`; manual admin trigger vẫn là POST;
+- maintenance dùng protected fixed-enum `GET /api/internal/maintenance/{taskName}`; browser/admin auth và caller filter/cutoff bị reject;
 - stable error code dùng enum trong OpenAPI; client không branch theo message;
 - rate-limit trả `429` và `Retry-After`.
 
@@ -435,20 +469,25 @@ OpenAPI là authority cho payload/nullability/enum/error. Prose trong file này 
 
 | Boundary | Control bắt buộc |
 |---|---|
-| Browser → API | schema validation, session, CSRF, Origin/CORS policy, rate limit |
+| Browser → API | same-origin only, exact Origin, strict 8 KiB target/64 KiB identity-encoded JSON, flat query parser, `__Host-` cookie, session, CSRF, trusted-IP rate limit |
 | Admin route | session + role + transition validation + atomic safe audit |
 | Cron → API | GET + Bearer `CRON_SECRET`, no cookie/CSRF, idempotency |
 | API → source URL | canonical HTTPS không credential; normalize mapped address, validate mọi A/AAAA, reject answer set có bất kỳ private/loopback/link-local/unspecified/multicast/reserved IP, pin connection vào validated public IP, manual redirect validation, timeout/size/content-type limit |
 | Browser → media host | current media policy, HTTPS host allowlist, CSP `img-src`, referrer policy, no arbitrary backend proxy |
-| Source text → AI | policy gate, sanitize/extract, delimit untrusted evidence, no tools |
-| API → provider | scoped input, timeout, redaction, ZDR/logging config khi hỗ trợ |
+| Source payload/text → parser/AI | safe fetch + decoded limits, no-network XML parser, policy gate, sanitize/extract, delimit untrusted evidence, no tools |
+| API → provider | privacy capability + sensitive-input gate, idempotent attempt, concurrency/budget/circuit, scoped input, timeout, metadata-only log |
 | API → MongoDB | least-privilege connection, indexed queries, no raw secret/full text |
+| Machine → maintenance | cron bearer, fixed task table, indexed deadline + `_id`, batch<=100, safe aggregate only |
 
 Safe-fetch không được validate hostname rồi để HTTP client tự resolve lại. IPv4-mapped IPv6 phải normalize về IPv4 trước CIDR classification; nếu một answer không public thì reject toàn bộ mixed answer set. Adapter chọn một IP từ tập A/AAAA đã validate và pin actual connection tới IP đó trong khi giữ original hostname cho HTTP Host/TLS SNI/certificate verification. Redirect dùng `redirect=manual`, tối đa cấu hình nhỏ; mỗi `Location` được resolve/canonicalize/validate/pin lại. URL rendered ra browser cũng phải qua canonical `HttpsUrl`, cấm username/password; external anchor dùng `rel="noopener noreferrer external"`.
 
+Source response giữ wire bytes tối đa 1 MiB, decoded bytes tối đa 4 MiB và expansion ratio tối đa 20; vượt bound abort trước parse. RSS/Atom chỉ chấp nhận `application/rss+xml`, `application/atom+xml`, `application/xml`, `text/xml`. XML parser cấm `DOCTYPE`, external general/parameter entity, XInclude, entity expansion và mọi network resolver; depth<=64, node<=20.000, item<=100, field<=20.000 ký tự, parse deadline 2 giây. Reject tạo redacted `source_payload_rejected`, không retry vô hạn và test phải chứng minh zero secondary DNS/network call.
+
 Password dùng password hashing library được duy trì với cost cấu hình. Session token và reset-like token chỉ lưu hash. Log structured luôn có `requestId`; job log thêm `jobId`/`sourceId` nhưng không chứa credential, session ID, source body hoặc private chat.
 
-Login, AI Q&A, admin trigger và source technical check dùng atomic Mongo-backed rate-limit/quota buckets. `subjectType`/scope mapping là `login→ip`, `answer-*→user`, `admin-trigger→admin`, `source-test→source`; `keyHash` là keyed HMAC của opaque subject thích hợp, không là email/raw IP. Counter theo process không được dùng vì Vercel có thể cold start hoặc chạy nhiều instance; `Retry-After` được tính từ bucket window chứ không chờ TTL cleanup. Account deletion chỉ direct-delete user Q&A buckets, không đụng shared IP anti-abuse state.
+Login, register, AI Q&A, admin trigger và source technical check dùng atomic Mongo-backed rate-limit/quota buckets. `subjectType`/scope mapping là `login|register→ip`, `answer-*→user`, `admin-trigger→admin`, `source-test→source`; login=10/15 phút, register=5/60 phút và check trước password hash/write. Vercel adapter lấy platform-overwritten `x-forwarded-for` theo [official request-header contract](https://vercel.com/docs/headers/request-headers); application không chọn arbitrary caller chain. Local/test adapter phải explicit.
+
+`keyHash` là keyed HMAC của opaque subject, không là email/raw IP. Keyring có một current + tối đa hai retiring versions; read/delete derive mọi non-retired version và migrate/consolidate transactionally. Old key chỉ retire sau 30 ngày + zero dependent records. Account deletion direct-delete answer attempts và mọi-version user Q&A buckets, không đụng shared IP anti-abuse state.
 
 ## 12. Observability
 
@@ -471,22 +510,38 @@ Các event P0:
 
 Admin dashboard đọc dữ liệu tổng hợp từ collection nghiệp vụ; log platform không phải system of record cho audit. Audit document không có raw before/after snapshot: chỉ actor, action, target, changedFields, allowlisted state transition, action-specific `reasonCode`, result/request/time. Direct mutation + audit commit trong transaction ngắn; workflow dài có pending intent và terminal event. Free-form requester reason/evidence chỉ nằm trong restricted workflow document với retention/access riêng và không được copy sang audit.
 
+### 12.2. Audit integrity boundary
+
+Audit event có deterministic unique `eventId`. Direct mutation dùng **một transaction-capable Mongo client/credential/session**: custom role cấp mutation cần thiết trên domain collections nhưng chỉ `insert/find` trên `techpulse_app.adminAuditLogs` và `insert/find` trên governance suppression collection; không có audit update/delete. Vì cùng identity/session, domain mutation + audit insert và terminal deletion/takedown + signed suppression insert có thể commit/rollback atomically across pre-created collections/databases; MongoDB chính thức hỗ trợ transaction qua nhiều database trong cùng deployment ([MongoDB Transactions](https://www.mongodb.com/docs/v8.0/core/transactions/)). Integration test bằng credential thật phải chứng minh audit/suppression insert fail thì domain transaction rollback và audit update/delete bị từ chối.
+
+IP-HMAC field-unset dùng maintenance credential riêng, fixed task predicate và batch<=100. Full event purge không có HTTP route: sau 180 ngày, owner-only offline task tạo signed retention manifest cho exact due event IDs/digest, cutoff, previous/resulting checkpoint rồi mới xóa bounded batch. Mỗi release/rehearsal tạo ordered digest trên `(eventId, createdAt, _id)` bằng owner-only HMAC-SHA-256 key không có trong repo/Vercel/Mongo, rồi operator credential ghi checkpoint/manifest vào `techpulse_governance`. Offline key inventory có một current + tối đa hai verify-only retiring key IDs; old secret chỉ hủy sau khi mọi signed checkpoint/manifest/sidecar còn retention đã hết hoặc re-anchor. Verifier chỉ cho phép gap có manifest hợp lệ và fail nếu event khác bị modified/missing/reordered hoặc app database cũ hơn checkpoint; restore target không serve khi verifier fail.
+
+### 12.3. Backup/restore serving gate
+
+MVP chỉ có manual `mongodump` cho rehearsal. Dump `techpulse_app` dùng read-only backup credential tách runtime, lưu tối đa 7 ngày trong owner-only OS/provider-encrypted private storage ngoài repo, không upload public và destruction được ghi vào runbook. Đây là backup copy, không phải live system of record. Cùng inventory tạo signed read-only sidecar export của `techpulse_governance` để khôi phục khi cả Atlas deployment mất; inventory ghi backup ID/time/database/checkpoint/key IDs/location/access owner/destroyAt, không ghi secret.
+
+Restore mặc định vào isolated non-serving `techpulse_app_restore_*` database với credential không có trong production Vercel; không overwrite `techpulse_governance`. Trước promotion, restore runner đọc current signed suppression/checkpoint từ governance database. Nếu Atlas deployment mất, operator restore governance sidecar trước bằng owner credential rồi verify chain/signature; thiếu/invalid sidecar thì serving gate đóng. Account-deletion entry chỉ giữ `deletionRequestId`, opaque `userId`, `effectiveAt`; takedown entry chỉ giữ `takedownRequestId`, `targetType`, opaque `targetIds`, `requestedScope`, `effectiveAt`. Không giữ email, requester contact/reason, chat hoặc source text. Signed checkpoint phải cover terminal governance event mới nhất; mất continuity hoặc governance database không available thì serving gate đóng.
+
+Runner replay ledger bằng fixed reconciliation. Restore luôn direct-delete toàn bộ sessions, rate-limit/quota buckets, answer-attempt receipts và provider admission reservations; unset audit IP-HMAC nếu key continuity không chứng minh được. Với từng deletion entry, runner xóa saved/chat còn phục hồi và re-apply closed user tombstone; với từng takedown entry, runner re-apply artifact/citation suppression. Sau đó verify target-specific zero matches + audit checkpoint; thiếu current entry/actionable target thì serving gate đóng. Production restore rotate session/CSRF/HMAC material liên quan và runtime Mongo credential trước traffic; credential cũ bị revoke để stale function không ghi vào target. Rehearsal bắt đầu bằng snapshot trước deletion+takedown và chỉ pass khi restored PII/session/available citations đã bị loại lại.
+
 ## 13. Testing strategy
 
 | Layer | Mục tiêu | Requirement tiêu biểu |
 |---|---|---|
 | Unit | state transition, scope gate, HTTPS canonicalization, dedupe, score | SRC-004..007, ING-007..009, SEARCH-004 |
-| Contract | request/response và invalid conditional fixtures validate cùng OpenAPI | AUTH/USER/ART/ADMIN endpoints |
-| Integration | Mongo indexes/repository predicates, fencing/idempotency, session/deletion | AUTH-002..006, ING-004, ART-002 |
-| Connector | fixture RSS/arXiv/HN → normalized candidate | ING-001, ING-007 |
-| Provider adapter | runtime-validated response, timeout/error/fallback; không network thật mặc định | AI-001..007, QA-008 |
+| Contract | request/response, cookie/cache/ingress/idempotency và invalid conditional fixtures validate cùng OpenAPI | AUTH/USER/ART/ADMIN endpoints |
+| Integration | Mongo indexes/explain, repository predicates, fencing/idempotency, HMAC rotation, session/deletion | AUTH-002..006, ING-004, ART-002 |
+| Connector | fixture RSS/arXiv/HN, XXE/XInclude/entity/nesting/decompression → bounded candidate/error | ING-001, ING-007 |
+| Provider adapter | privacy admission, concurrency/budget/circuit, support verdict, timeout/fallback; không network thật mặc định | AI-001..007, QA-008 |
 | Media policy/UI | mode/host/attribution, null/fallback, broken remote image, video link-only | SRC-009, ART-007, ADMIN-008, NFR-011 |
 | Retrieval eval | top-5 relevance, refusal, hidden-content exclusion, citation precision | SEARCH-005..006, QA-002..007 |
 | E2E | login → feed → detail → source; admin source → job → audit | MVP gates |
 
-Test quan trọng nhất là negative invariant: một article hidden/removed/review-needed hoặc source bị blocked tuyệt đối không xuất hiện trong feed, search hay evidence context. Tương tự, media từ host/mode không được duyệt không được serialize và media `not-analyzed` không được dùng để hỗ trợ factual claim. Contract test còn phải reject answered rỗng/không citation, refused có factual paragraph, policy/connector combination mâu thuẫn, technical check passed thiếu evidence, Source response `attributionRequired=true` thiếu/null/rỗng text, reconciliation terminal state thiếu version/error, unavailable citation còn URL/title, completed takedown thiếu chat-redaction evidence, rendered URL dùng `javascript:|data:|file:`/credential, IP-literal media host và operation-specific reason code sai.
+Test quan trọng nhất là negative invariant: một article hidden/removed/review-needed hoặc source bị blocked tuyệt đối không xuất hiện trong feed, search hay evidence context; `community-signal` không xuất hiện trong Q&A evidence nhưng vẫn có ở feed/search. Tương tự, media từ host/mode không được duyệt không được serialize và media `not-analyzed` không hỗ trợ factual claim. Contract test còn phải reject cookie/header/Origin/CORS sai, oversized/compressed/non-JSON ingress, unknown/duplicate/operator query, `/answers` thiếu idempotency, answered rỗng/không citation, refused có factual paragraph, policy/connector mismatch, unavailable citation còn URL/title, deleted user còn role/email và operation-specific reason code sai.
 
-Integration/security suite phải có: crash-after-claim ingestion/indexing → linked retry → stale commit fail; account deletion crash sau revoke/trước delete hoặc sau delete/trước flag → same-request requeue giữ flags; direct session zero-match/user quota delete không đụng shared IP bucket; heartbeat exact owner/generation và expired lease không resurrect; cron/manual cùng source contend canonical key; Step 4 fake three-adapter fairness, Step 9 actual ingestion/indexing backlog, Step 11 actual three-queue proof; source connector-config update tăng đúng một policy version + marker/audit rồi mid-fetch candidate bị discard; reconciliation worker N không mutate marker N+1; policy đổi lúc fake provider pending → artifact commit fail; delayed Q&A → account deletion completed/takedown completed → provider resume không persist chat/quota/available citation; bounded per-chat takedown cleanup → zero-match → completion; DNS resolver đổi public→private giữa server validation/connect → request server-side vẫn pin public hoặc reject; mixed A/AAAA và IPv4-mapped IPv6 private đều bị chặn.
+Integration/security suite phải có: concurrent register/login trusted-IP atomic limit và spoofed forwarding header; 20 same-session/key answers → one quota/provider/chat append; hai routes cùng credential tranh aggregate admission-domain cap/budget, per-route timeout storm opens circuit và fallback không bypass privacy; email/token sentinel không tới nonconfidential route; real visible nhưng irrelevant evidence block phải refuse; XXE/parameter entity/XInclude/decompression tạo zero secondary network; old-HMAC bucket rotation giữ quota và deletion zero-verifies; due/retention/source-citation `explain` không scan/sort blocking; deleted raw tombstone closed allowlist; fixed maintenance auth/scope; real runtime Mongo role rollback domain mutation khi audit/suppression insert denied và deny update/delete; actual configured Atlas deployment probe chứng minh transaction ghi được vào pre-created collection ở cả hai logical database bằng cùng client/session; crash/fencing/reconciliation/delayed-write/takedown races cũ; governance checkpoint phát hiện tamper/old app restore; pre-deletion app snapshot + sidecar rehearsal reject old sessions/PII/citations.
+
+MongoDB hỗ trợ transaction qua nhiều database khi chúng nằm trong cùng deployment ([MongoDB Transactions](https://www.mongodb.com/docs/manual/core/transactions/)), nhưng đây không được coi là bằng chứng cho cấu hình Atlas cụ thể của dự án. Step 11 phải chạy probe cross-database thật bằng runtime credential/role trên cluster đã cấu hình. Probe fail, transaction bị deployment/role chặn hoặc không thể pre-create/index governance collection đều **block handoff**; không được âm thầm chuyển sang eventual write, best-effort export hay system of record khác.
 
 ## 14. Failure/degradation behavior
 
@@ -496,21 +551,25 @@ Integration/security suite phải có: crash-after-claim ingestion/indexing → 
 | RSS/arXiv/HN | Job partial/failed | Existing articles vẫn phục vụ; retry bounded |
 | LLM primary | Có thể thử fallback | Không fallback cho policy error; summary giữ trạng thái |
 | Cả hai LLM | Summary/Q&A unavailable rõ ràng | Feed/detail/citation nguồn vẫn dùng được |
+| Provider privacy/admission/circuit không phù hợp | Q&A refused/unavailable + retry hint | Không gửi raw question, không reserve thêm quota/provider call trùng |
 | Embedding | Search fallback text | Vector cũ chỉ dùng nếu version/input còn hợp lệ |
 | Ảnh remote lỗi/bị chặn | Visual fallback, link bài gốc vẫn hoạt động | Không backend-proxy hoặc lưu bản sao để che lỗi |
 | Cron due-work không chạy | Admin overview cảnh báo stale queues/ingestion | Manual trigger dùng cùng service; durable queued/running state không mất |
 | Audit write lỗi trong direct admin mutation | Mutation thất bại với request ID | Mongo transaction abort; không có state change không audit |
 | Account deletion cleanup lỗi | Admin thấy failed item an toàn | Session vẫn revoked; retry chỉ item chưa hoàn tất, không restore identity |
+| Audit/restore governance evidence thiếu | Restore target không serve | Không promote snapshot có thể resurrect PII/session/citation |
 
 ## 15. Architecture acceptance checklist
 
 - [ ] Mọi endpoint implementation map tới operation trong OpenAPI.
+- [ ] Same-origin/CORS, exact Origin, `__Host-` cookie/clear tuple, no-store/private cache và strict target/body/query ingress pass browser/contract tests.
 - [ ] Frontend JavaScript client/JSDoc và mock được derive từ OpenAPI.
 - [ ] Repository user-facing dùng visibility predicate chung.
 - [ ] Source scope được kiểm tra ngay trước mọi provider call.
 - [ ] Job/lease/idempotency test vượt qua duplicate, request-hash mismatch, crash recovery, generation high-water persistence và stale lease-generation case.
 - [ ] Canonical key test chứng minh cron/manual cùng source contend; heartbeat hết hạn không resurrect; account deletion recovery giữ same request/flags.
 - [ ] Queue-local priority + reserved fairness cho mỗi registered due queue bounded progress; unregistered queue zero counter và không query collection.
+- [ ] Two-lane queue selection và mọi retention/citation deadline path dùng exact index + `_id`; `explain` không có COLLSCAN/blocking sort.
 - [ ] Ingestion final transaction fail nếu source policy/config/state đổi và không advance checkpoint.
 - [ ] Reconciliation marker mutation CAS exact version/status/cursor; worker N không ghi lên N+1.
 - [ ] AI artifact commit thất bại nếu current source policy version khác job expectation.
@@ -518,10 +577,17 @@ Integration/security suite phải có: crash-after-claim ingestion/indexing → 
 - [ ] Mọi rendered external URL là HTTPS không credential và external anchor có rel an toàn.
 - [ ] Text search hoạt động khi embedding adapter bị tắt.
 - [ ] Citation serializer không nhận URL do model tạo.
+- [ ] Q&A same-key concurrency chỉ tạo một attempt/quota/provider/chat result; sensitive input/non-ZDR/community/irrelevant-block paths đều fail closed và fallback không bypass.
+- [ ] XML parser cấm DOCTYPE/entity/XInclude/network resolver và wire/decoded/depth/node/time limits pass adversarial fixtures.
 - [ ] Takedown ẩn trước, redacts historical citation URL/title, xóa/index cleanup sau và chỉ completed khi chat evidence true.
-- [ ] Account deletion revoke session trước, direct-delete/zero-verify session document và user quota trước `completed`; shared IP bucket không bị xóa, delayed Q&A không tái tạo user data.
+- [ ] Account deletion revoke session trước, direct-delete/zero-verify session/answer-attempt, zero-verify user quota theo mọi key version còn hiệu lực và closed user tombstone trước `completed`; shared IP bucket không bị xóa, delayed Q&A không tái tạo user data.
 - [ ] Retention owner tạo TTL/indexed cleanup cùng migration; TTL không được dùng làm authorization, completion evidence hoặc fencing.
+- [ ] Fixed maintenance route chỉ nhận enum task + machine bearer; caller không điều khiển collection/filter/cutoff/batch.
+- [ ] HMAC keyring rotation không reset quota và old key chỉ retire sau 30 ngày + zero dependent records.
 - [ ] Direct admin mutation không thể commit nếu safe audit event không commit.
+- [ ] Same runtime session/identity rollback domain mutation khi audit/suppression insert fail; audit/suppression update/delete bị deny; governance signed digest phát hiện tamper/old app restore.
+- [ ] Actual Atlas deployment probe commit/rollback cross-database transaction qua pre-created `techpulse_app` + `techpulse_governance` collections bằng runtime role; probe fail block handoff và không có best-effort fallback.
+- [ ] Backup inventory/encryption/destruction và isolated restore rehearsal pass; serving gate chờ current governance ledger replay, session invalidation và secret rotation.
 - [ ] Không có raw HTML/full text/secret trong MongoDB hoặc log fixture.
 - [ ] Không có binary/base64/GridFS media; media ngoài policy bị loại và broken image có fallback.
 - [ ] Video chỉ link-only và mọi media MVP mang `mediaEvidenceStatus=not-analyzed`.
