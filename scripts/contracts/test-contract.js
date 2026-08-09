@@ -1,0 +1,44 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import Ajv from 'ajv'
+import addFormats from 'ajv-formats'
+import { loadOpenApi, runContractChecks } from './openapi-utils.js'
+
+const document = loadOpenApi()
+const result = runContractChecks(document)
+if (result.failures.length > 0) {
+  console.error(result.failures.map((failure) => `- ${failure}`).join('\n'))
+  process.exit(1)
+}
+
+const generatedSchemaPath = path.resolve('shared/generated/api-schema.js')
+const generatedClientPath = path.resolve('shared/generated/api-client.js')
+if (!fs.existsSync(generatedSchemaPath) || !fs.existsSync(generatedClientPath)) {
+  console.error('Generated contract artifacts are missing; run npm run contract:generate first')
+  process.exit(1)
+}
+
+const generatedSchema = await import(`${pathToFileURL(generatedSchemaPath).href}?contract-test=1`)
+const generatedClient = await import(`${pathToFileURL(generatedClientPath).href}?contract-test=1`)
+if (JSON.stringify(generatedSchema.openApiDocument) !== JSON.stringify(document)) {
+  console.error('Generated schema drifted from docs/contracts/openapi.json')
+  process.exit(1)
+}
+if (typeof generatedClient.createApiClient !== 'function' || typeof generatedClient.operations?.find !== 'function') {
+  console.error('Generated client shape is invalid')
+  process.exit(1)
+}
+
+const ajv = new Ajv({ allErrors: true, strict: false })
+addFormats(ajv)
+const schemaDocument = { ...document, $id: 'techpulse-openapi' }
+ajv.addSchema(schemaDocument)
+const validateHealth = ajv.compile({ $ref: 'techpulse-openapi#/components/schemas/HealthResponse' })
+const healthFixture = { data: { status: 'ok', timestamp: '2026-08-09T00:00:00.000Z' } }
+if (!validateHealth(healthFixture)) {
+  console.error(validateHealth.errors)
+  process.exit(1)
+}
+
+console.log(`Contract artifacts valid: ${result.operations.length} operations and health fixture`)

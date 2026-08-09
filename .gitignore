@@ -1,2 +1,9 @@
+# Agent
 .agents/
 .claude/
+.open-design/
+
+# Node
+node_modules/
+dist/
+coverage/

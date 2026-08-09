@@ -1,6 +1,6 @@
 # Commands
 
-- Hiện tại repo chưa có `package.json` hoặc lockfile. Trước khi Step 1 hoàn tất, không chạy hay tự tạo lệnh install/dev/test/build ngoài phạm vi Step 1.
+- Step 1 đã tạo `package.json` và `package-lock.json`; dùng Node.js `24.14.1` và npm `11` trước khi chạy command. Không chuyển package manager.
 - Kiểm tra thay đổi tài liệu: `git diff --check`.
 - Parse OpenAPI trước khi có contract toolchain: `node -e "JSON.parse(require('fs').readFileSync('docs/contracts/openapi.json', 'utf8'))"`.
 - Sau khi Step 1 tạo `package.json` và `package-lock.json`:
@@ -11,11 +11,13 @@
   - Lint: `npm run lint`
   - Test all: `npm test -- --run` — chỉ chạy khi blueprint step hoặc user yêu cầu; bình thường chạy command test hẹp được ghi trong step hiện tại.
   - Build: `npm run build`
-- Dev command, Node version và migration command chưa được chốt. Step 1/2 phải cập nhật hai file này từ cấu hình thật; không tự suy đoán command hoặc version.
+  - Dev: `npm run dev` (local Express/Vite composition trên port 3000)
+- Migration command và database chưa được implement; không chạy các script `db:*` cho tới blueprint step sở hữu chúng.
 
 # Tooling
 
 - Dùng npm và commit `package-lock.json`; không chuyển sang pnpm, Yarn hoặc Bun nếu chưa có quyết định kiến trúc được duyệt.
+- Node.js `24.14.1` và npm `11` là baseline hiện tại; thay đổi runtime phải cập nhật `package.json`, `package-lock.json`, hai instruction file và blueprint/ADR liên quan.
 - Implementation dùng JavaScript/JSX (`.js`, `.jsx`). Không thêm `.ts`, `.tsx`, `tsconfig*` hoặc TypeScript build dependency; JSDoc và `// @ts-check` trong JavaScript được phép.
 - `AGENTS.md` và `CLAUDE.md` phải giống hệt từng byte. Khi sửa một file, sửa file còn lại và xác minh SHA-256 trùng nhau.
 

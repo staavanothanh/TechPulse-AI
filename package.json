@@ -1,0 +1,49 @@
+{
+  "name": "techpulse-ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.14.1 <25",
+    "npm": ">=11 <12"
+  },
+  "scripts": {
+    "dev": "node server/dev.js",
+    "build": "vite build",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "test": "vitest",
+    "test:integration": "vitest run test/integration",
+    "test:security": "vitest run test/security",
+    "test:ui": "vitest run test/ui",
+    "test:e2e": "vitest run test/e2e",
+    "eval:retrieval": "node scripts/future-step.js eval:retrieval",
+    "eval:groundedness": "node scripts/future-step.js eval:groundedness",
+    "eval:citations": "node scripts/future-step.js eval:citations",
+    "db:migrate": "node scripts/future-step.js db:migrate",
+    "db:migrate:dry-run": "node scripts/future-step.js db:migrate:dry-run",
+    "db:verify": "node scripts/future-step.js db:verify",
+    "contract:validate": "node scripts/contracts/validate-openapi.js",
+    "contract:generate": "node scripts/contracts/generate.js",
+    "contract:test": "node scripts/contracts/test-contract.js"
+  },
+  "dependencies": {
+    "@apidevtools/swagger-parser": "12.1.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "express": "5.2.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@vitejs/plugin-react": "6.0.5",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.8.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "prettier": "3.9.6",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  }
+}

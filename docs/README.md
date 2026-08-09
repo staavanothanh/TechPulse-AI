@@ -105,3 +105,7 @@ Các item execution chưa chặn Step 1:
 - benchmark BGE-M3 trước khi khóa `embeddingVersion=1`;
 - kiểm tra quota/availability Vercel, OpenCode Zen, DeepSeek và OpenRouter gần ngày demo;
 - chốt ngày tắt public deployment sau khi chấm.
+
+### Step 1 scaffold status
+
+Step 1 đã tạo scaffold JavaScript/JSX với React/Vite, Express/Vercel entrypoint, generated OpenAPI client/schema, strict ingress boundary, health route và contract/test/lint/build scripts. Local command baseline là Node.js `24.14.1` + npm `11`; chạy `npm ci`, sau đó `npm run dev` trên port 3000. Database, authentication persistence, connector, provider và business UI vẫn thuộc các step sau.
