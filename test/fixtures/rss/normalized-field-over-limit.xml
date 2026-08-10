@@ -1,0 +1,1 @@
+<rss version="2.0"><channel><item><title>Nested normalized field</title><link>https://news.example.test/nested-large</link><description><b>DESC_PART_A&amp;</b><i>DESC_PART_B</i></description><media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://cdn.example.test/large.jpg" type="image/jpeg" alt="ALT_PART_A&amp;ALT_PART_B" /></item></channel></rss>

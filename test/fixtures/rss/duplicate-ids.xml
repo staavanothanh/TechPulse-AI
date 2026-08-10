@@ -1,0 +1,4 @@
+<rss version="2.0"><channel>
+  <item><title>First duplicate</title><link>https://news.example.test/one</link><guid>same-id</guid><pubDate>2026-08-10T00:00:00Z</pubDate></item>
+  <item><title>Second duplicate</title><link>https://news.example.test/two</link><guid>same-id</guid><pubDate>2026-08-10T00:01:00Z</pubDate></item>
+</channel></rss>

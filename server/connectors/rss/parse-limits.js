@@ -1,0 +1,1 @@
+export const MAX_PARSE_WORK_DELAY_MS = 10_000

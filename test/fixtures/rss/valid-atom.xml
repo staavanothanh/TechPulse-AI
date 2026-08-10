@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="vi">
+  <title>Research Feed</title>
+  <id>urn:uuid:feed-1</id>
+  <updated>2026-08-10T00:00:00Z</updated>
+  <entry>
+    <id>urn:uuid:entry-1</id>
+    <title type="text">Atom entry with safe metadata</title>
+    <link rel="alternate" href="https://research.example.test/papers/1" type="text/html" />
+    <author><name>Dr. Lin</name></author>
+    <published>2026-08-09T12:30:00Z</published>
+    <updated>2026-08-10T00:00:00Z</updated>
+    <dc:language>vi</dc:language>
+    <summary type="html"><![CDATA[<p>Atom summary only.</p>]]></summary>
+    <content type="html"><![CDATA[<p>This content must not be returned.</p>]]></content>
+    <media:content url="https://media.example.test/video.mp4" type="video/mp4" medium="video">
+      <media:description>A video</media:description>
+      <media:credit>Research Lab</media:credit>
+    </media:content>
+  </entry>
+</feed>

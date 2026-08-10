@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Example Feed</title>
+    <link>https://news.example.test/</link>
+    <description>Metadata feed.</description>
+    <language>en</language>
+    <item>
+      <title>AI systems ship a bounded parser</title>
+      <link>https://news.example.test/articles/1#tracking</link>
+      <guid isPermaLink="false">guid-1</guid>
+      <dc:creator>Ada Example</dc:creator>
+      <pubDate>Mon, 10 Aug 2026 00:00:00 GMT</pubDate>
+      <description><![CDATA[<p>A short <strong>official</strong> excerpt.</p>]]></description>
+      <media:content url="https://cdn.example.test/images/one.jpg" type="image/jpeg" medium="image">
+        <media:description>A safe image</media:description>
+        <media:credit>Example Media</media:credit>
+      </media:content>
+    </item>
+  </channel>
+</rss>

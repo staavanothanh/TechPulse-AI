@@ -1,0 +1,4 @@
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><item>
+  <title>Unsafe URLs</title><link>javascript:alert(1)</link><guid>unsafe</guid><pubDate>2026-08-10T00:00:00Z</pubDate>
+  <media:content url="http://cdn.example.test/image.jpg" type="image/jpeg" medium="image" />
+</item></channel></rss>
