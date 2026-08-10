@@ -1,6 +1,8 @@
 import { validateMongoConfiguration } from '../server/config/runtime.js'
 import { getMongoContext, closeMongoConnection } from '../server/repositories/mongo/connection.js'
-import { buildAuthCoreMigration, runAuthCoreMigration } from './migrations/auth-core.js'
+import { buildAuthCoreMigration } from './migrations/auth-core.js'
+import { buildSourcesMigration, runSourcesMigration } from './migrations/sources.js'
+import { runAuthCoreWithStep3Compatibility } from './migrations/step3-compatibility.js'
 import { configureDns } from './configure-dns.js'
 
 configureDns()
@@ -10,17 +12,19 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 
-if (target !== 'auth-core') {
-  console.error('Only --to auth-core is supported in Step 2')
+if (!['auth-core', 'sources'].includes(target)) {
+  console.error('Supported migration targets: auth-core, sources')
   process.exitCode = 2
 } else {
   try {
     const runtime = { mongo: validateMongoConfiguration(process.env) }
+    const buildMigration = target === 'sources' ? buildSourcesMigration : buildAuthCoreMigration
+    const runMigration = target === 'sources' ? runSourcesMigration : runAuthCoreWithStep3Compatibility
     const plan = dryRun
-      ? buildAuthCoreMigration({ dryRun: true })
+      ? buildMigration({ dryRun: true })
       : await (async () => {
         const context = await getMongoContext(runtime)
-        return runAuthCoreMigration({ db: context.db })
+        return runMigration({ db: context.db })
       })()
     console.log(JSON.stringify({ migration: target, dryRun, operations: plan.length }))
   } catch {

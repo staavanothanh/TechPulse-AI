@@ -42,6 +42,33 @@ function lifecycleProbeDocument() {
   }
 }
 
+function sourceProbeDocument() {
+  const now = new Date()
+  return {
+    _id: new ObjectId(),
+    name: 'Role probe source',
+    sourceKey: `role-probe:${randomUUID()}`,
+    publisherName: 'Role probe publisher',
+    domain: 'example.com',
+    connectorType: 'rss',
+    accessMethod: 'rss',
+    authorityTier: 'editorial',
+    connectorConfig: { kind: 'rss', feedUrl: 'https://example.com/feed.xml', batchSize: 1 },
+    operationalStatus: 'draft',
+    licenseStatus: 'review-needed',
+    llmInputScope: 'none',
+    storageScope: { metadata: false, excerpt: false, summary: false, embedding: false },
+    mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false, evidenceNote: null },
+    attributionRequired: false,
+    policyVersion: 1,
+    reconciliation: { status: 'idle', requiredPolicyVersion: 1, completedPolicyVersion: null, requestedAt: null, error: null },
+    technicalCheck: { status: 'not-run', checkedAt: null, contentType: null, resolvedHost: null, sampleCount: null, error: null },
+    health: { lastIngestSucceededAt: null, lastIngestFailedAt: null, consecutiveFailures: 0, lastError: null },
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
 export function isAuthorizationDenied(error) {
   if (error?.code === 13) return true
   if (error?.code !== 8000 || (error?.name !== 'AtlasError' && error?.codeName !== 'AtlasError')) return false
@@ -87,6 +114,19 @@ async function deniedMutation(client, work) {
   return outcome.sessionHealthy && outcome.operationFailed && isAuthorizationDenied(outcome.operationError)
 }
 
+async function deniedMutationAfterSetup(client, setup, mutation) {
+  const outcome = await runProbeTransaction(client, async (session) => {
+    await setup(session)
+    try {
+      await mutation(session)
+      return { mutationDenied: false }
+    } catch (error) {
+      return { mutationDenied: isAuthorizationDenied(error) }
+    }
+  })
+  return outcome.sessionHealthy && !outcome.operationFailed && outcome.value?.mutationDenied === true
+}
+
 export async function probeAuditRoleCapabilities({ client, db } = {}) {
   if (!client?.startSession || !db?.collection) throw new Error('Mongo client and database are required')
   const collection = db.collection('adminAuditLogs')
@@ -117,4 +157,39 @@ export async function probeHmacLifecycleRoleCapabilities({ client, db } = {}) {
   const updateDenied = await deniedMutation(client, (session) => collection.updateOne({ _id: document._id }, { $set: { snapshotHash: 'c'.repeat(64) } }, { session }))
   const deleteDenied = await deniedMutation(client, (session) => collection.deleteOne({ _id: document._id }, { session }))
   return { ...availability.value, updateDenied, deleteDenied }
+}
+
+export async function probeSourcesRoleCapabilities({ client, db } = {}) {
+  if (!client?.startSession || !db?.collection || !db?.listCollections) throw new Error('Mongo client and database are required')
+  const collection = db.collection('sources')
+  let listCollectionsAllowed = false
+  let listIndexesAllowed = false
+  try { listCollectionsAllowed = Boolean(await db.listCollections({ name: 'sources' }, { nameOnly: true }).hasNext()) } catch { /* fail closed */ }
+  try { listIndexesAllowed = Boolean(await collection.listIndexes().hasNext()) } catch { /* fail closed */ }
+
+  const availabilityDocument = sourceProbeDocument()
+  const availability = await runProbeTransaction(client, async (session) => {
+    await collection.insertOne(availabilityDocument, { session })
+    return { inserted: true, findAllowed: Boolean(await collection.findOne({ _id: availabilityDocument._id }, { session })) }
+  })
+  const updateDocument = sourceProbeDocument()
+  const update = await runProbeTransaction(client, async (session) => {
+    await collection.insertOne(updateDocument, { session })
+    const result = await collection.updateOne({ _id: updateDocument._id }, { $set: { name: 'Updated role probe source', updatedAt: new Date(updateDocument.updatedAt.getTime() + 1) } }, { session })
+    return result.matchedCount === 1
+  })
+  const deleteDocument = sourceProbeDocument()
+  const deleteDenied = await deniedMutationAfterSetup(
+    client,
+    (session) => collection.insertOne(deleteDocument, { session }),
+    (session) => collection.deleteOne({ _id: deleteDocument._id }, { session }),
+  )
+  return {
+    listCollectionsAllowed,
+    listIndexesAllowed,
+    inserted: availability.sessionHealthy && !availability.operationFailed && availability.value?.inserted === true,
+    findAllowed: availability.sessionHealthy && !availability.operationFailed && availability.value?.findAllowed === true,
+    updateAllowed: update.sessionHealthy && !update.operationFailed && update.value === true,
+    deleteDenied,
+  }
 }

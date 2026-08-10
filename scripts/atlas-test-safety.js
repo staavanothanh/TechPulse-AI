@@ -29,8 +29,8 @@ function assertTestDatabaseName(database, protectedDatabase) {
 }
 
 function safeRunId(value) {
-  const runId = value ?? randomBytes(3).toString('hex')
-  if (typeof runId !== 'string' || !/^[a-z0-9]{6,10}$/.test(runId)) throw new Error('Atlas test run ID is invalid')
+  const runId = value ?? randomBytes(4).readUInt32BE(0).toString(36).padStart(7, '0').slice(-5)
+  if (typeof runId !== 'string' || !/^[a-z0-9]{5}$/.test(runId)) throw new Error('Atlas test run ID is invalid')
   return runId
 }
 
@@ -67,7 +67,8 @@ export async function dropTestDatabase({ context, expectedDatabase, environment 
 export function atlasTestArguments(mode) {
   if (mode === 'integration') return ['node_modules/vitest/vitest.mjs', 'run', 'test/integration']
   if (mode === 'full') return ['node_modules/vitest/vitest.mjs', 'run']
-  throw new Error('Atlas test mode must be integration or full')
+  if (mode === 'coverage') return ['node_modules/vitest/vitest.mjs', 'run', '--coverage']
+  throw new Error('Atlas test mode must be integration, full or coverage')
 }
 
 export function redactAtlasOutput(value, uri) {

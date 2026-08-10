@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ObjectId } from 'mongodb'
 import {
@@ -6,6 +8,15 @@ import {
   buildAuthCoreMigration,
   validateDeletedUserDocument,
 } from '../../scripts/migrations/auth-core.js'
+
+const DEPLOYED_AUTH_CORE_BLOB = '6556ff34cdd954bea9831ba60ae40c81af8da67b'
+
+function gitBlobHash(buffer) {
+  return createHash('sha1')
+    .update(`blob ${buffer.length}\0`)
+    .update(buffer)
+    .digest('hex')
+}
 
 describe('Step 2 auth-core migration contract', () => {
   it('defines all Step 2 collections and required indexes', () => {
@@ -44,5 +55,10 @@ describe('Step 2 auth-core migration contract', () => {
     const plan = buildAuthCoreMigration({ dryRun: true })
     expect(plan.every((operation) => ['createCollection', 'collMod', 'createIndex'].includes(operation.type))).toBe(true)
     expect(plan.some((operation) => operation.type === 'dropCollection' || operation.type === 'dropIndex')).toBe(false)
+  })
+
+  it('keeps the deployed migration byte-identical to commit 12847240', () => {
+    const migration = readFileSync(new URL('../../scripts/migrations/auth-core.js', import.meta.url))
+    expect(gitBlobHash(migration)).toBe(DEPLOYED_AUTH_CORE_BLOB)
   })
 })

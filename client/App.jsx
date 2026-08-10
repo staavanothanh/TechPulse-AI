@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createApiClient } from '../shared/generated/api-client.js'
 import AuthAccount from './features/auth/AuthAccount.jsx'
+import SourceRegistry from './features/admin/sources/SourceRegistry.jsx'
 import { bootstrapSessionFailure } from './features/auth/session-state.js'
 
 const api = createApiClient()
@@ -64,11 +65,12 @@ export default function App() {
 
       <div className="app-layout">
         <nav className="side-nav" aria-label="Điều hướng nền tảng">
-          <span className="nav-label">Step 02</span>
+          <span className="nav-label">Step 03</span>
           <a className="nav-item active" href="#main-content" aria-current="page">
-            App shell
+            Source policy
           </a>
-          <span className="nav-note">Feed, Search, Article, Q&amp;A và Admin sẽ được triển khai ở các step sau.</span>
+          {session.user?.role === 'admin' ? <a className="nav-item" href="#source-registry-title">Source Registry</a> : null}
+          <span className="nav-note">Source Registry quản lý quyền xử lý trước khi connector hoặc AI được phép dùng dữ liệu.</span>
         </nav>
 
         <main id="main-content" tabIndex="-1">
@@ -82,27 +84,28 @@ export default function App() {
             </section>
           ) : null}
           {session.status === 'ready' ? <AuthAccount key={`${session.user?.id ?? 'guest'}:${session.csrfToken ?? 'none'}`} api={api} initialUser={session.user} initialCsrfToken={session.csrfToken} initialNotice={session.notice} onSession={(nextUser, nextCsrfToken, nextNotice) => setSession({ status: 'ready', user: nextUser, csrfToken: nextCsrfToken, error: null, notice: nextNotice ?? null })} /> : null}
+          {session.status === 'ready' && session.user?.role === 'admin' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
           <section className="hero-card" aria-labelledby="page-title">
-            <div className="eyebrow">STEP 02 · AUTHENTICATED FOUNDATION</div>
-            <h1 id="page-title">Theo dõi công nghệ với bằng chứng rõ ràng.</h1>
+            <div className="eyebrow">STEP 03 · RIGHTS-AWARE FOUNDATION</div>
+            <h1 id="page-title">Mỗi nguồn có quyền xử lý kiểm chứng được.</h1>
             <p className="hero-copy">
-              Nền tảng hiện đã có đăng ký, đăng nhập, phiên cookie và lưu chủ đề cá nhân. Feed, Search, Article, Q&amp;A và Admin đầy đủ sẽ được triển khai ở các step sau.
+              Source Policy tách quyền văn bản, media và trạng thái vận hành. Nguồn chưa được con người review luôn bị chặn trước storage và AI.
             </p>
             <div className="foundation-grid">
               <article className="foundation-card">
                 <span className="mono">01</span>
-                <h2>JavaScript/JSX</h2>
-                <p>Frontend và backend dùng chung quy ước module, JSDoc và OpenAPI.</p>
+                <h2>Fail closed</h2>
+                <p>Draft, review-needed và blocked không thể âm thầm cấp quyền xử lý.</p>
               </article>
               <article className="foundation-card">
                 <span className="mono">02</span>
-                <h2>Boundary trước feature</h2>
-                <p>Ingress, error envelope, Origin và request ID được khóa trước business flow.</p>
+                <h2>Policy version</h2>
+                <p>Mỗi thay đổi ảnh hưởng ingestion tạo đúng một version và marker reconciliation.</p>
               </article>
               <article className="foundation-card">
                 <span className="mono">03</span>
-                <h2>Accessibility mặc định</h2>
-                <p>Skip link, focus-visible, live status và responsive layout sẵn sàng cho step kế tiếp.</p>
+                <h2>Audit an toàn</h2>
+                <p>Mutation và changed-fields audit cùng commit, không lưu snapshot hoặc credential.</p>
               </article>
             </div>
           </section>

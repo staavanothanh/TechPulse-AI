@@ -4,6 +4,7 @@ import {
   isAuthorizationDenied,
   probeAuditRoleCapabilities,
   probeHmacLifecycleRoleCapabilities,
+  probeSourcesRoleCapabilities,
 } from '../../scripts/mongo-role-probe.js'
 
 function deniedError() {
@@ -115,6 +116,32 @@ describe('Mongo audit role capability probe', () => {
     await expect(probeAuditRoleCapabilities({ client, db: { collection: vi.fn(() => collection) } })).resolves.toEqual({
       inserted: true, findAllowed: true, updateDenied: false, deleteDenied: false,
     })
+  })
+
+  it('live-probes Source Registry find/insert/update/listIndexes and independently denies delete', async () => {
+    const { client, sessions } = createClient()
+    const collection = {
+      listIndexes: vi.fn(() => ({ hasNext: vi.fn(async () => true) })),
+      insertOne: vi.fn(async () => ({ acknowledged: true })),
+      findOne: vi.fn(async () => ({ sourceKey: 'role-probe' })),
+      updateOne: vi.fn(async () => ({ matchedCount: 1 })),
+      deleteOne: vi.fn(async () => { throw atlasDeniedError('name') }),
+    }
+    const db = {
+      listCollections: vi.fn(() => ({ hasNext: vi.fn(async () => true) })),
+      collection: vi.fn(() => collection),
+    }
+
+    await expect(probeSourcesRoleCapabilities({ client, db })).resolves.toEqual({
+      listCollectionsAllowed: true,
+      listIndexesAllowed: true,
+      inserted: true,
+      findAllowed: true,
+      updateAllowed: true,
+      deleteDenied: true,
+    })
+    expect(client.startSession).toHaveBeenCalledTimes(3)
+    expect(sessions.every((session) => session.abortTransaction.mock.calls.length === 1)).toBe(true)
   })
 
   it.each([

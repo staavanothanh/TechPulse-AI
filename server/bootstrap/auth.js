@@ -6,6 +6,7 @@ import { reconcileQuotaHmacLifecycle } from '../security/hmac-lifecycle.js'
 import { MongoAuthRepository } from '../repositories/mongo/auth-repository.js'
 import { getMongoContext } from '../repositories/mongo/connection.js'
 import { AUTH_CORE_COLLECTIONS, AUTH_CORE_INDEXES } from '../../scripts/migrations/auth-core.js'
+import { SOURCE_AUDIT_VALIDATOR } from '../../scripts/migrations/sources.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -18,7 +19,8 @@ export async function assertAuthCoreReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const name of Object.keys(AUTH_CORE_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || stableJson(collection.options.validator) !== stableJson(AUTH_CORE_COLLECTIONS[name].validator)) {
+    const acceptedValidators = name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR] : [AUTH_CORE_COLLECTIONS[name].validator]
+    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || !acceptedValidators.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) {
       throw new Error('auth-core validator is not ready')
     }
     const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))

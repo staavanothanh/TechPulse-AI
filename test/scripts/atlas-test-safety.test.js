@@ -21,10 +21,10 @@ describe('Step 2 explicit Atlas test safety', () => {
         QUOTA_HMAC_CURRENT_KEY: 'must-not-reach-child',
         Path: 'C:\\Windows\\System32',
       },
-      runId: 'abc123',
+      runId: 'abc12',
     })
 
-    expect(result.testDatabaseBase).toBe('techpulse_step2_test_abc123')
+    expect(result.testDatabaseBase).toBe('techpulse_step2_test_abc12')
     expect(result.childEnvironment.MONGODB_TEST_URI).toBe(fakeUri)
     expect(result.childEnvironment.MONGODB_TEST_DATABASE).toBe(result.testDatabaseBase)
     expect(result.childEnvironment.MONGODB_PROTECTED_DATABASE_NAME).toBe('techpulse_app')
@@ -51,9 +51,9 @@ describe('Step 2 explicit Atlas test safety', () => {
   })
 
   it('builds suite-specific names and only drops the exact guarded database', async () => {
-    const environment = { MONGODB_TEST_DATABASE: 'techpulse_step2_test_abc123', MONGODB_PROTECTED_DATABASE_NAME: 'techpulse_app' }
+    const environment = { MONGODB_TEST_DATABASE: 'techpulse_step2_test_abc12', MONGODB_PROTECTED_DATABASE_NAME: 'techpulse_app' }
     const database = databaseNameForSuite('hmac', environment)
-    expect(database).toBe('techpulse_step2_test_abc123_hmac')
+    expect(database).toBe('techpulse_step2_test_abc12_hmac')
     expect(Buffer.byteLength(database, 'utf8')).toBeLessThanOrEqual(38)
     expect(() => databaseNameForSuite('hmac_lifecycle', environment)).toThrow(/38-byte/)
     const dropDatabase = vi.fn(async () => ({ ok: 1 }))
@@ -76,11 +76,13 @@ describe('Step 2 explicit Atlas test safety', () => {
     const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
     expect(pkg.scripts.test).toBe('vitest')
     expect(pkg.scripts['test:atlas']).toBe('node --env-file-if-exists=.env scripts/run-atlas-tests.js')
+    expect(pkg.scripts['test:coverage:mongodb']).toBe('node --env-file-if-exists=.env scripts/run-atlas-tests.js coverage')
     for (const name of ['dev', 'db:migrate', 'db:migrate:dry-run', 'db:verify', 'seed:admin']) {
       expect(pkg.scripts[name]).toContain('node --env-file-if-exists=.env ')
     }
     expect(atlasTestArguments('integration')).toEqual(['node_modules/vitest/vitest.mjs', 'run', 'test/integration'])
     expect(atlasTestArguments('full')).toEqual(['node_modules/vitest/vitest.mjs', 'run'])
+    expect(atlasTestArguments('coverage')).toEqual(['node_modules/vitest/vitest.mjs', 'run', '--coverage'])
     for (const path of ['../../server/dev.js', '../../scripts/db-migrate.js', '../../scripts/db-verify.js', '../../scripts/seed-admin.js', '../../scripts/run-atlas-tests.js']) {
       expect(readFileSync(new URL(path, import.meta.url), 'utf8')).toContain('configure-dns.js')
     }

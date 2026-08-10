@@ -11,13 +11,17 @@ const vite = await createViteServer({
 
 const { createApp } = await import('./app.js')
 const { createConfiguredAuthService } = await import('./bootstrap/auth.js')
+const { createConfiguredSourceService } = await import('./bootstrap/sources.js')
 let authService
+let sourceService
 try {
-  authService = (await createConfiguredAuthService()).authService
+  const configured = await createConfiguredAuthService()
+  authService = configured.authService
+  try { sourceService = (await createConfiguredSourceService({ context: configured.context })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
 } catch {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
-const app = createApp({ authService, afterApiMiddleware: vite.middlewares })
+const app = createApp({ authService, sourceService, afterApiMiddleware: vite.middlewares })
 const server = app.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)
 })

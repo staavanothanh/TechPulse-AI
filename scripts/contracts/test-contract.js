@@ -5,6 +5,7 @@ import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { loadOpenApi, runContractChecks } from './openapi-utils.js'
 import { runAuthAccountContractFixtures } from './auth-account-fixtures.js'
+import { runAdminSourcesContractFixtures } from './admin-sources-fixtures.js'
 
 const document = loadOpenApi()
 const result = runContractChecks(document)
@@ -45,5 +46,7 @@ if (!validateHealth(healthFixture)) {
 const selection = process.argv.slice(2)
 const shouldRunAuthAccount = selection.length === 0 || selection.some((value) => ['auth', 'account'].includes(value))
 const authAccountResult = shouldRunAuthAccount ? await runAuthAccountContractFixtures({ document }) : { cases: 0 }
+const shouldRunAdminSources = selection.length === 0 || selection.includes('admin-sources')
+const adminSourcesResult = shouldRunAdminSources ? await runAdminSourcesContractFixtures({ document }) : { cases: 0 }
 
-console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}`)
+console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}`)

@@ -165,13 +165,20 @@ a {
 }
 
 .auth-form input,
-.auth-card input {
+.auth-card input,
+.source-form input,
+.source-form select,
+.source-form textarea {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--control-radius);
   color: var(--fg);
   background: var(--bg);
+}
+
+.source-form textarea {
+  resize: vertical;
 }
 
 .primary-button,
@@ -262,6 +269,200 @@ a {
   padding: clamp(24px, 5vw, 56px);
 }
 
+.source-registry {
+  margin-bottom: 18px;
+  padding: clamp(20px, 3vw, 34px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.operator-header,
+.source-title-row,
+.form-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.operator-header h1 {
+  max-width: 22ch;
+  margin-bottom: 8px;
+  font-size: clamp(28px, 4vw, 46px);
+}
+
+.operator-copy {
+  max-width: 72ch;
+  color: var(--muted);
+}
+
+.source-live {
+  min-height: 24px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.source-workspace {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(0, 2fr);
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.source-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.source-list button,
+.source-actions button,
+.source-state button {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  color: var(--fg);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.source-list button {
+  display: grid;
+  gap: 2px;
+  padding: 11px 12px;
+  text-align: left;
+}
+
+.source-list button.selected {
+  border-color: var(--fg);
+  background: var(--accent-soft);
+}
+
+.source-list span,
+.source-list small {
+  color: var(--muted);
+}
+
+.source-editor,
+.source-details,
+.source-form {
+  display: grid;
+  gap: 16px;
+}
+
+.source-details,
+.source-form,
+.source-state {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.source-form {
+  margin-top: 0;
+  background: var(--bg);
+}
+
+.source-form h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.source-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.source-form label {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.source-form input,
+.source-form select,
+.source-form textarea {
+  padding: 9px 10px;
+}
+
+.policy-chip,
+.source-badges span {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface);
+  font: 600 11px/1.4 var(--font-mono);
+}
+
+.source-badges,
+.source-actions,
+.policy-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-actions button {
+  padding: 8px 12px;
+}
+
+.source-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.policy-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border-block: 1px solid var(--border);
+}
+
+.policy-rail div {
+  padding: 10px;
+  border-right: 1px solid var(--border);
+}
+
+.policy-rail div:last-child {
+  border-right: 0;
+}
+
+.policy-rail dt {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.policy-rail dd {
+  margin: 3px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.policy-options {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+
+.policy-options legend {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.policy-options label {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 6px;
+}
+
 h1,
 h2,
 p {
@@ -326,6 +527,10 @@ h2 {
   .nav-note {
     max-width: 62ch;
   }
+
+  .source-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 600px) {
@@ -353,6 +558,21 @@ h2 {
 
   .hero-card {
     padding: 24px;
+  }
+
+  .operator-header,
+  .source-title-row {
+    display: grid;
+  }
+
+  .source-form-grid,
+  .policy-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .policy-rail div {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 }
 

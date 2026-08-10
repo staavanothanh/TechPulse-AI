@@ -50,7 +50,9 @@
 
 - Summary và phần diễn giải phải viết bằng tiếng Việt không dấu; file path, identifier và command giữ nguyên.
 - Luôn thêm co-author-by: `<name> <email>` với name và email lấy từ danh sách dưới đây:
-    - Khoa : meoluoitt1@gmail.com
+    - Khoa : meoluoicoding@gmail.com
+    - Huy : huyly2906@gmail.com
+    - Minh : minhlee9507@gmail.com
 - Luôn có nội dung không rỗng cho `Why?` và `What change?`. Trong `What change?`, liệt kê mọi file thay đổi đáng kể kèm mô tả ngắn.
 - Chỉ thêm section `Testing` khi đã thêm hoặc chạy test. Nếu không có test, bỏ toàn bộ section; không ghi “khong test”.
 
