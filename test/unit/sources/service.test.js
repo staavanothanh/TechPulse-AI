@@ -12,6 +12,7 @@ const input = {
   connectorType: 'rss', accessMethod: 'rss', authorityTier: 'editorial',
   connectorConfig: { kind: 'rss', feedUrl: 'https://example.com/feed.xml', batchSize: 20 },
 }
+const allowAdmission = { reserve: vi.fn(async () => ({ allowed: true })) }
 
 function memoryRepository() {
   let source
@@ -102,6 +103,18 @@ describe('Source application service', () => {
     await expect(service.runTechnicalCheck({ auth: admin, sourceId: source.id, request })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
   })
 
+  it('fails closed before outbound technical work when rate-limit admission is missing or unavailable', async () => {
+    const repository = memoryRepository()
+    const adapter = { run: vi.fn(async () => ({ status: 'passed', contentType: 'application/rss+xml', resolvedHost: 'example.com', sampleCount: 1 })) }
+    expect(() => createSourceService({ repository, technicalCheckAdapter: adapter })).toThrow(/rate-limit/i)
+    const creator = createSourceService({ repository })
+    const source = await creator.create({ auth: admin, input, request })
+
+    const unavailable = createSourceService({ repository, technicalCheckAdapter: adapter, rateLimitAdmission: { reserve: async () => { throw new Error('unavailable') } } })
+    await expect(unavailable.runTechnicalCheck({ auth: admin, sourceId: source.id, request })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+    expect(adapter.run).not.toHaveBeenCalled()
+  })
+
   it('does not let the technical-check adapter mutate or elevate Source Policy', async () => {
     const repository = memoryRepository()
     const technicalCheckAdapter = { run: vi.fn(async ({ source }) => {
@@ -111,7 +124,7 @@ describe('Source application service', () => {
       try { source.connectorConfig.feedUrl = 'https://evil.example/feed.xml' } catch { /* expected frozen input */ }
       return { status: 'passed', contentType: 'application/rss+xml', resolvedHost: 'example.com', sampleCount: 1, licenseStatus: 'permitted' }
     }) }
-    const service = createSourceService({ repository, technicalCheckAdapter, now: () => new Date('2026-08-10T00:00:00.000Z') })
+    const service = createSourceService({ repository, technicalCheckAdapter, rateLimitAdmission: allowAdmission, now: () => new Date('2026-08-10T00:00:00.000Z') })
     const source = await service.create({ auth: admin, input, request })
     const result = await service.runTechnicalCheck({ auth: admin, sourceId: source.id, request: { serverRequestId: 'technical-no-elevation' } })
     expect(result.technicalCheck.status).toBe('passed')
@@ -122,7 +135,7 @@ describe('Source application service', () => {
 
   it('rejects unsafe technical-check output and maps Mongo outages to canonical 503', async () => {
     const repository = memoryRepository()
-    const unsafe = createSourceService({ repository, technicalCheckAdapter: { run: vi.fn(async () => ({ status: 'passed', contentType: 'application/rss+xml', resolvedHost: '127.0.0.1', sampleCount: 1 })) } })
+    const unsafe = createSourceService({ repository, technicalCheckAdapter: { run: vi.fn(async () => ({ status: 'passed', contentType: 'application/rss+xml', resolvedHost: '127.0.0.1', sampleCount: 1 })) }, rateLimitAdmission: allowAdmission })
     const source = await unsafe.create({ auth: admin, input, request })
     await expect(unsafe.runTechnicalCheck({ auth: admin, sourceId: source.id, request })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
 
@@ -143,12 +156,12 @@ describe('Source application service', () => {
   it('persists a bounded failed technical-check result and rejects malformed adapter payloads', async () => {
     const repository = memoryRepository()
     const failedAdapter = { run: vi.fn(async () => ({ status: 'failed', error: { code: 'upstream_timeout', message: 'Timed out safely', retryable: true, upstreamStatus: 504 } })) }
-    const failedService = createSourceService({ repository, technicalCheckAdapter: failedAdapter, now: () => new Date('2026-08-10T00:00:00.000Z') })
+    const failedService = createSourceService({ repository, technicalCheckAdapter: failedAdapter, rateLimitAdmission: allowAdmission, now: () => new Date('2026-08-10T00:00:00.000Z') })
     const source = await failedService.create({ auth: admin, input, request })
     await expect(failedService.runTechnicalCheck({ auth: admin, sourceId: source.id, request: { serverRequestId: 'technical-failed-safe' } })).resolves.toEqual(expect.objectContaining({ technicalCheck: expect.objectContaining({ status: 'failed', contentType: null, error: expect.objectContaining({ code: 'upstream_timeout', upstreamStatus: 504 }) }) }))
 
     for (const output of [null, { status: 'unknown' }, { status: 'passed', contentType: '', resolvedHost: 'example.com', sampleCount: 1 }, { status: 'failed', error: { code: 'bad', message: '', retryable: true } }]) {
-      const malformed = createSourceService({ repository, technicalCheckAdapter: { run: vi.fn(async () => output) } })
+      const malformed = createSourceService({ repository, technicalCheckAdapter: { run: vi.fn(async () => output) }, rateLimitAdmission: allowAdmission })
       await expect(malformed.runTechnicalCheck({ auth: admin, sourceId: source.id, request: { serverRequestId: `malformed-${String(output?.status)}` } })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
     }
   })

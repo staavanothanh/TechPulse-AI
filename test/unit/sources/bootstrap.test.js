@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { assertSourcesReady, createConfiguredSourceService } from '../../../server/bootstrap/sources.js'
 import { SOURCE_AUDIT_VALIDATOR, SOURCE_COLLECTIONS, SOURCE_INDEXES } from '../../../scripts/migrations/sources.js'
+import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/durable-jobs.js'
 
 function readyContext({ sourceValidator = SOURCE_COLLECTIONS.sources.validator, auditValidator = SOURCE_AUDIT_VALIDATOR, indexes } = {}) {
   const actualIndexes = indexes ?? SOURCE_INDEXES.sources.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) }))
@@ -20,13 +21,18 @@ describe('Source Registry bootstrap readiness', () => {
   it('constructs the service and current-policy boundary only for exact validators and indexes', async () => {
     const context = readyContext()
     await expect(assertSourcesReady(context)).resolves.toBeUndefined()
-    const configured = await createConfiguredSourceService({ context, technicalCheckAdapter: { run() {} } })
+    const configured = await createConfiguredSourceService({ context, technicalCheckAdapter: { run() {} }, rateLimitAdmission: { reserve: async () => ({ allowed: true }) } })
     expect(configured.sourceService).toEqual(expect.objectContaining({ list: expect.any(Function), runTechnicalCheck: expect.any(Function) }))
     expect(configured.currentSourcePolicy).toEqual(expect.objectContaining({ content: expect.any(Function), media: expect.any(Function) }))
   })
 
+  it('accepts the exact forward-compatible durable-job audit validator', async () => {
+    await expect(assertSourcesReady(readyContext({ auditValidator: DURABLE_JOB_AUDIT_VALIDATOR }))).resolves.toBeUndefined()
+  })
+
   it('fails closed for missing context, stale validators, missing indexes, key drift and option drift', async () => {
     await expect(createConfiguredSourceService()).rejects.toThrow(/context/i)
+    await expect(createConfiguredSourceService({ context: readyContext(), technicalCheckAdapter: { run() {} } })).rejects.toThrow(/rate-limit/i)
     await expect(assertSourcesReady(readyContext({ sourceValidator: {} }))).rejects.toThrow(/sources validator/i)
     await expect(assertSourcesReady(readyContext({ auditValidator: {} }))).rejects.toThrow(/audit validator/i)
     await expect(assertSourcesReady(readyContext({ indexes: [] }))).rejects.toThrow(/indexes/i)

@@ -80,7 +80,8 @@ describe('GET /api/v1/health', () => {
     })
     expect(missing.status).toBe(401)
     expect(invalid.status).toBe(401)
-    expect(valid.status).toBe(404)
+    expect(valid.status).toBe(503)
+    expect((await valid.json()).error.code).toBe('service_unavailable')
   })
 
   it('rejects hostile Origin, non-JSON bodies, compressed bodies and oversized JSON', async () => {

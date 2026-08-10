@@ -55,6 +55,7 @@ beforeAll(async () => {
   const sourceService = createSourceService({
     repository: new MongoSourceRepository(context),
     technicalCheckAdapter: { async run() { return { status: 'passed', checkedAt: new Date(), contentType: 'application/rss+xml', resolvedHost: 'example.com', sampleCount: 1, licenseStatus: 'permitted' } } },
+    rateLimitAdmission: { async reserve() { return { allowed: true } } },
   })
   const app = createApp({ authService, sourceService })
   server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)) })

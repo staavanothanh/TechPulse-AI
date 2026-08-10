@@ -7,6 +7,8 @@ import { MongoAuthRepository } from '../repositories/mongo/auth-repository.js'
 import { getMongoContext } from '../repositories/mongo/connection.js'
 import { AUTH_CORE_COLLECTIONS, AUTH_CORE_INDEXES } from '../../scripts/migrations/auth-core.js'
 import { SOURCE_AUDIT_VALIDATOR } from '../../scripts/migrations/sources.js'
+import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/durable-jobs.js'
+import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -19,16 +21,14 @@ export async function assertAuthCoreReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const name of Object.keys(AUTH_CORE_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    const acceptedValidators = name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR] : [AUTH_CORE_COLLECTIONS[name].validator]
+    const acceptedValidators = name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR] : [AUTH_CORE_COLLECTIONS[name].validator]
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || !acceptedValidators.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) {
       throw new Error('auth-core validator is not ready')
     }
     const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
     for (const expected of AUTH_CORE_INDEXES[name]) {
       const actual = actualByName.get(expected.name)
-      if (!actual || stableJson(actual.key) !== stableJson(expected.key)) throw new Error('auth-core indexes are not ready')
-      for (const option of ['unique', 'expireAfterSeconds']) if (expected.options?.[option] !== undefined && actual[option] !== expected.options[option]) throw new Error('auth-core indexes are not ready')
-      if (expected.options?.partialFilterExpression && stableJson(actual.partialFilterExpression) !== stableJson(expected.options.partialFilterExpression)) throw new Error('auth-core indexes are not ready')
+      if (!exactMongoIndex(actual, expected)) throw new Error('auth-core indexes are not ready')
     }
   }
 }
@@ -55,6 +55,8 @@ export async function createConfiguredAuthService({ environment = process.env } 
   const mode = environment.VERCEL === '1' || environment.VERCEL === 'true' ? 'production' : environment.NODE_ENV === 'test' ? 'test' : 'local'
   return {
     authService: createAuthService({ repository, runtime, quotaKeyring, clientIpAdapter: createClientIpAdapter({ mode }) }),
+    authRepository: repository,
+    quotaKeyring,
     context,
     runtime,
   }

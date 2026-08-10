@@ -6,6 +6,7 @@ import addFormats from 'ajv-formats'
 import { loadOpenApi, runContractChecks } from './openapi-utils.js'
 import { runAuthAccountContractFixtures } from './auth-account-fixtures.js'
 import { runAdminSourcesContractFixtures } from './admin-sources-fixtures.js'
+import { runStep4ContractFixtures } from './step4-fixtures.js'
 
 const document = loadOpenApi()
 const result = runContractChecks(document)
@@ -46,7 +47,9 @@ if (!validateHealth(healthFixture)) {
 const selection = process.argv.slice(2)
 const shouldRunAuthAccount = selection.length === 0 || selection.some((value) => ['auth', 'account'].includes(value))
 const authAccountResult = shouldRunAuthAccount ? await runAuthAccountContractFixtures({ document }) : { cases: 0 }
-const shouldRunAdminSources = selection.length === 0 || selection.includes('admin-sources')
+const shouldRunAdminSources = selection.length === 0 || selection.includes('admin-sources') || selection.includes('source-check')
 const adminSourcesResult = shouldRunAdminSources ? await runAdminSourcesContractFixtures({ document }) : { cases: 0 }
+const shouldRunStep4 = selection.length === 0 || selection.some((value) => ['ingestion-jobs', 'cron'].includes(value))
+const step4Result = shouldRunStep4 ? await runStep4ContractFixtures({ document }) : { cases: 0 }
 
-console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}`)
+console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}, Step 4 runtime fixtures: ${step4Result.cases}`)

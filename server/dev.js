@@ -12,16 +12,33 @@ const vite = await createViteServer({
 const { createApp } = await import('./app.js')
 const { createConfiguredAuthService } = await import('./bootstrap/auth.js')
 const { createConfiguredSourceService } = await import('./bootstrap/sources.js')
+const { createConfiguredJobRuntime } = await import('./bootstrap/jobs.js')
+const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
+const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
+const { createRateLimitAdmission } = await import('./security/rate-limit-admission.js')
 let authService
 let sourceService
+let jobService
+let dueWorkRunner
+let maintenanceRunner
+let runtime
 try {
   const configured = await createConfiguredAuthService()
   authService = configured.authService
-  try { sourceService = (await createConfiguredSourceService({ context: configured.context })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
+  runtime = configured.runtime
+  const rateLimitAdmission = createRateLimitAdmission({ repository: configured.authRepository, keyring: configured.quotaKeyring })
+  const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
+  try { sourceService = (await createConfiguredSourceService({ context: configured.context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
+  try {
+    const jobs = await createConfiguredJobRuntime({ context: configured.context, rateLimitAdmission })
+    jobService = jobs.jobService
+    dueWorkRunner = jobs.dueWorkRunner
+    maintenanceRunner = jobs.maintenanceRunner
+  } catch { console.warn('Durable job service is unavailable until its migration is applied') }
 } catch {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
-const app = createApp({ authService, sourceService, afterApiMiddleware: vite.middlewares })
+const app = createApp({ authService, sourceService, jobService, dueWorkRunner, maintenanceRunner, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
 const server = app.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)
 })

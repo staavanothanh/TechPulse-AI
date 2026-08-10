@@ -5,17 +5,21 @@ export function sourceActionPrerequisites(source = {}) {
   return {
     activationReady: missing.length === 0,
     activationReason: missing.length === 0 ? 'Đủ điều kiện kích hoạt.' : `Chưa thể kích hoạt: ${missing.join('; ')}.`,
-    technicalCheckReady: false,
-    technicalCheckReason: 'Kiểm tra kỹ thuật bằng safe-fetch sẽ khả dụng ở Step 4.',
+    technicalCheckReady: source.operationalStatus !== 'archived' && ['rss', 'arxiv', 'hacker-news'].includes(source.connectorType),
+    technicalCheckReason: source.operationalStatus === 'archived'
+      ? 'Nguồn archived không chạy kiểm tra kỹ thuật.'
+      : 'Safe-fetch kiểm tra HTTPS, DNS công khai, content type và giới hạn payload trước khi ghi evidence.',
   }
 }
 
 export function sourceRegistryErrorState(error) {
   let message
   if (error?.status === 401) message = 'Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.'
+  else if (error?.status === 403 && error?.code === 'csrf_invalid') message = 'Phiên thao tác đã hết hạn. Hãy tải lại để lấy CSRF mới.'
   else if (error?.status === 403) message = 'Bạn không có quyền quản trị Source Registry.'
   else if (error?.status === 409) message = 'Nguồn vừa thay đổi, evidence cần duyệt lại hoặc Idempotency-Key không còn khớp. Hãy tải lại.'
   else if (error?.status === 422) message = 'Dữ liệu nguồn hoặc chính sách chưa hợp lệ.'
+  else if (error?.status === 429) message = `Đã chạm giới hạn kiểm tra nguồn. Thử lại sau ${error?.retryAfter ?? error?.retryAfterSeconds ?? 'ít phút'}.`
   else if (error?.status === 503) message = 'Source Registry hoặc audit bắt buộc đang tạm thời không sẵn sàng.'
   else message = error?.message ?? 'Không thể hoàn tất thao tác Source Registry.'
   return { message, sessionExpiredNotice: error?.status === 401 ? 'Phiên đăng nhập đã hết hạn khi quản lý nguồn.' : null }

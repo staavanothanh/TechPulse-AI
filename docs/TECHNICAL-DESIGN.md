@@ -178,7 +178,8 @@ Technical check không được tự phê duyệt rights và `passed` phải có
 ```text
 Vercel Cron GET /api/internal/cron/due-work
 → authenticate separate trust boundary
-→ idempotently materialize scheduled ingestion intents for active sources
+→ idempotently consume bounded daily continuation pages for active sources (100/source page, explicit page cap + deadline)
+→ CAS durable per-period cursor/completion marker before coordinator work
 → recover a bounded batch of expired active leases/running jobs
 → select due work across ingestion/indexing/account-deletion queues
 → return aggregate recovery + per-queue counters
@@ -186,8 +187,8 @@ Vercel Cron GET /api/internal/cron/due-work
 Admin POST ingestion trigger
 → authenticate cookie + admin role + CSRF
 → derive/validate actor-scoped idempotency key + request hash
-→ create or reuse job record
-→ invoke the same queue runner through a separate adapter
+→ atomically create/reuse + admission + audit record
+→ invoke shared queue coordinator only (không materialize cron intent ngoài request)
 
 Selected job
 → acquire persistent lease ownership; increment generationHighWater
@@ -200,7 +201,7 @@ Selected job
 → atomically mark succeeded/partial/failed + clear active ownership; preserve generationHighWater
 ```
 
-Job runner dừng trước execution deadline bằng safety margin. Phần còn lại tồn tại với `availableAt` và checkpoint để due-work coordinator resume qua manual run hoặc lần cron sau. Coordinator queue-agnostic nhưng response chỉ trả aggregate counters; chi tiết job đọc qua admin queue endpoints. `partial` không rollback dữ liệu đã ghi; mỗi item operation idempotent và stale worker không commit được sau khi mất generation. Nếu source bị block, mất eligibility hoặc policy/connector config đổi trong lúc fetch, final CAS miss discard candidate và không advance checkpoint/counter; safe workflow error là `policy_version_mismatch`.
+Job runner dừng trước execution deadline bằng safety margin. Phần còn lại tồn tại với `availableAt` và checkpoint để coordinator resume qua manual run hoặc lần cron sau. Cron adapter consume liên tiếp các trang daily continuation trong một invocation tới page cap/deadline; durable cursor vẫn cho phép invocation sau tiếp tục khi cap/deadline chạm tới. Manual adapter không được tạo cron job ngoài intent. Coordinator queue-agnostic nhưng response chỉ trả aggregate counters; chi tiết job đọc qua admin queue endpoints. `partial` không rollback dữ liệu đã ghi; mỗi item operation idempotent và stale worker không commit được sau khi mất generation. Nếu source bị block, mất eligibility hoặc policy/connector config đổi trong lúc fetch, final CAS miss discard candidate và không advance checkpoint/counter; safe workflow error là `policy_version_mismatch`.
 
 ### 6.4. Summary và embedding
 

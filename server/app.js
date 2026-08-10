@@ -4,6 +4,9 @@ import { createIngressMiddleware } from './http/ingress.js'
 import { sendError, errorHandler } from './http/errors.js'
 import { createAuthRouter } from './http/auth-router.js'
 import { createAdminSourcesRouter } from './http/admin/sources/router.js'
+import { createAdminIngestionJobsRouter } from './http/admin/ingestion-jobs/router.js'
+import { createInternalCronRouter } from './http/internal/cron/router.js'
+import { createInternalMaintenanceRouter } from './http/internal/maintenance/router.js'
 import { createSessionMiddleware } from './http/middleware/session.js'
 
 export function createApp(options = {}) {
@@ -15,6 +18,9 @@ export function createApp(options = {}) {
   app.use(createSessionMiddleware({ authService: options.authService }))
   app.use(createAuthRouter({ authService: options.authService }))
   app.use(createAdminSourcesRouter({ sourceService: options.sourceService, authService: options.authService }))
+  app.use(createAdminIngestionJobsRouter({ jobService: options.jobService, authService: options.authService }))
+  app.use(createInternalCronRouter({ dueWorkRunner: options.dueWorkRunner }))
+  app.use(createInternalMaintenanceRouter({ maintenanceRunner: options.maintenanceRunner }))
 
   app.get('/api/v1/health', (_req, res) => {
     res.set('Cache-Control', 'no-store, private')

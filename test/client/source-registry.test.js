@@ -50,10 +50,11 @@ describe('Admin Source Registry UI', () => {
     expect(html).not.toMatch(/type="password"|credential|api key/i)
   })
 
-  it('disables activation and technical checks with connected prerequisite explanations', () => {
+  it('disables activation until evidence is ready and enables Step 4 technical checks', () => {
     const blocked = { ...source, licenseStatus: 'review-needed', reviewedAt: null, reviewedBy: null, evidenceNote: null, technicalCheck: { status: 'not-run' } }
     const prerequisites = sourceActionPrerequisites(blocked)
     expect(prerequisites.activationReady).toBe(false)
+    expect(prerequisites.technicalCheckReady).toBe(true)
     expect(prerequisites.activationReason).toMatch(/kiểm tra kỹ thuật|duyệt quyền/i)
 
     const html = renderToStaticMarkup(React.createElement(SourceRegistryView, { state: 'ready', sources: [blocked], selected: blocked, busy: false, handlers }))
@@ -61,6 +62,7 @@ describe('Admin Source Registry UI', () => {
     expect(html).toContain('aria-describedby="source-activation-prerequisites"')
     expect(html).toContain('id="source-technical-check-prerequisite"')
     expect(html).toContain('aria-describedby="source-technical-check-prerequisite"')
+    expect(html).not.toMatch(/disabled="" aria-describedby="source-technical-check-prerequisite">Chạy kiểm tra kỹ thuật/)
     expect(html).toMatch(/Kích hoạt<\/button>/)
   })
 
@@ -74,10 +76,14 @@ describe('Admin Source Registry UI', () => {
       return children.map((child) => findButton(child, label)).find(Boolean) ?? null
     }
     const activate = findButton(tree, 'Kích hoạt')
+    const technicalCheck = findButton(tree, 'Chạy kiểm tra kỹ thuật')
     expect(activate.type).toBe('button')
     expect(activate.props.disabled).toBe(false)
+    expect(technicalCheck.props.disabled).toBe(false)
     activate.props.onClick()
+    technicalCheck.props.onClick()
     expect(localHandlers.onStatus).toHaveBeenCalledWith(source, 'active')
+    expect(localHandlers.onTechnicalCheck).toHaveBeenCalledWith(source)
   })
 
   it('executes create/config/review/activate API interactions and classifies session expiry', async () => {
@@ -119,6 +125,8 @@ describe('Admin Source Registry UI', () => {
     expect(sourceRegistryErrorState({ status: 403 }).message).toMatch(/quyền/i)
     expect(sourceRegistryErrorState({ status: 409 }).message).toMatch(/thay đổi|Idempotency/i)
     expect(sourceRegistryErrorState({ status: 422 }).message).toMatch(/hợp lệ/i)
+    expect(sourceRegistryErrorState({ status: 429, retryAfter: 30 }).message).toMatch(/giới hạn|30/i)
+    expect(sourceRegistryErrorState({ status: 403, code: 'csrf_invalid' }).message).toMatch(/CSRF/i)
     expect(sourceRegistryErrorState(new Error('custom failure')).message).toBe('custom failure')
     expect(sourceRegistryErrorState({}).message).toMatch(/Không thể/i)
     expect(sourceActionPrerequisites(source)).toEqual(expect.objectContaining({ activationReady: true, activationReason: 'Đủ điều kiện kích hoạt.' }))

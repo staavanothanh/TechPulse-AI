@@ -33,6 +33,7 @@ Các block `type ...` dưới đây là ký pháp tài liệu trung lập để 
 | `articles` | Normalized metadata, summary, vector, provenance | Content module |
 | `savedArticles` | Quan hệ user–article | User library module |
 | `ingestionJobs` | Durable connector run/checkpoint/counters | Job module |
+| `ingestionScheduleProgress` | Cursor server-owned cho bounded daily ingestion materialization | Job module |
 | `indexingJobs` | Summary/embedding/re-index work | Job/AI module |
 | `jobLeases` | Persistent fencing high-water + active distributed ownership | Job module |
 | `chatSessions` | Question/answer/citation history tối thiểu | Q&A module |
@@ -494,9 +495,24 @@ partial { purgeAfter: 1, _id: 1 } where purgeAfter exists
 
 `expectedSourcePolicyVersion` được capture trước external fetch; `policyVersion` đại diện cả rights policy và connector configuration ảnh hưởng ingestion, nên mọi thay đổi đó phải increment version. Final article/checkpoint transaction conditionally touch exact source `_id`, version, `operationalStatus=active`, eligible license và connector discriminant cùng lease fence; CAS miss discard candidate, không tăng counter/advance checkpoint và chỉ ghi safe `policy_version_mismatch` ở workflow hợp lệ.
 
-Retry tạo job mới với idempotency key/attempt mới và `parentJobId`; không mutate failed history thành queued. Automatic crash recovery derive deterministic identity `system-recovery:<parentJobId>:<nextAttempt>` nên transaction/retry lặp chỉ tạo một child job. Reuse cùng actor/key nhưng `requestHash` khác là conflict, không trả generic duplicate.
+Retry tạo job mới với idempotency key/attempt mới và `parentJobId`; không mutate failed history thành queued. Automatic crash recovery derive deterministic identity `system-recovery:<parentJobId>:<nextAttempt>` nên transaction/retry lặp chỉ tạo một child job. Create/retry admin resolve exact existing actor/key hoặc parent/attempt trước khi reserve admission; transaction duy nhất reserve đúng một quota slot, insert job và append audit. Reuse cùng actor/key nhưng `requestHash` khác là conflict, không trả generic duplicate.
 
-Queue selector chạy aged lane trước: due document có `agingEligibleAt<=now` sort `agingEligibleAt → availableAt → createdAt → _id`; nếu không có thì normal lane sort `priority desc → availableAt → createdAt → _id`. `agingEligibleAt` server derive tối đa 30 phút sau `createdAt`; caller không set. Job không được purge trước `idempotencyExpiresAt=createdAt+14 ngày`, nên `purgeAfter=max(terminal retention, idempotencyExpiresAt)`.
+Queue selector chạy aged lane trước: due document có `agingEligibleAt<=now` sort `agingEligibleAt → availableAt → createdAt → _id`; nếu không có thì normal lane sort `priority desc → availableAt → createdAt → _id`. `agingEligibleAt` server derive đúng `createdAt+30 phút`, immutable qua defer/retry của cùng job; caller không set. Job không được purge trước `idempotencyExpiresAt=createdAt+14 ngày`, nên `purgeAfter=max(terminal retention, idempotencyExpiresAt)`.
+
+### 10.1. `ingestionScheduleProgress`
+
+```text
+type IngestionScheduleProgressDocument = {
+  _id: ObjectId;
+  period: "YYYY-MM-DD";
+  cursorSourceId?: ObjectId;
+  completedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+```
+
+`unique { period: 1 }`. Chỉ cron materializer sở hữu collection này. Mỗi trang materialize nhiều nhất 100 source eligible có `_id > cursorSourceId`, rồi transactionally CAS cursor/`completedAt`; production cron consume liên tiếp các trang trong một invocation với page cap/deadline bounded, và invocation sau tiếp tục từ durable cursor nếu còn `hasMore`. Replay hoặc concurrent invocation không quay lại các source đã commit. Period mới có record mới, không carry cursor giữa các ngày. Admin manual create/retry không đọc hoặc ghi collection này.
 
 ## 11. `indexingJobs`
 

@@ -2,6 +2,8 @@ import { createSourceService } from '../application/sources/service.js'
 import { createCurrentSourcePolicy } from '../application/sources/current-policy.js'
 import { MongoSourceRepository } from '../repositories/mongo/source-repository.js'
 import { SOURCE_AUDIT_VALIDATOR, SOURCE_COLLECTIONS, SOURCE_INDEXES } from '../../scripts/migrations/sources.js'
+import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/durable-jobs.js'
+import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -15,18 +17,19 @@ export async function assertSourcesReady(context) {
   const sourceCollection = collectionMap.get('sources')
   const auditCollection = collectionMap.get('adminAuditLogs')
   if (!sourceCollection || sourceCollection.options?.validationLevel !== 'strict' || sourceCollection.options?.validationAction !== 'error' || stableJson(sourceCollection.options?.validator) !== stableJson(SOURCE_COLLECTIONS.sources.validator)) throw new Error('sources validator is not ready')
-  if (!auditCollection || auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || stableJson(auditCollection.options?.validator) !== stableJson(SOURCE_AUDIT_VALIDATOR)) throw new Error('source audit validator is not ready')
+  const acceptedAuditValidators = [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR]
+  if (!auditCollection || auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || !acceptedAuditValidators.some((validator) => stableJson(auditCollection.options?.validator) === stableJson(validator))) throw new Error('source audit validator is not ready')
   const actualByName = new Map((await context.db.collection('sources').indexes()).map((index) => [index.name, index]))
   for (const expected of SOURCE_INDEXES.sources) {
     const actual = actualByName.get(expected.name)
-    if (!actual || stableJson(actual.key) !== stableJson(expected.key)) throw new Error('sources indexes are not ready')
-    if (expected.options?.unique !== undefined && actual.unique !== expected.options.unique) throw new Error('sources indexes are not ready')
+    if (!exactMongoIndex(actual, expected)) throw new Error('sources indexes are not ready')
   }
 }
 
-export async function createConfiguredSourceService({ context, technicalCheckAdapter } = {}) {
+export async function createConfiguredSourceService({ context, technicalCheckAdapter, rateLimitAdmission } = {}) {
   if (!context) throw new Error('Mongo context is required')
+  if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   await assertSourcesReady(context)
   const repository = new MongoSourceRepository(context)
-  return { sourceService: createSourceService({ repository, technicalCheckAdapter }), currentSourcePolicy: createCurrentSourcePolicy({ repository }) }
+  return { sourceService: createSourceService({ repository, technicalCheckAdapter, rateLimitAdmission }), currentSourcePolicy: createCurrentSourcePolicy({ repository }) }
 }

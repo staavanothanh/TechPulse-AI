@@ -160,10 +160,19 @@ export function createIngressMiddleware(options = {}) {
     if (!validateRequestTarget(req.originalUrl || req.url)) return reject(res, 413, 'payload_too_large', 'Request target is too large')
     const operation = findOperationForRequest(OPENAPI, req.method, req.originalUrl || req.url)
     const isApi = req.path.startsWith('/api/')
+    const isInternal = req.path.startsWith('/api/internal/')
     const isMutation = MUTATING_METHODS.has(req.method)
     const hasBody = req.headers['content-length'] !== undefined || req.headers['transfer-encoding'] !== undefined
     const declaredLength = Number(req.get('Content-Length'))
     const hasPayload = hasBody && (req.headers['transfer-encoding'] !== undefined || !Number.isFinite(declaredLength) || declaredLength > 0)
+
+    // Internal routes are a separate trust boundary.  Express accepts HEAD for
+    // GET and trailing slashes by default, while OpenAPI deliberately does not.
+    // Reject aliases before router dispatch so an undocumented path can never
+    // become a bearer-less route when the contract lookup misses it.
+    if (isInternal && (!operation || !requiresMachineAuth(operation.operation))) {
+      return reject(res, 404, 'not_found', 'Internal resource is not documented')
+    }
 
     if (isApi && isMutation) {
       if (!isExactOriginAllowed(req.get('Origin'), allowedOrigins(options))) return reject(res, 403, 'forbidden', 'Origin is not allowed')

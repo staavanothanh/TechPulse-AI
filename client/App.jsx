@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { createApiClient } from '../shared/generated/api-client.js'
 import AuthAccount from './features/auth/AuthAccount.jsx'
 import SourceRegistry from './features/admin/sources/SourceRegistry.jsx'
+import JobsPanel from './features/admin/jobs/JobsPanel.jsx'
 import { bootstrapSessionFailure } from './features/auth/session-state.js'
 
 const api = createApiClient()
@@ -65,12 +66,13 @@ export default function App() {
 
       <div className="app-layout">
         <nav className="side-nav" aria-label="Điều hướng nền tảng">
-          <span className="nav-label">Step 03</span>
+          <span className="nav-label">Step 04</span>
           <a className="nav-item active" href="#main-content" aria-current="page">
             Source policy
           </a>
           {session.user?.role === 'admin' ? <a className="nav-item" href="#source-registry-title">Source Registry</a> : null}
-          <span className="nav-note">Source Registry quản lý quyền xử lý trước khi connector hoặc AI được phép dùng dữ liệu.</span>
+          {session.user?.role === 'admin' ? <a className="nav-item" href="#jobs-panel-title">Durable jobs</a> : null}
+          <span className="nav-note">Source policy, durable jobs và fenced leases giữ ingestion fail closed trước các connector ở Step 5.</span>
         </nav>
 
         <main id="main-content" tabIndex="-1">
@@ -85,27 +87,28 @@ export default function App() {
           ) : null}
           {session.status === 'ready' ? <AuthAccount key={`${session.user?.id ?? 'guest'}:${session.csrfToken ?? 'none'}`} api={api} initialUser={session.user} initialCsrfToken={session.csrfToken} initialNotice={session.notice} onSession={(nextUser, nextCsrfToken, nextNotice) => setSession({ status: 'ready', user: nextUser, csrfToken: nextCsrfToken, error: null, notice: nextNotice ?? null })} /> : null}
           {session.status === 'ready' && session.user?.role === 'admin' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
+          {session.status === 'ready' && session.user?.role === 'admin' ? <JobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
           <section className="hero-card" aria-labelledby="page-title">
-            <div className="eyebrow">STEP 03 · RIGHTS-AWARE FOUNDATION</div>
-            <h1 id="page-title">Mỗi nguồn có quyền xử lý kiểm chứng được.</h1>
+            <div className="eyebrow">STEP 04 · DURABLE EXECUTION FOUNDATION</div>
+            <h1 id="page-title">Mỗi lần chạy có identity, lease và giới hạn rõ ràng.</h1>
             <p className="hero-copy">
-              Source Policy tách quyền văn bản, media và trạng thái vận hành. Nguồn chưa được con người review luôn bị chặn trước storage và AI.
+              Admin trigger và cron dùng chung durable queue. Safe-fetch kiểm chứng network boundary; lease generation chặn stale worker ghi kết quả.
             </p>
             <div className="foundation-grid">
               <article className="foundation-card">
                 <span className="mono">01</span>
-                <h2>Fail closed</h2>
-                <p>Draft, review-needed và blocked không thể âm thầm cấp quyền xử lý.</p>
+                <h2>SSRF fail closed</h2>
+                <p>HTTPS, toàn bộ A/AAAA, redirect, content type và payload đều bị giới hạn trước connector.</p>
               </article>
               <article className="foundation-card">
                 <span className="mono">02</span>
-                <h2>Policy version</h2>
-                <p>Mỗi thay đổi ảnh hưởng ingestion tạo đúng một version và marker reconciliation.</p>
+                <h2>Exact fence</h2>
+                <p>Owner hash, generation và thời hạn lease phải cùng khớp trong transaction trước mutation.</p>
               </article>
               <article className="foundation-card">
                 <span className="mono">03</span>
-                <h2>Audit an toàn</h2>
-                <p>Mutation và changed-fields audit cùng commit, không lưu snapshot hoặc credential.</p>
+                <h2>Bounded fairness</h2>
+                <p>Mỗi queue có reserved attempt trước spill; queue chưa đăng ký giữ zero counters và không bị query.</p>
               </article>
             </div>
           </section>

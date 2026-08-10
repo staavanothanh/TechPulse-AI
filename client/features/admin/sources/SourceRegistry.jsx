@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createSourceRegistryActions, sourceActionPrerequisites, sourceRegistryErrorState } from './source-actions.js'
+import { createRequestSequence } from '../request-sequence.js'
 import { buildPolicyReview, buildSourceConfigurationPatch, buildSourceCreateInput, policyDraftForSource } from './source-form.js'
 
 const INITIAL_CREATE = Object.freeze({ connectorType: 'rss', accessMethod: 'rss', name: '', sourceKey: '', publisherName: '', domain: '', endpoint: '', batchSize: '20' })
@@ -95,7 +96,7 @@ export function SourceDetails({ source, handlers, busy, error, headingRef }) {
         {canTest ? <button type="button" onClick={() => handlers.onStatus(source, 'testing')} disabled={busy}>Chuyển sang kiểm thử</button> : null}
         {canActivate ? <button type="button" onClick={() => handlers.onStatus(source, 'active')} disabled={busy || !prerequisites.activationReady} aria-describedby={!prerequisites.activationReady ? 'source-activation-prerequisites' : undefined}>Kích hoạt</button> : null}
         {canPause ? <button type="button" onClick={() => handlers.onStatus(source, 'paused')} disabled={busy}>Tạm dừng</button> : null}
-        <button type="button" onClick={() => handlers.onTechnicalCheck(source)} disabled aria-describedby="source-technical-check-prerequisite">Chạy kiểm tra kỹ thuật</button>
+        <button type="button" onClick={() => handlers.onTechnicalCheck(source)} disabled={busy || !prerequisites.technicalCheckReady} aria-describedby="source-technical-check-prerequisite">Chạy kiểm tra kỹ thuật</button>
         <button type="button" onClick={() => handlers.onReReview(source)} disabled={busy || !canReReview} aria-describedby={!canReReview ? 'source-re-review-prerequisite' : undefined}>Gửi duyệt lại</button>
       </div>
       {canActivate && !prerequisites.activationReady ? <p id="source-activation-prerequisites" className="form-error">{prerequisites.activationReason}</p> : null}
@@ -129,6 +130,7 @@ export default function SourceRegistry({ api, csrfToken, onSessionExpired }) {
   const [notice, setNotice] = useState(null)
   const [focusDetailRequest, setFocusDetailRequest] = useState(0)
   const detailHeadingRef = useRef(null)
+  const [requestSequence] = useState(createRequestSequence)
 
   const handleError = useCallback((requestError) => {
     const failure = sourceRegistryErrorState(requestError)
@@ -137,29 +139,32 @@ export default function SourceRegistry({ api, csrfToken, onSessionExpired }) {
   }, [onSessionExpired])
 
   const reload = useCallback(async () => {
+    const sequence = requestSequence.start()
     setState('loading'); setError(null)
     try {
       const response = await api.listSources({ credentials: 'same-origin' })
+      if (!requestSequence.isCurrent(sequence)) return
       setSources(response.data)
       setSelected((current) => response.data.find((item) => item.id === current?.id) ?? response.data[0] ?? null)
       setState('ready')
     } catch (requestError) { handleError(requestError); setState('error') }
-  }, [api, handleError])
+  }, [api, handleError, requestSequence])
 
   useEffect(() => {
     let active = true
+    const sequence = requestSequence.start()
     api.listSources({ credentials: 'same-origin' }).then((response) => {
-      if (!active) return
+      if (!active || !requestSequence.isCurrent(sequence)) return
       setSources(response.data)
       setSelected(response.data[0] ?? null)
       setState('ready')
     }).catch((requestError) => {
-      if (!active) return
+      if (!active || !requestSequence.isCurrent(sequence)) return
       handleError(requestError)
       setState('error')
     })
-    return () => { active = false }
-  }, [api, handleError])
+    return () => { active = false; requestSequence.invalidate() }
+  }, [api, handleError, requestSequence])
 
   useEffect(() => {
     if (focusDetailRequest === 0 || !selected?.id) return
@@ -189,7 +194,12 @@ export default function SourceRegistry({ api, csrfToken, onSessionExpired }) {
   const handlers = {
     onReload: reload,
     onSelect: selectSource,
-    ...createSourceRegistryActions({ api, csrfToken, mutate }),
+    onCreate: (input) => createSourceRegistryActions({ api, csrfToken, mutate }).onCreate(input),
+    onConfig: (source, patch) => createSourceRegistryActions({ api, csrfToken, mutate }).onConfig(source, patch),
+    onStatus: (source, status) => createSourceRegistryActions({ api, csrfToken, mutate }).onStatus(source, status),
+    onTechnicalCheck: (source) => createSourceRegistryActions({ api, csrfToken, mutate }).onTechnicalCheck(source),
+    onPolicyReview: (source, review) => createSourceRegistryActions({ api, csrfToken, mutate }).onPolicyReview(source, review),
+    onReReview: (source) => createSourceRegistryActions({ api, csrfToken, mutate }).onReReview(source),
   }
   return <SourceRegistryView state={state} sources={sources} selected={selected} busy={busy} error={error} notice={notice} handlers={handlers} detailHeadingRef={detailHeadingRef} />
 }

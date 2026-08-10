@@ -9,6 +9,7 @@ export class SourceError extends Error {
     this.name = 'SourceError'
     this.status = status
     this.code = code
+    this.retryAfter = options.retryAfter
     if (options.details) this.details = options.details
   }
 }
@@ -100,7 +101,8 @@ function technicalCheckInput(source) {
   })
 }
 
-export function createSourceService({ repository, technicalCheckAdapter, now = () => new Date() } = {}) {
+export function createSourceService({ repository, technicalCheckAdapter, rateLimitAdmission, now = () => new Date() } = {}) {
+  if (technicalCheckAdapter?.run && typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   async function recordFailed({ auth, actor, sourceId: targetId, action, changedFields, reasonCode, request, stateTransition, idempotencyKey, createdAt = now() }) {
     try {
       if (!repository?.commitFailedAudit) throw new Error('failed source audit repository is unavailable')
@@ -207,6 +209,11 @@ export function createSourceService({ repository, technicalCheckAdapter, now = (
       const actor = requireAdmin(auth)
       if (!technicalCheckAdapter?.run) throw new SourceError(503, 'service_unavailable', 'Technical check is unavailable until Step 4')
       const previous = await current(auth, rawId)
+      if (typeof rateLimitAdmission?.reserve !== 'function') throw new SourceError(503, 'service_unavailable', 'Rate-limit service is unavailable')
+      let admission
+      try { admission = await rateLimitAdmission.reserve({ scope: 'source-test', subject: previous.id }) } catch { throw new SourceError(503, 'service_unavailable', 'Rate-limit service is temporarily unavailable') }
+      if (!admission || typeof admission.allowed !== 'boolean') throw new SourceError(503, 'service_unavailable', 'Rate-limit service is temporarily unavailable')
+      if (!admission.allowed) throw new SourceError(429, 'rate_limit_exceeded', 'Too many source technical checks', { retryAfter: admission.retryAfterSeconds })
       let adapterResult
       try { adapterResult = await technicalCheckAdapter.run({ source: technicalCheckInput(previous) }) } catch (error) {
         await recordFailed({ auth, actor, sourceId: previous.id, action: 'source_technical_check_recorded', changedFields: ['technicalCheck'], reasonCode: 'source_technical_check_requested', request })
