@@ -1,0 +1,8 @@
+{
+  "101": {"id": 101, "type": "story", "by": "alice", "time": 1781006400, "title": "A safe HN story", "url": "https://linked.example.test/article", "text": "<p>Official HN text.</p>", "score": 42, "descendants": 7},
+  "102": {"id": 102, "deleted": true},
+  "103": null,
+  "104": {"id": 104, "type": "story", "by": "bob", "time": 1781006460, "title": "A story without a linked page", "score": 5, "descendants": 0},
+  "201": {"id": 201, "type": "story", "by": "new-user", "time": 1781006520, "title": "New stream story", "url": "https://linked.example.test/new", "score": 8},
+  "301": {"id": 301, "type": "story", "by": "best-user", "time": 1781006580, "title": "Best stream story", "url": "https://linked.example.test/best", "score": 100}
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.example.test/opensearch" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <opensearch:totalResults>3</opensearch:totalResults>
+  <opensearch:startIndex>2</opensearch:startIndex>
+  <opensearch:itemsPerPage>1</opensearch:itemsPerPage>
+  <entry>
+    <id>http://arxiv.org/abs/hep-th/9901001v3</id>
+    <updated>2026-08-06T12:00:00Z</updated>
+    <published>2026-08-05T12:00:00Z</published>
+    <title>Legacy identifier paper</title>
+    <summary>Legacy abstract.</summary>
+    <author><name>Rin Example</name></author>
+    <link rel="alternate" type="text/html" href="https://arxiv.org/abs/hep-th/9901001v3" />
+    <arxiv:license uri="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</arxiv:license>
+    <category term="hep-th" />
+  </entry>
+</feed>

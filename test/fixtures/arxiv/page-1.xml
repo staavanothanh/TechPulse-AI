@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.example.test/opensearch" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <opensearch:totalResults>3</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <opensearch:itemsPerPage>2</opensearch:itemsPerPage>
+  <entry>
+    <id>http://arxiv.org/abs/2401.12345v2</id>
+    <updated>2026-08-10T12:00:00Z</updated>
+    <published>2026-08-09T12:00:00Z</published>
+    <title>  First paper &amp; bounded parsing  </title>
+    <summary>&lt;p&gt;An official abstract excerpt.&lt;/p&gt;</summary>
+    <author><name>Ada Example</name></author>
+    <author><name>Lin Example</name></author>
+    <link rel="alternate" type="text/html" href="http://arxiv.org/abs/2401.12345v2" />
+    <link title="pdf" type="application/pdf" href="http://arxiv.org/pdf/2401.12345v2" />
+    <category term="cs.AI" />
+    <category term="cs.LG" />
+    <arxiv:license uri="http://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0</arxiv:license>
+  </entry>
+  <entry>
+    <id>https://arxiv.org/abs/2401.99999</id>
+    <updated>2026-08-08T12:00:00Z</updated>
+    <published>2026-08-07T12:00:00Z</published>
+    <title>Second paper</title>
+    <summary>Second abstract.</summary>
+    <author><name>Sam Example</name></author>
+    <link rel="alternate" type="text/html" href="https://arxiv.org/abs/2401.99999" />
+    <category term="cs.RO" />
+  </entry>
+</feed>
