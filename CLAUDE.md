@@ -18,6 +18,9 @@
 - Chỉ dùng JavaScript/JSX (`.js`, `.jsx`); không thêm `.ts`, `.tsx`, `tsconfig*` hoặc TypeScript build dependency. JSDoc và `// @ts-check` được phép.
 - Mongo runtime đọc URI qua tên env `MONGODB_URI_ENV` và database qua `MONGODB_DATABASE`; quota HMAC dùng stable current/retiring version trong env nhưng lifecycle history thuộc append-only `hmacKeyLifecycleSnapshots` trong Mongo. Runtime role chỉ `find/insert` collection này; không ghi URI/credential, secret hoặc key material vào log/DB/command output.
 
+# .env
+- **Không được đọc .env** nhưng được phép sử dụng dotenv để nạp value từ .env trong quá trình build/test.
+
 # Không được đụng
 
 - Không sửa tay `shared/generated/**`. Sửa `docs/contracts/openapi.json`, sau đó chạy `npm run contract:generate` khi toolchain đã tồn tại.
