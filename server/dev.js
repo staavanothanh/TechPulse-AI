@@ -1,13 +1,13 @@
+import { createServer } from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { configureDns } from '../scripts/configure-dns.js'
+import { createDevViteOptions } from './dev-vite.js'
 
 configureDns()
 
 const port = Number(process.env.PORT || 3000)
-const vite = await createViteServer({
-  server: { middlewareMode: true },
-  appType: 'spa',
-})
+const server = createServer()
+const vite = await createViteServer(createDevViteOptions(server))
 
 const { createApp } = await import('./app.js')
 const { createConfiguredAuthService } = await import('./bootstrap/auth.js')
@@ -61,7 +61,8 @@ try {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
 const app = createApp({ authService, sourceService, jobService, indexingJobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
-const server = app.listen(port, () => {
+server.on('request', app)
+server.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)
 })
 

@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { IndexingActionDialog, IndexingJobDetails, IndexingJobsPanelView } from '../../client/features/admin/jobs/indexing/IndexingJobsPanel.jsx'
 import { createIndexingJobActions, indexingJobPrerequisites } from '../../client/features/admin/jobs/indexing/indexing-job-actions.js'
+import { createIndexingApi, createIndexingRequestGate } from '../../client/features/admin/jobs/indexing/indexing-api.js'
+import { nextIndexingPollDelay } from '../../client/features/admin/jobs/indexing/polling.js'
 import { focusTrapTarget } from '../../client/features/saved/dialog-focus.js'
 
 const job = {
@@ -34,6 +36,12 @@ describe('Step 9 minimalist indexing jobs UI', () => {
     expect(html).not.toContain('cancelled')
   })
 
+  it('does not impose a client retry-attempt ceiling over public server state', () => {
+    const longLivedRetryable = { ...job, attempt: 99 }
+    expect(indexingJobPrerequisites(longLivedRetryable)).toEqual(expect.objectContaining({ retryReady: true }))
+    expect(indexingJobPrerequisites({ ...longLivedRetryable, error: { ...job.error, retryable: false } })).toEqual(expect.objectContaining({ retryReady: false }))
+  })
+
   it('confirms retry/cancel in a modal dialog with keyboard focus containment', () => {
     const html = renderToStaticMarkup(React.createElement(IndexingActionDialog, {
       intent: { action: 'retry', job },
@@ -49,6 +57,97 @@ describe('Step 9 minimalist indexing jobs UI', () => {
     const last = { id: 'last' }
     expect(focusTrapTarget({ key: 'Tab', shiftKey: true, activeElement: first, focusables: [first, last] })).toBe(last)
     expect(focusTrapTarget({ key: 'Tab', shiftKey: false, activeElement: last, focusables: [first, last] })).toBe(first)
+  })
+
+  it('confirms a create action with its safe article context before mutation', () => {
+    const html = renderToStaticMarkup(React.createElement(IndexingActionDialog, {
+      intent: { action: 'create', task: 'summary', articleId: job.articleId },
+      busy: false,
+      onCancel: vi.fn(),
+      onConfirm: vi.fn(),
+    }))
+    expect(html).toContain('Tạo job tóm tắt?')
+    expect(html).toContain(job.articleId)
+    expect(html).toContain('Xác nhận tạo job')
+  })
+
+  it('renders filter errors and opaque indexing load-more without exposing the cursor', () => {
+    const html = renderToStaticMarkup(React.createElement(IndexingJobsPanelView, {
+      state: 'ready',
+      jobs: [job],
+      selected: job,
+      filters: { status: '', task: '', articleId: 'bad', sourceId: '' },
+      filterErrors: { articleId: 'Article ID chưa hợp lệ.' },
+      meta: { hasNext: true, nextCursor: 'opaque-indexing-cursor' },
+      handlers,
+    }))
+    expect(html).toContain('Article ID chưa hợp lệ.')
+    expect(html).toContain('aria-invalid="true"')
+    expect(html).toContain('Tải thêm indexing jobs')
+    expect(html).not.toContain('opaque-indexing-cursor')
+  })
+
+  it('renders retryable append, poll, and selection failures in the ready surface', () => {
+    for (const scope of ['append', 'poll', 'selection']) {
+      const html = renderToStaticMarkup(React.createElement(IndexingJobsPanelView, {
+        state: 'ready', jobs: [job], selected: job, handlers,
+        operationError: { scope, message: `Lỗi ${scope}` },
+      }))
+      expect(html).toContain(`Lỗi ${scope}`)
+      expect(html).toContain('role="alert"')
+      expect(html).toContain('Thử lại')
+    }
+  })
+
+  it('keeps a rate-limited initiating action disabled with safe retry timing', () => {
+    const html = renderToStaticMarkup(React.createElement(IndexingActionDialog, {
+      intent: { action: 'retry', job },
+      busy: false,
+      cooldown: 12,
+      onCancel: vi.fn(),
+      onConfirm: vi.fn(),
+    }))
+    expect(html).toContain('Thử lại sau 12 giây')
+    expect(html).toContain('disabled=""')
+  })
+
+  it('captures only safe 422 field errors and numeric Retry-After through the indexing boundary', async () => {
+    const generatedApi = {
+      listIndexingJobs: vi.fn(async ({ fetchImpl }) => {
+        await fetchImpl('https://techpulse.test/api/v1/admin/indexing-jobs', {})
+        throw Object.assign(new Error('validation failed'), { status: 422, code: 'validation_error' })
+      }),
+      getIndexingJob: vi.fn(async ({ fetchImpl }) => {
+        await fetchImpl('https://techpulse.test/api/v1/admin/indexing-jobs/job-1', {})
+        throw Object.assign(new Error('limited'), { status: 429, code: 'rate_limit_exceeded' })
+      }),
+    }
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({
+        status: 422,
+        headers: { get: () => null },
+        clone: () => ({ json: async () => ({ error: { details: [{ field: 'articleId', code: 'invalid', message: 'raw-value-must-not-render' }] } }) }),
+      })
+      .mockResolvedValueOnce({ status: 429, headers: { get: (name) => name === 'Retry-After' ? '12' : null }, clone: () => ({ json: async () => ({}) }) })
+    const api = createIndexingApi(generatedApi, fetchImpl)
+
+    await expect(api.listIndexingJobs({ query: { articleId: 'x' } })).rejects.toMatchObject({
+      status: 422,
+      fieldErrors: { articleId: 'Article ID chưa hợp lệ.' },
+    })
+    await expect(api.getIndexingJob({ pathParams: { jobId: 'job-1' } })).rejects.toMatchObject({ status: 429, retryAfter: 12 })
+    expect(nextIndexingPollDelay({ elapsedMs: 0, errorCount: 1, retryAfterSeconds: 12 })).toBe(12_000)
+  })
+
+  it('serializes duplicate filter requests before they can race a newer result', async () => {
+    const gate = createIndexingRequestGate()
+    let resolveFirst
+    const first = gate.run(() => new Promise((resolve) => { resolveFirst = resolve }))
+    await Promise.resolve()
+    expect(gate.run(async () => 'second')).toEqual({ started: false })
+    resolveFirst('first')
+    await expect(first).resolves.toEqual({ started: true, value: 'first' })
+    await expect(gate.run(async () => 'after-settle')).resolves.toEqual({ started: true, value: 'after-settle' })
   })
 
   it('calls all mutation operations with hidden CSRF/idempotency transports and fixed reason codes', async () => {

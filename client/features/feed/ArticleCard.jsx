@@ -1,24 +1,8 @@
 import LeadMediaView from '../article-detail/LeadMediaView.jsx'
 import { contentErrorCopy, formatPublishedAt } from './content-format.js'
+import SummaryRegion from './SummaryRegion.jsx'
 
-function SummaryRegion({ article }) {
-  if (article.summaryStatus === 'ready' && article.summaryVi && article.summaryBasis) {
-    return (
-      <section className="content-summary" aria-label="Tóm tắt AI">
-        <div className="content-summary-label"><span>AI tổng hợp</span><code>{article.summaryBasis}</code></div>
-        <p>{article.summaryVi}</p>
-      </section>
-    )
-  }
-  const copy = {
-    pending: 'Tóm tắt đang chờ xử lý.',
-    processing: 'Tóm tắt đang được xử lý.',
-    failed: 'Tóm tắt chưa khả dụng. Bài nguồn vẫn có thể được kiểm chứng.',
-  }[article.summaryStatus] ?? 'Tóm tắt chưa khả dụng.'
-  return <p className="content-summary-pending">{copy}</p>
-}
-
-export default function ArticleCard({ article, onSaveToggle, onOpenArticle, busy = false, savedOverride, savedContext = false }) {
+export default function ArticleCard({ article, onSaveToggle, onOpenArticle, busy = false, savedOverride, savedContext = false, saveActionLabel, saveActionDisabled = false }) {
   const isSaved = savedOverride ?? article.isSaved
   const title = article.titleVi || article.titleOriginal
   return (
@@ -37,8 +21,8 @@ export default function ArticleCard({ article, onSaveToggle, onOpenArticle, busy
       <SummaryRegion article={article} />
       <div className="content-topics" aria-label="Chủ đề">{article.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
       <div className="content-card-actions">
-        <button className="content-button" type="button" aria-pressed={isSaved} aria-busy={busy || undefined} disabled={busy} onClick={() => onSaveToggle?.(article, !isSaved)}>
-          {busy ? 'Đang cập nhật…' : isSaved ? savedContext ? 'Bỏ lưu bài này' : 'Bỏ lưu bài' : 'Lưu bài'}
+        <button className="content-button" type="button" aria-pressed={isSaved} aria-busy={busy || undefined} disabled={busy || saveActionDisabled} onClick={() => onSaveToggle?.(article, !isSaved)}>
+          {saveActionLabel ?? (busy ? 'Đang cập nhật…' : isSaved ? savedContext ? 'Bỏ lưu bài này' : 'Bỏ lưu bài' : 'Lưu bài')}
         </button>
         {onOpenArticle ? <button className="content-text-action" type="button" onClick={() => onOpenArticle(article.id)}>Đọc chi tiết</button> : null}
       </div>

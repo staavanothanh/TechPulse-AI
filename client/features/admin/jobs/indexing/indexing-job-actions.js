@@ -1,9 +1,9 @@
 export function indexingJobPrerequisites(job = {}) {
-  const retryReady = (job.status === 'partial' || job.status === 'failed' && job.error?.retryable === true) && job.attempt < 3
+  const retryReady = job.status === 'partial' || job.status === 'failed' && job.error?.retryable === true
   const cancelReady = ['queued', 'running'].includes(job.status)
   return {
     retryReady,
-    retryReason: retryReady ? 'Có thể tạo một linked retry mới.' : 'Chỉ job partial hoặc failed/retryable dưới ba lần thử mới có thể retry.',
+    retryReason: retryReady ? 'Có thể yêu cầu server tạo một linked retry mới.' : 'Chỉ job partial hoặc failed/retryable mới có thể gửi yêu cầu retry.',
     cancelReady,
     cancelReason: cancelReady ? 'Có thể gửi yêu cầu dừng an toàn.' : 'Job terminal không thể hủy lại.',
   }

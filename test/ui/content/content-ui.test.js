@@ -35,12 +35,16 @@ describe('Step 8 content UI', () => {
   it('renders summary copy only for ready and never exposes removed/internal state', () => {
     const ready = render(ArticleCard, { article: baseArticle, onSaveToggle: handlers.onSaveToggle })
     const pending = render(ArticleCard, { article: { ...baseArticle, summaryStatus: 'pending', summaryVi: null, summaryBasis: null }, onSaveToggle: handlers.onSaveToggle })
+    const processing = render(ArticleCard, { article: { ...baseArticle, summaryStatus: 'processing', summaryVi: null, summaryBasis: null }, onSaveToggle: handlers.onSaveToggle })
     expect(ready).toContain('Bản tóm tắt đã sẵn sàng.')
     expect(ready).toContain('AI tổng hợp')
-    expect(ready).toContain('metadata')
+    expect(ready).toContain('Cơ sở: metadata nguồn')
+    expect(ready).toContain('content-summary-ready')
     expect(pending).not.toContain('Bản tóm tắt đã sẵn sàng.')
     expect(pending).not.toContain('summaryBasis')
     expect(pending).not.toContain('removed')
+    expect(processing).toContain('content-summary-processing')
+    expect(processing).toContain('aria-busy="true"')
   })
 
   it('implements remote image, link-only video and owned fallback without unsafe embedding', () => {
@@ -72,6 +76,12 @@ describe('Step 8 content UI', () => {
     expect(success).not.toContain('429')
   })
 
+  it('keeps the feed apply control visibly pending while filters are applying', () => {
+    const html = render(FeedView, { state: 'loading', applying: true, articles: [], filters: { topic: 'AI' }, handlers })
+    expect(html).toContain('Đang áp dụng…')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Đang áp dụng…<\/button>/)
+  })
+
   it('keeps the article heading semantic and places the interactive title inside it', () => {
     const html = render(ArticleCard, { article: baseArticle, onSaveToggle: handlers.onSaveToggle, onOpenArticle: handlers.onOpenArticle })
     expect(html).toMatch(/<h2[^>]*><button[^>]*class="content-title-action"/)
@@ -92,6 +102,8 @@ describe('Step 8 content UI', () => {
     expect(html).toContain('target="_blank"')
     expect(html).toContain('rel="noopener noreferrer external"')
     expect(html).toContain('Nguồn kiểm chứng')
+    expect(html).toContain('content-verification-band')
+    expect(html).toContain('Kiểm chứng với nguồn gốc')
     expect(html).not.toMatch(/rawHtml|fullText|providerPayload/)
   })
 
@@ -101,7 +113,7 @@ describe('Step 8 content UI', () => {
     expect(empty).toContain('Chưa có bài đã lưu')
     expect(empty).not.toMatch(/không còn khả dụng|unavailable/i)
     expect(success).toContain('Bỏ lưu bài này')
-    expect(success).not.toContain('role="status"')
+    expect(success).toContain('id="saved-list-status"')
     expect(success).toContain('role="region"')
     expect(success).toContain('Tải thêm bài đã lưu')
     expect(success).not.toContain('opaque-saved-cursor')
@@ -117,6 +129,55 @@ describe('Step 8 content UI', () => {
     const last = { id: 'last' }
     expect(focusTrapTarget({ key: 'Tab', shiftKey: true, activeElement: first, focusables: [first, last] })).toBe(last)
     expect(focusTrapTarget({ key: 'Tab', shiftKey: false, activeElement: last, focusables: [first, last] })).toBe(first)
+  })
+
+  it('keeps clear-saved failures visible and cooldown-gated inside the dialog', () => {
+    const html = render(SavedView, {
+      state: 'ready',
+      articles: [{ ...baseArticle, isSaved: true }],
+      clearOpen: true,
+      clearError: 'Không thể xóa danh sách đã lưu. Thử lại.',
+      clearCooldown: 12,
+      handlers,
+    })
+    expect(html).toContain('Không thể xóa danh sách đã lưu. Thử lại.')
+    expect(html).toContain('Thử lại sau 12 giây')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Thử lại sau 12 giây<\/button>/)
+  })
+
+  it('keeps an unsave row disabled and relabelled for a bounded Retry-After cooldown', () => {
+    const html = render(SavedView, {
+      state: 'ready',
+      articles: [{ ...baseArticle, isSaved: true }],
+      unsaveCooldowns: { [baseArticle.id]: 17 },
+      mutationError: 'Không thể bỏ lưu bài. Thử lại sau 17 giây.',
+      handlers,
+    })
+    expect(html).toContain('Không thể bỏ lưu bài. Thử lại sau 17 giây.')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Thử lại sau 17 giây<\/button>/)
+    expect(html).not.toContain('opaque-saved-cursor')
+  })
+
+  it('provides the Saved-list status region as the distinct post-unsave focus target', () => {
+    const html = render(SavedView, {
+      state: 'ready',
+      articles: [{ ...baseArticle, isSaved: true }],
+      savedListNotice: 'Đã bỏ lưu bài.',
+      handlers,
+    })
+    expect(html).toMatch(/id="saved-list-status"[^>]*role="status"[^>]*tabindex="-1"/)
+    expect(html).toContain('Đã bỏ lưu bài.')
+  })
+
+  it('bounds unsave Retry-After and focuses the Saved-list status target', async () => {
+    const { focusSavedListStatus, savedMutationCooldownSeconds } = await import('../../../client/features/saved/saved-mutation.js')
+    expect(savedMutationCooldownSeconds({ status: 429, retryAfter: 999_999 })).toBe(300)
+    expect(savedMutationCooldownSeconds({ status: 429, retryAfter: 17 })).toBe(17)
+    expect(savedMutationCooldownSeconds({ status: 429, retryAfter: 0 })).toBe(60)
+    expect(savedMutationCooldownSeconds({ status: 503, retryAfter: 17 })).toBe(0)
+    const focus = vi.fn()
+    focusSavedListStatus({ current: { focus } })
+    expect(focus).toHaveBeenCalledOnce()
   })
 
   it('validates query/filter boundaries before submit', () => {

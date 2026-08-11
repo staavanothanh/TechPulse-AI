@@ -2,22 +2,9 @@ import { useEffect, useState } from 'react'
 import CitationPanel from '../../components/citation/CitationPanel.jsx'
 import { ContentErrorState, ContentSkeleton } from '../feed/ArticleCard.jsx'
 import { formatPublishedAt } from '../feed/content-format.js'
+import SummaryRegion from '../feed/SummaryRegion.jsx'
 import LeadMediaView from './LeadMediaView.jsx'
 import { safeHttpsUrl } from './safe-url.js'
-
-function DetailSummary({ article }) {
-  if (article.summaryStatus === 'ready' && article.summaryVi && article.summaryBasis) {
-    return (
-      <section className="detail-summary" aria-labelledby="detail-summary-title">
-        <div className="content-summary-label"><span id="detail-summary-title">AI tổng hợp</span><code>{article.summaryBasis}</code></div>
-        <p>{article.summaryVi}</p>
-        <small>{article.aiDisclosure}</small>
-      </section>
-    )
-  }
-  const copy = article.summaryStatus === 'processing' ? 'Tóm tắt đang được xử lý.' : article.summaryStatus === 'pending' ? 'Tóm tắt đang chờ xử lý.' : 'Tóm tắt chưa khả dụng. Bạn vẫn có thể kiểm chứng bài nguồn.'
-  return <section className="detail-summary unavailable"><h2>Tóm tắt tiếng Việt</h2><p>{copy}</p></section>
-}
 
 export function ArticleDetailView({ state = 'loading', article, error, pendingSave = false, savedOverride, handlers = {} }) {
   if (state === 'loading') return <section className="content-screen" aria-labelledby="detail-loading-title"><h1 className="sr-only" id="detail-loading-title">Đang tải bài viết</h1><ContentSkeleton label="Đang tải bài viết" /></section>
@@ -35,17 +22,17 @@ export function ArticleDetailView({ state = 'loading', article, error, pendingSa
         {article.titleVi ? <p className="article-original-title">{article.titleOriginal}</p> : null}
         <div className="article-detail-actions">
           <button className="content-button" type="button" aria-pressed={isSaved} disabled={pendingSave} aria-busy={pendingSave || undefined} onClick={() => handlers.onSaveToggle?.(article, !isSaved)}>{pendingSave ? 'Đang cập nhật…' : isSaved ? 'Bỏ lưu bài' : 'Lưu bài'}</button>
-          {originalUrl ? <a className="content-button content-button-primary" href={originalUrl} target="_blank" rel="noopener noreferrer external">Mở nguồn gốc</a> : null}
         </div>
       </header>
       <div className="article-detail-grid">
         <div className="article-detail-body">
           <LeadMediaView media={article.leadMedia} />
-          <DetailSummary article={article} />
+          <SummaryRegion article={article} detail />
           <div className="content-topics" aria-label="Chủ đề">{article.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
         </div>
-        <CitationPanel citation={article.citation} />
+        <CitationPanel citation={article.citation} showSourceAction={false} />
       </div>
+      {originalUrl ? <aside className="content-verification-band" aria-labelledby="verification-band-title"><div><div className="content-eyebrow">Kiểm chứng với nguồn gốc</div><h2 id="verification-band-title">Đọc bản gốc trước khi kết luận</h2><p>TechPulse chỉ tổng hợp từ dữ liệu được phép; nguồn gốc là điểm kiểm chứng cuối cùng.</p></div><a className="content-button" href={originalUrl} target="_blank" rel="noopener noreferrer external">Mở nguồn gốc</a></aside> : null}
     </article>
   )
 }

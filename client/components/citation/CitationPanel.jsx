@@ -1,6 +1,6 @@
 import { safeHttpsUrl } from '../../features/article-detail/safe-url.js'
 
-export default function CitationPanel({ citation }) {
+export default function CitationPanel({ citation, showSourceAction = true }) {
   if (!citation) return null
   const originalUrl = safeHttpsUrl(citation.originalUrl)
   return (
@@ -13,7 +13,7 @@ export default function CitationPanel({ citation }) {
         <div><dt>Ngôn ngữ</dt><dd>{citation.sourceLanguage}</dd></div>
         {citation.author ? <div><dt>Tác giả</dt><dd>{citation.author}</dd></div> : null}
       </dl>
-      {originalUrl ? <a className="content-button content-button-primary" href={originalUrl} target="_blank" rel="noopener noreferrer external">Mở nguồn gốc</a> : null}
+      {showSourceAction && originalUrl ? <a className="content-button content-button-primary" href={originalUrl} target="_blank" rel="noopener noreferrer external">Mở nguồn gốc</a> : null}
     </aside>
   )
 }

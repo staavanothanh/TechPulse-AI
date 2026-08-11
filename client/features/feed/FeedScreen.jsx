@@ -19,7 +19,7 @@ function FilterField({ id, label, value, onChange, error, type = 'text', maxLeng
   )
 }
 
-export function FeedView({ state = 'initial', articles = [], filters = EMPTY_FILTERS, errors = {}, error, meta = { hasNext: false, nextCursor: null }, pendingArticleId, loadingMore = false, savedOverrides = {}, handlers = {} }) {
+export function FeedView({ state = 'initial', articles = [], filters = EMPTY_FILTERS, errors = {}, error, meta = { hasNext: false, nextCursor: null }, pendingArticleId, loadingMore = false, applying = false, savedOverrides = {}, handlers = {} }) {
   const hasFilters = Object.values(filters).some(Boolean)
   return (
     <section className="content-screen" aria-labelledby="feed-title">
@@ -43,13 +43,13 @@ export function FeedView({ state = 'initial', articles = [], filters = EMPTY_FIL
           {state === 'ready' && meta.hasNext ? <button className="content-button content-load-more" type="button" onClick={handlers.onLoadMore} disabled={loadingMore} aria-busy={loadingMore || undefined}>{loadingMore ? 'Đang tải thêm…' : 'Tải thêm bài'}</button> : null}
         </div>
         <aside className="content-filter-rail" aria-labelledby="feed-filter-title">
-          <form onSubmit={handlers.onSubmit} noValidate>
-            <div className="content-filter-heading"><h2 id="feed-filter-title">Bộ lọc</h2>{hasFilters ? <button className="content-text-action" type="button" onClick={handlers.onClearFilters}>Đặt lại</button> : null}</div>
+          <form onSubmit={handlers.onSubmit} noValidate aria-busy={applying || undefined}>
+            <div className="content-filter-heading"><h2 id="feed-filter-title">Bộ lọc</h2>{hasFilters ? <button className="content-text-action" type="button" onClick={handlers.onClearFilters} disabled={applying}>Đặt lại</button> : null}</div>
             <FilterField id="feed-topic" label="Chủ đề" value={filters.topic ?? ''} onChange={(value) => handlers.onFilterChange?.('topic', value)} error={errors.topic} maxLength={64} />
             <FilterField id="feed-sourceId" label="Nguồn" value={filters.sourceId ?? ''} onChange={(value) => handlers.onFilterChange?.('sourceId', value)} error={errors.sourceId} maxLength={128} />
             <FilterField id="feed-publishedAfter" label="Từ ngày" value={filters.publishedAfter ?? ''} onChange={(value) => handlers.onFilterChange?.('publishedAfter', value)} error={errors.publishedAfter} type="datetime-local" />
             <FilterField id="feed-publishedBefore" label="Đến ngày" value={filters.publishedBefore ?? ''} onChange={(value) => handlers.onFilterChange?.('publishedBefore', value)} error={errors.publishedBefore} type="datetime-local" />
-            <button className="content-button content-button-primary" type="submit">Áp dụng bộ lọc</button>
+            <button className="content-button content-button-primary" type="submit" disabled={applying} aria-busy={applying || undefined}>{applying ? 'Đang áp dụng…' : 'Áp dụng bộ lọc'}</button>
           </form>
         </aside>
       </div>
@@ -66,12 +66,14 @@ export default function FeedScreen({ api, csrfToken, savedOverrides = {}, onSave
   const [error, setError] = useState(null)
   const [meta, setMeta] = useState({ hasNext: false, nextCursor: null })
   const [loadingMore, setLoadingMore] = useState(false)
+  const [applyingFilters, setApplyingFilters] = useState(false)
   const [pendingArticleId, setPendingArticleId] = useState(null)
   const fieldRefs = useRef({})
 
-  async function load({ nextFilters = appliedFilters, cursor = null, append = false } = {}) {
+  async function load({ nextFilters = appliedFilters, cursor = null, append = false, applying = false } = {}) {
     if (append) setLoadingMore(true)
     else setState('loading')
+    if (applying) setApplyingFilters(true)
     setError(null)
     try {
       const response = await api.listArticles({ ...transportFilters(nextFilters), ...(cursor ? { cursor } : {}) })
@@ -85,6 +87,7 @@ export default function FeedScreen({ api, csrfToken, savedOverrides = {}, onSave
       setState('error')
     } finally {
       setLoadingMore(false)
+      if (applying) setApplyingFilters(false)
     }
   }
 
@@ -114,7 +117,7 @@ export default function FeedScreen({ api, csrfToken, savedOverrides = {}, onSave
       return
     }
     setAppliedFilters(filters)
-    load({ nextFilters: filters })
+    load({ nextFilters: filters, applying: true })
   }
 
   async function toggleSave(article, nextSaved) {
@@ -143,5 +146,5 @@ export default function FeedScreen({ api, csrfToken, savedOverrides = {}, onSave
     onOpenArticle,
     onOpenSearch,
   }
-  return <FeedView state={state} articles={articles} filters={filters} errors={errors} error={error} meta={meta} pendingArticleId={pendingArticleId} loadingMore={loadingMore} savedOverrides={savedOverrides} handlers={handlers} fieldRefs={fieldRefs} />
+  return <FeedView state={state} articles={articles} filters={filters} errors={errors} error={error} meta={meta} pendingArticleId={pendingArticleId} loadingMore={loadingMore} applying={applyingFilters} savedOverrides={savedOverrides} handlers={handlers} fieldRefs={fieldRefs} />
 }

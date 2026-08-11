@@ -9,10 +9,41 @@ import ContentWorkspace from './features/feed/ContentWorkspace.jsx'
 
 const api = createApiClient()
 
+const ADMIN_DESTINATIONS = Object.freeze([
+  { id: 'sources', label: 'Source Registry' },
+  { id: 'jobs', label: 'Durable jobs' },
+  { id: 'indexing', label: 'Indexing jobs' },
+  { id: 'account', label: 'Tài khoản' },
+])
+
+export function AdminNavigation({ route, onNavigate }) {
+  return (
+    <nav className="side-nav" aria-label="Điều hướng quản trị">
+      <span className="nav-label">TechPulse Admin</span>
+      {ADMIN_DESTINATIONS.map((destination) => {
+        const current = destination.id === route
+        return (
+          <button
+            key={destination.id}
+            className={`nav-item${current ? ' active' : ''}`}
+            type="button"
+            aria-current={current ? 'page' : undefined}
+            onClick={() => onNavigate?.(destination.id)}
+          >
+            {destination.label}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 export default function App() {
   const [health, setHealth] = useState({ status: 'loading', message: 'Đang kiểm tra API…' })
   const [session, setSession] = useState({ status: 'loading', user: null, csrfToken: null, error: null, notice: null })
   const [contentRoute, setContentRoute] = useState('feed')
+  const [adminRoute, setAdminRoute] = useState('sources')
+  const [adminNotice, setAdminNotice] = useState('')
 
   useEffect(() => {
     let active = true
@@ -52,8 +83,20 @@ export default function App() {
     setSession({ status: 'ready', user: nextUser, csrfToken: nextCsrfToken, error: null, notice: nextNotice ?? null })
   }
 
+  function navigateAdmin(nextRoute) {
+    const destination = ADMIN_DESTINATIONS.find((item) => item.id === nextRoute)
+    if (!destination) return
+    setAdminRoute(destination.id)
+    setAdminNotice(`Đang mở ${destination.label}.`)
+    if (typeof window === 'undefined') return
+    window.requestAnimationFrame(() => {
+      document.getElementById('main-content')?.focus({ preventScroll: true })
+    })
+  }
+
   const accountPanel = session.status === 'ready' ? <AuthAccount key={`${session.user?.id ?? 'guest'}:${session.csrfToken ?? 'none'}`} api={api} initialUser={session.user} initialCsrfToken={session.csrfToken} initialNotice={session.notice} onSession={applySession} /> : null
   const reader = session.status === 'ready' && session.user?.role === 'user'
+  const admin = session.status === 'ready' && session.user?.role === 'admin'
 
   return (
     <>
@@ -74,17 +117,9 @@ export default function App() {
         </div>
       </header>
 
-      <div className={`app-layout ${reader ? 'reader-app-layout' : ''}`}>
-        {!reader ? <nav className="side-nav" aria-label="Điều hướng nền tảng">
-          <span className="nav-label">Step 04</span>
-          <a className="nav-item active" href="#main-content" aria-current="page">
-            Source policy
-          </a>
-          {session.user?.role === 'admin' ? <a className="nav-item" href="#source-registry-title">Source Registry</a> : null}
-          {session.user?.role === 'admin' ? <a className="nav-item" href="#jobs-panel-title">Durable jobs</a> : null}
-          {session.user?.role === 'admin' ? <a className="nav-item" href="#indexing-jobs-title">Indexing jobs</a> : null}
-          <span className="nav-note">Source policy, durable jobs và fenced leases giữ ingestion fail closed trước các connector ở Step 5.</span>
-        </nav> : null}
+      <div className={`app-layout ${admin ? 'admin-app-layout' : reader ? 'reader-app-layout' : 'guest-app-layout'}`}>
+        {admin ? <AdminNavigation route={adminRoute} onNavigate={navigateAdmin} /> : null}
+        {admin ? <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{adminNotice}</p> : null}
 
         <main id="main-content" tabIndex="-1">
           {session.status === 'loading' ? <section className="hero-card" aria-busy="true"><p>Đang khôi phục phiên…</p></section> : null}
@@ -96,35 +131,12 @@ export default function App() {
               <button className="primary-button" type="button" onClick={restoreSession}>Thử lại</button>
             </section>
           ) : null}
-          {session.status === 'ready' && (!session.user || session.user.role === 'admin') ? accountPanel : null}
+          {session.status === 'ready' && !session.user ? accountPanel : null}
           {reader ? <ContentWorkspace generatedApi={api} csrfToken={session.csrfToken} route={contentRoute} onRouteChange={setContentRoute} accountPanel={accountPanel} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
-          {session.status === 'ready' && session.user?.role === 'admin' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
-          {session.status === 'ready' && session.user?.role === 'admin' ? <JobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
-          {session.status === 'ready' && session.user?.role === 'admin' ? <IndexingJobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
-          {!reader ? <section className="hero-card" aria-labelledby="page-title">
-            <div className="eyebrow">STEP 04 · DURABLE EXECUTION FOUNDATION</div>
-            <h1 id="page-title">Mỗi lần chạy có identity, lease và giới hạn rõ ràng.</h1>
-            <p className="hero-copy">
-              Admin trigger và cron dùng chung durable queue. Safe-fetch kiểm chứng network boundary; lease generation chặn stale worker ghi kết quả.
-            </p>
-            <div className="foundation-grid">
-              <article className="foundation-card">
-                <span className="mono">01</span>
-                <h2>SSRF fail closed</h2>
-                <p>HTTPS, toàn bộ A/AAAA, redirect, content type và payload đều bị giới hạn trước connector.</p>
-              </article>
-              <article className="foundation-card">
-                <span className="mono">02</span>
-                <h2>Exact fence</h2>
-                <p>Owner hash, generation và thời hạn lease phải cùng khớp trong transaction trước mutation.</p>
-              </article>
-              <article className="foundation-card">
-                <span className="mono">03</span>
-                <h2>Bounded fairness</h2>
-                <p>Mỗi queue có reserved attempt trước spill; queue chưa đăng ký giữ zero counters và không bị query.</p>
-              </article>
-            </div>
-          </section> : null}
+          {admin && adminRoute === 'account' ? accountPanel : null}
+          {admin && adminRoute === 'sources' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
+          {admin && adminRoute === 'jobs' ? <JobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
+          {admin && adminRoute === 'indexing' ? <IndexingJobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
         </main>
       </div>
     </>

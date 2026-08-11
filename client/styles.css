@@ -8,6 +8,8 @@
   --accent-soft: oklch(95% 0.035 145);
   --warning: oklch(54% 0.13 72);
   --warning-soft: oklch(96% 0.035 72);
+  --danger: oklch(48% 0.18 28);
+  --danger-soft: oklch(95% 0.035 28);
   --font-display: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
   --font-body: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
@@ -51,6 +53,18 @@ a {
 :focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .skip-link {
@@ -133,6 +147,10 @@ a {
 .app-layout.reader-app-layout {
   grid-template-columns: minmax(0, 1fr);
   width: min(1440px, calc(100% - 32px));
+}
+
+.app-layout.guest-app-layout {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .side-nav,
@@ -251,14 +269,23 @@ a {
 }
 
 .nav-item {
+  width: 100%;
+  min-height: 44px;
   padding: 9px 10px;
+  border: 0;
   border-radius: var(--control-radius);
+  color: var(--fg);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
   font-weight: 600;
+  text-align: left;
   text-decoration: none;
 }
 
 .nav-item:hover,
-.nav-item.active {
+.nav-item.active,
+.nav-item[aria-current='page'] {
   color: var(--surface);
   background: var(--fg);
 }
