@@ -13,7 +13,8 @@ function reject(source, purpose, code) {
 const METADATA_FIELDS = Object.freeze(['titleOriginal', 'author', 'publishedAt', 'topics', 'sourceName'])
 
 function fieldsFor(purpose, inputScope) {
-  if (!['summary', 'embedding'].includes(purpose)) return purpose === 'excerpt' ? [...METADATA_FIELDS, 'excerptOriginal'] : [...METADATA_FIELDS]
+  if (purpose === 'embedding') return ['titleOriginal', 'titleVi', 'summaryVi', 'topics']
+  if (purpose !== 'summary') return purpose === 'excerpt' ? [...METADATA_FIELDS, 'excerptOriginal'] : [...METADATA_FIELDS]
   if (inputScope === 'excerpt') return [...METADATA_FIELDS, 'excerptOriginal']
   if (inputScope === 'fulltext-temporary') return [...METADATA_FIELDS, 'fullTextTemporary']
   return [...METADATA_FIELDS]

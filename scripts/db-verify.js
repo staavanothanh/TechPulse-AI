@@ -5,6 +5,7 @@ import { AUTH_CORE_COLLECTIONS, AUTH_CORE_INDEXES } from './migrations/auth-core
 import { SOURCE_AUDIT_VALIDATOR, SOURCE_COLLECTIONS, SOURCE_INDEXES } from './migrations/sources.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from './migrations/durable-jobs.js'
 import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from './migrations/articles.js'
+import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from './migrations/indexing-jobs.js'
 import { actionsForCollection, probeAuditRoleCapabilities, probeHmacLifecycleRoleCapabilities, probeSourcesRoleCapabilities } from './mongo-role-probe.js'
 import { configureDns } from './configure-dns.js'
 import { exactMongoIndex } from '../server/repositories/mongo/index-contract.js'
@@ -26,8 +27,8 @@ function exactArticleIndex(actual, expected) {
   const expectedWeights = Object.fromEntries(expectedFields.map((field) => [field, 1]))
   return stableJson(actual?.key) === stableJson({ _fts: 'text', _ftsx: 1 }) && stableJson(actual?.weights) === stableJson(expectedWeights) && stableJson(actual.default_language) === stableJson(expected.options?.default_language)
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'articles'].includes(target)) {
-  console.error('Supported verification targets: auth-core, sources, durable-jobs, articles')
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].includes(target)) {
+  console.error('Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs')
   process.exitCode = 2
 } else {
   try {
@@ -37,14 +38,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles'].includes(target)) {
     const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
     const missing = []
     const validatorProblems = []
-    const expectedCollections = target === 'sources' ? SOURCE_COLLECTIONS : target === 'durable-jobs' ? DURABLE_JOB_COLLECTIONS : target === 'articles' ? ARTICLE_COLLECTIONS : AUTH_CORE_COLLECTIONS
-    const expectedIndexes = target === 'sources' ? SOURCE_INDEXES : target === 'durable-jobs' ? DURABLE_JOB_INDEXES : target === 'articles' ? ARTICLE_INDEXES : AUTH_CORE_INDEXES
+    const expectedCollections = target === 'sources' ? SOURCE_COLLECTIONS : target === 'durable-jobs' ? DURABLE_JOB_COLLECTIONS : target === 'articles' ? ARTICLE_COLLECTIONS : target === 'indexing-jobs' ? INDEXING_JOB_COLLECTIONS : AUTH_CORE_COLLECTIONS
+    const expectedIndexes = target === 'sources' ? SOURCE_INDEXES : target === 'durable-jobs' ? DURABLE_JOB_INDEXES : target === 'articles' ? ARTICLE_INDEXES : target === 'indexing-jobs' ? INDEXING_JOB_INDEXES : AUTH_CORE_INDEXES
     for (const name of Object.keys(expectedCollections)) {
       const collection = collectionMap.get(name)
       if (!collection) { missing.push(`${name}:collection`); continue }
       if (collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator) validatorProblems.push(`${name}:validator`)
       else {
-        const accepted = target === 'auth-core' && name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR] : [expectedCollections[name].validator]
+        const accepted = target === 'auth-core' && name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR] : [expectedCollections[name].validator]
         if (!accepted.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) validatorProblems.push(`${name}:validator-definition`)
       }
       const actualIndexes = await context.db.collection(name).indexes()
@@ -57,17 +58,24 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles'].includes(target)) {
         if (!exact) missing.push(`${name}:index:${index.name}:semantic-options`)
       }
     }
-    if (target === 'sources' || target === 'durable-jobs' || target === 'articles') {
+    if (target === 'sources' || target === 'durable-jobs' || target === 'articles' || target === 'indexing-jobs') {
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')
       else {
-        const acceptedAuditValidators = target === 'durable-jobs' || target === 'articles' ? [DURABLE_JOB_AUDIT_VALIDATOR] : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR]
+        const acceptedAuditValidators = target === 'indexing-jobs' ? [INDEXING_JOB_AUDIT_VALIDATOR] : target === 'durable-jobs' || target === 'articles' ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR] : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR]
         if (auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || !acceptedAuditValidators.some((validator) => stableJson(auditCollection.options?.validator) === stableJson(validator))) validatorProblems.push(`adminAuditLogs:${target}-audit-validator-definition`)
       }
     }
     if (target === 'durable-jobs') {
       const leaseIndexes = await context.db.collection('jobLeases').indexes()
       for (const index of leaseIndexes) if (index.expireAfterSeconds !== undefined) missing.push(`jobLeases:index:${index.name}:ttl-forbidden`)
+    }
+    if (target === 'indexing-jobs') {
+      if (!collectionMap.has('articles')) missing.push('articles:collection')
+      else {
+        const actualByName = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
+        for (const expected of INDEXING_ARTICLE_INDEXES) if (!exactMongoIndex(actualByName.get(expected.name), expected)) missing.push(`articles:index:${expected.name}`)
+      }
     }
     const plans = target === 'sources' ? [
       ['sources_cursor', 'sources', {}, { createdAt: -1, _id: -1 }],
@@ -79,6 +87,15 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles'].includes(target)) {
       ['ingestion_purge', 'ingestionJobs', { purgeAfter: { $lte: new Date() } }, { purgeAfter: 1, _id: 1 }, 'ingestion_purge_deadline'],
       ['job_lease_expiry', 'jobLeases', { 'activeOwner.expiresAt': { $lte: new Date() } }, { 'activeOwner.expiresAt': 1 }, 'job_lease_expiry'],
       ['ingestion_schedule_period', 'ingestionScheduleProgress', { period: '2026-08-10' }, { period: 1 }, 'ingestion_schedule_period_unique'],
+    ] : target === 'indexing-jobs' ? [
+      ['indexing_due_normal', 'indexingJobs', { status: 'queued', availableAt: { $lte: new Date() }, agingEligibleAt: { $gt: new Date() } }, { priority: -1, availableAt: 1, createdAt: 1, _id: 1 }, 'indexing_due_normal'],
+      ['indexing_due_aged', 'indexingJobs', { status: 'queued', agingEligibleAt: { $lte: new Date() }, availableAt: { $lte: new Date() } }, { agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }, 'indexing_due_aged'],
+      ['indexing_article_created', 'indexingJobs', { articleId: new ObjectId('000000000000000000000001') }, { createdAt: -1 }, 'indexing_article_created'],
+      ['indexing_source_status_available', 'indexingJobs', { sourceId: new ObjectId('000000000000000000000001'), status: 'queued' }, { availableAt: 1 }, 'indexing_source_status_available'],
+      ['indexing_purge', 'indexingJobs', { purgeAfter: { $lte: new Date() } }, { purgeAfter: 1, _id: 1 }, 'indexing_purge_deadline'],
+      ['provider_domain', 'providerAdmissionStates', { admissionDomainId: 'probe' }, undefined, 'provider_admission_domain_unique'],
+      ['provider_route', 'providerAdmissionStates', { 'routeCircuits.routeId': 'probe' }, { _id: 1 }, 'provider_route_circuit'],
+      ['articles_source_reconciliation', 'articles', { sourceId: new ObjectId('000000000000000000000001') }, { _id: 1 }, 'articles_source_reconciliation'],
     ] : target === 'articles' ? [
       ['articles_published', 'articles', { status: 'published' }, { publishedAt: -1, _id: -1 }, 'articles_status_published'],
       ['articles_topic_time', 'articles', { status: 'published', topics: 'ai' }, { publishedAt: -1 }, 'articles_status_topic_time'],
@@ -110,14 +127,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles'].includes(target)) {
       visit(explain.queryPlanner?.winningPlan)
       if (stages.includes('COLLSCAN') || stages.includes('SORT')) planProblems.push(`${label}:${stages.join(',')}`)
     }
-    let roleStatus = target === 'sources' || target === 'durable-jobs' || target === 'articles' ? 'not-requested' : 'unavailable-local'
+    let roleStatus = target === 'sources' || target === 'durable-jobs' || target === 'articles' || target === 'indexing-jobs' ? 'not-requested' : 'unavailable-local'
     const roleProblems = []
     try {
       const connection = await context.db.command({ connectionStatus: 1, showPrivileges: true })
       const privileges = connection.authInfo?.authenticatedUserPrivileges
       if (Array.isArray(privileges) && privileges.length > 0) {
         if (target === 'auth-core') roleStatus = 'verified'
-        for (const [collectionName, label] of (target === 'sources' ? [['sources', 'sources'], ['adminAuditLogs', 'audit']] : target === 'durable-jobs' ? [] : [['adminAuditLogs', 'audit'], ['hmacKeyLifecycleSnapshots', 'HMAC lifecycle']])) {
+        for (const [collectionName, label] of (target === 'sources' ? [['sources', 'sources'], ['adminAuditLogs', 'audit']] : ['durable-jobs', 'indexing-jobs'].includes(target) ? [] : [['adminAuditLogs', 'audit'], ['hmacKeyLifecycleSnapshots', 'HMAC lifecycle']])) {
           const actions = actionsForCollection(privileges, context.database, collectionName)
           const required = collectionName === 'sources' ? ['find', 'insert', 'update', 'listIndexes', 'listCollections'] : ['find', 'insert']
           for (const action of required) if (!actions.has(action)) roleProblems.push(`${label} role needs ${action}`)
@@ -143,7 +160,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles'].includes(target)) {
       const lifecycleProbe = await probeHmacLifecycleRoleCapabilities(context)
       if (!lifecycleProbe.inserted || !lifecycleProbe.findAllowed || !lifecycleProbe.updateDenied || !lifecycleProbe.deleteDenied) roleProblems.push('runtime HMAC lifecycle role capability probe failed')
       if (roleProblems.length === 0) roleStatus = 'verified'
-    } else if (requireRole && target === 'articles') {
+    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs')) {
       roleStatus = 'not-requested'
     } else if (requireRole) {
       roleProblems.push('durable-jobs runtime role capability probe is not registered')

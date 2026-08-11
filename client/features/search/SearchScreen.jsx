@@ -6,13 +6,18 @@ const EMPTY_QUERY = Object.freeze({ q: '', mode: 'hybrid', topic: '', sourceId: 
 
 function SearchMetaNotice({ meta }) {
   if (!meta) return null
+  const fallbackCopy = {
+    'embedding-unavailable': 'Chỉ mục ngữ nghĩa chưa sẵn sàng. Kết quả văn bản vẫn đầy đủ.',
+    'no-compatible-vectors': 'Không có vector tương thích với phiên bản truy vấn hiện tại. Kết quả văn bản vẫn khả dụng.',
+    'provider-timeout': 'Dịch vụ ngữ nghĩa tạm gián đoạn; kết quả từ khóa vẫn khả dụng.',
+  }
+  const copy = meta.fallbackUsed
+    ? fallbackCopy[meta.fallbackReason] ?? 'Tìm kiếm ngữ nghĩa tạm gián đoạn; kết quả từ khóa vẫn khả dụng.'
+    : meta.effectiveMode === 'hybrid' ? 'Tìm kiếm hybrid đang kết hợp tín hiệu từ khóa và ngữ nghĩa.' : 'Kết quả được xếp hạng bằng tín hiệu văn bản.'
   return (
     <aside className={`search-meta-notice ${meta.fallbackUsed ? 'degraded' : ''}`} aria-label="Chế độ tìm kiếm">
-      <code>requestedMode={meta.requestedMode}</code>
-      <code>effectiveMode={meta.effectiveMode}</code>
-      <code>fallbackUsed={String(meta.fallbackUsed)}</code>
-      <code>fallbackReason={meta.fallbackReason ?? 'null'}</code>
-      <p>{meta.fallbackUsed ? 'Đang dùng tìm kiếm văn bản vì embedding chưa khả dụng.' : meta.effectiveMode === 'text' ? 'Kết quả được xếp hạng bằng tín hiệu văn bản.' : 'Kết quả kết hợp tín hiệu văn bản và semantic.'}</p>
+      <strong>{meta.effectiveMode === 'hybrid' ? 'Tìm kiếm hybrid' : 'Tìm kiếm văn bản'}</strong>
+      <p>{copy}</p>
     </aside>
   )
 }
@@ -49,7 +54,6 @@ export function SearchView({ state = 'initial', query = EMPTY_QUERY, errors = {}
         {state === 'ready' && results.length === 0 ? <section className="content-state"><div className="content-eyebrow">Không có kết quả</div><h2>Không tìm thấy bài phù hợp</h2><p>Thử từ khóa ngắn hơn hoặc bỏ bớt bộ lọc.</p></section> : null}
         {results.map((result) => (
           <div className="search-result" key={result.article.id}>
-            <div className="search-scores"><code>score: {result.score.toFixed(3)}</code>{result.textScore !== null ? <code>textScore: {result.textScore.toFixed(3)}</code> : null}{result.semanticScore !== null ? <code>semanticScore: {result.semanticScore.toFixed(3)}</code> : null}</div>
             <ArticleCard article={result.article} savedOverride={savedOverrides[result.article.id]} busy={pendingArticleId === result.article.id} onSaveToggle={handlers.onSaveToggle} onOpenArticle={handlers.onOpenArticle} />
           </div>
         ))}

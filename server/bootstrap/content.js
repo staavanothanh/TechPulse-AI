@@ -29,13 +29,13 @@ async function deployedImageCspHosts(context) {
   return [...new Set(sources.flatMap((source) => source.mediaPolicy?.allowedHosts ?? []).map(normalizeReviewedHostname))].sort()
 }
 
-export async function createConfiguredContentServices({ context } = {}) {
+export async function createConfiguredContentServices({ context, queryEmbedding } = {}) {
   if (!context) throw new Error('Mongo context is required')
   await assertArticlesReady(context)
   const repository = new MongoArticleRepository(context)
   return Object.freeze({
     articleService: createArticleService({ repository }),
-    searchService: createSearchService({ repository, embeddingAvailable: () => false }),
+    searchService: createSearchService({ repository, embeddingAvailable: () => false, queryEmbedding }),
     savedService: createSavedService({ repository }),
     imageCspHosts: await deployedImageCspHosts(context),
   })

@@ -8,6 +8,7 @@ import { getMongoContext } from '../repositories/mongo/connection.js'
 import { AUTH_CORE_COLLECTIONS, AUTH_CORE_INDEXES } from '../../scripts/migrations/auth-core.js'
 import { SOURCE_AUDIT_VALIDATOR } from '../../scripts/migrations/sources.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/durable-jobs.js'
+import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/indexing-jobs.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
@@ -21,7 +22,7 @@ export async function assertAuthCoreReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const name of Object.keys(AUTH_CORE_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    const acceptedValidators = name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR] : [AUTH_CORE_COLLECTIONS[name].validator]
+    const acceptedValidators = name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR] : [AUTH_CORE_COLLECTIONS[name].validator]
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || !acceptedValidators.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) {
       throw new Error('auth-core validator is not ready')
     }

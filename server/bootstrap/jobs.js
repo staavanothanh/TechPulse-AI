@@ -9,6 +9,7 @@ import { runDueWork } from '../jobs/due-work-coordinator.js'
 import { createMaintenanceRegistry } from '../maintenance/task-registry.js'
 import { createMaintenanceRunner } from '../maintenance/runner.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
+import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/indexing-jobs.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -28,7 +29,7 @@ export async function assertDurableJobsReady(context) {
     if (name === 'jobLeases' && [...actualByName.values()].some((index) => index.expireAfterSeconds !== undefined)) throw new Error('durable-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || stableJson(audit.options?.validator) !== stableJson(DURABLE_JOB_AUDIT_VALIDATOR)) throw new Error('durable-jobs audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('durable-jobs audit validator is not ready')
 }
 
 export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork } = {}) {
@@ -60,11 +61,13 @@ export function createCronDueWorkRunner({
   materializationPageLimit = DAILY_MATERIALIZATION_PAGE_LIMIT,
   maxMaterializationPages = MAX_DAILY_MATERIALIZATION_PAGES,
   materializationBudgetMs = DAILY_MATERIALIZATION_BUDGET_MS,
+  materializers = [],
 } = {}) {
   if (!jobRepository || typeof coordinatorRunner !== 'function') throw new Error('Cron job dependencies are required')
   if (!Number.isInteger(materializationPageLimit) || materializationPageLimit < 1 || materializationPageLimit > DAILY_MATERIALIZATION_PAGE_LIMIT) throw new Error('Daily materialization page limit is invalid')
   if (!Number.isInteger(maxMaterializationPages) || maxMaterializationPages < 1) throw new Error('Daily materialization page cap is invalid')
   if (!Number.isFinite(materializationBudgetMs) || materializationBudgetMs <= 0) throw new Error('Daily materialization budget is invalid')
+  if (!Array.isArray(materializers) || materializers.some((materializer) => typeof materializer !== 'function')) throw new Error('Cron materializers are invalid')
   return async () => {
     const startedAt = now()
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
@@ -79,6 +82,10 @@ export function createCronDueWorkRunner({
       pages += 1
       hasMore = result?.hasMore === true
       if (hasMore && now().getTime() >= deadline) break
+    }
+    for (const materializer of materializers) {
+      if (now().getTime() >= deadline) break
+      await materializer()
     }
     return coordinatorRunner()
   }
@@ -95,7 +102,8 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
   maintenanceRegistry.register('purge-ingestion-jobs', ({ cutoff, limit }) => jobRepository.purgeDueIngestionJobs({ cutoff, limit }))
   const maintenanceRunner = createMaintenanceRunner({ registry: maintenanceRegistry, now })
   const coordinatorRunner = createCoordinatorRunner({ queueRegistry, now })
-  const dueWorkRunner = createCronDueWorkRunner({ jobRepository, coordinatorRunner, now })
+  const cronMaterializers = []
+  const dueWorkRunner = createCronDueWorkRunner({ jobRepository, coordinatorRunner, now, materializers: cronMaterializers })
   const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner })
   return {
     ...configured,
@@ -104,5 +112,6 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
     maintenanceRunner,
     coordinatorRunner,
     dueWorkRunner,
+    cronMaterializers,
   }
 }

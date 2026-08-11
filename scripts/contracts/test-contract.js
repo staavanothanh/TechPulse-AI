@@ -8,6 +8,7 @@ import { runAuthAccountContractFixtures } from './auth-account-fixtures.js'
 import { runAdminSourcesContractFixtures } from './admin-sources-fixtures.js'
 import { runStep4ContractFixtures } from './step4-fixtures.js'
 import { runStep8ContentContractFixtures } from './step8-content-fixtures.js'
+import { runStep9IndexingContractFixtures } from './step9-indexing-fixtures.js'
 
 const document = loadOpenApi()
 const result = runContractChecks(document)
@@ -54,5 +55,7 @@ const shouldRunStep4 = selection.length === 0 || selection.some((value) => ['ing
 const step4Result = shouldRunStep4 ? await runStep4ContractFixtures({ document }) : { cases: 0 }
 const shouldRunStep8Content = selection.length === 0 || selection.some((value) => ['articles', 'search', 'saved'].includes(value))
 const step8ContentResult = shouldRunStep8Content ? await runStep8ContentContractFixtures({ document }) : { cases: 0 }
+const shouldRunStep9Indexing = selection.length === 0 || selection.includes('indexing')
+const step9IndexingResult = shouldRunStep9Indexing ? await runStep9IndexingContractFixtures({ document }) : { cases: 0 }
 
-console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}, Step 4 runtime fixtures: ${step4Result.cases}, Step 8 content runtime fixtures: ${step8ContentResult.cases}`)
+console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}, Step 4 runtime fixtures: ${step4Result.cases}, Step 8 content runtime fixtures: ${step8ContentResult.cases}, Step 9 indexing runtime fixtures: ${step9IndexingResult.cases}`)

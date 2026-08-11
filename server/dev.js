@@ -14,6 +14,8 @@ const { createConfiguredAuthService } = await import('./bootstrap/auth.js')
 const { createConfiguredSourceService } = await import('./bootstrap/sources.js')
 const { createConfiguredJobRuntime } = await import('./bootstrap/jobs.js')
 const { createConfiguredContentServices } = await import('./bootstrap/content.js')
+const { createConfiguredIndexingRuntime } = await import('./bootstrap/indexing.js')
+const { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } = await import('./ai/provider-adapters.js')
 const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
 const { createRateLimitAdmission } = await import('./security/rate-limit-admission.js')
@@ -26,6 +28,8 @@ let articleService
 let searchService
 let savedService
 let imageCspHosts
+let indexingJobService
+let queryEmbedding
 let runtime
 try {
   const configured = await createConfiguredAuthService()
@@ -39,9 +43,15 @@ try {
     jobService = jobs.jobService
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner
+    try {
+      const adapters = createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
+      const indexing = await createConfiguredIndexingRuntime({ context: configured.context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerAdmissionDomains, ...adapters })
+      indexingJobService = indexing.indexingJobService
+      queryEmbedding = indexing.queryEmbedding
+    } catch { console.warn('Indexing service is unavailable until the Step 9 migration/provider configuration is ready') }
   } catch { console.warn('Durable job service is unavailable until its migration is applied') }
   try {
-    const content = await createConfiguredContentServices({ context: configured.context })
+    const content = await createConfiguredContentServices({ context: configured.context, queryEmbedding })
     articleService = content.articleService
     searchService = content.searchService
     savedService = content.savedService
@@ -50,7 +60,7 @@ try {
 } catch {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
-const app = createApp({ authService, sourceService, jobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
+const app = createApp({ authService, sourceService, jobService, indexingJobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
 const server = app.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)
 })

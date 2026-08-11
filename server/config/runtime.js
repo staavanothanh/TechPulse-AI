@@ -1,3 +1,5 @@
+import { validateProviderConfiguration } from '../ai/provider-registry.js'
+
 const ORIGIN_PATTERN = /^https:\/\/[^/]+$|^http:\/\/localhost(?::\d+)?$/
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{1,127}$/
 const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/
@@ -68,36 +70,7 @@ export function validateMongoConfiguration(input = process.env) {
 function providerDomains(value) {
   const parsed = JSON.parse(value || '[]')
   if (!Array.isArray(parsed)) throw new Error('PROVIDER_ADMISSION_DOMAINS_JSON must be an array')
-  const domainIds = new Set()
-  const credentialEnvNames = new Map()
-  const routeIds = new Set()
-  for (const domain of parsed) {
-    if (!domain || typeof domain !== 'object') throw new Error('provider admission domain must be an object')
-    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(domain.admissionDomainId)) throw new Error('invalid admissionDomainId')
-    if (domainIds.has(domain.admissionDomainId)) throw new Error('duplicate admissionDomainId')
-    domainIds.add(domain.admissionDomainId)
-    const credential = envName(domain.credentialEnvName, 'provider credentialEnvName')
-    const previous = credentialEnvNames.get(credential)
-    if (previous && previous !== domain.admissionDomainId) throw new Error('credential split across admission domains')
-    credentialEnvNames.set(credential, domain.admissionDomainId)
-    if (!Number.isInteger(domain.maxConcurrency) || domain.maxConcurrency < 1 || domain.maxConcurrency > 8) {
-      throw new Error('provider maxConcurrency must be 1..8')
-    }
-    if (!Array.isArray(domain.routes) || domain.routes.length === 0) throw new Error('provider domain needs routes')
-    for (const route of domain.routes) {
-      if (!route || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(route.routeId) || route.admissionDomainId !== domain.admissionDomainId) {
-        throw new Error('provider route must point to its admission domain')
-      }
-      if (routeIds.has(route.routeId)) throw new Error('duplicate provider routeId')
-      routeIds.add(route.routeId)
-      if (!['zdr-verified', 'nonconfidential'].includes(route.capability)) throw new Error('invalid provider capability')
-      if (typeof route.model !== 'string' || route.model.trim() === '') throw new Error('provider route model is required')
-      if (route.capability === 'zdr-verified' && typeof route.evidenceExpiresAt !== 'string') {
-        throw new Error('zdr-verified route needs evidence expiry')
-      }
-    }
-  }
-  return parsed
+  return validateProviderConfiguration(parsed)
 }
 
 export function validateRuntimeConfiguration(input = process.env) {

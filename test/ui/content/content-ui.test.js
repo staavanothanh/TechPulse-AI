@@ -78,13 +78,11 @@ describe('Step 8 content UI', () => {
     expect(html).not.toMatch(/<button[^>]*class="content-title-action"[^>]*><h2>/)
   })
 
-  it('renders the complete search fallback tuple and treats null scores as absent', () => {
+  it('renders friendly search mode/fallback copy without score or transport debug values', () => {
     const html = render(SearchView, { state: 'ready', query: { q: 'AI', mode: 'hybrid' }, results: [{ article: baseArticle, score: 0.7, textScore: 0.7, semanticScore: null }], meta: { hasNext: false, nextCursor: null, requestedMode: 'hybrid', effectiveMode: 'text', fallbackUsed: true, fallbackReason: 'embedding-unavailable' }, handlers })
-    expect(html).toContain('requestedMode=hybrid')
-    expect(html).toContain('effectiveMode=text')
-    expect(html).toContain('fallbackUsed=true')
-    expect(html).toContain('fallbackReason=embedding-unavailable')
-    expect(html).not.toContain('semanticScore: 0')
+    expect(html).toContain('Chỉ mục ngữ nghĩa chưa sẵn sàng')
+    expect(html).toContain('Kết quả văn bản vẫn đầy đủ')
+    expect(html).not.toMatch(/requestedMode|effectiveMode|fallbackUsed|fallbackReason|score:|textScore|semanticScore/)
   })
 
   it('binds detail CTA and citation only to canonical HTTPS fields with safe external rel', () => {

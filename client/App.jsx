@@ -3,6 +3,7 @@ import { createApiClient } from '../shared/generated/api-client.js'
 import AuthAccount from './features/auth/AuthAccount.jsx'
 import SourceRegistry from './features/admin/sources/SourceRegistry.jsx'
 import JobsPanel from './features/admin/jobs/JobsPanel.jsx'
+import IndexingJobsPanel from './features/admin/jobs/indexing/IndexingJobsPanel.jsx'
 import { bootstrapSessionFailure } from './features/auth/session-state.js'
 import ContentWorkspace from './features/feed/ContentWorkspace.jsx'
 
@@ -81,6 +82,7 @@ export default function App() {
           </a>
           {session.user?.role === 'admin' ? <a className="nav-item" href="#source-registry-title">Source Registry</a> : null}
           {session.user?.role === 'admin' ? <a className="nav-item" href="#jobs-panel-title">Durable jobs</a> : null}
+          {session.user?.role === 'admin' ? <a className="nav-item" href="#indexing-jobs-title">Indexing jobs</a> : null}
           <span className="nav-note">Source policy, durable jobs và fenced leases giữ ingestion fail closed trước các connector ở Step 5.</span>
         </nav> : null}
 
@@ -98,6 +100,7 @@ export default function App() {
           {reader ? <ContentWorkspace generatedApi={api} csrfToken={session.csrfToken} route={contentRoute} onRouteChange={setContentRoute} accountPanel={accountPanel} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {session.status === 'ready' && session.user?.role === 'admin' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
           {session.status === 'ready' && session.user?.role === 'admin' ? <JobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
+          {session.status === 'ready' && session.user?.role === 'admin' ? <IndexingJobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
           {!reader ? <section className="hero-card" aria-labelledby="page-title">
             <div className="eyebrow">STEP 04 · DURABLE EXECUTION FOUNDATION</div>
             <h1 id="page-title">Mỗi lần chạy có identity, lease và giới hạn rõ ràng.</h1>

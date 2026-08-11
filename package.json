@@ -19,7 +19,7 @@
     "test:security": "vitest run test/security",
     "test:ui": "vitest run test/ui",
     "test:e2e": "vitest run test/e2e",
-    "eval:retrieval": "node scripts/future-step.js eval:retrieval",
+    "eval:retrieval": "node scripts/eval-retrieval.js",
     "eval:groundedness": "node scripts/future-step.js eval:groundedness",
     "eval:citations": "node scripts/future-step.js eval:citations",
     "db:migrate": "node --env-file-if-exists=.env scripts/db-migrate.js",

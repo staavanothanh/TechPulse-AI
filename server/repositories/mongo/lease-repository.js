@@ -92,7 +92,16 @@ export class MongoLeaseRepository {
 
   async listExpired({ now = new Date(), limit = 10, namespace = 'ingestion:source:' } = {}) {
     const authoritativeNow = validDate(now, 'Lease recovery time')
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || namespace !== 'ingestion:source:') throw new Error('Lease recovery query is invalid')
-    return this.collection().find({ key: /^ingestion:source:/, 'activeOwner.expiresAt': { $lte: authoritativeNow } }).sort({ 'activeOwner.expiresAt': 1 }).hint('job_lease_expiry').limit(limit).toArray()
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !['ingestion:source:', 'indexing:article:'].includes(namespace)) throw new Error('Lease recovery query is invalid')
+    const key = namespace === 'indexing:article:' ? /^indexing:article:/ : /^ingestion:source:/
+    return this.collection().find({ key, 'activeOwner.expiresAt': { $lte: authoritativeNow } }).sort({ 'activeOwner.expiresAt': 1 }).hint('job_lease_expiry').limit(limit).toArray()
+  }
+
+  async clearExpiredReconciliation({ key, now = this.clock() } = {}) {
+    assertCanonicalLeaseKey(key)
+    if (!key.startsWith('reconciliation:source:')) throw new Error('Only reconciliation ownership may be cleared directly')
+    const authoritativeNow = validDate(now, 'Reconciliation recovery time')
+    const result = await this.collection().updateOne({ key, 'activeOwner.expiresAt': { $lte: authoritativeNow } }, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: authoritativeNow, updatedAt: authoritativeNow } })
+    return result.matchedCount === 1
   }
 }

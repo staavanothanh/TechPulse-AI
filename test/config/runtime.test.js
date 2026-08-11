@@ -15,9 +15,12 @@ const validEnvironment = {
   PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify([
     {
       admissionDomainId: 'open-code-zen',
+      provider: 'opencode-zen',
       credentialEnvName: 'OPENCODE_ZEN_API_KEY',
       maxConcurrency: 4,
-      routes: [{ routeId: 'zen-summary', admissionDomainId: 'open-code-zen', model: 'deepseek-v4-flash-free', capability: 'nonconfidential' }],
+      budgetLimit: 1000,
+      budgetWindow: 'day',
+      routes: [{ routeId: 'zen-summary', admissionDomainId: 'open-code-zen', model: 'deepseek-v4-flash-free', capability: 'nonconfidential', evidenceUrl: 'https://opencode.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
     },
   ]),
   INTERNAL_MACHINE_SECRET_ENV: 'CRON_SECRET',
@@ -37,15 +40,21 @@ describe('Step 1 runtime configuration contract', () => {
       PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify([
         {
           admissionDomainId: 'one',
+          provider: 'openrouter',
           credentialEnvName: 'SAME_KEY',
           maxConcurrency: 1,
-          routes: [{ routeId: 'one-route', admissionDomainId: 'one', model: 'model', capability: 'nonconfidential' }],
+          budgetLimit: 10,
+          budgetWindow: 'day',
+          routes: [{ routeId: 'one-route', admissionDomainId: 'one', model: 'model-one', capability: 'nonconfidential', evidenceUrl: 'https://one.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
         },
         {
           admissionDomainId: 'two',
+          provider: 'openrouter',
           credentialEnvName: 'SAME_KEY',
           maxConcurrency: 1,
-          routes: [{ routeId: 'two-route', admissionDomainId: 'two', model: 'model', capability: 'nonconfidential' }],
+          budgetLimit: 10,
+          budgetWindow: 'day',
+          routes: [{ routeId: 'two-route', admissionDomainId: 'two', model: 'model-two', capability: 'nonconfidential', evidenceUrl: 'https://two.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
         },
       ]),
     }
@@ -63,10 +72,13 @@ describe('Step 1 runtime configuration contract', () => {
       ...validEnvironment,
       PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify([{
         admissionDomainId: 'bad',
+        provider: 'openrouter',
         credentialEnvName: 'KEY',
         maxConcurrency: 9,
-        routes: [{ routeId: 'route', admissionDomainId: 'bad', model: 'model', capability: 'nonconfidential' }],
+        budgetLimit: 10,
+        budgetWindow: 'day',
+        routes: [{ routeId: 'route', admissionDomainId: 'bad', model: 'model', capability: 'nonconfidential', evidenceUrl: 'https://bad.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
       }]),
-    })).toThrow(/maxConcurrency/)
+    })).toThrow(/maxConcurrency|concurrency/)
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { assertSourcesReady, createConfiguredSourceService } from '../../../server/bootstrap/sources.js'
 import { SOURCE_AUDIT_VALIDATOR, SOURCE_COLLECTIONS, SOURCE_INDEXES } from '../../../scripts/migrations/sources.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/durable-jobs.js'
+import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/indexing-jobs.js'
 
 function readyContext({ sourceValidator = SOURCE_COLLECTIONS.sources.validator, auditValidator = SOURCE_AUDIT_VALIDATOR, indexes } = {}) {
   const actualIndexes = indexes ?? SOURCE_INDEXES.sources.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) }))
@@ -28,6 +29,10 @@ describe('Source Registry bootstrap readiness', () => {
 
   it('accepts the exact forward-compatible durable-job audit validator', async () => {
     await expect(assertSourcesReady(readyContext({ auditValidator: DURABLE_JOB_AUDIT_VALIDATOR }))).resolves.toBeUndefined()
+  })
+
+  it('accepts the exact forward-compatible indexing-job audit validator', async () => {
+    await expect(assertSourcesReady(readyContext({ auditValidator: INDEXING_JOB_AUDIT_VALIDATOR }))).resolves.toBeUndefined()
   })
 
   it('fails closed for missing context, stale validators, missing indexes, key drift and option drift', async () => {

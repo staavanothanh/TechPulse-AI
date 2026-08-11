@@ -6,8 +6,14 @@ import { ArticleError, articleConflict, leaseFenceStale, policyVersionMismatch, 
 import { hideArticle as hideArticleRecord, removeArticle as removeArticleRecord, restoreArticle as restoreArticleRecord } from '../../domain/article/lifecycle.js'
 import { normalizeCandidateToArticle } from '../../domain/article/normalization.js'
 import { evaluateMediaPolicy } from '../../domain/policy/media-policy.js'
+import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
 import { canUseQnaEvidence, currentArticleVisibilityFilter, isSourceProductionEligible, qnaEvidenceFilter } from '../../domain/article/visibility.js'
 import { validateArticleDocument } from '../../../scripts/migrations/articles.js'
+import { BGE_M3, validateBgeM3Embedding } from '../../ai/embedding.js'
+import { validateVietnameseSummary } from '../../ai/summary.js'
+import { cosineSimilarity } from '../../ai/retrieval.js'
+import { buildPolicyDerivedInput } from '../../ai/policy-input.js'
+import { buildIngestionArtifactJobs, indexingJobDocument } from './indexing-job-repository.js'
 
 const COUNTER_KEYS = Object.freeze(['fetched', 'created', 'updated', 'duplicate', 'skipped', 'failed'])
 const FORBIDDEN_FIELDS = Object.freeze(['raw', 'rawHtml', 'html', 'body', 'content', 'fullText', 'translatedFullText', 'mediaBinary', 'binary', 'imageBinary', 'videoBinary', 'audioBinary', 'base64', 'gridFsId', 'providerPayload'])
@@ -315,6 +321,7 @@ export class MongoArticleRepository {
   collection(name = 'articles') { return this.db.collection(name) }
   articles() { return this.collection('articles') }
   jobs() { return this.collection('ingestionJobs') }
+  indexingJobs() { return this.collection('indexingJobs') }
   leases() { return this.collection('jobLeases') }
   sources() { return this.collection('sources') }
   savedArticles() { return this.collection('savedArticles') }
@@ -389,6 +396,13 @@ export class MongoArticleRepository {
           result.updated += saved.updated
           result.duplicate += saved.duplicate
           result.candidates.push(saved.article)
+          for (const indexingJob of buildIngestionArtifactJobs({ source: { ...currentSource, id: currentSource._id.toHexString() }, article: saved.article, now })) {
+            await this.indexingJobs().updateOne(
+              { actorScope: indexingJob.actorScope, idempotencyKey: indexingJob.idempotencyKey },
+              { $setOnInsert: indexingJobDocument(indexingJob) },
+              { upsert: true, session },
+            )
+          }
         } catch (error) {
           if (error instanceof ArticleError && error.code === 'candidate_invalid') result.skipped += 1
           else throw error
@@ -507,18 +521,162 @@ export class MongoArticleRepository {
     return document ? publicArticleDetail(document) : null
   }
 
-  async searchVisibleArticles({ userId, q, topic, sourceId, publishedAfter, publishedBefore, cursor, limit = 20 } = {}) {
+  async findArticleForIndexing(articleId, options = {}) {
+    const id = contentObjectId(articleId, { nullable: true })
+    if (!id) return null
+    return serializeArticle(await this.articles().findOne({ _id: id, status: { $ne: 'removed' } }, options))
+  }
+
+  async commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, onCommitted } = {}) {
+    const articleId = contentObjectId(job?.articleId, { nullable: true })
+    const sourceId = contentObjectId(job?.sourceId, { nullable: true })
+    const jobId = contentObjectId(job?.id, { nullable: true })
+    if (!articleId || !sourceId || !jobId || !Number.isInteger(expectedSourcePolicyVersion)) return false
+    try {
+      assertCanonicalLeaseKey(fence?.key)
+      if (fence.key !== `indexing:article:${articleId.toHexString()}` || typeof fence.ownerTokenHash !== 'string' || !/^[a-f0-9]{64}$/.test(fence.ownerTokenHash) || !Number.isInteger(fence.leaseGeneration) || fence.leaseGeneration < 1) return false
+    } catch { return false }
+    return this.withTransaction(async (session) => {
+      const now = dateValue(this.clock(), 'Artifact commit clock')
+      const leaseFilter = {
+        key: fence.key, 'activeOwner.jobId': jobId, 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
+        'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
+      }
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      if (touched.matchedCount !== 1) return false
+      const currentJob = await this.indexingJobs().findOne({
+        _id: jobId, articleId, sourceId, expectedSourcePolicyVersion, task: purpose, status: 'running', leaseGeneration: fence.leaseGeneration,
+      }, { session })
+      if (!currentJob) return false
+      const source = await this.sources().findOne({
+        _id: sourceId, policyVersion: expectedSourcePolicyVersion, operationalStatus: 'active',
+        licenseStatus: { $in: ['permitted', 'metadata-only'] }, 'technicalCheck.status': 'passed',
+        [`storageScope.${purpose}`]: true, llmInputScope: { $ne: 'none' },
+      }, { session })
+      if (!source) return false
+      const currentArticle = await this.articles().findOne({ _id: articleId, sourceId, status: 'published' }, { session })
+      if (!currentArticle) return false
+      try {
+        const currentInput = buildPolicyDerivedInput({ article: serializeArticle(currentArticle), source: { ...source, id: source._id.toHexString() }, purpose })
+        if (currentInput.inputHash !== inputHash) return false
+      } catch { return false }
+      const filter = { _id: articleId, sourceId, status: 'published', ...(currentArticle.updatedAt ? { updatedAt: currentArticle.updatedAt } : {}) }
+      const updated = await this.articles().updateOne(filter, { $set: { ...fields, updatedAt: now } }, { session })
+      if (updated.matchedCount !== 1) return false
+      await onCommitted?.({ session, source, article: serializeArticle({ ...currentArticle, ...fields, updatedAt: now }), now })
+      return true
+    })
+  }
+
+  async commitSummaryArtifact({ job, fence, expectedSourcePolicyVersion, inputHash, summary } = {}) {
+    let output
+    try { output = validateVietnameseSummary({ titleVi: summary?.titleVi, summaryVi: summary?.summaryVi }) } catch { return false }
+    if (summary?.summaryStatus !== 'ready' || !SUMMARY_BASES.has(summary.summaryBasis) || summary.summaryInputHash !== inputHash || summary.summarySourcePolicyVersion !== expectedSourcePolicyVersion || typeof summary.summaryModel !== 'string' || !summary.summaryModel || !(summary.summaryGeneratedAt instanceof Date)) return false
+    return this.commitArtifact({
+      job, fence, expectedSourcePolicyVersion, purpose: 'summary',
+      inputHash,
+      fields: { ...output, summaryStatus: 'ready', summaryBasis: summary.summaryBasis, summaryModel: summary.summaryModel, summaryInputHash: inputHash, summarySourcePolicyVersion: expectedSourcePolicyVersion, summaryGeneratedAt: summary.summaryGeneratedAt, summaryError: null },
+      onCommitted: async ({ session, source, article: committedArticle, now }) => {
+        for (const successor of buildIngestionArtifactJobs({ source: { ...source, id: source._id.toHexString() }, article: committedArticle, now }).filter((item) => item.task === 'embedding')) {
+          await this.indexingJobs().updateOne({ actorScope: successor.actorScope, idempotencyKey: successor.idempotencyKey }, { $setOnInsert: indexingJobDocument(successor) }, { upsert: true, session })
+        }
+      },
+    })
+  }
+
+  async commitEmbeddingArtifact({ job, fence, expectedSourcePolicyVersion, inputHash, embedding } = {}) {
+    try { validateBgeM3Embedding({ model: embedding?.embeddingModel, embedding: embedding?.embedding }) } catch { return false }
+    if (embedding?.embeddingStatus !== 'ready' || embedding.embeddingDimensions !== BGE_M3.dimensions || embedding.embeddingVersion !== BGE_M3.version || embedding.embeddingInputHash !== inputHash || embedding.embeddingSourcePolicyVersion !== expectedSourcePolicyVersion || !(embedding.embeddedAt instanceof Date)) return false
+    return this.commitArtifact({
+      job, fence, expectedSourcePolicyVersion, purpose: 'embedding',
+      inputHash,
+      fields: { embeddingStatus: 'ready', embedding: [...embedding.embedding], embeddingModel: BGE_M3.model, embeddingDimensions: BGE_M3.dimensions, embeddingInputHash: inputHash, embeddingVersion: BGE_M3.version, embeddingSourcePolicyVersion: expectedSourcePolicyVersion, embeddedAt: embedding.embeddedAt, embeddingError: null },
+    })
+  }
+
+  async markArtifactProcessing({ job, fence, expectedSourcePolicyVersion, purpose, inputHash } = {}) {
+    if (!['summary', 'embedding'].includes(purpose) || typeof inputHash !== 'string') return false
+    const fields = purpose === 'summary'
+      ? { titleVi: null, summaryVi: null, summaryStatus: 'processing', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
+      : { embeddingStatus: 'processing', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null }
+    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields })
+  }
+
+  async resetArtifactPending({ job, fence, expectedSourcePolicyVersion, purpose, inputHash } = {}) {
+    if (!['summary', 'embedding'].includes(purpose) || typeof inputHash !== 'string') return false
+    const fields = purpose === 'summary'
+      ? { titleVi: null, summaryVi: null, summaryStatus: 'pending', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
+      : { embeddingStatus: 'pending', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null }
+    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields })
+  }
+
+  async markArtifactFailed({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, error } = {}) {
+    if (!['summary', 'embedding'].includes(purpose) || typeof inputHash !== 'string') return false
+    const occurredAt = dateValue(this.clock(), 'Artifact failure clock')
+    const safe = { code: typeof error?.code === 'string' ? error.code.slice(0, 128) : 'artifact_failed', message: 'AI artifact did not complete safely', retryable: Boolean(error?.retryable), occurredAt }
+    const fields = purpose === 'summary'
+      ? { titleVi: null, summaryVi: null, summaryStatus: 'failed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: safe }
+      : { embeddingStatus: 'failed', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: safe }
+    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields })
+  }
+
+  async reconcileArticleVisibility({ job, fence, expectedSourcePolicyVersion, now: suppliedNow } = {}) {
+    const articleId = contentObjectId(job?.articleId, { nullable: true })
+    const sourceId = contentObjectId(job?.sourceId, { nullable: true })
+    const jobId = contentObjectId(job?.id, { nullable: true })
+    if (!articleId || !sourceId || !jobId || job.task !== 'visibility-reconcile' || fence?.key !== `indexing:article:${articleId.toHexString()}`) return false
+    return this.withTransaction(async (session) => {
+      const now = dateValue(suppliedNow ?? this.clock(), 'Reconciliation commit clock')
+      const leaseFilter = { key: fence.key, 'activeOwner.jobId': jobId, 'activeOwner.ownerTokenHash': fence.ownerTokenHash, 'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now } }
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      if (touched.matchedCount !== 1) return false
+      const currentJob = await this.indexingJobs().findOne({ _id: jobId, articleId, sourceId, expectedSourcePolicyVersion, task: 'visibility-reconcile', status: 'running', leaseGeneration: fence.leaseGeneration }, { session })
+      if (!currentJob) return false
+      const source = await this.sources().findOne({ _id: sourceId, policyVersion: expectedSourcePolicyVersion, 'reconciliation.requiredPolicyVersion': expectedSourcePolicyVersion }, { session })
+      if (!source) return false
+      const article = await this.articles().findOne({ _id: articleId, sourceId, status: { $ne: 'removed' } }, { session })
+      if (!article) return false
+      const productionEligible = isSourceProductionEligible(source)
+      const summaryAllowed = evaluateContentPolicy(source, 'summary').allowed
+      const embeddingAllowed = evaluateContentPolicy(source, 'embedding').allowed
+      const excerptAllowed = evaluateContentPolicy(source, 'excerpt').allowed
+      const summaryCurrent = summaryAllowed && article.summaryStatus === 'ready' && article.summarySourcePolicyVersion === expectedSourcePolicyVersion
+      const embeddingCurrent = embeddingAllowed && article.embeddingStatus === 'ready' && article.embeddingSourcePolicyVersion === expectedSourcePolicyVersion && article.embeddingModel === BGE_M3.model && article.embeddingDimensions === BGE_M3.dimensions && article.embeddingVersion === BGE_M3.version
+      const mediaAllowed = article.leadMedia ? evaluateMediaPolicy(source, article.leadMedia).allowed : false
+      const set = {
+        rightsSnapshot: { sourcePolicyVersion: expectedSourcePolicyVersion, licenseStatus: source.licenseStatus, llmInputScope: source.llmInputScope, capturedAt: now },
+        updatedAt: now,
+      }
+      if (!productionEligible && article.status === 'published') { set.status = 'hidden'; set.hiddenReason = 'source_policy_changed' }
+      if (!mediaAllowed && article.leadMedia) { set.leadMedia = null; set.leadMediaStatus = 'hidden'; set.leadMediaHiddenReason = 'source_policy_changed' }
+      if (!summaryCurrent) Object.assign(set, {
+        titleVi: null, summaryVi: null, summaryStatus: summaryAllowed ? 'pending' : 'removed', summaryBasis: null, summaryModel: null,
+        summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null,
+      })
+      if (!embeddingCurrent) Object.assign(set, {
+        embeddingStatus: embeddingAllowed ? 'pending' : 'removed', embedding: null, embeddingModel: null, embeddingDimensions: null,
+        embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null,
+      })
+      const update = { $set: set, ...(!excerptAllowed && article.excerptOriginal !== undefined ? { $unset: { excerptOriginal: '' } } : {}) }
+      if (!excerptAllowed) set.contentScope = 'metadata'
+      const result = await this.articles().updateOne({ _id: articleId, sourceId, status: article.status }, update, { session })
+      return result.matchedCount === 1
+    })
+  }
+
+  async searchVisibleArticles({ userId, q, mode = 'text', queryEmbedding, topic, sourceId, publishedAfter, publishedBefore, cursor, limit = 20 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw contentQueryInvalid('Search limit is invalid')
     const normalizedQuery = normalizedSearchText(q)
     if (normalizedQuery.length < 2 || normalizedQuery.length > 300) throw contentQueryInvalid('Search query is invalid')
-    const fingerprint = cursorFingerprint('search', { userId, q: normalizedQuery, topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit })
+    const hybrid = mode === 'hybrid' && queryEmbedding?.model === BGE_M3.model && queryEmbedding?.dimensions === BGE_M3.dimensions && queryEmbedding?.version === BGE_M3.version && Array.isArray(queryEmbedding.embedding) && queryEmbedding.embedding.length === BGE_M3.dimensions
+    const fingerprint = cursorFingerprint('search', { userId, q: normalizedQuery, mode: hybrid ? 'hybrid' : 'text', topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit })
     const cursorPosition = decodeContentCursor(cursor, 'search', fingerprint)
     const match = contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore })
     const textMatch = match.$and ? { $and: [...match.$and, { $text: { $search: normalizedQuery } }] } : { ...match, $text: { $search: normalizedQuery } }
     const pipeline = visibilityPipeline({ match: textMatch, userId })
     pipeline.splice(1, 0, { $set: { _textScore: { $meta: 'textScore' } } })
     pipeline[pipeline.length - 1] = { $sort: { _textScore: -1, publishedAt: -1, _id: -1 } }
-    if (cursorPosition) {
+    if (cursorPosition && !hybrid) {
       const rawScore = Number(cursorPosition.rawScore)
       const publishedAt = new Date(cursorPosition.publishedAt)
       const id = contentObjectId(cursorPosition.id)
@@ -529,12 +687,60 @@ export class MongoArticleRepository {
         { $and: [{ $eq: ['$_textScore', rawScore] }, { $eq: ['$publishedAt', publishedAt] }, { $lt: ['$_id', id] }] },
       ] } } })
     }
-    pipeline.push({ $limit: limit + 1 })
+    pipeline.push({ $limit: hybrid ? 401 : limit + 1 })
     const documents = await this.articles().aggregate(pipeline).toArray()
     const ranked = documents.map((document) => {
       const textScore = Math.max(0, Math.min(1, Number(document._textScore ?? 0) / (Number(document._textScore ?? 0) + 1)))
       return { document, article: publicArticleCard(document), score: textScore, textScore, semanticScore: null }
     }).filter((result) => result.article)
+    if (hybrid) {
+      const semanticFilter = {
+        embeddingStatus: 'ready', embeddingModel: BGE_M3.model, embeddingDimensions: BGE_M3.dimensions,
+        embeddingVersion: BGE_M3.version, embedding: { $type: 'array' },
+      }
+      const semanticMatch = match.$and ? { $and: [...match.$and, semanticFilter] } : { $and: [match, semanticFilter] }
+      const semanticDocuments = await this.articles().aggregate(visibilityPipeline({ match: semanticMatch, userId, limit: 400 })).toArray()
+      if (semanticDocuments.length === 0) {
+        const fallbackPage = ranked.slice(0, limit)
+        const fallbackHasNext = ranked.length > limit
+        const fallbackLast = fallbackPage.at(-1)
+        return {
+          results: fallbackPage.map(({ article, score, textScore }) => ({ article, score, textScore, semanticScore: null })),
+          hasNext: fallbackHasNext,
+          nextCursor: fallbackHasNext && fallbackLast ? encodeContentCursor('search', fingerprint, { id: fallbackLast.document._id.toHexString(), publishedAt: publicDate(fallbackLast.document.publishedAt), score: fallbackLast.score, textScore: fallbackLast.textScore }) : null,
+          fallbackReason: 'no-compatible-vectors',
+        }
+      }
+      const candidates = new Map()
+      for (const document of semanticDocuments) candidates.set(document._id.toHexString(), { document, rawTextScore: 0 })
+      for (const document of documents) candidates.set(document._id.toHexString(), { document, rawTextScore: Number(document._textScore ?? 0) })
+      let hybridRanked = [...candidates.values()].flatMap(({ document, rawTextScore }) => {
+        const article = publicArticleCard(document)
+        if (!article) return []
+        const textScore = Math.max(0, Math.min(1, rawTextScore / (rawTextScore + 1)))
+        const compatible = document.embeddingStatus === 'ready' && document.embeddingModel === BGE_M3.model && document.embeddingDimensions === BGE_M3.dimensions && document.embeddingVersion === BGE_M3.version && Array.isArray(document.embedding) && document.embedding.length === BGE_M3.dimensions
+        const semanticScore = compatible ? Math.max(0, cosineSimilarity(queryEmbedding.embedding, document.embedding)) : null
+        const score = compatible ? 0.45 * textScore + 0.55 * semanticScore : 0.45 * textScore
+        return [{ document, article, score: Number(score.toFixed(12)), textScore, semanticScore }]
+      }).sort((left, right) => right.score - left.score || right.textScore - left.textScore || right.document.publishedAt - left.document.publishedAt || right.document._id.toHexString().localeCompare(left.document._id.toHexString()))
+      if (cursorPosition) {
+        const score = Number(cursorPosition.score)
+        const textScore = Number(cursorPosition.textScore)
+        const publishedAt = new Date(cursorPosition.publishedAt)
+        const id = contentObjectId(cursorPosition.id)
+        if (!Number.isFinite(score) || !Number.isFinite(textScore) || Number.isNaN(publishedAt.getTime())) throw contentQueryInvalid()
+        hybridRanked = hybridRanked.filter((item) => item.score < score || item.score === score && (item.textScore < textScore || item.textScore === textScore && (item.document.publishedAt < publishedAt || item.document.publishedAt.getTime() === publishedAt.getTime() && item.document._id.toHexString() < id.toHexString())))
+      }
+      const page = hybridRanked.slice(0, limit)
+      const hasNext = hybridRanked.length > limit
+      const last = page.at(-1)
+      return {
+        results: page.map(({ article, score, textScore, semanticScore }) => ({ article, score, textScore, semanticScore })),
+        hasNext,
+        nextCursor: hasNext && last ? encodeContentCursor('search', fingerprint, { id: last.document._id.toHexString(), publishedAt: publicDate(last.document.publishedAt), score: last.score, textScore: last.textScore }) : null,
+        fallbackReason: null,
+      }
+    }
     const page = ranked.slice(0, limit)
     const hasNext = ranked.length > limit
     const last = page.at(-1)

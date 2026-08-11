@@ -19,14 +19,16 @@ function fakeCommitRepository({ leaseMatched = 1, currentSource = makeSource() }
     findOne: vi.fn(async () => currentJob),
     updateOne: vi.fn(async (_filter, update) => { Object.assign(currentJob, update.$set); return { matchedCount: 1 } }),
   }
+  const indexingJobs = { updateOne: vi.fn(async () => ({ matchedCount: 0, upsertedCount: 1 })) }
   const sources = { findOne: vi.fn(async () => source) }
   const repository = new MongoArticleRepository({ db: {}, client: {} })
   repository.withTransaction = vi.fn(async (work) => work({}))
   repository.articles = () => articles
   repository.leases = () => leases
   repository.jobs = () => jobs
+  repository.indexingJobs = () => indexingJobs
   repository.sources = () => sources
-  return { repository, source, currentJob, articles, leases, jobs, sources }
+  return { repository, source, currentJob, articles, leases, jobs, indexingJobs, sources }
 }
 
 describe('article repository fence contract', () => {
@@ -65,7 +67,7 @@ describe('article repository fence contract', () => {
   })
 
   it('commits a batch once and replays the same checkpoint without duplicate article/counter writes', async () => {
-    const { repository, source, articles, jobs } = fakeCommitRepository()
+    const { repository, source, articles, jobs, indexingJobs } = fakeCommitRepository()
     const job = makeJob()
     const fence = { key: `ingestion:source:${SOURCE_ID}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
     const article = normalizeCandidateToArticle(makeCandidate(), { source, now: RETRIEVED_AT })
@@ -78,6 +80,8 @@ describe('article repository fence contract', () => {
     expect(second).toMatchObject({ created: 0, updated: 0, fetched: 0, counters: first.counters })
     expect(articles.insertOne).toHaveBeenCalledTimes(1)
     expect(jobs.updateOne).toHaveBeenCalledTimes(1)
+    expect(indexingJobs.updateOne).toHaveBeenCalledTimes(2)
+    expect(indexingJobs.updateOne.mock.calls.map(([, update]) => update.$setOnInsert.task)).toEqual(['summary', 'embedding'])
   })
 
   it('fails closed at the lease CAS before source/article writes', async () => {

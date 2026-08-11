@@ -1,11 +1,16 @@
 import { createHash } from 'node:crypto'
 
 const JOB_AUDIT_RULES = Object.freeze({
-  ingestion_job_created: Object.freeze({ reasonCode: 'ingestion_trigger_requested', exactFields: ['status'] }),
-  ingestion_job_retry_created: Object.freeze({ reasonCode: 'job_retry_requested', exactFields: ['status', 'attempt', 'parentJobId'] }),
-  ingestion_job_cancelled: Object.freeze({ reasonCode: 'job_cancel_requested', exactFields: ['status'] }),
-  ingestion_job_cancellation_requested: Object.freeze({ reasonCode: 'job_cancel_requested', exactFields: ['cancellationRequestedAt'] }),
-  ingestion_job_lease_recovered: Object.freeze({ reasonCode: 'lease_expired_recovered', exactFields: ['status', 'error'], systemOnly: true }),
+  ingestion_job_created: Object.freeze({ targetType: 'ingestion-job', reasonCode: 'ingestion_trigger_requested', exactFields: ['status'] }),
+  ingestion_job_retry_created: Object.freeze({ targetType: 'ingestion-job', reasonCode: 'job_retry_requested', exactFields: ['status', 'attempt', 'parentJobId'] }),
+  ingestion_job_cancelled: Object.freeze({ targetType: 'ingestion-job', reasonCode: 'job_cancel_requested', exactFields: ['status'] }),
+  ingestion_job_cancellation_requested: Object.freeze({ targetType: 'ingestion-job', reasonCode: 'job_cancel_requested', exactFields: ['cancellationRequestedAt'] }),
+  ingestion_job_lease_recovered: Object.freeze({ targetType: 'ingestion-job', reasonCode: 'lease_expired_recovered', exactFields: ['status', 'error'], systemOnly: true }),
+  indexing_job_created: Object.freeze({ targetType: 'indexing-job', reasonCode: 'artifact_regeneration_requested', exactFields: ['status'] }),
+  indexing_job_retry_created: Object.freeze({ targetType: 'indexing-job', reasonCode: 'job_retry_requested', exactFields: ['status', 'attempt', 'parentJobId'] }),
+  indexing_job_cancelled: Object.freeze({ targetType: 'indexing-job', reasonCode: 'job_cancel_requested', exactFields: ['status'] }),
+  indexing_job_cancellation_requested: Object.freeze({ targetType: 'indexing-job', reasonCode: 'job_cancel_requested', exactFields: ['cancellationRequestedAt'] }),
+  indexing_job_lease_recovered: Object.freeze({ targetType: 'indexing-job', reasonCode: 'lease_expired_recovered', exactFields: ['status', 'error'], systemOnly: true }),
 })
 
 function sameFields(actual, expected) {
@@ -32,7 +37,7 @@ export function createJobAuditEvent({ actor, action, targetId, changedFields, re
   if (!actorType || !actorId || !targetId || !requestIdentity || !['succeeded', 'failed', 'pending'].includes(result) || !(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) throw new Error('Job audit identity is invalid')
   return {
     eventId: eventId({ action, targetId, requestIdentity, actorId, sessionId }),
-    actorType, actorId, action, targetType: 'ingestion-job', targetId,
+    actorType, actorId, action, targetType: JOB_AUDIT_RULES[action].targetType, targetId,
     changedFields: [...changedFields], reasonCode, requestId: String(requestIdentity), result, createdAt,
   }
 }
