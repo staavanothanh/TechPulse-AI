@@ -7,6 +7,7 @@ import { loadOpenApi, runContractChecks } from './openapi-utils.js'
 import { runAuthAccountContractFixtures } from './auth-account-fixtures.js'
 import { runAdminSourcesContractFixtures } from './admin-sources-fixtures.js'
 import { runStep4ContractFixtures } from './step4-fixtures.js'
+import { runStep8ContentContractFixtures } from './step8-content-fixtures.js'
 
 const document = loadOpenApi()
 const result = runContractChecks(document)
@@ -51,5 +52,7 @@ const shouldRunAdminSources = selection.length === 0 || selection.includes('admi
 const adminSourcesResult = shouldRunAdminSources ? await runAdminSourcesContractFixtures({ document }) : { cases: 0 }
 const shouldRunStep4 = selection.length === 0 || selection.some((value) => ['ingestion-jobs', 'cron'].includes(value))
 const step4Result = shouldRunStep4 ? await runStep4ContractFixtures({ document }) : { cases: 0 }
+const shouldRunStep8Content = selection.length === 0 || selection.some((value) => ['articles', 'search', 'saved'].includes(value))
+const step8ContentResult = shouldRunStep8Content ? await runStep8ContentContractFixtures({ document }) : { cases: 0 }
 
-console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}, Step 4 runtime fixtures: ${step4Result.cases}`)
+console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}, Step 4 runtime fixtures: ${step4Result.cases}, Step 8 content runtime fixtures: ${step8ContentResult.cases}`)

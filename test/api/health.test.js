@@ -5,7 +5,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { loadOpenApi } from '../../scripts/contracts/openapi-utils.js'
 import { createApp } from '../../server/app.js'
 
-const app = createApp({ machineSecret: 'test-machine-secret' })
+const VITE_DEPENDENCY_PATH = '/node_modules/.vite/deps/react.js'
+const app = createApp({
+  machineSecret: 'test-machine-secret',
+  afterApiMiddleware(req, res, next) {
+    if (req.path !== VITE_DEPENDENCY_PATH) return next()
+    res.set('X-After-API-Middleware', 'reached')
+    return res.type('application/javascript').send('export default {}')
+  },
+})
 
 let server
 let origin
@@ -46,6 +54,14 @@ describe('GET /api/v1/health', () => {
     expect(payload.error.requestId).toBeTruthy()
   })
 
+  it('passes Vite dependency query parameters through to the non-API middleware', async () => {
+    const response = await fetch(`${origin}${VITE_DEPENDENCY_PATH}?v=4f3c2a1b`)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-after-api-middleware')).toBe('reached')
+    expect(await response.text()).toBe('export default {}')
+  })
+
   it('rejects unknown query parameters before the handler', async () => {
     const response = await fetch(`${origin}/api/v1/health?unexpected=value`)
     const payload = await response.json()
@@ -55,9 +71,13 @@ describe('GET /api/v1/health', () => {
 
   it('rejects duplicate and pollution-shaped query values', async () => {
     const duplicate = await fetch(`${origin}/api/v1/articles?limit=1&limit=2`)
-    const polluted = await fetch(`${origin}/api/v1/articles?q%5B%24gt%5D=secret`)
+    const operator = await fetch(`${origin}/api/v1/articles?q%5B%24gt%5D=secret`)
+    const prototype = await fetch(`${origin}/api/v1/articles?__proto__=polluted`)
+    const internal = await fetch(`${origin}/api/internal/cron/due-work?unexpected=value`)
     expect(duplicate.status).toBe(400)
-    expect(polluted.status).toBe(400)
+    expect(operator.status).toBe(400)
+    expect(prototype.status).toBe(400)
+    expect(internal.status).toBe(400)
   })
 
   it('rejects an oversized opaque path id before routing', async () => {

@@ -13,6 +13,7 @@ const { createApp } = await import('./app.js')
 const { createConfiguredAuthService } = await import('./bootstrap/auth.js')
 const { createConfiguredSourceService } = await import('./bootstrap/sources.js')
 const { createConfiguredJobRuntime } = await import('./bootstrap/jobs.js')
+const { createConfiguredContentServices } = await import('./bootstrap/content.js')
 const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
 const { createRateLimitAdmission } = await import('./security/rate-limit-admission.js')
@@ -21,6 +22,10 @@ let sourceService
 let jobService
 let dueWorkRunner
 let maintenanceRunner
+let articleService
+let searchService
+let savedService
+let imageCspHosts
 let runtime
 try {
   const configured = await createConfiguredAuthService()
@@ -35,10 +40,17 @@ try {
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner
   } catch { console.warn('Durable job service is unavailable until its migration is applied') }
+  try {
+    const content = await createConfiguredContentServices({ context: configured.context })
+    articleService = content.articleService
+    searchService = content.searchService
+    savedService = content.savedService
+    imageCspHosts = content.imageCspHosts
+  } catch { console.warn('Content service is unavailable until article migrations are applied') }
 } catch {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
-const app = createApp({ authService, sourceService, jobService, dueWorkRunner, maintenanceRunner, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
+const app = createApp({ authService, sourceService, jobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
 const server = app.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)
 })

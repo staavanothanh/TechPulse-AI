@@ -192,12 +192,14 @@ export function createIngressMiddleware(options = {}) {
       if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BYTES) return reject(res, 413, 'payload_too_large', 'Request body is too large')
     }
 
-    const queryResult = validateQuery(req, operation, res)
-    if (queryResult) return queryResult
-    const pathResult = validatePathParameters(req, operation, res)
-    if (pathResult) return pathResult
-    const machineAuthResult = validateMachineAuth(req, operation?.operation, options, res)
-    if (machineAuthResult) return machineAuthResult
+    if (isApi) {
+      const queryResult = validateQuery(req, operation, res)
+      if (queryResult) return queryResult
+      const pathResult = validatePathParameters(req, operation, res)
+      if (pathResult) return pathResult
+      const machineAuthResult = validateMachineAuth(req, operation?.operation, options, res)
+      if (machineAuthResult) return machineAuthResult
+    }
     return next()
   }
 }

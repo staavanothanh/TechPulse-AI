@@ -130,6 +130,11 @@ a {
   margin: 0 auto 42px;
 }
 
+.app-layout.reader-app-layout {
+  grid-template-columns: minmax(0, 1fr);
+  width: min(1440px, calc(100% - 32px));
+}
+
 .side-nav,
 .hero-card {
   border: 1px solid var(--border);

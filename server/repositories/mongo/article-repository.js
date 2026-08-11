@@ -1,4 +1,5 @@
 import { ObjectId } from 'mongodb'
+import { createHash } from 'node:crypto'
 import { assertCanonicalLeaseKey } from '../../domain/jobs/lease-keys.js'
 import { assessDedupe, mergeArticleRecords } from '../../domain/article/dedupe.js'
 import { ArticleError, articleConflict, leaseFenceStale, policyVersionMismatch, sourcePolicyBlocked } from '../../domain/article/errors.js'
@@ -146,6 +147,163 @@ async function sourceForArticle(sourceCollection, document) {
   return sourceCollection.findOne({ _id: document.sourceId })
 }
 
+const PUBLIC_SUMMARY_STATUSES = new Set(['pending', 'processing', 'ready', 'failed'])
+const SUMMARY_BASES = new Set(['metadata', 'excerpt', 'fulltext-temporary'])
+
+function contentQueryInvalid(message = 'Content cursor is invalid') {
+  return new ArticleError('validation_error', message, { status: 422 })
+}
+
+function contentFenceStale() {
+  return new ArticleError('conflict', 'Saved article state changed', { status: 409 })
+}
+
+function contentObjectId(value, { nullable = false } = {}) {
+  if (value instanceof ObjectId) return value
+  if (typeof value === 'string' && ObjectId.isValid(value) && new ObjectId(value).toHexString() === value.toLowerCase()) return new ObjectId(value)
+  if (nullable) return null
+  throw contentQueryInvalid('Content identifier is invalid')
+}
+
+function normalizedSearchText(value) {
+  return String(value ?? '').normalize('NFD').replaceAll(/[\u0300-\u036f]/g, '').replaceAll(/đ/gi, (letter) => letter === 'Đ' ? 'D' : 'd').toLocaleLowerCase('vi').trim().replaceAll(/\s+/g, ' ')
+}
+
+function publicDate(value) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) throw contentQueryInvalid('Stored article date is invalid')
+  return date.toISOString()
+}
+
+function canonicalPublicHttps(value) {
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
+function publicLeadMedia(media) {
+  if (!media || !['image', 'video'].includes(media.type) || typeof media.attribution !== 'string' || media.attribution.length < 1) return null
+  if (media.type === 'image' && media.displayMode !== 'remote-preview') return null
+  if (media.type === 'video' && media.displayMode !== 'link-only') return null
+  const url = canonicalPublicHttps(media.url)
+  const sourcePageUrl = canonicalPublicHttps(media.sourcePageUrl)
+  if (!url || !sourcePageUrl) return null
+  return {
+    type: media.type,
+    displayMode: media.displayMode,
+    url,
+    sourcePageUrl,
+    altText: typeof media.altText === 'string' ? media.altText : null,
+    credit: typeof media.credit === 'string' ? media.credit : null,
+    attribution: media.attribution,
+    mediaEvidenceStatus: 'not-analyzed',
+  }
+}
+
+function summaryFields(article) {
+  const ready = article.summaryStatus === 'ready' && typeof article.summaryVi === 'string' && article.summaryVi.length > 0 && SUMMARY_BASES.has(article.summaryBasis)
+  const status = ready ? 'ready' : PUBLIC_SUMMARY_STATUSES.has(article.summaryStatus) && article.summaryStatus !== 'ready' ? article.summaryStatus : 'failed'
+  return { summaryStatus: status, summaryVi: ready ? article.summaryVi : null, summaryBasis: ready ? article.summaryBasis : null }
+}
+
+function savedMarker(document) {
+  return Boolean(document?._isSaved?.length || document?._saved === true)
+}
+
+function publicArticleCard(document, source = document?._currentSource) {
+  const article = serializeVisibleArticle(document, source)
+  if (!article || !source || typeof article.titleOriginal !== 'string' || article.titleOriginal.length < 1) return null
+  return {
+    id: article.id,
+    titleOriginal: article.titleOriginal,
+    titleVi: typeof article.titleVi === 'string' ? article.titleVi : null,
+    source: {
+      id: source._id?.toHexString?.() ?? String(source.id ?? article.sourceId),
+      name: String(source.name ?? ''),
+      authorityTier: source.authorityTier,
+    },
+    publishedAt: publicDate(article.publishedAt),
+    sourceLanguage: String(article.sourceLanguage),
+    topics: [...new Set((article.topics ?? []).filter((topic) => typeof topic === 'string'))],
+    ...summaryFields(article),
+    leadMedia: publicLeadMedia(article.leadMedia),
+    isSaved: savedMarker(document),
+  }
+}
+
+function publicArticleDetail(document, source = document?._currentSource) {
+  const card = publicArticleCard(document, source)
+  const originalUrl = canonicalPublicHttps(document?.originalUrl)
+  if (!card || !originalUrl) return null
+  const author = typeof document.author === 'string' ? document.author : null
+  return {
+    ...card,
+    originalUrl,
+    author,
+    retrievedAt: publicDate(document.retrievedAt),
+    citation: {
+      sourceId: card.source.id,
+      sourceName: card.source.name,
+      titleOriginal: card.titleOriginal,
+      originalUrl,
+      author,
+      publishedAt: card.publishedAt,
+      sourceLanguage: card.sourceLanguage,
+    },
+    aiDisclosure: 'AI tổng hợp; hãy kiểm chứng với nguồn gốc.',
+  }
+}
+
+function cursorFingerprint(kind, input) {
+  return createHash('sha256').update(stableJson({ kind, ...input })).digest('hex')
+}
+
+function encodeContentCursor(kind, fingerprint, position) {
+  return Buffer.from(JSON.stringify({ v: 1, kind, fingerprint, position }), 'utf8').toString('base64url')
+}
+
+function decodeContentCursor(value, kind, fingerprint) {
+  if (!value) return null
+  try {
+    const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+    if (cursor?.v !== 1 || cursor.kind !== kind || cursor.fingerprint !== fingerprint || !cursor.position || typeof cursor.position !== 'object') throw contentQueryInvalid()
+    return cursor.position
+  } catch (error) {
+    if (error instanceof ArticleError) throw error
+    throw contentQueryInvalid()
+  }
+}
+
+function contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore, cursorPosition } = {}) {
+  const filters = [{ status: 'published' }]
+  if (topic) filters.push({ topics: topic })
+  if (sourceId) filters.push({ sourceId: contentObjectId(sourceId) })
+  if (publishedAfter || publishedBefore) filters.push({ publishedAt: { ...(publishedAfter ? { $gte: publishedAfter } : {}), ...(publishedBefore ? { $lte: publishedBefore } : {}) } })
+  if (cursorPosition) {
+    const publishedAt = new Date(cursorPosition.publishedAt)
+    const id = contentObjectId(cursorPosition.id)
+    if (Number.isNaN(publishedAt.getTime())) throw contentQueryInvalid()
+    filters.push({ $or: [{ publishedAt: { $lt: publishedAt } }, { publishedAt, _id: { $lt: id } }] })
+  }
+  return filters.length === 1 ? filters[0] : { $and: filters }
+}
+
+function visibilityPipeline({ match, userId, limit } = {}) {
+  return [
+    { $match: match },
+    { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
+    { $unwind: '$_currentSource' },
+    { $match: currentArticleVisibilityFilter({ sourcePath: '_currentSource' }) },
+    ...(userId ? [{ $lookup: { from: 'savedArticles', let: { articleId: '$_id' }, pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$articleId', '$$articleId'] }, { $eq: ['$userId', contentObjectId(userId)] }] } } }, { $limit: 1 }], as: '_isSaved' } }] : []),
+    { $sort: { publishedAt: -1, _id: -1 } },
+    ...(limit ? [{ $limit: limit }] : []),
+  ]
+}
+
 export class MongoArticleRepository {
   constructor(context) {
     if (!context?.db || !context?.client) throw new Error('Mongo context is required')
@@ -159,6 +317,9 @@ export class MongoArticleRepository {
   jobs() { return this.collection('ingestionJobs') }
   leases() { return this.collection('jobLeases') }
   sources() { return this.collection('sources') }
+  savedArticles() { return this.collection('savedArticles') }
+  users() { return this.collection('users') }
+  sessions() { return this.collection('sessions') }
 
   withTransaction(work) {
     const session = this.client.startSession()
@@ -316,6 +477,155 @@ export class MongoArticleRepository {
       { $limit: limit },
     ]).toArray()
     return documents.flatMap(({ _currentSource: source, ...document }) => isSourceProductionEligible(source) ? [serializeVisibleArticle(document, source)] : [])
+  }
+
+  async listVisibleArticles({ userId, topic, sourceId, publishedAfter, publishedBefore, cursor, limit = 20 } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw contentQueryInvalid('Article limit is invalid')
+    const fingerprint = cursorFingerprint('articles', { userId, topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit })
+    const cursorPosition = decodeContentCursor(cursor, 'articles', fingerprint)
+    const match = contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore, cursorPosition })
+    const documents = await this.articles().aggregate(visibilityPipeline({ match, userId, limit: limit + 1 })).toArray()
+    const cards = documents.map((document) => publicArticleCard(document)).filter(Boolean)
+    const page = cards.slice(0, limit)
+    const lastDocument = documents[Math.min(page.length, limit) - 1]
+    return {
+      articles: page,
+      hasNext: cards.length > limit,
+      nextCursor: cards.length > limit && lastDocument ? encodeContentCursor('articles', fingerprint, { publishedAt: publicDate(lastDocument.publishedAt), id: lastDocument._id.toHexString() }) : null,
+    }
+  }
+
+  async findVisibleArticleDocument({ userId, articleId, session } = {}) {
+    const id = contentObjectId(articleId, { nullable: true })
+    if (!id) return null
+    const documents = await this.articles().aggregate(visibilityPipeline({ match: { status: 'published', _id: id }, userId, limit: 1 }), session ? { session } : {}).toArray()
+    return documents[0] ?? null
+  }
+
+  async getVisibleArticle({ userId, articleId, session } = {}) {
+    const document = await this.findVisibleArticleDocument({ userId, articleId, session })
+    return document ? publicArticleDetail(document) : null
+  }
+
+  async searchVisibleArticles({ userId, q, topic, sourceId, publishedAfter, publishedBefore, cursor, limit = 20 } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw contentQueryInvalid('Search limit is invalid')
+    const normalizedQuery = normalizedSearchText(q)
+    if (normalizedQuery.length < 2 || normalizedQuery.length > 300) throw contentQueryInvalid('Search query is invalid')
+    const fingerprint = cursorFingerprint('search', { userId, q: normalizedQuery, topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit })
+    const cursorPosition = decodeContentCursor(cursor, 'search', fingerprint)
+    const match = contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore })
+    const textMatch = match.$and ? { $and: [...match.$and, { $text: { $search: normalizedQuery } }] } : { ...match, $text: { $search: normalizedQuery } }
+    const pipeline = visibilityPipeline({ match: textMatch, userId })
+    pipeline.splice(1, 0, { $set: { _textScore: { $meta: 'textScore' } } })
+    pipeline[pipeline.length - 1] = { $sort: { _textScore: -1, publishedAt: -1, _id: -1 } }
+    if (cursorPosition) {
+      const rawScore = Number(cursorPosition.rawScore)
+      const publishedAt = new Date(cursorPosition.publishedAt)
+      const id = contentObjectId(cursorPosition.id)
+      if (!Number.isFinite(rawScore) || Number.isNaN(publishedAt.getTime())) throw contentQueryInvalid()
+      pipeline.splice(pipeline.length - 1, 0, { $match: { $expr: { $or: [
+        { $lt: ['$_textScore', rawScore] },
+        { $and: [{ $eq: ['$_textScore', rawScore] }, { $lt: ['$publishedAt', publishedAt] }] },
+        { $and: [{ $eq: ['$_textScore', rawScore] }, { $eq: ['$publishedAt', publishedAt] }, { $lt: ['$_id', id] }] },
+      ] } } })
+    }
+    pipeline.push({ $limit: limit + 1 })
+    const documents = await this.articles().aggregate(pipeline).toArray()
+    const ranked = documents.map((document) => {
+      const textScore = Math.max(0, Math.min(1, Number(document._textScore ?? 0) / (Number(document._textScore ?? 0) + 1)))
+      return { document, article: publicArticleCard(document), score: textScore, textScore, semanticScore: null }
+    }).filter((result) => result.article)
+    const page = ranked.slice(0, limit)
+    const hasNext = ranked.length > limit
+    const last = page.at(-1)
+    return {
+      results: page.map(({ article, score, textScore, semanticScore }) => ({ article, score, textScore, semanticScore })),
+      hasNext,
+      nextCursor: hasNext && last ? encodeContentCursor('search', fingerprint, { id: last.document._id.toHexString(), publishedAt: publicDate(last.document.publishedAt), rawScore: Number(last.document._textScore ?? 0) }) : null,
+    }
+  }
+
+  async visibleArticlesByIds(articleIds, userId) {
+    const ids = articleIds.map((value) => contentObjectId(value, { nullable: true })).filter(Boolean)
+    if (ids.length === 0) return new Map()
+    const documents = await this.articles().aggregate(visibilityPipeline({ match: { status: 'published', _id: { $in: ids } }, userId })).toArray()
+    return new Map(documents.map((document) => [document._id.toHexString(), document]))
+  }
+
+  async listSavedVisibleArticles({ userId, cursor, limit = 20 } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw contentQueryInvalid('Saved article limit is invalid')
+    const userObjectId = contentObjectId(userId)
+    const fingerprint = cursorFingerprint('saved', { userId, limit })
+    const position = decodeContentCursor(cursor, 'saved', fingerprint)
+    const batchSize = 100
+    const visibleItems = []
+    let scanPosition = position
+    let exhausted = false
+    while (!exhausted && visibleItems.length <= limit) {
+      const relationFilter = { userId: userObjectId }
+      if (scanPosition) {
+        const createdAt = new Date(scanPosition.createdAt)
+        const id = contentObjectId(scanPosition.id)
+        if (Number.isNaN(createdAt.getTime())) throw contentQueryInvalid()
+        relationFilter.$or = [{ createdAt: { $lt: createdAt } }, { createdAt, _id: { $lt: id } }]
+      }
+      const relations = await this.savedArticles().find(relationFilter).sort({ createdAt: -1, _id: -1 }).limit(batchSize).toArray()
+      if (relations.length === 0) break
+      const visible = await this.visibleArticlesByIds(relations.map((relation) => relation.articleId), userId)
+      const invalidRelations = []
+      for (const relation of relations) {
+        const document = visible.get(relation.articleId.toHexString())
+        const article = document ? publicArticleCard({ ...document, _saved: true }) : null
+        if (article) visibleItems.push({ relation, article })
+        else invalidRelations.push(relation)
+      }
+      if (invalidRelations.length > 0) await this.savedArticles().deleteMany({ userId: userObjectId, _id: { $in: invalidRelations.map((relation) => relation._id) } })
+      const lastScanned = relations.at(-1)
+      scanPosition = { createdAt: publicDate(lastScanned.createdAt), id: lastScanned._id.toHexString() }
+      exhausted = relations.length < batchSize
+    }
+    const pageItems = visibleItems.slice(0, limit)
+    const articles = pageItems.map(({ article }) => article)
+    const hasNext = visibleItems.length > limit
+    const last = pageItems.at(-1)?.relation
+    return {
+      articles,
+      hasNext,
+      nextCursor: hasNext && last ? encodeContentCursor('saved', fingerprint, { createdAt: publicDate(last.createdAt), id: last._id.toHexString() }) : null,
+    }
+  }
+
+  async saveVisibleArticle({ userId, articleId, actorFence } = {}) {
+    const userObjectId = contentObjectId(userId)
+    const articleObjectId = contentObjectId(articleId, { nullable: true })
+    const sessionObjectId = contentObjectId(actorFence?.sessionId, { nullable: true })
+    if (!articleObjectId) return false
+    if (!sessionObjectId || !Number.isInteger(actorFence?.sessionVersion) || actorFence.sessionVersion < 0) throw contentFenceStale()
+    return this.withTransaction(async (session) => {
+      const now = dateValue(this.clock(), 'Saved article date')
+      const userFence = await this.users().updateOne({ _id: userObjectId, status: 'active', sessionVersion: actorFence.sessionVersion }, { $set: { updatedAt: now } }, { session })
+      if (userFence.matchedCount !== 1) throw contentFenceStale()
+      const sessionFence = await this.sessions().updateOne({ _id: sessionObjectId, userId: userObjectId, userSessionVersion: actorFence.sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, { $set: { lastSeenAt: now } }, { session })
+      if (sessionFence.matchedCount !== 1) throw contentFenceStale()
+      const visible = await this.findVisibleArticleDocument({ userId, articleId, session })
+      if (!visible) return false
+      const articleFence = await this.articles().updateOne({ _id: articleObjectId, status: 'published', sourceId: visible.sourceId }, { $set: { updatedAt: now } }, { session })
+      if (articleFence.matchedCount !== 1) throw contentFenceStale()
+      const sourceFence = await this.sources().updateOne({ _id: visible._currentSource._id, operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, policyVersion: visible._currentSource.policyVersion }, { $set: { updatedAt: now } }, { session })
+      if (sourceFence.matchedCount !== 1) throw contentFenceStale()
+      await this.savedArticles().updateOne({ userId: userObjectId, articleId: articleObjectId }, { $setOnInsert: { _id: new ObjectId(), userId: userObjectId, articleId: articleObjectId, createdAt: now } }, { upsert: true, session })
+      return true
+    })
+  }
+
+  async unsaveArticle({ userId, articleId } = {}) {
+    const articleObjectId = contentObjectId(articleId, { nullable: true })
+    if (!articleObjectId) return
+    await this.savedArticles().deleteOne({ userId: contentObjectId(userId), articleId: articleObjectId })
+  }
+
+  async clearSavedArticles({ userId } = {}) {
+    await this.savedArticles().deleteMany({ userId: contentObjectId(userId) })
   }
 
   async findQnaEvidence({ limit = 20 } = {}) {

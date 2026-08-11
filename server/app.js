@@ -5,6 +5,10 @@ import { sendError, errorHandler } from './http/errors.js'
 import { createAuthRouter } from './http/auth-router.js'
 import { createAdminSourcesRouter } from './http/admin/sources/router.js'
 import { createAdminIngestionJobsRouter } from './http/admin/ingestion-jobs/router.js'
+import { createArticlesRouter } from './http/articles/router.js'
+import { createContentSecurityPolicyMiddleware } from './http/articles/content-security-policy.js'
+import { createSearchRouter } from './http/search/router.js'
+import { createSavedRouter } from './http/saved/router.js'
 import { createInternalCronRouter } from './http/internal/cron/router.js'
 import { createInternalMaintenanceRouter } from './http/internal/maintenance/router.js'
 import { createSessionMiddleware } from './http/middleware/session.js'
@@ -13,10 +17,14 @@ export function createApp(options = {}) {
   const app = express()
   app.disable('x-powered-by')
   app.use(createRequestIdMiddleware())
+  app.use(createContentSecurityPolicyMiddleware({ imageHosts: options.imageCspHosts }))
   app.use(createIngressMiddleware(options))
   app.use(express.json({ limit: '64kb', strict: true, type: 'application/json' }))
   app.use(createSessionMiddleware({ authService: options.authService }))
   app.use(createAuthRouter({ authService: options.authService }))
+  app.use(createArticlesRouter({ articleService: options.articleService }))
+  app.use(createSearchRouter({ searchService: options.searchService }))
+  app.use(createSavedRouter({ savedService: options.savedService, authService: options.authService }))
   app.use(createAdminSourcesRouter({ sourceService: options.sourceService, authService: options.authService }))
   app.use(createAdminIngestionJobsRouter({ jobService: options.jobService, authService: options.authService }))
   app.use(createInternalCronRouter({ dueWorkRunner: options.dueWorkRunner }))

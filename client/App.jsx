@@ -4,12 +4,14 @@ import AuthAccount from './features/auth/AuthAccount.jsx'
 import SourceRegistry from './features/admin/sources/SourceRegistry.jsx'
 import JobsPanel from './features/admin/jobs/JobsPanel.jsx'
 import { bootstrapSessionFailure } from './features/auth/session-state.js'
+import ContentWorkspace from './features/feed/ContentWorkspace.jsx'
 
 const api = createApiClient()
 
 export default function App() {
   const [health, setHealth] = useState({ status: 'loading', message: 'Đang kiểm tra API…' })
   const [session, setSession] = useState({ status: 'loading', user: null, csrfToken: null, error: null, notice: null })
+  const [contentRoute, setContentRoute] = useState('feed')
 
   useEffect(() => {
     let active = true
@@ -45,6 +47,13 @@ export default function App() {
     loadSession()
   }
 
+  function applySession(nextUser, nextCsrfToken, nextNotice) {
+    setSession({ status: 'ready', user: nextUser, csrfToken: nextCsrfToken, error: null, notice: nextNotice ?? null })
+  }
+
+  const accountPanel = session.status === 'ready' ? <AuthAccount key={`${session.user?.id ?? 'guest'}:${session.csrfToken ?? 'none'}`} api={api} initialUser={session.user} initialCsrfToken={session.csrfToken} initialNotice={session.notice} onSession={applySession} /> : null
+  const reader = session.status === 'ready' && session.user?.role === 'user'
+
   return (
     <>
       <a className="skip-link" href="#main-content">
@@ -56,7 +65,7 @@ export default function App() {
         </div>
         <div>
           <div className="brand-name">TechPulse AI</div>
-          <div className="brand-sub">News intelligence foundation</div>
+          <div className="brand-sub">Tin công nghệ có nguồn</div>
         </div>
         <div className="header-status" role="status" aria-live="polite">
           <span className={`status-dot status-${health.status}`} aria-hidden="true" />
@@ -64,8 +73,8 @@ export default function App() {
         </div>
       </header>
 
-      <div className="app-layout">
-        <nav className="side-nav" aria-label="Điều hướng nền tảng">
+      <div className={`app-layout ${reader ? 'reader-app-layout' : ''}`}>
+        {!reader ? <nav className="side-nav" aria-label="Điều hướng nền tảng">
           <span className="nav-label">Step 04</span>
           <a className="nav-item active" href="#main-content" aria-current="page">
             Source policy
@@ -73,7 +82,7 @@ export default function App() {
           {session.user?.role === 'admin' ? <a className="nav-item" href="#source-registry-title">Source Registry</a> : null}
           {session.user?.role === 'admin' ? <a className="nav-item" href="#jobs-panel-title">Durable jobs</a> : null}
           <span className="nav-note">Source policy, durable jobs và fenced leases giữ ingestion fail closed trước các connector ở Step 5.</span>
-        </nav>
+        </nav> : null}
 
         <main id="main-content" tabIndex="-1">
           {session.status === 'loading' ? <section className="hero-card" aria-busy="true"><p>Đang khôi phục phiên…</p></section> : null}
@@ -85,10 +94,11 @@ export default function App() {
               <button className="primary-button" type="button" onClick={restoreSession}>Thử lại</button>
             </section>
           ) : null}
-          {session.status === 'ready' ? <AuthAccount key={`${session.user?.id ?? 'guest'}:${session.csrfToken ?? 'none'}`} api={api} initialUser={session.user} initialCsrfToken={session.csrfToken} initialNotice={session.notice} onSession={(nextUser, nextCsrfToken, nextNotice) => setSession({ status: 'ready', user: nextUser, csrfToken: nextCsrfToken, error: null, notice: nextNotice ?? null })} /> : null}
+          {session.status === 'ready' && (!session.user || session.user.role === 'admin') ? accountPanel : null}
+          {reader ? <ContentWorkspace generatedApi={api} csrfToken={session.csrfToken} route={contentRoute} onRouteChange={setContentRoute} accountPanel={accountPanel} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {session.status === 'ready' && session.user?.role === 'admin' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
           {session.status === 'ready' && session.user?.role === 'admin' ? <JobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => setSession({ status: 'ready', user: null, csrfToken: null, error: null, notice })} /> : null}
-          <section className="hero-card" aria-labelledby="page-title">
+          {!reader ? <section className="hero-card" aria-labelledby="page-title">
             <div className="eyebrow">STEP 04 · DURABLE EXECUTION FOUNDATION</div>
             <h1 id="page-title">Mỗi lần chạy có identity, lease và giới hạn rõ ràng.</h1>
             <p className="hero-copy">
@@ -111,7 +121,7 @@ export default function App() {
                 <p>Mỗi queue có reserved attempt trước spill; queue chưa đăng ký giữ zero counters và không bị query.</p>
               </article>
             </div>
-          </section>
+          </section> : null}
         </main>
       </div>
     </>

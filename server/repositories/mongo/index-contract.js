@@ -12,14 +12,40 @@ function normalizeOption(value) {
   return value
 }
 
+function materializedTextKey(key) {
+  const entries = Object.entries(key ?? {})
+  if (!entries.some(([, direction]) => direction === 'text')) return key
+  const stored = {}
+  let textMarkerAdded = false
+  for (const [name, direction] of entries) {
+    if (direction !== 'text') stored[name] = direction
+    else if (!textMarkerAdded) {
+      stored._fts = 'text'
+      stored._ftsx = 1
+      textMarkerAdded = true
+    }
+  }
+  return stored
+}
+
+function expectedIndexOption(expected, option) {
+  const textFields = Object.entries(expected.key ?? {}).filter(([, direction]) => direction === 'text').map(([name]) => name)
+  if (textFields.length === 0) return expected.options?.[option]
+  if (option === 'weights') return expected.options?.weights ?? Object.fromEntries(textFields.map((name) => [name, 1]))
+  if (option === 'default_language') return expected.options?.default_language ?? 'english'
+  if (option === 'language_override') return expected.options?.language_override ?? 'language'
+  if (option === 'textIndexVersion') return expected.options?.textIndexVersion ?? 3
+  return expected.options?.[option]
+}
+
 export function exactMongoIndex(actual, expected) {
-  if (!actual || stableJson(actual.key) !== stableJson(expected.key)) return false
+  if (!actual || stableJson(actual.key) !== stableJson(materializedTextKey(expected.key))) return false
   const optionNames = new Set([
     ...Object.keys(actual).filter((name) => !INDEX_METADATA_FIELDS.has(name)),
     ...Object.keys(expected.options ?? {}),
   ])
   for (const option of optionNames) {
-    if (stableJson(normalizeOption(actual[option])) !== stableJson(normalizeOption(expected.options?.[option]))) return false
+    if (stableJson(normalizeOption(actual[option])) !== stableJson(normalizeOption(expectedIndexOption(expected, option)))) return false
   }
   return true
 }
