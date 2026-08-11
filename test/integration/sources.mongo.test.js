@@ -64,8 +64,10 @@ describeMongo('Step 3 Source Registry Mongo transaction boundary', () => {
 
   it('uses exact CAS so concurrent connector updates cannot drift marker and audit', async () => {
     const current = await repository.findSourceByKey('rss:example')
-    const first = applySourceUpdate(current, { domain: 'first.example.com', connectorConfig: { kind: 'rss', feedUrl: 'https://first.example.com/feed.xml', batchSize: 30 }, reasonCode: 'source_configuration_changed' }, { now: new Date('2026-08-11T00:00:00.000Z') })
-    const second = applySourceUpdate(current, { domain: 'second.example.com', connectorConfig: { kind: 'rss', feedUrl: 'https://second.example.com/feed.xml', batchSize: 40 }, reasonCode: 'source_configuration_changed' }, { now: new Date('2026-08-11T00:00:01.000Z') })
+    const firstAt = new Date(current.updatedAt.getTime() + 1)
+    const secondAt = new Date(current.updatedAt.getTime() + 2)
+    const first = applySourceUpdate(current, { domain: 'first.example.com', connectorConfig: { kind: 'rss', feedUrl: 'https://first.example.com/feed.xml', batchSize: 30 }, reasonCode: 'source_configuration_changed' }, { now: firstAt })
+    const second = applySourceUpdate(current, { domain: 'second.example.com', connectorConfig: { kind: 'rss', feedUrl: 'https://second.example.com/feed.xml', batchSize: 40 }, reasonCode: 'source_configuration_changed' }, { now: secondAt })
     const makeAudit = (result, requestId) => createSourceAuditEvent({ actor, action: 'source_configuration_updated', targetId: result.source.id, changedFields: result.changedFields, reasonCode: 'source_configuration_changed', request: { serverRequestId: requestId } })
     const outcomes = await Promise.allSettled([
       repository.commitReplacement({ source: first.source, expectedUpdatedAt: current.updatedAt, expectedPolicyVersion: current.policyVersion, audit: makeAudit(first, 'source-update-1'), actorFence }),
