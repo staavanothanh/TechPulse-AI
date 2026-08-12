@@ -143,6 +143,16 @@ const operations = [
     "pathParams": []
   },
   {
+    "operationId": "getChatSession",
+    "method": "GET",
+    "path": "/api/v1/chat-sessions/{chatSessionId}",
+    "requiredHeaders": [],
+    "browserManagedHeaders": [],
+    "pathParams": [
+      "chatSessionId"
+    ]
+  },
+  {
     "operationId": "deleteChatSession",
     "method": "DELETE",
     "path": "/api/v1/chat-sessions/{chatSessionId}",
@@ -670,6 +680,7 @@ export function createApiClient(clientOptions = {}) {
     unsaveArticle: (init = {}) => requestOperation('unsaveArticle', init, clientOptions),
     listChatSessions: (init = {}) => requestOperation('listChatSessions', init, clientOptions),
     clearChatSessions: (init = {}) => requestOperation('clearChatSessions', init, clientOptions),
+    getChatSession: (init = {}) => requestOperation('getChatSession', init, clientOptions),
     deleteChatSession: (init = {}) => requestOperation('deleteChatSession', init, clientOptions),
     listArticles: (init = {}) => requestOperation('listArticles', init, clientOptions),
     getArticle: (init = {}) => requestOperation('getArticle', init, clientOptions),

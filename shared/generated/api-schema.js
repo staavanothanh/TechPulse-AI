@@ -670,6 +670,44 @@ export const openApiDocument = {
       }
     },
     "/api/v1/chat-sessions/{chatSessionId}": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "getChatSession",
+        "x-persistence": "mongo",
+        "summary": "Read one current user's bounded chat session detail",
+        "description": "Returns only the authenticated owner's non-expired session. Missing, cross-user and expired sessions use the same not-found response so ownership is not disclosed. The detail is capped at 30 persisted messages and exposes no raw evidence, provider, prompt or credential state.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ChatSessionIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Account"
@@ -5177,6 +5215,200 @@ export const openApiDocument = {
           },
           "meta": {
             "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "ChatSessionDetailResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ChatSessionDetail"
+          }
+        }
+      },
+      "ChatSessionDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "scope",
+          "messageCount",
+          "messages",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AnswerScope"
+          },
+          "messageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatSessionMessage"
+            },
+            "maxItems": 30
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Public bounded history for the authenticated owner. messageCount equals the persisted messages length and never exceeds 30; the server enforces the equality before serialization. No owner identity, raw evidence, provider state, prompt, score, vector, credential or token is public."
+      },
+      "ChatSessionMessage": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UserChatMessage"
+          },
+          {
+            "$ref": "#/components/schemas/AnsweredChatMessage"
+          },
+          {
+            "$ref": "#/components/schemas/RefusedChatMessage"
+          }
+        ],
+        "description": "Mutually exclusive persisted user question, answered assistant message or refused assistant message."
+      },
+      "UserChatMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role",
+          "text",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "const": "user"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AnsweredChatMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role",
+          "status",
+          "paragraphs",
+          "citations",
+          "refusalReason",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "const": "assistant"
+          },
+          "status": {
+            "const": "answered"
+          },
+          "paragraphs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnswerParagraph"
+            },
+            "minItems": 1,
+            "maxItems": 12
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoricalChatCitation"
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "refusalReason": {
+            "type": "null"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Historical answered assistant message. Every paragraph citation ID resolves to one returned HistoricalChatCitation.id; citations may be available or unavailable after policy/takedown changes."
+      },
+      "RefusedChatMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role",
+          "status",
+          "paragraphs",
+          "citations",
+          "refusalReason",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "const": "assistant"
+          },
+          "status": {
+            "const": "refused"
+          },
+          "paragraphs": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "citations": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "refusalReason": {
+            "type": "string",
+            "enum": [
+              "insufficient-evidence",
+              "policy-blocked",
+              "sensitive-input",
+              "provider-unavailable"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
