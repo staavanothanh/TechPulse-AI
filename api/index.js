@@ -4,6 +4,7 @@ import { createConfiguredSourceService } from '../server/bootstrap/sources.js'
 import { createConfiguredJobRuntime } from '../server/bootstrap/jobs.js'
 import { createConfiguredContentServices } from '../server/bootstrap/content.js'
 import { createConfiguredIndexingRuntime } from '../server/bootstrap/indexing.js'
+import { createConfiguredQaService } from '../server/bootstrap/qa.js'
 import { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } from '../server/ai/provider-adapters.js'
 import { createSafeFetch } from '../server/infrastructure/http/safe-fetch.js'
 import { createSourceTechnicalCheckAdapter } from '../server/infrastructure/http/source-technical-check.js'
@@ -16,6 +17,8 @@ function loadApp() {
       let sourceService
       let jobs = {}
       let content = {}
+      let qaService
+      let providerAdapters
       const rateLimitAdmission = createRateLimitAdmission({ repository: authRepository, keyring: quotaKeyring })
       const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
       try { sourceService = (await createConfiguredSourceService({ context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.error('Source Registry service is unavailable') }
@@ -23,14 +26,18 @@ function loadApp() {
       let indexing = {}
       if (jobs.queueRegistry) {
         try {
-          const adapters = createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
-          indexing = await createConfiguredIndexingRuntime({ context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerAdmissionDomains, ...adapters })
+          providerAdapters = createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
+          indexing = await createConfiguredIndexingRuntime({ context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerAdmissionDomains, ...providerAdapters })
         } catch { console.error('Indexing service is unavailable') }
       }
+      try {
+        providerAdapters ??= createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
+        qaService = await createConfiguredQaService({ context, providerRegistry: runtime.providerAdmissionDomains, providerAdapters, providerAdmission: indexing.providerAdmission, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
+      } catch { console.error('Grounded Q&A service is unavailable') }
       try { content = await createConfiguredContentServices({ context, queryEmbedding: indexing.queryEmbedding }) } catch { console.error('Content service is unavailable') }
       return createApp({
         authService, sourceService, jobService: jobs.jobService, indexingJobService: indexing.indexingJobService, dueWorkRunner: jobs.dueWorkRunner, maintenanceRunner: jobs.maintenanceRunner,
-        articleService: content.articleService, searchService: content.searchService, savedService: content.savedService,
+        articleService: content.articleService, searchService: content.searchService, savedService: content.savedService, qaService,
         imageCspHosts: content.imageCspHosts,
         allowedOrigins: runtime.origins.join(','), machineSecretEnv: runtime.internalMachineSecretEnv,
       })

@@ -154,6 +154,25 @@ describe('article repository fence contract', () => {
     expect(await repository.findQnaEvidence({ limit: 1 })).toEqual([])
   })
 
+  it('pushes the requested article, topic and time scope into the Q&A evidence query', async () => {
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    const source = { ...makeSource(), _id: new ObjectId(SOURCE_ID) }
+    const article = normalizeCandidateToArticle(makeCandidate(), { source, now: RETRIEVED_AT })
+    const document = { ...article, _id: new ObjectId('507f1f77bcf86cd799439099'), sourceId: source._id, provenance: article.provenance.map((entry) => ({ ...entry, sourceId: source._id })), _currentSource: source }
+    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [document]) }))
+    repository.articles = () => ({ aggregate })
+
+    await repository.findQnaEvidence({
+      limit: 20,
+      scope: { articleId: document._id.toHexString(), topics: ['ai'], publishedAfter: new Date('2026-08-01T00:00:00.000Z'), publishedBefore: new Date('2026-08-11T00:00:00.000Z') },
+      includeSource: true,
+    })
+
+    expect(aggregate.mock.calls[0][0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ $match: expect.objectContaining({ _id: document._id, topics: { $in: ['ai'] }, publishedAt: { $gte: new Date('2026-08-01T00:00:00.000Z'), $lte: new Date('2026-08-11T00:00:00.000Z') } }) }),
+    ]))
+  })
+
   it('does not retain candidate body/media binary in the commit input contract', () => {
     const repository = new MongoArticleRepository({ db: {}, client: {} })
     const candidate = { ...makeCandidate(), body: 'full body', rawHtml: '<html>raw</html>', mediaBinary: Buffer.from('binary'), mediaCandidate: { ...makeCandidate().mediaCandidate, binary: 'nested binary' }, sourceMetadata: { comment: 'safe', body: 'nested full text' } }

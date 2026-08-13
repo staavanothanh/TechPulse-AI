@@ -4,9 +4,10 @@ import SavedScreen from '../saved/SavedScreen.jsx'
 import SearchScreen from '../search/SearchScreen.jsx'
 import { createContentApi } from './content-api.js'
 import FeedScreen from './FeedScreen.jsx'
+import GroundedQaScreen from '../qa/GroundedQaScreen.jsx'
 import './content.css'
 
-const SAFE_ROUTES = new Set(['feed', 'search', 'saved', 'account'])
+const SAFE_ROUTES = new Set(['feed', 'search', 'saved', 'qa', 'account'])
 
 function NavButton({ route, current, onSelect, children }) {
   return <button type="button" className={current === route ? 'current' : ''} aria-current={current === route ? 'page' : undefined} onClick={() => onSelect(route)}>{children}</button>
@@ -56,6 +57,7 @@ export default function ContentWorkspace({ generatedApi, csrfToken, route = 'fee
         <NavButton route="feed" current={current} onSelect={select}>Feed</NavButton>
         <NavButton route="search" current={current} onSelect={select}>Search</NavButton>
         <NavButton route="saved" current={current} onSelect={select}>Saved</NavButton>
+        <NavButton route="qa" current={current} onSelect={select}>Hỏi đáp</NavButton>
         <NavButton route="account" current={current} onSelect={select}>Account</NavButton>
         <p>Nội dung chỉ xuất hiện khi bài và nguồn vẫn đạt visibility policy hiện hành.</p>
       </aside>
@@ -63,6 +65,7 @@ export default function ContentWorkspace({ generatedApi, csrfToken, route = 'fee
         {current === 'feed' ? <FeedScreen {...shared} onOpenSearch={() => select('search')} /> : null}
         {current === 'search' ? <SearchScreen {...shared} /> : null}
         {current === 'saved' ? <SavedScreen {...shared} onOpenFeed={() => select('feed')} /> : null}
+        {current === 'qa' ? <GroundedQaScreen generatedApi={generatedApi} csrfToken={csrfToken} announce={setLiveStatus} onSessionExpired={() => expire('qa')} /> : null}
         {current === 'account' ? accountPanel : null}
         {current === 'article' && articleId ? <ArticleDetailScreen {...shared} articleId={articleId} onBack={() => select('feed')} /> : null}
         {current === 'article' && !articleId ? <section className="content-state"><h1>Chưa chọn bài viết</h1><button className="content-button" type="button" onClick={() => select('feed')}>Quay lại Feed</button></section> : null}
@@ -71,6 +74,7 @@ export default function ContentWorkspace({ generatedApi, csrfToken, route = 'fee
         <NavButton route="feed" current={current} onSelect={select}>Feed</NavButton>
         <NavButton route="search" current={current} onSelect={select}>Search</NavButton>
         <NavButton route="saved" current={current} onSelect={select}>Saved</NavButton>
+        <NavButton route="qa" current={current} onSelect={select}>Hỏi đáp</NavButton>
         <NavButton route="account" current={current} onSelect={select}>Account</NavButton>
       </nav>
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveStatus}</p>

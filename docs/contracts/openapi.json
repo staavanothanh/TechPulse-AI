@@ -695,6 +695,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
@@ -733,6 +736,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -1005,6 +1011,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -3365,8 +3374,9 @@
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 128
+          "minLength": 24,
+          "maxLength": 24,
+          "pattern": "^[0-9a-fA-F]{24}$"
         }
       },
       "TakedownRequestIdPath": {
@@ -4618,7 +4628,9 @@
         "properties": {
           "articleId": {
             "type": "string",
-            "maxLength": 128
+            "minLength": 24,
+            "maxLength": 24,
+            "pattern": "^[0-9a-fA-F]{24}$"
           },
           "topics": {
             "type": "array",
@@ -4663,7 +4675,9 @@
           },
           "chatSessionId": {
             "type": "string",
-            "maxLength": 128
+            "minLength": 24,
+            "maxLength": 24,
+            "pattern": "^[0-9a-fA-F]{24}$"
           }
         }
       },

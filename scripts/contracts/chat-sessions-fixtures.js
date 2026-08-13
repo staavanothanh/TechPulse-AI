@@ -5,7 +5,7 @@ import { collectOperations, dereference } from './openapi-utils.js'
 const NOW = '2026-08-12T00:00:00.000Z'
 const ARTICLE_ID = '507f1f77bcf86cd799439011'
 const SOURCE_ID = '507f1f77bcf86cd799439021'
-const SESSION_ID = 'chat-session-contract-001'
+const SESSION_ID = '507f1f77bcf86cd799439031'
 
 function responseValidator(document) {
   const ajv = new Ajv({ allErrors: true, strict: false })

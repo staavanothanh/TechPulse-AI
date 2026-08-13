@@ -15,6 +15,7 @@ const { createConfiguredSourceService } = await import('./bootstrap/sources.js')
 const { createConfiguredJobRuntime } = await import('./bootstrap/jobs.js')
 const { createConfiguredContentServices } = await import('./bootstrap/content.js')
 const { createConfiguredIndexingRuntime } = await import('./bootstrap/indexing.js')
+const { createConfiguredQaService } = await import('./bootstrap/qa.js')
 const { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } = await import('./ai/provider-adapters.js')
 const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
@@ -30,6 +31,7 @@ let savedService
 let imageCspHosts
 let indexingJobService
 let queryEmbedding
+let qaService
 let runtime
 try {
   const configured = await createConfiguredAuthService()
@@ -43,12 +45,18 @@ try {
     jobService = jobs.jobService
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner
+    let adapters
+    let indexing = {}
     try {
-      const adapters = createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
-      const indexing = await createConfiguredIndexingRuntime({ context: configured.context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerAdmissionDomains, ...adapters })
+      adapters = createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
+      indexing = await createConfiguredIndexingRuntime({ context: configured.context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerAdmissionDomains, ...adapters })
       indexingJobService = indexing.indexingJobService
       queryEmbedding = indexing.queryEmbedding
     } catch { console.warn('Indexing service is unavailable until the Step 9 migration/provider configuration is ready') }
+    try {
+      adapters ??= createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
+      qaService = await createConfiguredQaService({ context: configured.context, providerRegistry: runtime.providerAdmissionDomains, providerAdapters: adapters, providerAdmission: indexing.providerAdmission, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
+    } catch { console.warn('Grounded Q&A service is unavailable until the Step 10 migration/provider configuration is ready') }
   } catch { console.warn('Durable job service is unavailable until its migration is applied') }
   try {
     const content = await createConfiguredContentServices({ context: configured.context, queryEmbedding })
@@ -60,7 +68,7 @@ try {
 } catch {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
-const app = createApp({ authService, sourceService, jobService, indexingJobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
+const app = createApp({ authService, sourceService, jobService, indexingJobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, qaService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
 server.on('request', app)
 server.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)

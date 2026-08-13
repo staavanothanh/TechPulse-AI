@@ -25,8 +25,9 @@ export function createProviderAdmission({ repository, registry, now = () => new 
     async run({ routeId, capability = 'nonconfidential', attemptId, kind, units = 1, invoke } = {}) {
       const route = routes.get(routeId)
       const domain = route ? domains.get(route.admissionDomainId) : null
-      if (!route || !domain || route.enabled !== true || !capabilityAllows(route.capability, capability) || !KINDS.has(kind) || typeof invoke !== 'function') throw new ProviderBoundaryError('provider_unavailable', 'No eligible AI provider route is available', { retryable: false })
       const reservedAt = now()
+      const evidenceExpiresAt = route?.evidenceExpiresAt ? new Date(route.evidenceExpiresAt) : null
+      if (!route || !domain || route.enabled !== true || !capabilityAllows(route.capability, capability) || capability === 'zdr-verified' && (!evidenceExpiresAt || Number.isNaN(evidenceExpiresAt.getTime()) || evidenceExpiresAt <= reservedAt) || !KINDS.has(kind) || typeof invoke !== 'function') throw new ProviderBoundaryError('provider_unavailable', 'No eligible AI provider route is available', { retryable: false })
       const id = reservationId()
       const reservation = await repository.reserveProviderCall({
         domain, route, reservationId: id, attemptId, kind, units,
@@ -34,6 +35,11 @@ export function createProviderAdmission({ repository, registry, now = () => new 
       })
       if (!reservation?.allowed) throw new ProviderBoundaryError('provider_unavailable', 'AI provider is temporarily unavailable', { retryAfterSeconds: reservation?.retryAfterSeconds })
       try {
+        if (capability === 'zdr-verified' && evidenceExpiresAt <= now()) {
+          const error = new ProviderBoundaryError('provider_unavailable', 'Current private provider evidence has expired', { retryable: false })
+          error.releaseCode = 'provider_evidence_expired'
+          throw error
+        }
         const result = await invoke(route)
         await repository.releaseProviderCall({ admissionDomainId: domain.admissionDomainId, routeId, reservationId: id, outcome: 'succeeded', now: now() })
         return result
@@ -41,8 +47,16 @@ export function createProviderAdmission({ repository, registry, now = () => new 
         await repository.releaseProviderCall({
           admissionDomainId: domain.admissionDomainId, routeId, reservationId: id,
           outcome: error?.retryable === true ? 'retryable-failure' : 'nonretryable-failure',
-          errorCode: typeof error?.code === 'string' ? error.code.slice(0, 128) : 'provider_failed', now: now(),
+          errorCode: typeof error?.releaseCode === 'string' ? error.releaseCode : typeof error?.code === 'string' ? error.code.slice(0, 128) : 'provider_failed', now: now(),
         })
+        if (error?.name === 'EvidenceSelectionError' && ['policy-blocked', 'insufficient-evidence'].includes(error.code)) {
+          error.message = error.code === 'policy-blocked' ? 'Provider input is no longer permitted' : 'Provider evidence is no longer sufficient'
+          throw error
+        }
+        if (error?.name === 'PrivacyAdmissionError' && ['sensitive-input', 'provider-unavailable'].includes(error.code)) {
+          error.message = error.code === 'sensitive-input' ? 'Provider input cannot be processed safely' : 'Current private provider route is unavailable'
+          throw error
+        }
         throw new ProviderBoundaryError('provider_unavailable', 'AI provider is temporarily unavailable', { retryable: error?.retryable === true })
       }
     },

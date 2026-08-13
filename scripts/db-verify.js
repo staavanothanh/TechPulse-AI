@@ -16,6 +16,10 @@ import {
   INDEXING_JOB_INDEXES,
 } from './migrations/indexing-jobs.js'
 import {
+  CHAT_SESSION_COLLECTIONS,
+  CHAT_SESSION_INDEXES,
+} from './migrations/chat-sessions.js'
+import {
   actionsForCollection,
   probeAuditRoleCapabilities,
   probeHmacLifecycleRoleCapabilities,
@@ -51,9 +55,9 @@ function exactArticleIndex(actual, expected) {
     stableJson(actual.default_language) === stableJson(expected.options?.default_language)
   )
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat-sessions'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs',
+    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, chat-sessions',
   )
   process.exitCode = 2
 } else {
@@ -73,6 +77,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
             ? ARTICLE_COLLECTIONS
             : target === 'indexing-jobs'
               ? INDEXING_JOB_COLLECTIONS
+              : target === 'chat-sessions'
+                ? CHAT_SESSION_COLLECTIONS
               : AUTH_CORE_COLLECTIONS
     const expectedIndexes =
       target === 'sources'
@@ -83,6 +89,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
             ? ARTICLE_INDEXES
             : target === 'indexing-jobs'
               ? INDEXING_JOB_INDEXES
+              : target === 'chat-sessions'
+                ? CHAT_SESSION_INDEXES
               : AUTH_CORE_INDEXES
     for (const name of Object.keys(expectedCollections)) {
       const collection = collectionMap.get(name)
@@ -135,13 +143,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
       target === 'sources' ||
       target === 'durable-jobs' ||
       target === 'articles' ||
-      target === 'indexing-jobs'
+      target === 'indexing-jobs' ||
+      target === 'chat-sessions'
     ) {
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')
       else {
         const acceptedAuditValidators =
-          target === 'indexing-jobs'
+          target === 'indexing-jobs' || target === 'chat-sessions'
             ? [INDEXING_JOB_AUDIT_VALIDATOR]
             : target === 'durable-jobs' || target === 'articles'
               ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR]
@@ -236,7 +245,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
                 'ingestion_schedule_period_unique',
               ],
             ]
-          : target === 'indexing-jobs'
+            : target === 'indexing-jobs'
             ? [
                 [
                   'indexing_due_normal',
@@ -303,6 +312,63 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
                   'articles_source_reconciliation',
                 ],
               ]
+            : target === 'chat-sessions'
+              ? [
+                  [
+                    'chat_user_updated',
+                    'chatSessions',
+                    { userId: new ObjectId('000000000000000000000001') },
+                    { updatedAt: -1, _id: -1 },
+                    'chat_sessions_user_updated',
+                  ],
+                  [
+                    'chat_citation_article',
+                    'chatSessions',
+                    { 'messages.citations.articleId': new ObjectId('000000000000000000000001') },
+                    { _id: 1 },
+                    'chat_sessions_citation_article',
+                  ],
+                  [
+                    'chat_citation_source',
+                    'chatSessions',
+                    { 'messages.citations.sourceId': new ObjectId('000000000000000000000001') },
+                    { _id: 1 },
+                    'chat_sessions_citation_source',
+                  ],
+                  [
+                    'chat_expiry',
+                    'chatSessions',
+                    { expiresAt: { $lte: new Date() } },
+                    { expiresAt: 1 },
+                    'chat_sessions_expires_ttl',
+                  ],
+                  [
+                    'answer_attempts_identity',
+                    'answerAttempts',
+                    {
+                      userId: new ObjectId('000000000000000000000001'),
+                      sessionId: new ObjectId('000000000000000000000002'),
+                      expectedSessionVersion: 1,
+                      idempotencyKeyHash: 'a'.repeat(64),
+                    },
+                    undefined,
+                    'answer_attempts_identity_unique',
+                  ],
+                  [
+                    'answer_attempts_user_created',
+                    'answerAttempts',
+                    { userId: new ObjectId('000000000000000000000001') },
+                    { createdAt: -1, _id: -1 },
+                    'answer_attempts_user_created',
+                  ],
+                  [
+                    'answer_attempts_expiry',
+                    'answerAttempts',
+                    { expiresAt: { $lte: new Date() } },
+                    { expiresAt: 1, _id: 1 },
+                    'answer_attempts_expiry_deadline',
+                  ],
+                ]
             : target === 'articles'
               ? [
                   [
@@ -401,7 +467,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
       target === 'sources' ||
       target === 'durable-jobs' ||
       target === 'articles' ||
-      target === 'indexing-jobs'
+      target === 'indexing-jobs' ||
+      target === 'chat-sessions'
         ? 'not-requested'
         : 'unavailable-local'
     const roleProblems = []
@@ -415,7 +482,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
               ['sources', 'sources'],
               ['adminAuditLogs', 'audit'],
             ]
-          : ['durable-jobs', 'indexing-jobs'].includes(target)
+          : ['durable-jobs', 'indexing-jobs', 'chat-sessions'].includes(target)
             ? []
             : [
                 ['adminAuditLogs', 'audit'],
@@ -462,7 +529,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
       )
         roleProblems.push('runtime HMAC lifecycle role capability probe failed')
       if (roleProblems.length === 0) roleStatus = 'verified'
-    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs')) {
+    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs' || target === 'chat-sessions')) {
       roleStatus = 'not-requested'
     } else if (requireRole) {
       roleProblems.push('durable-jobs runtime role capability probe is not registered')

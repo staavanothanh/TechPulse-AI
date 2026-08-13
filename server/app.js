@@ -10,6 +10,8 @@ import { createArticlesRouter } from './http/articles/router.js'
 import { createContentSecurityPolicyMiddleware } from './http/articles/content-security-policy.js'
 import { createSearchRouter } from './http/search/router.js'
 import { createSavedRouter } from './http/saved/router.js'
+import { createAnswersRouter } from './http/answers/router.js'
+import { createChatSessionsRouter } from './http/chat-sessions/router.js'
 import { createInternalCronRouter } from './http/internal/cron/router.js'
 import { createInternalMaintenanceRouter } from './http/internal/maintenance/router.js'
 import { createSessionMiddleware } from './http/middleware/session.js'
@@ -26,6 +28,8 @@ export function createApp(options = {}) {
   app.use(createArticlesRouter({ articleService: options.articleService }))
   app.use(createSearchRouter({ searchService: options.searchService }))
   app.use(createSavedRouter({ savedService: options.savedService, authService: options.authService }))
+  app.use(createAnswersRouter({ qaService: options.qaService, authService: options.authService }))
+  app.use(createChatSessionsRouter({ qaService: options.qaService, authService: options.authService }))
   app.use(createAdminSourcesRouter({ sourceService: options.sourceService, authService: options.authService }))
   app.use(createAdminIngestionJobsRouter({ jobService: options.jobService, authService: options.authService }))
   app.use(createAdminIndexingJobsRouter({ indexingJobService: options.indexingJobService, authService: options.authService }))

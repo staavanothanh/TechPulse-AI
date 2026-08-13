@@ -5,6 +5,7 @@ import { buildSourcesMigration } from './migrations/sources.js'
 import { buildDurableJobsMigration } from './migrations/durable-jobs.js'
 import { buildArticlesMigration, runArticlesMigration } from './migrations/articles.js'
 import { buildIndexingJobsMigration, runIndexingJobsMigration } from './migrations/indexing-jobs.js'
+import { buildChatSessionsMigration, runChatSessionsMigration } from './migrations/chat-sessions.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
@@ -19,9 +20,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat-sessions'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, chat-sessions',
   )
   process.exitCode = 2
 } else {
@@ -39,8 +40,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
           ? buildDurableJobsMigration
           : target === 'articles'
             ? buildArticlesMigration
-            : target === 'indexing-jobs'
+          : target === 'indexing-jobs'
               ? buildIndexingJobsMigration
+              : target === 'chat-sessions'
+                ? buildChatSessionsMigration
               : buildAuthCoreMigration
     const runMigration =
       target === 'sources'
@@ -49,8 +52,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs'].inclu
           ? runDurableJobsWithStep4Compatibility
           : target === 'articles'
             ? runArticlesMigration
-            : target === 'indexing-jobs'
+          : target === 'indexing-jobs'
               ? runIndexingJobsMigration
+              : target === 'chat-sessions'
+                ? runChatSessionsMigration
               : runAuthCoreWithStep4Compatibility
     const plan = dryRun
       ? buildMigration({ dryRun: true })

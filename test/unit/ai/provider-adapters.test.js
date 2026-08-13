@@ -42,4 +42,26 @@ describe('Step 9 controlled provider adapters', () => {
     await expect(missing.embeddingProvider.embed({ route: { ...registry.routes[1], model: 'alternate' }, input: 'safe', model: 'baai/bge-m3', dimensions: 1024 })).rejects.toMatchObject({ retryable: false })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
+
+  it('instructs the answer provider to return exact evidence block IDs for every cited paragraph', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ status: 'answered', paragraphs: [] }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const answerRoute = { routeId: 'answer-primary', admissionDomainId: 'openrouter-main', provider: 'openrouter', model: 'summary/model' }
+    const adapters = createConfiguredProviderAdapters({ registry: { ...registry, routes: [...registry.routes, answerRoute] }, fetchImpl, resolveCredential: () => 'secret-value' })
+
+    await adapters.llmProvider.answer({ route: answerRoute, input: '<evidence-block id="E1" citation="C1">du lieu</evidence-block>', locale: 'vi', tools: [] })
+
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.messages[0].content).toMatch(/evidenceBlockIds/)
+  })
+
+  it('requires the support provider to bind its verdict to the exact evidence block set', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: 'supported', evidenceBlockIds: ['E1'] }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const supportRoute = { routeId: 'answer-support', admissionDomainId: 'openrouter-main', provider: 'openrouter', model: 'summary/model' }
+    const adapters = createConfiguredProviderAdapters({ registry: { ...registry, routes: [...registry.routes, supportRoute] }, fetchImpl, resolveCredential: () => 'secret-value' })
+
+    await expect(adapters.llmProvider.verifySupport({ route: supportRoute, input: JSON.stringify({ evidenceBlocks: [{ id: 'E1', citationId: 'C1', text: 'exact admitted block' }], evidenceMap: { E1: 'C1' }, paragraphs: [] }), locale: 'vi', tools: [] })).resolves.toMatchObject({ verdict: 'supported', evidenceBlockIds: ['E1'] })
+
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.messages[0].content).toMatch(/evidenceBlockIds/)
+  })
 })

@@ -694,6 +694,9 @@ export const openApiDocument = {
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -729,6 +732,9 @@ export const openApiDocument = {
         "responses": {
           "204": {
             "description": "Chat session deleted or already absent"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -1010,6 +1016,9 @@ export const openApiDocument = {
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -3500,8 +3509,9 @@ export const openApiDocument = {
         "required": true,
         "schema": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 128
+          "minLength": 24,
+          "maxLength": 24,
+          "pattern": "^[0-9a-fA-F]{24}$"
         }
       },
       "TakedownRequestIdPath": {
@@ -4923,7 +4933,9 @@ export const openApiDocument = {
         "properties": {
           "articleId": {
             "type": "string",
-            "maxLength": 128
+            "minLength": 24,
+            "maxLength": 24,
+            "pattern": "^[0-9a-fA-F]{24}$"
           },
           "topics": {
             "type": "array",
@@ -4981,7 +4993,9 @@ export const openApiDocument = {
           },
           "chatSessionId": {
             "type": "string",
-            "maxLength": 128
+            "minLength": 24,
+            "maxLength": 24,
+            "pattern": "^[0-9a-fA-F]{24}$"
           }
         }
       },

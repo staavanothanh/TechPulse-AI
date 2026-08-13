@@ -153,6 +153,22 @@ async function sourceForArticle(sourceCollection, document) {
   return sourceCollection.findOne({ _id: document.sourceId })
 }
 
+function serializeSourceForQna(source) {
+  if (!source) return null
+  return {
+    id: source._id?.toHexString?.() ?? String(source.id ?? source.sourceId),
+    name: typeof source.name === 'string' ? source.name : '',
+    authorityTier: source.authorityTier,
+    operationalStatus: source.operationalStatus,
+    licenseStatus: source.licenseStatus,
+    policyVersion: source.policyVersion,
+    llmInputScope: source.llmInputScope,
+    storageScope: source.storageScope ? { ...source.storageScope } : undefined,
+    mediaPolicy: source.mediaPolicy ? { ...source.mediaPolicy, allowedHosts: [...(source.mediaPolicy.allowedHosts ?? [])] } : undefined,
+    technicalCheck: { status: source.technicalCheck?.status },
+  }
+}
+
 const PUBLIC_SUMMARY_STATUSES = new Set(['pending', 'processing', 'ready', 'failed'])
 const SUMMARY_BASES = new Set(['metadata', 'excerpt', 'fulltext-temporary'])
 
@@ -296,6 +312,21 @@ function contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore, c
     filters.push({ $or: [{ publishedAt: { $lt: publishedAt } }, { publishedAt, _id: { $lt: id } }] })
   }
   return filters.length === 1 ? filters[0] : { $and: filters }
+}
+
+function qnaScopeFilter(scope = {}) {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw contentQueryInvalid('Q&A scope is invalid')
+  const match = {}
+  if (scope.articleId !== undefined && scope.articleId !== null) match._id = contentObjectId(scope.articleId)
+  if (scope.topics !== undefined) {
+    if (!Array.isArray(scope.topics) || scope.topics.length < 1 || scope.topics.length > 10 || scope.topics.some((topic) => typeof topic !== 'string' || topic.length < 1 || topic.length > 100)) throw contentQueryInvalid('Q&A topics are invalid')
+    match.topics = { $in: scope.topics }
+  }
+  const publishedAfter = scope.publishedAfter === undefined ? null : dateValue(scope.publishedAfter, 'Q&A publishedAfter')
+  const publishedBefore = scope.publishedBefore === undefined ? null : dateValue(scope.publishedBefore, 'Q&A publishedBefore')
+  if (Boolean(publishedAfter) !== Boolean(publishedBefore) || publishedAfter && publishedBefore && publishedAfter > publishedBefore) throw contentQueryInvalid('Q&A date range is invalid')
+  if (publishedAfter) match.publishedAt = { $gte: publishedAfter, $lte: publishedBefore }
+  return match
 }
 
 function visibilityPipeline({ match, userId, limit } = {}) {
@@ -834,28 +865,36 @@ export class MongoArticleRepository {
     await this.savedArticles().deleteMany({ userId: contentObjectId(userId) })
   }
 
-  async findQnaEvidence({ limit = 20 } = {}) {
+  async findQnaEvidence({ limit = 20, includeSource = false, scope = {} } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ArticleError('article_query_invalid', 'Article limit is invalid', { status: 400 })
     const collection = this.articles()
     const qnaFilter = qnaEvidenceFilter({ sourcePath: '_currentSource' })
+    const scopeFilter = qnaScopeFilter(scope)
     if (typeof collection.aggregate !== 'function') {
-      const documents = await collection.find({ status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible }).sort({ publishedAt: -1, _id: -1 }).limit(limit).toArray()
+      const documents = await collection.find({ status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter }).sort({ publishedAt: -1, _id: -1 }).limit(limit).toArray()
       const evidence = []
       for (const document of documents) {
         const source = await sourceForArticle(this.sources(), document)
-        if (canUseQnaEvidence(document, source)) evidence.push(serializeVisibleArticle(document, source))
+        if (canUseQnaEvidence(document, source)) {
+          const article = serializeVisibleArticle(document, source)
+          evidence.push(includeSource ? { article, source: serializeSourceForQna(source) } : article)
+        }
       }
       return evidence
     }
     const articles = await collection.aggregate([
-      { $match: { status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible } },
+      { $match: { status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter } },
       { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
       { $unwind: '$_currentSource' },
       { $match: sourceOnlyFilter(qnaFilter) },
       { $sort: { publishedAt: -1, _id: -1 } },
       { $limit: limit },
     ]).toArray()
-    return articles.flatMap(({ _currentSource: source, ...document }) => canUseQnaEvidence(document, source) ? [serializeVisibleArticle(document, source)] : [])
+    return articles.flatMap(({ _currentSource: source, ...document }) => {
+      if (!canUseQnaEvidence(document, source)) return []
+      const article = serializeVisibleArticle(document, source)
+      return [includeSource ? { article, source: serializeSourceForQna(source) } : article]
+    })
   }
 }
 
