@@ -46,4 +46,27 @@ describe('Step 10 Q&A API adapter', () => {
       },
     })
   })
+
+  it('keeps Retry-After isolated per overlapping invocation', async () => {
+    let releaseSlow
+    const slow = new Promise((resolve) => { releaseSlow = resolve })
+    const fetchImpl = vi.fn(async (input) => {
+      if (new URL(input).pathname.includes('slow')) {
+        await slow
+        return response({ error: { code: 'rate_limit_exceeded', message: 'Rate limited' } }, 429, { 'Retry-After': '19' })
+      }
+      return response({ error: { code: 'service_unavailable', message: 'Unavailable' } }, 503)
+    })
+    const generated = {
+      listChatSessions: ({ fetchImpl: managedFetch }) => managedFetch('/slow'),
+      getChatSession: ({ fetchImpl: managedFetch }) => managedFetch('/fast'),
+    }
+    const api = createQaApi(generated, fetchImpl)
+    const slowRequest = api.listSessions()
+    const fastRequest = api.getSession('s1')
+    releaseSlow()
+    await expect(slowRequest).rejects.toMatchObject({ status: 429, retryAfter: 19 })
+    await expect(fastRequest).rejects.toMatchObject({ status: 503 })
+    await expect(fastRequest).rejects.not.toMatchObject({ retryAfter: 19 })
+  })
 })

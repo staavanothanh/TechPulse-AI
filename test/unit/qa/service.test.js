@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createQaService } from '../../../server/application/qa/service.js'
+import { createQaService, scopeValue } from '../../../server/application/qa/service.js'
 
 const auth = {
   user: { id: 'user-1', status: 'active', sessionVersion: 3 },
@@ -53,6 +53,12 @@ function evidence() {
 }
 
 describe('Step 10 grounded answer service', () => {
+  it('normalizes topics before validation and rejects empty or duplicate topics', () => {
+    expect(() => scopeValue({ topics: [' AI ', 'ai'] })).toThrowError(expect.objectContaining({ status: 422 }))
+    expect(() => scopeValue({ topics: ['   '] })).toThrowError(expect.objectContaining({ status: 422 }))
+    expect(scopeValue({ topics: [' AI ', 'ML'] })).toEqual({ topics: ['ai', 'ml'] })
+  })
+
   it('deterministically refuses sensitive input before any provider call', async () => {
     const repo = repository({ records: evidence() })
     const answer = vi.fn()
@@ -92,7 +98,7 @@ describe('Step 10 grounded answer service', () => {
   it('allows one grounded generation and support verdict, then appends one answer', async () => {
     const repo = repository({ records: evidence() })
     const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Bài viết mô tả kết quả ổn định.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
-    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: provider } }, routes: { primary: 'primary' }, supportVerifier })
     const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'grounded-key-1' })
     expect(result.answer).toMatchObject({ status: 'answered', citations: [{ id: 'C1', originalUrl: 'https://example.com/a' }] })
@@ -111,7 +117,7 @@ describe('Step 10 grounded answer service', () => {
     const originalAppend = repo.appendAnswer
     repo.appendAnswer = vi.fn(async (input) => ({ ...await originalAppend(input), attemptCommitted: true }))
     const updateAttempt = vi.spyOn(repo, 'updateAnswerAttempt')
-    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }) } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'] }) })
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }) } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     await service.createAnswer({ auth, question: 'Kết luận là gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'atomic-receipt-key' })
 
@@ -122,7 +128,7 @@ describe('Step 10 grounded answer service', () => {
   it('rejects a provider paragraph that lacks the exact internal evidence block ID', async () => {
     const repo = repository({ records: evidence() })
     const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận không có block.', citationIds: ['C1'] }] }))
-    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: provider } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'] }) })
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: provider } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'missing-block-key' })
 
@@ -157,6 +163,27 @@ describe('Step 10 grounded answer service', () => {
     expect(repo.getChatSession).toHaveBeenCalledTimes(1)
     expect(repo.attempts).toHaveLength(0)
     expect(provider).not.toHaveBeenCalled()
+  })
+
+  it('rejects continuation when its scope differs from the persisted session scope', async () => {
+    const repo = repository({ records: evidence() })
+    repo.getChatSession = vi.fn(async () => ({ id: '507f1f77bcf86cd799439099', scope: { topics: ['ml'] } }))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo })
+
+    await expect(service.createAnswer({ auth, question: 'Tiếp tục phiên này', scope: { topics: ['AI'] }, chatSessionId: '507f1f77bcf86cd799439099', idempotencyKey: 'scope-conflict-key' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
+    expect(repo.attempts).toHaveLength(0)
+  })
+
+  it('treats normalized continuation topics as an unordered scope', async () => {
+    const repo = repository({ records: evidence() })
+    repo.getChatSession = vi.fn(async () => ({ id: '507f1f77bcf86cd799439099', scope: { topics: ['ml', 'ai'] } }))
+    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: provider } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
+
+    const result = await service.createAnswer({ auth, question: 'Tiếp tục phiên này', scope: { topics: [' AI ', 'ML'] }, chatSessionId: '507f1f77bcf86cd799439099', idempotencyKey: 'scope-order-key' })
+
+    expect(result.answer.status).toBe('answered')
+    expect(provider).toHaveBeenCalledTimes(1)
   })
 
   it('appends a provider-unavailable refusal to the selected continuation session', async () => {
@@ -201,7 +228,7 @@ describe('Step 10 grounded answer service', () => {
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false)
     const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
-    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
     await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'lost-before-support-key' })).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
@@ -255,9 +282,7 @@ describe('Step 10 grounded answer service', () => {
     const answer = vi.fn(async ({ route }) => route === 'primary' ? primary() : fallback())
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', fallback: 'fallback' } })
 
-    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'policy-before-fallback' })
-
-    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'policy-blocked' })
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'policy-before-fallback' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
     expect(primary).toHaveBeenCalledTimes(1)
     expect(fallback).not.toHaveBeenCalled()
     expect(repo.findQnaEvidence).toHaveBeenCalledTimes(3)
@@ -278,9 +303,7 @@ describe('Step 10 grounded answer service', () => {
     const supportVerifier = vi.fn()
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
-    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'scope-before-support' })
-
-    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'policy-blocked' })
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'scope-before-support' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
     expect(answer).toHaveBeenCalledTimes(1)
     expect(supportVerifier).not.toHaveBeenCalled()
     expect(repo.findQnaEvidence).toHaveBeenCalledTimes(3)
@@ -289,13 +312,134 @@ describe('Step 10 grounded answer service', () => {
   it('fails closed when the support verdict is not bound to the exact evidence block set', async () => {
     const repo = repository({ records: evidence() })
     const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
-    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E2'] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E2'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
     const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'mismatched-support-set' })
 
     expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence' })
     expect(repo.sessions[0].answer.paragraphs).toEqual([])
+  })
+
+  it('refuses visible evidence that does not address the admitted question', async () => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: false, evidenceBlockIds: ['E1'] }))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Dữ liệu này nói về thời tiết gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'irrelevant-visible-key' })
+
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence' })
+    expect(supportVerifier).toHaveBeenCalledWith(expect.objectContaining({ question: 'Dữ liệu này nói về thời tiết gì?' }))
+  })
+
+  it('fails closed when the support verifier does not explicitly confirm the question is addressed', async () => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'] }))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'missing-address-confirmation' })
+
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence' })
+    expect(repo.sessions[0].answer.paragraphs).toEqual([])
+  })
+
+  it('discards a lifecycle or policy race without appending refusal chat or terminal outcome', async () => {
+    const repo = repository({ records: evidence() })
+    let records = evidence()
+    repo.findQnaEvidence = vi.fn(async () => records)
+    const providerAdmission = {
+      run: vi.fn(async ({ invoke, routeId }) => {
+        records = records.map((record) => ({ ...record, article: { ...record.article, status: 'hidden' } }))
+        return invoke(routeId)
+      }),
+    }
+    const answer = vi.fn()
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdmission, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' } })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'discard-race-key' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
+    expect(answer).not.toHaveBeenCalled()
+    expect(repo.sessions).toHaveLength(0)
+    expect([...repo.attempts.values()][0]).not.toMatchObject({ status: 'refused', resultStatus: 'refused' })
+  })
+
+  it('discards a newly sensitive source input race without appending refusal chat or terminal outcome', async () => {
+    const repo = repository({ records: evidence() })
+    let records = evidence()
+    repo.findQnaEvidence = vi.fn(async () => records)
+    const providerAdmission = {
+      run: vi.fn(async ({ invoke, routeId, kind }) => {
+        if (kind === 'answer-primary') records = records.map((record) => ({ ...record, article: { ...record.article, excerptOriginal: 'ghp_1234567890abcdefghijklmnop' } }))
+        return invoke(routeId)
+      }),
+    }
+    const answer = vi.fn()
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdmission, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' } })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'discard-sensitive-race' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
+    expect(answer).not.toHaveBeenCalled()
+    expect(repo.sessions).toHaveLength(0)
+    expect([...repo.attempts.values()][0]).not.toMatchObject({ status: 'refused', resultStatus: 'refused' })
+  })
+
+  it('does not create a refusal when final append CAS loses the article lifecycle race', async () => {
+    const repo = repository({ records: evidence() })
+    repo.appendAnswer = vi.fn(async () => { throw Object.assign(new Error('article lifecycle changed'), { status: 409, code: 'conflict' }) })
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'append-cas-race' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
+    expect(repo.sessions).toHaveLength(0)
+    expect([...repo.attempts.values()][0]).not.toMatchObject({ status: 'refused', resultStatus: 'refused' })
+  })
+
+  it('does not create a refusal when final append CAS loses the active user lifecycle race', async () => {
+    const repo = repository({ records: evidence() })
+    repo.appendAnswer = vi.fn(async () => { throw Object.assign(new Error('user lifecycle changed'), { status: 409, code: 'conflict' }) })
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'append-user-cas-race' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
+    expect(repo.sessions).toHaveLength(0)
+  })
+
+  it('allows one execution owner for twenty concurrent same-key requests', async () => {
+    const records = evidence()
+    const attempts = new Map()
+    const sessions = []
+    let providerCalls = 0
+    let quotaReservations = 0
+    const repo = {
+      attempts,
+      sessions,
+      async reserveAnswerAttempt({ idempotencyKeyHash, requestHash, chatSessionId, rateLimitAdmission }) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        const current = attempts.get(idempotencyKeyHash)
+        if (current) return { ...current, reused: true }
+        for (const scope of ['answer-minute', 'answer-daily']) {
+          await rateLimitAdmission.reserve({ scope })
+          quotaReservations += 1
+        }
+        const value = { _id: 'attempt-concurrent', idempotencyKeyHash, requestHash, status: 'reserved', ...(chatSessionId ? { chatSessionId } : {}) }
+        attempts.set(idempotencyKeyHash, value)
+        return value
+      },
+      async updateAnswerAttempt(_id, update) { const value = [...attempts.values()][0]; Object.assign(value, update); return value },
+      async appendAnswer({ answer, chatSessionId }) { const value = { chatSessionId: chatSessionId ?? 'chat-1', messageId: answer.id, answer: { ...answer, chatSessionId: chatSessionId ?? 'chat-1' } }; sessions.push(value); return value },
+      async findQnaEvidence() { return records },
+    }
+    const answer = vi.fn(async () => { providerCalls += 1; await new Promise((resolve) => setTimeout(resolve, 15)); return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] } })
+    const rateLimitAdmission = { reserve: vi.fn(async () => ({ allowed: true })) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, rateLimitAdmission, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
+
+    const results = await Promise.allSettled(Array.from({ length: 20 }, () => service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'concurrent-same-key' })))
+
+    expect(providerCalls).toBe(1)
+    expect(quotaReservations).toBe(2)
+    expect(rateLimitAdmission.reserve).toHaveBeenCalledTimes(2)
+    expect(sessions).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
   })
 
   it('performs the final primary evidence read inside provider admission invoke', async () => {
@@ -311,9 +455,7 @@ describe('Step 10 grounded answer service', () => {
     }
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdmission, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' } })
 
-    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'admission-primary-race' })
-
-    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'policy-blocked' })
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'admission-primary-race' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
     expect(answer).not.toHaveBeenCalled()
   })
 
@@ -331,9 +473,7 @@ describe('Step 10 grounded answer service', () => {
     }
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdmission, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
-    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'admission-support-race' })
-
-    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'policy-blocked' })
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'admission-support-race' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
     expect(answer).toHaveBeenCalledTimes(1)
     expect(supportVerifier).not.toHaveBeenCalled()
   })
@@ -346,7 +486,7 @@ describe('Step 10 grounded answer service', () => {
       if (route === 'primary') throw Object.assign(new Error('retryable'), { retryable: true })
       return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
     })
-    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', fallback: 'fallback', support: 'support' }, supportVerifier: async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'] }) })
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', fallback: 'fallback', support: 'support' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'renew-each-stage' })
 

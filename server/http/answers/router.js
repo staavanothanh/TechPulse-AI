@@ -10,6 +10,7 @@ const ajv = new Ajv({ allErrors: true, strict: false })
 addFormats(ajv)
 for (const [name, schema] of Object.entries(openApi.components.schemas)) ajv.addSchema(schema, `#/components/schemas/${name}`)
 const validateAnswerRequest = ajv.compile({ $ref: '#/components/schemas/AnswerRequest' })
+const validateAnswerResponse = ajv.compile({ $ref: '#/components/schemas/AnswerResponse' })
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
 
 function validationError(message, details) {
@@ -49,6 +50,13 @@ export function validatePublicAnswer(answer) {
   return answer
 }
 
+export function validatePublicAnswerResponse(answer) {
+  const data = validatePublicAnswer(answer)
+  const payload = { data }
+  if (!validateAnswerResponse(payload)) throw new Error('Public AnswerResponse is invalid')
+  return data
+}
+
 export function createAnswersRouter({ qaService, authService } = {}) {
   const router = Router()
   const service = qaService ?? { createAnswer: unavailable }
@@ -65,7 +73,7 @@ export function createAnswersRouter({ qaService, authService } = {}) {
       request: req,
     })
     noStoreContent(res)
-    res.status(200).json({ data: validatePublicAnswer(result?.answer ?? result) })
+    res.status(200).json({ data: validatePublicAnswerResponse(result?.answer ?? result) })
   }))
 
   return router

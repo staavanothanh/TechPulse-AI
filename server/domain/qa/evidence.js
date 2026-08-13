@@ -52,6 +52,7 @@ export function evidenceAdmissionFence(evidence = []) {
     articleSourceId: idValue(article.sourceId),
     articleStatus: article.status,
     articleVersion: article.version ?? article.updatedAt ?? null,
+    articleUpdatedAt: article.updatedAt instanceof Date ? article.updatedAt.toISOString() : article.updatedAt ?? null,
     admittedSourceName: sourceName(source),
     admittedSourceText: sourceText(article, source),
     evidenceEligible: article.evidenceEligible,
@@ -68,10 +69,11 @@ export function evidenceAdmissionFence(evidence = []) {
   const canonical = JSON.stringify(records)
   return Object.freeze({
     digest: createHash('sha256').update(canonical).digest('hex'),
-    articles: Object.freeze(records.map(({ articleId, sourceId, articleVersion, currentPolicyVersion, admittedSourceText }) => Object.freeze({
+    articles: Object.freeze(records.map(({ articleId, sourceId, articleVersion, articleUpdatedAt, currentPolicyVersion, admittedSourceText }) => Object.freeze({
       articleId,
       sourceId,
       articleVersion,
+      articleUpdatedAt,
       sourcePolicyVersion: currentPolicyVersion,
       evidenceTextHash: createHash('sha256').update(admittedSourceText).digest('hex'),
     }))),

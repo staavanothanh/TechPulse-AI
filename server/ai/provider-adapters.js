@@ -89,7 +89,7 @@ export function createConfiguredProviderAdapters({
       },
       async verifySupport({ route, input, locale, tools } = {}) {
         if (locale !== 'vi' || !Array.isArray(tools) || tools.length !== 0) throw new ProviderAdapterError('provider_input_invalid')
-        return structuredChat({ route, input, systemInstruction: 'Kiem tra tung paragraph co duoc ho tro boi evidence tuong ung hay khong. Tra ve JSON duy nhat gom verdict la supported, unsupported hoac uncertain va evidenceBlockIds chinh xac da duoc kiem tra. Khong tao URL va khong them thong tin moi.' })
+        return structuredChat({ route, input, systemInstruction: 'Kiem tra tung paragraph co duoc ho tro boi evidence tuong ung va co tra loi dung question hay khong. Tra ve JSON duy nhat gom verdict la supported, unsupported hoac uncertain, addressesQuestion la boolean, va evidenceBlockIds chinh xac da duoc kiem tra. Khong tao URL va khong them thong tin moi.' })
       },
     }),
     embeddingProvider: Object.freeze({

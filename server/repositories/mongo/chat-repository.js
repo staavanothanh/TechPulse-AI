@@ -105,6 +105,27 @@ function redactHistoricalCitation(citation, { article, source } = {}) {
   return { id: citation.id, status: 'unavailable', articleId: citation.articleId, sourceId: citation.sourceId, unavailableReason: reason }
 }
 
+function publicAnswerCitation(citation, article, source) {
+  if (!canUseQnaEvidence(article, source)) return null
+  let originalUrl
+  try {
+    const parsed = new URL(article.originalUrl ?? citation.originalUrl)
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null
+    originalUrl = parsed.toString()
+  } catch { return null }
+  return {
+    id: citation.id,
+    articleId: idString(article._id ?? article.id ?? citation.articleId),
+    sourceId: idString(source._id ?? source.id ?? citation.sourceId),
+    sourceName: typeof source.name === 'string' ? source.name : '',
+    titleOriginal: String(article.titleOriginal ?? citation.titleOriginal ?? ''),
+    originalUrl,
+    author: typeof article.author === 'string' ? article.author : null,
+    publishedAt: dateValue(article.publishedAt ?? citation.publishedAt).toISOString(),
+    sourceLanguage: typeof article.sourceLanguage === 'string' ? article.sourceLanguage : 'unknown',
+  }
+}
+
 function publicMessage(message) {
   if (!message || typeof message.id !== 'string' || !['user', 'assistant'].includes(message.role)) throw new Error('Chat message is invalid')
   if (message.role === 'user') return { id: message.id, role: 'user', text: String(message.text), createdAt: dateValue(message.createdAt).toISOString() }
@@ -311,15 +332,34 @@ export class MongoChatRepository {
     return this.withTransaction(async (session) => {
       const tx = { session }
       if (!await this.assertActorFence(actor, tx)) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
+      const userCollection = this.users()
+      const sessionCollection = this.sessions()
+      if (typeof userCollection.updateOne === 'function') {
+        const userFence = await userCollection.updateOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { $set: { updatedAt: current } }, tx)
+        if (userFence.matchedCount !== 1) { const error = new Error('Active user lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+      }
+      if (typeof sessionCollection.updateOne === 'function') {
+        const sessionFence = await sessionCollection.updateOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: current }, absoluteExpiresAt: { $gt: current } }, { $set: { lastSeenAt: current } }, tx)
+        if (sessionFence.matchedCount !== 1) { const error = new Error('Active session lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+      }
       for (const expected of expectedEvidenceFence?.articles ?? []) {
         const versionFilter = expected.articleVersion !== null && expected.articleVersion !== undefined
           ? { $or: [{ version: expected.articleVersion }, { updatedAt: expected.articleVersion }] }
           : { version: { $exists: false }, updatedAt: { $exists: false } }
+        if (expected.articleUpdatedAt) versionFilter.updatedAt = dateValue(expected.articleUpdatedAt, 'article updatedAt')
         const article = await this.collection('articles').findOne({ _id: objectId(expected.articleId, 'article'), sourceId: objectId(expected.sourceId, 'source'), status: 'published', evidenceEligible: true, ...versionFilter }, tx)
         if (!article) { const error = new Error('Article visibility changed'); error.code = 'conflict'; error.status = 409; throw error }
         const source = await this.collection('sources').findOne({ _id: article.sourceId, policyVersion: expected.sourcePolicyVersion, operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, 'technicalCheck.status': 'passed', authorityTier: { $in: ['primary', 'editorial'] } }, tx)
         const textHash = createHash('sha256').update(evidenceText(article, source)).digest('hex')
         if (!canUseQnaEvidence(article, source) || textHash !== expected.evidenceTextHash) { const error = new Error('Source visibility changed'); error.code = 'conflict'; error.status = 409; throw error }
+        if (typeof this.collection('articles').updateOne === 'function') {
+          const articleFence = await this.collection('articles').updateOne({ _id: objectId(expected.articleId, 'article'), sourceId: objectId(expected.sourceId, 'source'), status: 'published', evidenceEligible: true, ...versionFilter }, { $set: { updatedAt: current } }, tx)
+          if (articleFence.matchedCount !== 1) { const error = new Error('Article lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+        }
+        if (typeof this.collection('sources').updateOne === 'function') {
+          const sourceFence = await this.collection('sources').updateOne({ _id: objectId(expected.sourceId, 'source'), policyVersion: expected.sourcePolicyVersion, operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, 'technicalCheck.status': 'passed', authorityTier: { $in: ['primary', 'editorial'] } }, { $set: { updatedAt: current } }, tx)
+          if (sourceFence.matchedCount !== 1) { const error = new Error('Source lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+        }
       }
       let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
       let document = await this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, tx)
@@ -342,7 +382,10 @@ export class MongoChatRepository {
         const receipt = await this.answerAttempts().findOneAndUpdate({ _id: objectId(attempt.id, 'answer attempt'), userId: values.userId, sessionId: values.sessionId, expectedSessionVersion: values.sessionVersion, status: { $in: ['reserved', 'provider-running'] } }, { $set: { ...outcome, chatSessionId: after._id, messageId: assistant.id, updatedAt: current } }, { ...tx, returnDocument: 'after' })
         if (!unwrap(receipt)) { const error = new Error('Answer attempt state changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
       }
-      return { chatSessionId: idString(after._id), messageId: assistant.id, answer: { ...publicMessage(assistant), chatSessionId: idString(after._id) }, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
+      const publicAnswer = assistant.status === 'answered'
+        ? { id: answer.id ?? assistant.id, status: 'answered', paragraphs: (answer.paragraphs ?? []).map(({ text, citationIds }) => ({ text, citationIds: [...citationIds] })), citations: Array.isArray(answer.citations) ? answer.citations : [], refusalReason: null, chatSessionId: idString(after._id), createdAt: dateValue(answer.createdAt ?? current).toISOString() }
+        : { id: assistant.id, status: 'refused', paragraphs: [], citations: [], refusalReason: assistant.refusalReason, chatSessionId: idString(after._id), createdAt: dateValue(assistant.createdAt).toISOString() }
+      return { chatSessionId: idString(after._id), messageId: assistant.id, answer: publicAnswer, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
     })
   }
 
@@ -356,6 +399,14 @@ export class MongoChatRepository {
     return this.withTransaction(async (session) => {
       const tx = { session }
       if (!await this.assertActorFence(actor, tx)) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
+      if (typeof this.users().updateOne === 'function') {
+        const userFence = await this.users().updateOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { $set: { updatedAt: current } }, tx)
+        if (userFence.matchedCount !== 1) { const error = new Error('Active user lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+      }
+      if (typeof this.sessions().updateOne === 'function') {
+        const sessionFence = await this.sessions().updateOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: current }, absoluteExpiresAt: { $gt: current } }, { $set: { lastSeenAt: current } }, tx)
+        if (sessionFence.matchedCount !== 1) { const error = new Error('Active session lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+      }
       let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
       let document = await this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, tx)
       if (!document) {
@@ -375,7 +426,7 @@ export class MongoChatRepository {
         const receipt = await this.answerAttempts().findOneAndUpdate({ _id: objectId(attempt.id, 'answer attempt'), userId: values.userId, sessionId: values.sessionId, expectedSessionVersion: values.sessionVersion, status: 'reserved' }, { $set: { status: 'refused', resultStatus: 'refused', chatSessionId: after._id, messageId: assistant.id, updatedAt: current } }, { ...tx, returnDocument: 'after' })
         if (!unwrap(receipt)) { const error = new Error('Answer attempt state changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
       }
-      return { chatSessionId: idString(after._id), messageId: assistant.id, answer: { ...publicMessage(assistant), chatSessionId: idString(after._id) }, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
+      return { chatSessionId: idString(after._id), messageId: assistant.id, answer: { id: assistant.id, status: 'refused', paragraphs: [], citations: [], refusalReason: assistant.refusalReason, chatSessionId: idString(after._id), createdAt: dateValue(assistant.createdAt).toISOString() }, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
     })
   }
 
@@ -386,15 +437,19 @@ export class MongoChatRepository {
     if (!document) return null
     const message = (document.messages ?? []).find((item) => item.id === messageId && item.role === 'assistant')
     if (!message) return null
-    if (message.status !== 'answered') return { ...publicMessage(message), chatSessionId: idString(document._id) }
+    if (message.status !== 'answered') return { id: message.id, status: 'refused', paragraphs: [], citations: [], refusalReason: message.refusalReason, chatSessionId: idString(document._id), createdAt: dateValue(message.createdAt).toISOString() }
     const citations = []
+    let revoked = false
     for (const citation of message.citations ?? []) {
       const article = citation.status === 'available' ? await this.collection('articles').findOne({ _id: citation.articleId, sourceId: citation.sourceId }) : null
       const source = article ? await this.collection('sources').findOne({ _id: article.sourceId }) : null
-      citations.push(redactHistoricalCitation(citation, { article, source }))
+      const projected = publicAnswerCitation(citation, article, source)
+      if (!projected) revoked = true
+      else citations.push(projected)
     }
-    return { ...publicMessage({ ...message, citations }), chatSessionId: idString(document._id) }
+    if (revoked || citations.length !== (message.citations ?? []).length) return { id: message.id, status: 'refused', paragraphs: [], citations: [], refusalReason: 'policy-blocked', chatSessionId: idString(document._id), createdAt: dateValue(message.createdAt).toISOString() }
+    return { id: message.id, status: 'answered', paragraphs: (message.paragraphs ?? []).map((paragraph) => ({ text: paragraph.text, citationIds: [...paragraph.citationIds] })), citations, refusalReason: null, chatSessionId: idString(document._id), createdAt: dateValue(message.createdAt).toISOString() }
   }
 }
 
-export { actorValues, decodeCursor, encodeCursor, historicalCitation, historicalCitationDocument, redactHistoricalCitation, publicMessage }
+export { actorValues, decodeCursor, encodeCursor, historicalCitation, historicalCitationDocument, redactHistoricalCitation, publicAnswerCitation, publicMessage }

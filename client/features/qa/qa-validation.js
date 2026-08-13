@@ -20,7 +20,7 @@ export function firstQaFieldError(errors = {}) {
 }
 
 export function boundedQaCooldown(error) {
-  if (error?.status !== 429) return 0
+  if (![429, 503].includes(error?.status)) return 0
   const seconds = Number(error.retryAfter)
   return Number.isInteger(seconds) && seconds > 0 ? Math.min(seconds, 300) : 60
 }

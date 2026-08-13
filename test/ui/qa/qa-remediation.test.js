@@ -13,7 +13,8 @@ describe('Step 10 independent-review UI regressions', () => {
     expect(boundedQaCooldown({ status: 429, retryAfter: 9999 })).toBe(300)
     expect(boundedQaCooldown({ status: 429, retryAfter: 17 })).toBe(17)
     expect(boundedQaCooldown({ status: 429 })).toBe(60)
-    expect(boundedQaCooldown({ status: 503, retryAfter: 17 })).toBe(0)
+    expect(boundedQaCooldown({ status: 503, retryAfter: 17 })).toBe(17)
+    expect(boundedQaCooldown({ status: 503 })).toBe(60)
   })
 
   it('uses stable form order when focusing a 422 field', () => {
@@ -79,9 +80,41 @@ describe('Step 10 independent-review UI regressions', () => {
 
   it('uses a true modal history backdrop and focuses visible 404 and clear targets', () => {
     const screen = read('client/features/qa/GroundedQaScreen.jsx')
+    const list = read('client/features/qa/ChatSessionList.jsx')
     expect(screen).toContain('qa-history-scrim')
     expect(screen).toContain('emptyHeadingRef')
     expect(screen).toContain('focusListDestination')
+    expect(screen).toContain('statusVisible={listNotice !==')
+    expect(list).toContain('qa-session-status')
+  })
+
+  it('exposes an outcome-specific visible list status after successful deletion', () => {
+    const screen = read('client/features/qa/GroundedQaScreen.jsx')
+    expect(screen).toContain("setListNotice(current.kind === 'clear' ? 'Đã xóa tất cả phiên hỏi đáp' : 'Đã xóa phiên hỏi đáp')")
+    expect(screen).toContain('statusVisible={listNotice !==')
+  })
+
+  it('continues the server-created session and fences pending detail after mutations', () => {
+    const screen = read('client/features/qa/GroundedQaScreen.jsx')
+    expect(screen).toContain('setSelectedId(checked.answer.chatSessionId)')
+    expect(screen).toContain('invalidateSelectionRequest()')
+    expect(screen).toMatch(/async function executeDelete\(\) \{[\s\S]*invalidateSelectionRequest\(\)/)
+  })
+
+  it('announces destructive pending state and shows Retry-After for 503', () => {
+    const screen = read('client/features/qa/GroundedQaScreen.jsx')
+    expect(screen).toContain("setDeletePending(true); setDeleteError(''); announce?.('Đang xóa phiên hỏi đáp')")
+    expect(screen).toContain('[429, 503].includes(error.status)')
+    expect(screen).toContain('[429, 503].includes(nextError?.status)')
+  })
+
+  it('keeps detail retry behind the server Retry-After window', () => {
+    const screen = read('client/features/qa/GroundedQaScreen.jsx')
+    const transcript = read('client/features/qa/ChatSessionTranscript.jsx')
+    expect(screen).toContain('detail: 0')
+    expect(screen).toContain('detail: cooldown')
+    expect(transcript).toContain('retryCooldown')
+    expect(transcript).toContain('disabled={retryCooldown > 0}')
   })
 
   it('keeps citation close callback stable across parent renders', () => {

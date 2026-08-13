@@ -23,6 +23,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
   const [detail, setDetail] = useState(null)
   const [listState, setListState] = useState('loading')
   const [listNotice, setListNotice] = useState('Trạng thái danh sách phiên')
+  const [listError, setListError] = useState(null)
   const [transcriptState, setTranscriptState] = useState('empty')
   const [phase, setPhase] = useState(null)
   const [answer, setAnswer] = useState(null)
@@ -33,12 +34,17 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
   const [confirm, setConfirm] = useState(null)
   const [deletePending, setDeletePending] = useState(false)
   const [deleteError, setDeleteError] = useState('')
-  const [cooldowns, setCooldowns] = useState({ answer: 0, delete: 0, clear: 0 })
+  const [cooldowns, setCooldowns] = useState({ answer: 0, detail: 0, list: 0, delete: 0, clear: 0 })
+  const cooldownsRef = useRef(cooldowns)
   const listStatusRef = useRef(null)
   const emptyHeadingRef = useRef(null)
   const conversationHeadingRef = useRef(null)
   const resultHeadingRef = useRef(null)
   const selectionRequestRef = useRef(0)
+  const listRequestRef = useRef(null)
+  const invalidateSelectionRequest = useCallback(() => {
+    selectionRequestRef.current += 1
+  }, [])
   const closeScope = useCallback(() => setScopeOpen(false), [])
   const closeHistory = useCallback(() => setHistoryOpen(false), [])
   const closeCitation = useCallback(() => setCitation(null), [])
@@ -49,30 +55,41 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
 
   const handleSessionExpired = useCallback((nextError) => {
     if (nextError?.status !== 401) return false
-    setPhase(null); setCitation(null); setDeletePending(false); setConfirm(null); setError(null)
+    invalidateSelectionRequest(); setPhase(null); setCitation(null); setDeletePending(false); setConfirm(null); setError(null)
     onSessionExpired?.()
     return true
-  }, [onSessionExpired])
+  }, [invalidateSelectionRequest, onSessionExpired])
 
   useEffect(() => {
+    cooldownsRef.current = cooldowns
     if (!Object.values(cooldowns).some((value) => value > 0)) return undefined
     const timer = globalThis.setTimeout(() => setCooldowns((current) => Object.fromEntries(Object.entries(current).map(([key, value]) => [key, Math.max(0, value - 1)]))), 1000)
     return () => globalThis.clearTimeout(timer)
   }, [cooldowns])
 
   const refreshSessions = useCallback(async ({ append = false, cursor } = {}) => {
+    if (cooldownsRef.current.list > 0) return undefined
+    if (listRequestRef.current) return listRequestRef.current
     setListState('loading')
-    try {
-      const response = await api.listSessions?.({ limit: 20, ...(cursor ? { cursor } : {}) })
-      const page = response?.data ?? []
-      setSessions((current) => append ? appendSessionPage(current, page) : page)
-      setNextCursor(response?.meta?.nextCursor ?? null)
-      setListState('ready')
-    } catch (nextError) {
-      if (handleSessionExpired(nextError)) return
-      setListState('error'); setError(nextError)
-    }
-  }, [api, handleSessionExpired])
+    const request = (async () => {
+      try {
+        const response = await api.listSessions?.({ limit: 20, ...(cursor ? { cursor } : {}) })
+        const page = response?.data ?? []
+        setSessions((current) => append ? appendSessionPage(current, page) : page)
+        setNextCursor(response?.meta?.nextCursor ?? null)
+        setListError(null); setListState('ready')
+      } catch (nextError) {
+        if (handleSessionExpired(nextError)) return
+        const cooldown = boundedQaCooldown(nextError)
+        if (cooldown) setCooldowns((values) => ({ ...values, list: cooldown }))
+        setListState('error'); setListError(nextError); announce?.('Không thể tải lịch sử phiên; dữ liệu đang hiển thị vẫn được giữ lại')
+      } finally {
+        listRequestRef.current = null
+      }
+    })()
+    listRequestRef.current = request
+    return request
+  }, [api, announce, handleSessionExpired])
 
   useEffect(() => {
     const timer = globalThis.setTimeout(() => { refreshSessions() }, 0)
@@ -92,7 +109,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
   }, [])
 
   const selectSession = useCallback(async (id) => {
-    if (phase) return
+    if (phase || cooldowns.detail > 0) return
     const requestId = selectionRequestRef.current + 1
     selectionRequestRef.current = requestId
     setSelectedId(id); setDetail(null); setAnswer(null); setError(null); setTranscriptState('loading'); closeHistory()
@@ -100,7 +117,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
       const response = await api.getSession?.(id)
       if (requestId !== selectionRequestRef.current) return
       const nextDetail = response?.data ?? response
-      setDetail(nextDetail); setTranscriptState('ready'); announce?.('Đã tải lịch sử phiên từ server')
+      setDetail(nextDetail); setCooldowns((values) => ({ ...values, detail: 0 })); setTranscriptState('ready'); announce?.('Đã tải lịch sử phiên từ server')
       globalThis.setTimeout(() => conversationHeadingRef.current?.focus(), 0)
     } catch (nextError) {
       if (requestId !== selectionRequestRef.current) return
@@ -112,9 +129,11 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
         focusListDestination()
         return
       }
+      const cooldown = boundedQaCooldown(nextError)
+      if (cooldown) setCooldowns((values) => ({ ...values, detail: cooldown }))
       setTranscriptState('error'); setError(nextError); announce?.('Không thể tải phiên')
     }
-  }, [api, announce, closeHistory, focusListDestination, handleSessionExpired, phase])
+  }, [api, announce, closeHistory, cooldowns.detail, focusListDestination, handleSessionExpired, phase])
 
   async function submitQuestion(question) {
     const validation = validateQuestionScope(question, scope)
@@ -131,7 +150,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
       const response = await api.createAnswer?.({ question, scope }, { csrfToken, idempotencyKey: key, chatSessionId: selectedId })
       const checked = validateAnswerPayload(response)
       if (!checked.valid) throw Object.assign(new Error('Câu trả lời không đáp ứng định dạng an toàn'), { code: 'invalid_answer_shape' })
-      setAnswer(checked.answer); setDetail(null); setTranscriptState('empty'); setPhase(null); announce?.(checked.answer.status === 'answered' ? 'Đã nhận câu trả lời có nguồn' : 'Câu hỏi được từ chối an toàn')
+      setAnswer(checked.answer); setSelectedId(checked.answer.chatSessionId); setDetail(null); setTranscriptState('empty'); setPhase(null); announce?.(checked.answer.status === 'answered' ? 'Đã nhận câu trả lời có nguồn' : 'Câu hỏi được từ chối an toàn')
       refreshSessions()
       globalThis.setTimeout(() => resultHeadingRef.current?.focus(), 0)
     } catch (nextError) {
@@ -164,18 +183,24 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
   async function executeDelete() {
     const current = confirm
     if (!current || deletePending) return
-    setDeletePending(true); setDeleteError('')
+    setDeletePending(true); setDeleteError(''); announce?.('Đang xóa phiên hỏi đáp')
     try {
       if (current.kind === 'clear') await api.clearSessions?.(csrfToken)
       else await api.deleteSession?.(current.id, csrfToken)
-      if (current.kind === 'clear') { setSessions([]); setSelectedId(null); setDetail(null); setTranscriptState('empty') } else { setSessions((items) => items.filter((item) => item.id !== current.id)); if (selectedId === current.id) { setSelectedId(null); setDetail(null); setTranscriptState('empty') } }
+      if (current.kind === 'clear') { invalidateSelectionRequest(); setSessions([]); setSelectedId(null); setDetail(null); setTranscriptState('empty') } else {
+        const deletingSelected = selectedId === current.id
+        if (deletingSelected) { invalidateSelectionRequest(); setSelectedId(null); setDetail(null); setTranscriptState('empty') }
+        setSessions((items) => items.filter((item) => item.id !== current.id))
+      }
+      setListNotice(current.kind === 'clear' ? 'Đã xóa tất cả phiên hỏi đáp' : 'Đã xóa phiên hỏi đáp')
       setConfirm(null); announce?.('Đã xóa phiên hỏi đáp')
-      focusListDestination({ empty: current.kind === 'clear' })
+      const emptyAfterDelete = current.kind === 'clear' || (current.kind === 'one' && sessions.filter((item) => item.id !== current.id).length === 0)
+      focusListDestination({ empty: emptyAfterDelete })
     } catch (nextError) {
       if (handleSessionExpired(nextError)) return
       const cooldown = boundedQaCooldown(nextError)
       if (cooldown) setCooldowns((values) => ({ ...values, [current.kind === 'clear' ? 'clear' : 'delete']: cooldown }))
-      setDeleteError(nextError?.status === 429 ? `Thử lại sau ${cooldown} giây.` : 'Không thể xóa phiên hỏi đáp. Hãy thử lại rõ ràng.')
+      setDeleteError([429, 503].includes(nextError?.status) ? `Thử lại sau ${cooldown} giây.` : 'Không thể xóa phiên hỏi đáp. Hãy thử lại rõ ràng.')
       announce?.('Không thể xóa phiên hỏi đáp')
     } finally { setDeletePending(false) }
   }
@@ -194,13 +219,13 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
       <div className="qa-layout">
         <div className={historyOpen ? 'qa-history-scrim open' : 'qa-history-scrim'} role="presentation" onClick={closeHistory}>
         <div className={historyOpen ? 'qa-rail-modal open' : 'qa-rail-modal'} ref={historyDialogRef} tabIndex="-1" role={historyOpen ? 'dialog' : undefined} aria-modal={historyOpen || undefined} aria-label={historyOpen ? 'Lịch sử phiên' : undefined} onClick={(event) => event.stopPropagation()}>
-          <ChatSessionList sessions={sessions} selectedId={selectedId} loading={listState === 'loading'} statusRef={listStatusRef} emptyHeadingRef={emptyHeadingRef} statusText={listNotice} onSelect={selectSession} onDelete={(id) => confirmDelete('one', id)} onClear={() => confirmDelete('clear')} onLoadMore={() => refreshSessions({ append: true, cursor: nextCursor })} hasNext={Boolean(nextCursor)} deleteCooldown={cooldowns.delete} clearCooldown={cooldowns.clear} selectionLocked={Boolean(phase)} />
+          <ChatSessionList sessions={sessions} selectedId={selectedId} loading={listState === 'loading'} listError={listState === 'error' ? listError : null} onRetry={() => refreshSessions()} retryCooldown={cooldowns.list} statusRef={listStatusRef} emptyHeadingRef={emptyHeadingRef} statusText={listNotice} statusVisible={listNotice !== 'Trạng thái danh sách phiên'} onSelect={selectSession} onDelete={(id) => confirmDelete('one', id)} onClear={() => confirmDelete('clear')} onLoadMore={() => refreshSessions({ append: true, cursor: nextCursor })} hasNext={Boolean(nextCursor)} deleteCooldown={cooldowns.delete} clearCooldown={cooldowns.clear} selectionLocked={Boolean(phase)} />
         </div>
         </div>
         <section className="qa-main">
           <div className="qa-conversation-head"><div><h2 tabIndex="-1" ref={conversationHeadingRef}>{detail?.title || 'Phiên hỏi đáp'}</h2><p>Chỉ hiển thị transcript bounded từ server.</p></div></div>
           <div className="qa-conversation">
-            {phase ? <GenerationProgress phase={phase} /> : error && !answer ? <section className="qa-conversation-state" role="alert"><h3>Không thể hoàn tất yêu cầu</h3><p>{error.status === 429 ? `Thử lại sau ${cooldowns.answer} giây.` : 'Giữ câu hỏi và phạm vi để thử lại rõ ràng.'}</p></section> : answer ? <AnswerResult answer={answer} onCitation={setCitation} headingRef={resultHeadingRef} /> : <ChatSessionTranscript status={transcriptState} detail={detail} error={error} onRetry={() => selectedId && selectSession(selectedId)} onCitation={setCitation} />}
+            {phase ? <GenerationProgress phase={phase} /> : error && !answer ? <section className="qa-conversation-state" role="alert"><h3>Không thể hoàn tất yêu cầu</h3><p>{[429, 503].includes(error.status) ? `Thử lại sau ${cooldowns.answer} giây.` : 'Giữ câu hỏi và phạm vi để thử lại rõ ràng.'}</p></section> : answer ? <AnswerResult answer={answer} onCitation={setCitation} headingRef={resultHeadingRef} /> : <ChatSessionTranscript status={transcriptState} detail={detail} error={error} retryCooldown={cooldowns.detail} onRetry={() => selectedId && selectSession(selectedId)} onCitation={setCitation} />}
           </div>
           <QuestionComposer scope={scope} onSubmit={submitQuestion} onInvalid={handleInvalid} onFieldChange={clearFieldError} busy={Boolean(phase)} cooldown={cooldowns.answer} errors={fieldErrors} />
         </section>

@@ -1,9 +1,9 @@
 import AnswerResult from './AnswerResult.jsx'
 import { safeDate, validateSessionDetail } from './qa-validation.js'
 
-export default function ChatSessionTranscript({ status = 'empty', detail, error, onRetry, onCitation }) {
+export default function ChatSessionTranscript({ status = 'empty', detail, error, onRetry, onCitation, retryCooldown = 0 }) {
   if (status === 'loading') return <section className="qa-conversation-state" aria-busy="true"><h2>Đang tải lịch sử phiên</h2><p>Transcript được đọc lại từ server.</p></section>
-  if (status === 'error') return <section className="qa-conversation-state" role="alert"><h2>{error?.status === 404 ? 'Phiên không còn khả dụng' : 'Không thể tải phiên'}</h2><p>{error?.status === 404 ? 'Phiên này không còn trong phạm vi hiện tại.' : 'Giữ phiên đã chọn và thử đọc lại.'}</p>{error?.status !== 401 ? <button className="qa-button" type="button" onClick={onRetry}>Đọc lại phiên</button> : null}</section>
+  if (status === 'error') return <section className="qa-conversation-state" role="alert"><h2>{error?.status === 404 ? 'Phiên không còn khả dụng' : 'Không thể tải phiên'}</h2><p>{error?.status === 404 ? 'Phiên này không còn trong phạm vi hiện tại.' : retryCooldown > 0 ? `Thử lại sau ${retryCooldown} giây.` : 'Giữ phiên đã chọn và thử đọc lại.'}</p>{error?.status !== 401 ? <button className="qa-button" type="button" onClick={onRetry} disabled={retryCooldown > 0}>{retryCooldown > 0 ? `Thử lại sau ${retryCooldown} giây` : 'Đọc lại phiên'}</button> : null}</section>
   const checked = validateSessionDetail(detail)
   if (status === 'empty' || !detail) return <section className="qa-conversation-state"><h2>Chưa có câu trả lời trong phiên này</h2><p>Nhập câu hỏi, kiểm tra phạm vi rồi gửi.</p></section>
   if (!checked.valid) return <section className="qa-conversation-state" role="alert"><h2>Phiên không thể hiển thị</h2><p>Dữ liệu lịch sử không đáp ứng giới hạn an toàn.</p></section>

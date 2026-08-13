@@ -25,10 +25,9 @@ function safeFieldErrors(details) {
 }
 
 export function createQaApi(generatedApi, fetchImpl = globalThis.fetch) {
-  let retryAfter = null
   async function invoke(operation, init = {}) {
     if (typeof operation !== 'function') throw new Error('Q&A operation is unavailable')
-    retryAfter = null
+    let retryAfter = null
     const { query, ...rest } = init
     const managedFetch = async (input, requestInit = {}) => {
       const url = new URL(input, typeof window === 'undefined' ? 'http://localhost:3000' : window.location.origin)

@@ -5,6 +5,8 @@ import { createProviderAdmission } from '../ai/provider-admission.js'
 import { MongoProviderAdmissionRepository } from '../repositories/mongo/provider-admission-repository.js'
 import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../scripts/migrations/chat-sessions.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
+import { BGE_M3, validateBgeM3Embedding } from '../ai/embedding.js'
+import { sanitizeText } from '../domain/article/normalization.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -24,7 +26,7 @@ export async function assertChatSessionsReady(context) {
   }
 }
 
-export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, rateLimitAdmission, maintenanceRegistry, routes = {}, now = () => new Date() } = {}) {
+export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, queryEmbedding, rateLimitAdmission, maintenanceRegistry, routes = {}, now = () => new Date() } = {}) {
   await assertChatSessionsReady(context)
   if (typeof maintenanceRegistry?.register !== 'function') throw new Error('Q&A maintenance registry is not ready')
   if (!providerAdapters?.llmProvider?.answer || !providerAdapters?.llmProvider?.verifySupport) throw new Error('Q&A provider adapters are not ready')
@@ -38,9 +40,18 @@ export async function createConfiguredQaService({ context, providerRegistry = { 
   const fallback = routes.fallback ?? enabled.find((route) => route.capability === 'zdr-verified' && route.routeId !== primary)?.routeId
   const support = routes.support ?? fallback ?? primary
   if (!primary || !eligibleRouteIds.has(primary)) throw new Error('Q&A ZDR provider route is not ready')
+  const qnaEmbeddingRoute = enabled.find((route) => route.model === BGE_M3.model && route.capability === 'zdr-verified')
+  const safeQueryEmbedding = queryEmbedding?.capability === 'zdr-verified'
+    ? queryEmbedding
+    : qnaEmbeddingRoute && providerAdapters.embeddingProvider
+      ? async (question) => {
+        const result = await admission.run({ routeId: qnaEmbeddingRoute.routeId, capability: 'zdr-verified', attemptId: `qna-embedding-${Date.now()}`, kind: 'embedding', invoke: (route) => providerAdapters.embeddingProvider.embed({ route, input: sanitizeText(question, 1000), model: BGE_M3.model, dimensions: BGE_M3.dimensions }) })
+        return { model: BGE_M3.model, dimensions: BGE_M3.dimensions, version: BGE_M3.version, embedding: validateBgeM3Embedding(result) }
+      }
+      : undefined
   const supportVerifier = providerAdapters.llmProvider.verifySupport
-    ? ({ route, paragraphs, evidenceBlocks, evidenceMap }) => providerAdapters.llmProvider.verifySupport({ route, input: JSON.stringify({ paragraphs, evidenceBlocks, evidenceMap }), locale: 'vi', tools: [] })
+    ? ({ route, question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }) => providerAdapters.llmProvider.verifySupport({ route, input: JSON.stringify({ question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }), locale: 'vi', tools: [] })
     : undefined
   maintenanceRegistry.register('purge-answer-attempts', ({ cutoff, limit }) => chatRepository.purgeDueAnswerAttempts({ cutoff, limit }))
-  return createQaService({ articleRepository, chatRepository, providerAdmission: admission, providerAdapters, rateLimitAdmission, supportVerifier, routes: { primary, fallback, support }, now })
+  return createQaService({ articleRepository, chatRepository, providerAdmission: admission, providerAdapters, queryEmbedding: safeQueryEmbedding, rateLimitAdmission, supportVerifier, routes: { primary, fallback, support }, now })
 }

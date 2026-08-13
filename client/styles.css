@@ -636,6 +636,7 @@ h2 {
 .qa-session-item[aria-current='true'] { border-color: var(--border); background: var(--surface); }
 .qa-session-select { min-width: 0; min-height: 44px; padding: 6px; border: 0; background: transparent; text-align: left; }
 .qa-session-select strong, .qa-session-select small { display: block; overflow-wrap: anywhere; }
+.qa-session-status { margin: 8px; padding: 8px; border: 1px solid var(--border); border-radius: var(--control-radius); color: var(--ink); font-size: 12px; }
 .qa-session-select strong { font-size: 12px; }
 .qa-session-select small { margin-top: 3px; color: var(--muted); font: 500 10px/1.4 var(--font-mono); }
 .qa-icon-button { width: 44px; height: 44px; padding: 0; border: 0; border-radius: var(--control-radius); background: transparent; font-size: 18px; }
