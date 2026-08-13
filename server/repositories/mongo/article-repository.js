@@ -11,7 +11,7 @@ import { canUseQnaEvidence, currentArticleVisibilityFilter, isSourceProductionEl
 import { validateArticleDocument } from '../../../scripts/migrations/articles.js'
 import { BGE_M3, validateBgeM3Embedding } from '../../ai/embedding.js'
 import { validateVietnameseSummary } from '../../ai/summary.js'
-import { cosineSimilarity } from '../../ai/retrieval.js'
+import { cosineSimilarity, rankQnaEvidence } from '../../ai/retrieval.js'
 import { buildPolicyDerivedInput } from '../../ai/policy-input.js'
 import { buildIngestionArtifactJobs, indexingJobDocument } from './indexing-job-repository.js'
 
@@ -865,13 +865,14 @@ export class MongoArticleRepository {
     await this.savedArticles().deleteMany({ userId: contentObjectId(userId) })
   }
 
-  async findQnaEvidence({ limit = 20, includeSource = false, scope = {} } = {}) {
+  async findQnaEvidence({ limit = 20, includeSource = false, scope = {}, question, queryEmbedding, relevanceThreshold = 0.25 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ArticleError('article_query_invalid', 'Article limit is invalid', { status: 400 })
     const collection = this.articles()
     const qnaFilter = qnaEvidenceFilter({ sourcePath: '_currentSource' })
     const scopeFilter = qnaScopeFilter(scope)
+    const candidateLimit = typeof question === 'string' ? Math.min(400, Math.max(limit, 100)) : limit
     if (typeof collection.aggregate !== 'function') {
-      const documents = await collection.find({ status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter }).sort({ publishedAt: -1, _id: -1 }).limit(limit).toArray()
+      const documents = await collection.find({ status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter }).sort({ publishedAt: -1, _id: -1 }).limit(candidateLimit).toArray()
       const evidence = []
       for (const document of documents) {
         const source = await sourceForArticle(this.sources(), document)
@@ -880,7 +881,7 @@ export class MongoArticleRepository {
           evidence.push(includeSource ? { article, source: serializeSourceForQna(source) } : article)
         }
       }
-      return evidence
+      return typeof question === 'string' ? rankQnaEvidence({ question, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, limit) }).slice(0, limit) : evidence
     }
     const articles = await collection.aggregate([
       { $match: { status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter } },
@@ -888,13 +889,14 @@ export class MongoArticleRepository {
       { $unwind: '$_currentSource' },
       { $match: sourceOnlyFilter(qnaFilter) },
       { $sort: { publishedAt: -1, _id: -1 } },
-      { $limit: limit },
+      { $limit: candidateLimit },
     ]).toArray()
-    return articles.flatMap(({ _currentSource: source, ...document }) => {
+    const evidence = articles.flatMap(({ _currentSource: source, ...document }) => {
       if (!canUseQnaEvidence(document, source)) return []
       const article = serializeVisibleArticle(document, source)
       return [includeSource ? { article, source: serializeSourceForQna(source) } : article]
     })
+    return typeof question === 'string' ? rankQnaEvidence({ question, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, limit) }).slice(0, limit) : evidence
   }
 }
 

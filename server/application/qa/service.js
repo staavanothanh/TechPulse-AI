@@ -12,16 +12,22 @@ function sha256(value) { return createHash('sha256').update(value).digest('hex')
 
 function scopeValue(scope = {}) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new ContentError(422, 'validation_error', 'Answer scope is invalid')
-  const hasScope = scope.articleId || Array.isArray(scope.topics) && scope.topics.length > 0 || scope.publishedAfter && scope.publishedBefore
+  let topics
+  if (scope.topics !== undefined) {
+    if (!Array.isArray(scope.topics) || scope.topics.length > 10 || scope.topics.some((topic) => typeof topic !== 'string')) throw new ContentError(422, 'validation_error', 'Answer topics are invalid')
+    const normalizedTopics = scope.topics.map((topic) => topic.trim().toLowerCase())
+    if (normalizedTopics.some((topic) => topic.length < 1 || topic.length > 100) || new Set(normalizedTopics).size !== normalizedTopics.length) throw new ContentError(422, 'validation_error', 'Answer topics are invalid')
+    topics = [...normalizedTopics].sort()
+  }
+  const hasScope = scope.articleId || topics?.length > 0 || scope.publishedAfter && scope.publishedBefore
   if (!hasScope) throw new ContentError(422, 'validation_error', 'Answer scope is required')
-  if (scope.topics && (!Array.isArray(scope.topics) || scope.topics.length > 10 || scope.topics.some((topic) => typeof topic !== 'string' || topic.length < 1 || topic.length > 100))) throw new ContentError(422, 'validation_error', 'Answer topics are invalid')
   if ((scope.publishedAfter && !scope.publishedBefore) || (!scope.publishedAfter && scope.publishedBefore)) throw new ContentError(422, 'validation_error', 'Answer date range is invalid')
   const publishedAfter = scope.publishedAfter ? new Date(scope.publishedAfter) : undefined
   const publishedBefore = scope.publishedBefore ? new Date(scope.publishedBefore) : undefined
   if ((publishedAfter && Number.isNaN(publishedAfter.getTime())) || (publishedBefore && Number.isNaN(publishedBefore.getTime())) || (publishedAfter && publishedBefore && publishedAfter > publishedBefore)) throw new ContentError(422, 'validation_error', 'Answer date range is invalid')
   return {
-    ...(scope.articleId ? { articleId: scope.articleId } : {}),
-    ...(scope.topics ? { topics: scope.topics.map((topic) => topic.trim().toLowerCase()) } : {}),
+    ...(scope.articleId ? { articleId: scope.articleId?.toHexString?.() ?? String(scope.articleId) } : {}),
+    ...(topics ? { topics } : {}),
     ...(publishedAfter ? { publishedAfter } : {}),
     ...(publishedBefore ? { publishedBefore } : {}),
   }
@@ -39,7 +45,7 @@ function scopeHashValue(scope) {
   }
 }
 
-export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerAdmission, providerAdapters = {}, rateLimitAdmission, routes = {}, supportVerifier, now = () => new Date() } = {}) {
+export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerAdmission, providerAdapters = {}, rateLimitAdmission, queryEmbedding, routes = {}, supportVerifier, now = () => new Date() } = {}) {
   if (!chatRepository || typeof chatRepository.reserveAnswerAttempt !== 'function') throw new Error('Chat repository is required')
   const articleRepo = articleRepository ?? { findQnaEvidence: async () => [] }
   const adapters = providerAdapters
@@ -50,25 +56,38 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
 
   async function prepareProviderInput({ question, scope, expectedFence }) {
     const admitted = admitQuestion(question, { capability: 'zdr-verified' })
-    const records = await articleRepo.findQnaEvidence({ scope, limit: 50, includeSource: true })
+    let embedding
+    if (typeof queryEmbedding === 'function') {
+      try { embedding = await queryEmbedding(admitted.question) } catch { embedding = undefined }
+      if (embedding && (embedding.model !== 'baai/bge-m3' || embedding.dimensions !== 1024 || embedding.version !== 1 || !Array.isArray(embedding.embedding) || embedding.embedding.length !== 1024)) embedding = undefined
+    }
+    const records = await articleRepo.findQnaEvidence({ question: admitted.question, queryEmbedding: embedding, scope, limit: 50, includeSource: true })
     let evidence
     try {
       evidence = filterQnaEvidence(records)
     } catch (error) {
-      if (expectedFence && error instanceof EvidenceSelectionError) throw new EvidenceSelectionError('policy-blocked', 'Evidence policy changed during answer generation')
+      if (expectedFence && error instanceof EvidenceSelectionError) { error.discard = true; throw error }
       throw error
     }
-    const fence = evidenceAdmissionFence(evidence)
+    let fence
+    try {
+      fence = evidenceAdmissionFence(evidence)
+    } catch (error) {
+      if (expectedFence && error instanceof EvidenceSelectionError) { error.discard = true }
+      throw error
+    }
     if (expectedFence && fence.digest !== expectedFence.digest) {
-      throw new EvidenceSelectionError('policy-blocked', 'Evidence policy changed during answer generation')
+      const error = new EvidenceSelectionError('policy-blocked', 'Evidence policy changed during answer generation')
+      error.discard = true
+      throw error
     }
     return Object.freeze({ admitted, evidence, fence: Object.freeze(fence), prompt: buildGroundedPrompt({ question: admitted.question, evidence }) })
   }
 
-  async function refusal({ actor, attempt, reason, scope, question }) {
+  async function refusal({ actor, attempt, reason, scope, question, expectedEvidenceFence }) {
     const createdAt = now().toISOString()
     const chat = typeof chatRepository.appendAnswer === 'function'
-      ? await chatRepository.appendAnswer({ actor, chatSessionId: attempt.chatSessionId, scope, question, answer: answerRefusal({ id: `answer-${attempt._id?.toHexString?.() ?? 'refused'}`, chatSessionId: attempt.chatSessionId, reason, createdAt }), attempt: { id: attempt._id, outcome: 'refused' }, now: now() })
+      ? await chatRepository.appendAnswer({ actor, chatSessionId: attempt.chatSessionId, scope, question, answer: answerRefusal({ id: `answer-${attempt._id?.toHexString?.() ?? 'refused'}`, chatSessionId: attempt.chatSessionId, reason, createdAt }), attempt: { id: attempt._id, outcome: 'refused' }, expectedEvidenceFence, now: now() })
       : null
     if (!chat?.attemptCommitted && typeof chatRepository.updateAnswerAttempt === 'function') await chatRepository.updateAnswerAttempt(attempt._id, { status: 'refused', resultStatus: 'refused', chatSessionId: chat?.chatSessionId, messageId: chat?.messageId }, { expectedStatuses: ['reserved', 'provider-running'] })
     return chat?.answer ?? answerRefusal({ id: `answer-${attempt._id?.toHexString?.() ?? 'refused'}`, chatSessionId: chat?.chatSessionId ?? attempt.chatSessionId, reason, createdAt })
@@ -97,6 +116,10 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       if (typeof chatRepository.getChatSession !== 'function') throw new ContentError(503, 'service_unavailable', 'Chat session service is unavailable')
       const existingSession = await chatRepository.getChatSession({ actor, chatSessionId, now: now() })
       if (!existingSession) throw new ContentError(404, 'not_found', 'Chat session not found')
+      if (existingSession.scope !== undefined) {
+        const persistedScope = scopeValue(existingSession.scope)
+        if (canonicalRequestHash({ scope: scopeHashValue(persistedScope) }) !== canonicalRequestHash({ scope: scopeHashValue(safeScope) })) throw new ContentError(409, 'conflict', 'Answer scope conflicts with the selected chat session')
+      }
     }
     const idempotencyKeyHash = sha256(String(idempotencyKey))
     const requestHash = canonicalRequestHash({ question, scope: scopeHashValue(safeScope), chatSessionId: chatSessionId ?? null })
@@ -110,17 +133,18 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       if (attempt.status === 'failed') throw new ContentError(503, 'service_unavailable', 'Answer outcome is unavailable')
       if (attempt.status === 'completed' || attempt.status === 'refused') throw new ContentError(503, 'service_unavailable', 'Answer outcome is unavailable')
     }
-    if (attempt.reused && attempt.status === 'provider-running') throw new ContentError(503, 'service_unavailable', 'Answer is already being processed')
+    if (attempt.reused && ['reserved', 'provider-running'].includes(attempt.status)) throw new ContentError(503, 'service_unavailable', 'Answer is already being processed')
     if (attempt.status === 'provider-running' && attempt.providerReservationExpiresAt && new Date(attempt.providerReservationExpiresAt) <= now()) {
       throw new ContentError(503, 'service_unavailable', 'Answer outcome is unavailable')
     }
     if (privacyError) return { answer: await privacyRefusal({ actor, attempt, scope: safeScope, chatSessionId }) }
+    let providerInput
     try {
       if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) {
         if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' })
         throw new ContentError(401, 'unauthorized', 'Authentication is required')
       }
-      let providerInput = await prepareProviderInput({ question, scope: safeScope })
+      providerInput = await prepareProviderInput({ question, scope: safeScope })
       const renewProviderStage = async () => {
         if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) throw new ContentError(401, 'unauthorized', 'Authentication is required')
         if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') {
@@ -144,7 +168,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
         }
         output = providerAdmission ? await providerAdmission.run({ routeId: fallbackRoute, capability: 'zdr-verified', attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), kind: 'answer-fallback', invoke: invokeAnswer }) : await invokeAnswer(fallbackRoute)
       }
-      if (output?.status === 'refused') return { answer: await refusal({ actor, attempt, reason: ['insufficient-evidence', 'policy-blocked', 'sensitive-input', 'provider-unavailable'].includes(output.refusalReason) ? output.refusalReason : 'insufficient-evidence', scope: safeScope, question }) }
+      if (output?.status === 'refused') return { answer: await refusal({ actor, attempt, reason: ['insufficient-evidence', 'policy-blocked', 'sensitive-input', 'provider-unavailable'].includes(output.refusalReason) ? output.refusalReason : 'insufficient-evidence', scope: safeScope, question, expectedEvidenceFence: providerInput?.fence }) }
       const parsed = output?.status === 'answered' ? output : { ...output, status: 'answered' }
       if (parsed.status !== 'answered' || !Array.isArray(parsed.paragraphs)) {
         const shapeError = new Error('Provider answer shape is invalid')
@@ -168,15 +192,15 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
           await renewProviderStage()
           providerInput = await prepareProviderInput({ question, scope: safeScope, expectedFence: providerInput.fence })
           paragraphs = validateParagraphCitations({ paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks })
-          return verifySupport({ route, paragraphs, evidenceBlocks: providerInput.prompt.blocks, evidenceMap: providerInput.prompt.evidenceMap })
+          return verifySupport({ route, question: providerInput.admitted.question, addressesQuestion: true, paragraphs, evidenceBlocks: providerInput.prompt.blocks, evidenceMap: providerInput.prompt.evidenceMap })
         }
         const verdict = providerAdmission && supportRoute
           ? await providerAdmission.run({ routeId: supportRoute, capability: 'zdr-verified', attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), kind: 'answer-support', invoke: invokeSupport })
           : await invokeSupport(supportRoute)
         const verdictValue = verdict?.verdict ?? verdict
-        if (['unsupported', 'uncertain'].includes(verdictValue)) {
+        if (verdict?.addressesQuestion !== true || ['unsupported', 'uncertain'].includes(verdictValue)) {
           const supportError = new Error('Answer support verdict is insufficient')
-          supportError.code = verdictValue
+          supportError.code = verdict?.addressesQuestion === true ? verdictValue : 'uncertain'
           throw supportError
         }
         assertSupportedAnswer({ verdict: verdictValue, verdictEvidenceBlockIds: verdict?.evidenceBlockIds, paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks })
@@ -188,11 +212,17 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       return { answer: { ...answer, chatSessionId: chat.chatSessionId } }
     } catch (error) {
       if (error instanceof PrivacyAdmissionError) return { answer: await refusal({ actor, attempt, reason: error.code === 'sensitive-input' ? 'sensitive-input' : 'provider-unavailable', scope: safeScope, question }) }
-      if (error instanceof EvidenceSelectionError) return { answer: await refusal({ actor, attempt, reason: error.code === 'policy-blocked' ? 'policy-blocked' : 'insufficient-evidence', scope: safeScope, question }) }
-      if (['unsupported', 'uncertain'].includes(error?.code)) return { answer: await refusal({ actor, attempt, reason: deterministicRefusal(error.code), scope: safeScope, question }) }
+      if (error instanceof EvidenceSelectionError) {
+        if (error.discard) {
+          if (error.code === 'insufficient-evidence') throw new ContentError(409, 'conflict', 'Answer evidence changed during processing')
+          throw new ContentError(409, 'conflict', 'Answer evidence changed during processing')
+        }
+        return { answer: await refusal({ actor, attempt, reason: error.code === 'policy-blocked' ? 'policy-blocked' : 'insufficient-evidence', scope: safeScope, question }) }
+      }
+      if (['unsupported', 'uncertain'].includes(error?.code)) return { answer: await refusal({ actor, attempt, reason: deterministicRefusal(error.code), scope: safeScope, question, expectedEvidenceFence: providerInput?.fence }) }
       if (error?.code === 'idempotency_mismatch') throw new ContentError(409, 'idempotency_mismatch', 'Answer request conflicts with current idempotency intent')
       if (error?.code === 'conflict' || error?.status === 409) throw new ContentError(409, 'conflict', 'Answer request conflicts with current state')
-      if (error?.retryable || error?.code === 'provider_unavailable' || error?.name === 'ProviderAdapterError' || error?.name === 'ProviderBoundaryError' || ['provider_response_invalid', 'provider_http_error', 'provider_network_error', 'provider_credential_unavailable', 'provider_route_invalid'].includes(error?.code)) return { answer: await refusal({ actor, attempt, reason: 'provider-unavailable', scope: safeScope, question }) }
+      if (error?.retryable || error?.code === 'provider_unavailable' || error?.name === 'ProviderAdapterError' || error?.name === 'ProviderBoundaryError' || ['provider_response_invalid', 'provider_http_error', 'provider_network_error', 'provider_credential_unavailable', 'provider_route_invalid'].includes(error?.code)) return { answer: await refusal({ actor, attempt, reason: 'provider-unavailable', scope: safeScope, question, expectedEvidenceFence: providerInput?.fence }) }
       throw error
     }
   }

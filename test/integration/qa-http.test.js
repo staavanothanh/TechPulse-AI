@@ -19,6 +19,9 @@ describe('Step 10 Q&A HTTP boundary', () => {
       calls.push(['createAnswer', input])
       if (input.question === 'Xung đột idempotency') throw Object.assign(new Error('Idempotency mismatch'), { status: 409, code: 'idempotency_mismatch' })
       if (input.question === 'Câu trả lời có citation lỗi') return { answer: { id: 'answer-invalid', status: 'answered', paragraphs: [{ text: 'Không được công khai.', citationIds: ['C-missing'] }], citations: [], refusalReason: null, chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
+      if (input.question === 'Câu trả lời hợp lệ') return { answer: { id: 'answer-valid', status: 'answered', paragraphs: [{ text: 'Câu trả lời có căn cứ.', citationIds: ['C1'] }], citations: [{ id: 'C1', articleId: ARTICLE_ID, sourceId: '507f1f77bcf86cd799439012', sourceName: 'Nguồn biên tập', titleOriginal: 'Bài nguồn', originalUrl: 'https://example.com/source', author: null, publishedAt: '2026-08-10T00:00:00.000Z', sourceLanguage: 'vi' }], refusalReason: null, chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
+      if (input.question === 'Replay có citation đã ẩn') return { answer: { id: 'answer-replay', status: 'refused', paragraphs: [], citations: [], refusalReason: 'policy-blocked', chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
+      if (input.question === 'Replay có role') return { answer: { id: 'answer-role', role: 'assistant', status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence', chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
       return { answer: { id: 'answer-1', status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence', chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
     },
     async listChatSessions() { calls.push(['listChatSessions']); return { sessions: [{ id: CHAT_ID, title: null, updatedAt: '2026-08-12T00:00:00.000Z' }], hasNext: false, nextCursor: null } },
@@ -112,6 +115,34 @@ describe('Step 10 Q&A HTTP boundary', () => {
     })
     expect(response.status).toBe(500)
     expect(await response.json()).toMatchObject({ error: { code: 'internal_error' } })
+  })
+
+  it('validates the complete AnswerResponse for answered and lifecycle replay branches', async () => {
+    const valid = await fetch(`${origin}/api/v1/answers`, {
+      method: 'POST',
+      headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-valid-answer', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Câu trả lời hợp lệ', scope: { topics: ['ai'] } }),
+    })
+    expect(valid.status).toBe(200)
+    expect(await valid.json()).toMatchObject({ data: { status: 'answered', citations: [{ id: 'C1', sourceLanguage: 'vi' }] } })
+
+    const lifecycle = await fetch(`${origin}/api/v1/answers`, {
+      method: 'POST',
+      headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-lifecycle-replay', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Replay có citation đã ẩn', scope: { topics: ['ai'] } }),
+    })
+    expect(lifecycle.status).toBe(200)
+    expect(await lifecycle.json()).toMatchObject({ data: { status: 'refused', refusalReason: 'policy-blocked', paragraphs: [], citations: [] } })
+  })
+
+  it('rejects historical chat role fields at the AnswerResponse boundary', async () => {
+    const response = await fetch(`${origin}/api/v1/answers`, {
+      method: 'POST',
+      headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-role-replay', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Replay có role', scope: { topics: ['ai'] } }),
+    })
+    expect(response.status).toBe(500)
+    expect((await response.json()).error.code).toBe('internal_error')
   })
 
   it('preserves the canonical idempotency mismatch code through HTTP', async () => {

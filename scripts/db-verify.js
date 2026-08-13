@@ -55,6 +55,95 @@ function exactArticleIndex(actual, expected) {
     stableJson(actual.default_language) === stableJson(expected.options?.default_language)
   )
 }
+
+const CHAT_ROLE_PROBE_USER_ID = new ObjectId('000000000000000000000001')
+const CHAT_ROLE_PROBE_SESSION_ID = new ObjectId('000000000000000000000002')
+const CHAT_ROLE_PROBE_CHAT_ID = new ObjectId('000000000000000000000003')
+const CHAT_ROLE_PROBE_ATTEMPT_ID = new ObjectId('000000000000000000000004')
+
+async function runChatRoleTransaction(client, work) {
+  let session
+  let transactionStarted = false
+  let sessionHealthy = true
+  let outcome
+  try {
+    session = client.startSession()
+    await session.startTransaction()
+    transactionStarted = true
+    const value = await work(session)
+    outcome = { transactionStarted, operationFailed: false, value }
+  } catch (error) {
+    outcome = { transactionStarted, operationFailed: true, error }
+  } finally {
+    try { if (session && transactionStarted) await session.abortTransaction() } catch { sessionHealthy = false }
+    try { if (session) await session.endSession() } catch { sessionHealthy = false }
+  }
+  return { ...outcome, sessionHealthy }
+}
+
+async function probeChatSessionsRoleCapabilities({ client, db } = {}) {
+  if (!client?.startSession || !db?.collection) {
+    return {
+      transaction: false,
+      chatSessionsRuntime: false,
+      answerAttemptsRuntime: false,
+      answerAttemptsMaintenanceDelete: false,
+    }
+  }
+  const now = new Date()
+  const chatSession = {
+    _id: CHAT_ROLE_PROBE_CHAT_ID,
+    userId: CHAT_ROLE_PROBE_USER_ID,
+    title: null,
+    scope: { topics: ['role-probe'] },
+    messages: [],
+    messageCount: 0,
+    expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+    createdAt: now,
+    updatedAt: now,
+  }
+  const answerAttempt = {
+    _id: CHAT_ROLE_PROBE_ATTEMPT_ID,
+    userId: CHAT_ROLE_PROBE_USER_ID,
+    sessionId: CHAT_ROLE_PROBE_SESSION_ID,
+    expectedSessionVersion: 1,
+    idempotencyKeyHash: 'b'.repeat(64),
+    requestHash: 'c'.repeat(64),
+    status: 'reserved',
+    quotaReservationKey: 'role-probe',
+    expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    createdAt: now,
+    updatedAt: now,
+  }
+  const chat = await runChatRoleTransaction(client, async (session) => {
+    const collection = db.collection('chatSessions')
+    await collection.insertOne(chatSession, { session })
+    await collection.updateOne({ _id: chatSession._id }, { $set: { title: 'role-probe' } }, { session })
+    const found = await collection.findOne({ _id: chatSession._id }, { session, projection: { _id: 1 } })
+    return found?._id?.equals?.(chatSession._id) === true
+  })
+  const attempts = await runChatRoleTransaction(client, async (session) => {
+    const collection = db.collection('answerAttempts')
+    await collection.insertOne(answerAttempt, { session })
+    await collection.updateOne({ _id: answerAttempt._id }, { $set: { status: 'provider-running' } }, { session })
+    const found = await collection.findOne({ _id: answerAttempt._id }, { session, projection: { _id: 1 } })
+    return found?._id?.equals?.(answerAttempt._id) === true
+  })
+  const maintenance = await runChatRoleTransaction(client, async (session) => {
+    const collection = db.collection('answerAttempts')
+    const expiredAt = new Date(now.getTime() - 1)
+    const expiredCreatedAt = new Date(expiredAt.getTime() - 24 * 60 * 60 * 1000)
+    await collection.insertOne({ ...answerAttempt, createdAt: expiredCreatedAt, updatedAt: expiredCreatedAt, expiresAt: expiredAt }, { session })
+    const deleted = await collection.deleteMany({ _id: answerAttempt._id, expiresAt: { $lte: now } }, { session })
+    return deleted.deletedCount === 1
+  })
+  return {
+    transaction: chat.transactionStarted && attempts.transactionStarted && maintenance.transactionStarted && chat.sessionHealthy && attempts.sessionHealthy && maintenance.sessionHealthy,
+    chatSessionsRuntime: chat.value === true && !chat.operationFailed && chat.sessionHealthy,
+    answerAttemptsRuntime: attempts.value === true && !attempts.operationFailed && attempts.sessionHealthy,
+    answerAttemptsMaintenanceDelete: maintenance.value === true && !maintenance.operationFailed && maintenance.sessionHealthy,
+  }
+}
 if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat-sessions'].includes(target)) {
   console.error(
     'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, chat-sessions',
@@ -529,8 +618,16 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
       )
         roleProblems.push('runtime HMAC lifecycle role capability probe failed')
       if (roleProblems.length === 0) roleStatus = 'verified'
-    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs' || target === 'chat-sessions')) {
+    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs')) {
       roleStatus = 'not-requested'
+    } else if (requireRole && target === 'chat-sessions') {
+      const probe = await probeChatSessionsRoleCapabilities(context)
+      for (const [capability, passed] of Object.entries(probe)) {
+        if (passed) continue
+        if (capability === 'answerAttemptsMaintenanceDelete') roleProblems.push('answerAttempts maintenance capability failed: delete')
+        else roleProblems.push(`chat-sessions runtime capability failed: ${capability}`)
+      }
+      roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
     } else if (requireRole) {
       roleProblems.push('durable-jobs runtime role capability probe is not registered')
     }

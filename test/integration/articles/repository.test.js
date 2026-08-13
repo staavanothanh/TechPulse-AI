@@ -173,6 +173,20 @@ describe('article repository fence contract', () => {
     ]))
   })
 
+  it('reranks before truncation so an older relevant article survives fifty newer unrelated rows', async () => {
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    const source = { ...makeSource(), _id: new ObjectId(SOURCE_ID) }
+    const relevant = normalizeCandidateToArticle(makeCandidate({ titleOriginal: 'Kubernetes autoscaling', excerptOriginal: 'Horizontal pod autoscaling dùng metrics CPU.' }), { source, now: RETRIEVED_AT })
+    const unrelated = Array.from({ length: 55 }, (_, index) => normalizeCandidateToArticle(makeCandidate({ titleOriginal: `Tin unrelated ${index}`, excerptOriginal: 'Tin công nghệ khác.' }), { source, now: new Date(RETRIEVED_AT.getTime() + index * 60_000) }))
+    const documents = [...unrelated, relevant].map((article, index) => ({ ...article, _id: new ObjectId(`507f1f77bcf86cd79943${index.toString(16).padStart(4, '0')}`), sourceId: source._id, provenance: article.provenance.map((entry) => ({ ...entry, sourceId: source._id })), _currentSource: source }))
+    repository.articles = () => ({ aggregate: vi.fn(() => ({ toArray: vi.fn(async () => documents) })) })
+
+    const result = await repository.findQnaEvidence({ question: 'Kubernetes autoscaling dùng metrics CPU thế nào?', limit: 1, includeSource: true })
+
+    expect(result).toHaveLength(1)
+    expect(result[0].article.titleOriginal).toBe('Kubernetes autoscaling')
+  })
+
   it('does not retain candidate body/media binary in the commit input contract', () => {
     const repository = new MongoArticleRepository({ db: {}, client: {} })
     const candidate = { ...makeCandidate(), body: 'full body', rawHtml: '<html>raw</html>', mediaBinary: Buffer.from('binary'), mediaCandidate: { ...makeCandidate().mediaCandidate, binary: 'nested binary' }, sourceMetadata: { comment: 'safe', body: 'nested full text' } }

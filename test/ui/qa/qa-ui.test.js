@@ -111,4 +111,17 @@ describe('Step 10 grounded Q&A UI', () => {
     expect(html).not.toContain('opaque-next-cursor')
     expect(html).toContain('tabindex="-1"')
   })
+
+  it('offers an explicit session-list retry and honors a bounded 503 cooldown', () => {
+    const html = render(ChatSessionList, { sessions: [], listError: { status: 503 }, retryCooldown: 17, onRetry: vi.fn() })
+    expect(html).toContain('Không thể tải lịch sử phiên')
+    expect(html).toContain('Thử lại sau 17 giây')
+    expect(html).toContain('disabled=""')
+  })
+
+  it('keeps loaded sessions visible when a refresh fails', () => {
+    const html = render(ChatSessionList, { sessions: [{ id: 's1', title: 'Phiên đã tải', updatedAt: '2026-08-12T00:00:00.000Z' }], listError: { status: 503 }, onRetry: vi.fn() })
+    expect(html).toContain('Phiên đã tải')
+    expect(html).toContain('Không thể tải lịch sử phiên')
+  })
 })

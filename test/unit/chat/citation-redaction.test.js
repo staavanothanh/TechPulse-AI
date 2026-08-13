@@ -42,4 +42,40 @@ describe('Step 10 historical citation persistence and read redaction', () => {
 
     expect(result.messages[0].citations).toEqual([{ id: 'C1', status: 'unavailable', articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), unavailableReason: 'takedown' }])
   })
+
+  it('replay projects available citations as AnswerCitation and refuses when lifecycle has revoked one', async () => {
+    const userId = new ObjectId('507f1f77bcf86cd799439013')
+    const sessionId = new ObjectId('507f1f77bcf86cd799439014')
+    const chatSessionId = new ObjectId('507f1f77bcf86cd799439015')
+    const current = new Date('2026-08-12T00:00:00.000Z')
+    const document = { _id: chatSessionId, userId, messageCount: 2, createdAt: current, updatedAt: current, expiresAt: new Date('2026-09-11T00:00:00.000Z'), messages: [{ id: 'u1', role: 'user', text: 'Cau hoi', createdAt: current }, { id: 'answer-1', role: 'assistant', status: 'answered', paragraphs: [{ text: 'Ket luan.', citationIds: ['C1'] }], citations: [historicalCitationDocument(available)], refusalReason: null, createdAt: current }] }
+    const db = { collection: (name) => ({
+      findOne: async () => {
+        if (name === 'users') return { _id: userId }
+        if (name === 'sessions') return { _id: sessionId }
+        if (name === 'chatSessions') return document
+        if (name === 'articles') return { _id: articleId, sourceId, status: 'published', evidenceEligible: true, rightsSnapshot: { sourcePolicyVersion: 1, licenseStatus: 'permitted', llmInputScope: 'excerpt' }, titleOriginal: 'Bài hợp lệ', originalUrl: available.originalUrl, publishedAt: available.publishedAt, sourceLanguage: 'vi' }
+        if (name === 'sources') return { _id: sourceId, name: 'Nguồn public-only', authorityTier: 'editorial', operationalStatus: 'active', licenseStatus: 'permitted', policyVersion: 1, llmInputScope: 'excerpt', storageScope: { metadata: true, excerpt: true, summary: true, embedding: true }, mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false, evidenceNote: null }, technicalCheck: { status: 'passed' } }
+        return null
+      },
+    }) }
+    const repository = new MongoChatRepository({ db, client: {}, now: () => current })
+    const result = await repository.getAnswerResult({ actor: { userId, actorFence: { sessionId, sessionVersion: 1 } }, chatSessionId, messageId: 'answer-1', now: current })
+
+    expect(result).toMatchObject({ status: 'answered', paragraphs: [{ citationIds: ['C1'] }], citations: [{ id: 'C1', sourceName: 'Nguồn public-only', originalUrl: available.originalUrl }] })
+    expect(result).not.toHaveProperty('role')
+  })
+
+  it('replay projects refused history without the assistant chat-message role', async () => {
+    const userId = new ObjectId('507f1f77bcf86cd799439013')
+    const sessionId = new ObjectId('507f1f77bcf86cd799439014')
+    const chatSessionId = new ObjectId('507f1f77bcf86cd799439015')
+    const current = new Date('2026-08-12T00:00:00.000Z')
+    const document = { _id: chatSessionId, userId, messageCount: 1, createdAt: current, updatedAt: current, expiresAt: new Date('2026-09-11T00:00:00.000Z'), messages: [{ id: 'answer-refused', role: 'assistant', status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence', createdAt: current }] }
+    const db = { collection: (name) => ({ findOne: async () => name === 'users' ? { _id: userId } : name === 'sessions' ? { _id: sessionId } : name === 'chatSessions' ? document : null }) }
+    const repository = new MongoChatRepository({ db, client: {}, now: () => current })
+    const result = await repository.getAnswerResult({ actor: { userId, actorFence: { sessionId, sessionVersion: 1 } }, chatSessionId, messageId: 'answer-refused', now: current })
+    expect(result).toMatchObject({ id: 'answer-refused', status: 'refused', refusalReason: 'insufficient-evidence' })
+    expect(result).not.toHaveProperty('role')
+  })
 })
