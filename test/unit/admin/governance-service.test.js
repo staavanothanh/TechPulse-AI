@@ -84,6 +84,15 @@ describe('admin governance service', () => {
     expect(result).not.toHaveProperty('providerPayload')
   })
 
+  it('serializes a removed article as a closed metadata-free tombstone', async () => {
+    const repository = { findAdminArticle: vi.fn(async () => ({ _id: '507f1f77bcf86cd799439010', sourceId: '507f1f77bcf86cd799439011', status: 'removed', evidenceEligible: false, canonicalUrlHash: 'a'.repeat(64), removalPolicyVersion: 4, removedAt: new Date('2026-08-14T00:00:00.000Z'), updatedAt: new Date('2026-08-14T00:00:00.000Z'), titleOriginal: 'must not escape', originalUrl: 'https://private.example/article', provenance: [{ secret: true }], summaryVi: 'private', embedding: [1, 2] })) }
+    const service = createAdminGovernanceService({ repository })
+    const result = await service.getAdminArticle({ auth: adminAuth, articleId: '507f1f77bcf86cd799439010' })
+    expect(result).toEqual({ id: '507f1f77bcf86cd799439010', sourceId: '507f1f77bcf86cd799439011', status: 'removed', removalPolicyVersion: 4, removedAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z' })
+    expect(JSON.stringify(result)).not.toContain('private')
+    expect(result).not.toHaveProperty('titleOriginal')
+  })
+
   it('replaces persisted article diagnostic text with an allowlisted safe error', async () => {
     const article = { _id: '507f1f77bcf86cd799439010', sourceId: '507f1f77bcf86cd799439011', titleOriginal: 'Safe title', originalUrl: 'https://example.test/a', status: 'published', topics: [], leadMedia: null, leadMediaStatus: 'none', summaryStatus: 'failed', summaryError: { code: 'provider_failed', message: 'mongodb://user:secret@private.example/db', retryable: true, occurredAt: new Date('2026-01-01') }, embeddingStatus: 'failed', embeddingError: { code: 'unknown_internal', message: 'stack trace and secret', retryable: false, occurredAt: new Date('2026-01-01') }, updatedAt: new Date('2026-01-01') }
     const service = createAdminGovernanceService({ repository: { findAdminArticle: vi.fn(async () => article) } })

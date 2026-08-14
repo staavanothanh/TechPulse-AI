@@ -17,6 +17,11 @@ function envName(value, name) {
   return result
 }
 
+function optionalEnvName(value, name) {
+  if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) return null
+  return envName(value, name)
+}
+
 function csv(value) {
   if (value === undefined || value === '') return []
   return value.split(',').map((item) => item.trim()).filter(Boolean)
@@ -63,6 +68,14 @@ function mongoConfiguration(input) {
   return Object.freeze({ uriEnv, database })
 }
 
+function maintenanceMongoConfiguration(input) {
+  const uriEnv = optionalEnvName(input.MONGODB_MAINTENANCE_URI_ENV, 'MongoDB maintenance URI env')
+  if (!uriEnv) return null
+  if (uriEnv === input.MONGODB_URI_ENV) throw new Error('MongoDB maintenance URI env must be separate from runtime URI env')
+  const database = requiredString(input.MONGODB_DATABASE, 'MongoDB database name')
+  return Object.freeze({ uriEnv, database })
+}
+
 export function validateMongoConfiguration(input = process.env) {
   return mongoConfiguration(input)
 }
@@ -94,6 +107,7 @@ export function validateRuntimeConfiguration(input = process.env) {
   return {
     origins,
     mongo: mongoConfiguration(input),
+    maintenanceMongo: maintenanceMongoConfiguration(input),
     quotaKeyring,
     governanceKeyring,
     checkpointKeyIds,
@@ -105,6 +119,7 @@ export function validateRuntimeConfiguration(input = process.env) {
 export const RUNTIME_ENV_CONTRACT = Object.freeze([
   'PUBLIC_APP_ORIGINS',
   'MONGODB_URI_ENV',
+  'MONGODB_MAINTENANCE_URI_ENV',
   'MONGODB_DATABASE',
   'QUOTA_HMAC_CURRENT_KEY_ENV',
   'QUOTA_HMAC_RETIRING_KEY_ENVS',

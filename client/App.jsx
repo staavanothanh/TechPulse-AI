@@ -16,7 +16,6 @@ const ADMIN_DESTINATIONS = Object.freeze([
   { id: 'governance', label: 'Governance' },
   { id: 'users', label: 'Người dùng' },
   { id: 'audit', label: 'Audit bất biến' },
-  { id: 'states', label: 'States' },
 ])
 const ADMIN_INTERNAL_ROUTES = Object.freeze(new Set(['sources', 'account', 'deletions']))
 
@@ -138,7 +137,7 @@ export default function App() {
           {session.status === 'ready' && !session.user ? accountPanel : null}
           {reader ? <ContentWorkspace generatedApi={api} csrfToken={session.csrfToken} route={contentRoute} onRouteChange={setContentRoute} accountPanel={accountPanel} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {admin && adminRoute === 'account' ? accountPanel : null}
-          {admin && ['overview', 'articles', 'governance', 'users', 'deletions', 'audit', 'states'].includes(adminRoute) ? <AdminOperations api={api} csrfToken={session.csrfToken} route={adminRoute} onNavigate={navigateAdmin} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
+          {admin && ['overview', 'articles', 'governance', 'users', 'deletions', 'audit'].includes(adminRoute) ? <AdminOperations api={api} csrfToken={session.csrfToken} route={adminRoute} onNavigate={navigateAdmin} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {admin && adminRoute === 'jobs' ? <AdminJobsWorkspace api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {admin && adminRoute === 'sources' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
         </main>

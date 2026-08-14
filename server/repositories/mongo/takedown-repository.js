@@ -1,7 +1,19 @@
 import { ObjectId } from 'mongodb'
 import { createTakedownRepository, redactCitationsForTarget } from '../../application/takedowns/repository.js'
+import { buildRemovedArticleTombstone } from '../../domain/article/removed-tombstone.js'
 
 const MAX_CITATION_PAGE = 100
+const MAX_RETENTION_BATCH = 100
+const TERMINAL_TAKEDOWN_STATUSES = Object.freeze(['rejected', 'completed'])
+const REMOVED_METADATA_FIELDS = Object.freeze([
+  'titleOriginal', 'titleVi', 'originalUrl', 'canonicalUrl', 'author', 'provenance',
+  'excerptOriginal', 'searchTextNormalized', 'leadMedia', 'leadMediaStatus', 'summaryVi', 'summaryStatus',
+  'summaryBasis', 'summaryModel', 'summaryInputHash', 'summarySourcePolicyVersion', 'summaryGeneratedAt',
+  'summaryError', 'embedding', 'embeddingStatus', 'embeddingModel', 'embeddingDimensions',
+  'embeddingInputHash', 'embeddingVersion', 'embeddingSourcePolicyVersion', 'embeddedAt', 'embeddingError',
+  'rightsSnapshot', 'authorityTier', 'sourceType', 'publishedAt', 'retrievedAt', 'sourceLanguage', 'topics',
+  'contentScope', 'hiddenReason', 'duplicateOfId', 'duplicateReason',
+])
 
 function objectId(value) {
   if (value instanceof ObjectId) return value
@@ -10,6 +22,28 @@ function objectId(value) {
 }
 
 function unwrap(value) { return value?.value ?? value }
+
+function removedMetadataFilter(base) {
+  return {
+    ...base,
+    status: 'removed',
+    evidenceEligible: false,
+    canonicalUrlHash: { $type: 'string' },
+    removalPolicyVersion: { $gte: 1 },
+    ...Object.fromEntries(REMOVED_METADATA_FIELDS.map((field) => [field, { $exists: false }])),
+  }
+}
+
+function pendingMetadataFilter(base) {
+  return {
+    ...base,
+    $or: [
+      { status: { $ne: 'removed' } },
+      { removalPolicyVersion: { $exists: false } },
+      ...REMOVED_METADATA_FIELDS.map((field) => ({ [field]: { $exists: true } })),
+    ],
+  }
+}
 
 export class MongoTakedownRepository {
   constructor(context) {
@@ -132,24 +166,29 @@ export class MongoTakedownRepository {
   async assertTerminalTargetsCurrent({ targetType, targetIds, requestedScope = [], session } = {}) {
     const ids = targetIds.map(objectId)
     const collection = targetType === 'article' ? this.collection('articles') : this.collection('sources')
-    const filter = targetType === 'article' ? {
-      _id: { $in: ids }, status: { $in: requestedScope.includes('metadata') ? ['removed', 'hidden'] : ['hidden'] }, evidenceEligible: false,
-      ...(requestedScope.includes('metadata') ? { searchTextNormalized: '' } : {}),
-      ...(requestedScope.includes('media-metadata') ? { leadMedia: null, leadMediaStatus: 'none' } : {}),
-      ...(requestedScope.includes('summary') ? { summaryStatus: 'removed', summaryVi: null } : {}),
-      ...(requestedScope.includes('embedding') ? { embeddingStatus: 'removed', embedding: null } : {}),
-    } : { _id: { $in: ids }, operationalStatus: 'paused' }
+    const metadataRequested = requestedScope.includes('metadata')
+    const filter = targetType === 'article'
+      ? metadataRequested
+        ? removedMetadataFilter({ _id: { $in: ids } })
+        : {
+            _id: { $in: ids }, status: 'hidden', evidenceEligible: false,
+            ...(requestedScope.includes('media-metadata') ? { leadMedia: null, leadMediaStatus: 'none' } : {}),
+            ...(requestedScope.includes('summary') ? { summaryStatus: 'removed', summaryVi: null } : {}),
+            ...(requestedScope.includes('embedding') ? { embeddingStatus: 'removed', embedding: null } : {}),
+          }
+      : { _id: { $in: ids }, operationalStatus: 'paused' }
     const result = await collection.updateMany(filter, { $set: { updatedAt: this.clock() } }, { session })
     if (result.matchedCount !== ids.length) throw Object.assign(new Error('Takedown target lifecycle changed'), { status: 409, code: 'conflict' })
     if (targetType === 'source') {
       const articles = this.collection('articles')
       const visible = await articles.countDocuments({ sourceId: { $in: ids }, status: { $in: ['published', 'processing', 'review-needed'] } }, { session, hint: 'articles_status_source_time' })
       if (visible !== 0) throw Object.assign(new Error('Source article lifecycle changed'), { status: 409, code: 'conflict' })
-      const artifactFilter = { sourceId: { $in: ids }, status: { $in: ['hidden', 'removed'] }, evidenceEligible: false }
-      if (requestedScope.includes('metadata')) artifactFilter.searchTextNormalized = ''
-      if (requestedScope.includes('media-metadata')) Object.assign(artifactFilter, { leadMedia: null, leadMediaStatus: 'none' })
-      if (requestedScope.includes('summary')) Object.assign(artifactFilter, { summaryStatus: 'removed', summaryVi: null })
-      if (requestedScope.includes('embedding')) Object.assign(artifactFilter, { embeddingStatus: 'removed', embedding: null })
+      const artifactFilter = metadataRequested
+        ? removedMetadataFilter({ sourceId: { $in: ids } })
+        : { sourceId: { $in: ids }, status: 'hidden', evidenceEligible: false }
+      if (!metadataRequested && requestedScope.includes('media-metadata')) Object.assign(artifactFilter, { leadMedia: null, leadMediaStatus: 'none' })
+      if (!metadataRequested && requestedScope.includes('summary')) Object.assign(artifactFilter, { summaryStatus: 'removed', summaryVi: null })
+      if (!metadataRequested && requestedScope.includes('embedding')) Object.assign(artifactFilter, { embeddingStatus: 'removed', embedding: null })
       const targetCount = await articles.countDocuments({ sourceId: { $in: ids } }, { session, hint: 'articles_status_source_time' })
       const fencedCount = await articles.countDocuments(artifactFilter, { session, hint: 'articles_status_source_time' })
       if (targetCount !== fencedCount) throw Object.assign(new Error('Source article artifact lifecycle changed'), { status: 409, code: 'conflict' })
@@ -159,15 +198,17 @@ export class MongoTakedownRepository {
 
   async cleanupArtifacts({ targetType, targetIds, requestedScope, session, now, limit = MAX_CITATION_PAGE } = {}) {
     const ids = targetIds.map(objectId)
+    const metadataRequested = requestedScope.includes('metadata')
     const completion = {
-      metadataRemoved: requestedScope.includes('metadata'),
-      mediaMetadataRemoved: requestedScope.includes('media-metadata'),
-      summaryRemoved: requestedScope.includes('summary'),
-      embeddingRemoved: requestedScope.includes('embedding'),
+      metadataRemoved: false,
+      mediaMetadataRemoved: false,
+      summaryRemoved: false,
+      embeddingRemoved: false,
       historicalChatCitationsRedacted: false,
     }
+    const sourcePolicyVersions = new Map()
     if (targetType === 'article') {
-      const lifecycleStatuses = requestedScope.includes('metadata') ? ['hidden', 'removed'] : ['hidden']
+      const lifecycleStatuses = metadataRequested ? ['hidden', 'removed'] : ['hidden']
       const fence = await this.collection('articles').updateMany({ _id: { $in: ids }, status: { $in: lifecycleStatuses }, evidenceEligible: false }, { $set: { updatedAt: now } }, { session })
       if (fence.matchedCount !== ids.length) throw Object.assign(new Error('Article cleanup lifecycle changed'), { status: 409, code: 'conflict' })
     } else {
@@ -175,6 +216,7 @@ export class MongoTakedownRepository {
       for (const sourceId of ids) {
         const source = await sources.findOne({ _id: sourceId, operationalStatus: 'paused' }, { session, projection: { policyVersion: 1 } })
         if (!source || !Number.isInteger(source.policyVersion)) throw Object.assign(new Error('Source cleanup lifecycle changed'), { status: 409, code: 'conflict' })
+        sourcePolicyVersions.set(sourceId.toHexString(), source.policyVersion)
         const fence = await sources.updateOne({ _id: sourceId, operationalStatus: 'paused', policyVersion: source.policyVersion }, { $set: { updatedAt: now } }, { session })
         if (fence.matchedCount !== 1) throw Object.assign(new Error('Source cleanup lifecycle changed'), { status: 409, code: 'conflict' })
       }
@@ -184,21 +226,45 @@ export class MongoTakedownRepository {
         if (visibleCount !== 0) throw Object.assign(new Error('Source cleanup lifecycle changed'), { status: 409, code: 'conflict' })
       }
     }
-    const lifecycleStatuses = completion.metadataRemoved ? ['hidden', 'removed'] : ['hidden']
+    const lifecycleStatuses = metadataRequested ? ['hidden', 'removed'] : ['hidden']
     const articleFilter = targetType === 'article'
       ? { _id: { $in: ids }, status: { $in: lifecycleStatuses }, evidenceEligible: false }
       : { sourceId: { $in: ids }, status: { $in: lifecycleStatuses }, evidenceEligible: false }
-    // Required article metadata remains schema-valid; hide/evidence fencing is the
-    // visibility removal. Only optional searchable/artifact fields are cleared.
-    const set = { updatedAt: now, evidenceEligible: false }
-    if (completion.metadataRemoved) { set.status = 'removed'; set.searchTextNormalized = '' }
-    if (completion.mediaMetadataRemoved) { set.leadMedia = null; set.leadMediaStatus = 'none' }
-    if (completion.summaryRemoved) Object.assign(set, { summaryVi: null, summaryStatus: 'removed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null })
-    if (completion.embeddingRemoved) Object.assign(set, { embedding: null, embeddingStatus: 'removed', embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null })
     const articleCollection = this.collection('articles')
-    const articleCount = typeof articleCollection.countDocuments === 'function' ? await articleCollection.countDocuments(articleFilter, { session, hint: 'articles_status_source_time' }) : null
-    const articleUpdate = await articleCollection.updateMany(articleFilter, { $set: set }, { session })
-    if (articleCount !== null && articleUpdate.matchedCount !== articleCount) throw Object.assign(new Error('Article cleanup lifecycle changed'), { status: 409, code: 'conflict' })
+    const pageLimit = Math.max(1, Math.min(MAX_CITATION_PAGE, Number(limit) || MAX_CITATION_PAGE))
+    let artifactHasMore = false
+    if (metadataRequested) {
+      let articleQuery = articleCollection.find(pendingMetadataFilter(articleFilter), { session })
+      if (typeof articleQuery.hint === 'function') articleQuery = articleQuery.hint(targetType === 'source' ? 'articles_status_source_time' : '_id_')
+      const articleRows = await articleQuery.limit(pageLimit + 1).toArray()
+      for (const article of articleRows.slice(0, pageLimit)) {
+        const policyVersion = article.removalPolicyVersion ?? article.rightsSnapshot?.sourcePolicyVersion ?? sourcePolicyVersions.get(article.sourceId?.toHexString?.())
+        const tombstone = buildRemovedArticleTombstone({ ...article, removalPolicyVersion: policyVersion }, { now })
+        const replaced = await articleCollection.replaceOne(
+          { _id: article._id, status: article.status, evidenceEligible: false, updatedAt: article.updatedAt },
+          tombstone,
+          { session },
+        )
+        if (replaced.matchedCount !== 1) throw Object.assign(new Error('Article metadata cleanup lifecycle changed'), { status: 409, code: 'conflict' })
+      }
+      const remainingMetadata = await articleCollection.countDocuments(pendingMetadataFilter(articleFilter), { session })
+      completion.metadataRemoved = remainingMetadata === 0
+      artifactHasMore = articleRows.length > pageLimit || remainingMetadata > 0
+      if (requestedScope.includes('media-metadata')) completion.mediaMetadataRemoved = completion.metadataRemoved
+      if (requestedScope.includes('summary')) completion.summaryRemoved = completion.metadataRemoved
+      if (requestedScope.includes('embedding')) completion.embeddingRemoved = completion.metadataRemoved
+    } else {
+      const set = { updatedAt: now, evidenceEligible: false }
+      if (requestedScope.includes('media-metadata')) { set.leadMedia = null; set.leadMediaStatus = 'none' }
+      if (requestedScope.includes('summary')) Object.assign(set, { summaryVi: null, summaryStatus: 'removed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null })
+      if (requestedScope.includes('embedding')) Object.assign(set, { embedding: null, embeddingStatus: 'removed', embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null })
+      const articleCount = typeof articleCollection.countDocuments === 'function' ? await articleCollection.countDocuments(articleFilter, { session, hint: 'articles_status_source_time' }) : null
+      const articleUpdate = await articleCollection.updateMany(articleFilter, { $set: set }, { session })
+      if (articleCount !== null && articleUpdate.matchedCount !== articleCount) throw Object.assign(new Error('Article cleanup lifecycle changed'), { status: 409, code: 'conflict' })
+      completion.mediaMetadataRemoved = requestedScope.includes('media-metadata')
+      completion.summaryRemoved = requestedScope.includes('summary')
+      completion.embeddingRemoved = requestedScope.includes('embedding')
+    }
 
     const chat = this.collection('chatSessions')
     const citationField = targetType === 'article' ? 'messages.citations.articleId' : 'messages.citations.sourceId'
@@ -210,7 +276,6 @@ export class MongoTakedownRepository {
     }
     let query = chat.find(filter, { session, projection: { _id: 1, updatedAt: 1, messageCount: 1, messages: 1 } })
     if (typeof query.hint === 'function') query = query.hint(directIndex)
-    const pageLimit = Math.max(1, Math.min(MAX_CITATION_PAGE, Number(limit) || MAX_CITATION_PAGE))
     const rows = await query.sort({ _id: 1 }).limit(pageLimit + 1).toArray()
     const selected = rows.slice(0, pageLimit)
     for (const row of selected) {
@@ -218,9 +283,9 @@ export class MongoTakedownRepository {
       const updated = await chat.updateOne({ _id: row._id, updatedAt: row.updatedAt, messageCount: row.messageCount }, { $set: { messages, updatedAt: now } }, { session })
       if (updated.matchedCount !== 1) throw Object.assign(new Error('Historical citation lifecycle changed'), { status: 409, code: 'conflict' })
     }
-    const hasMore = rows.length > pageLimit
+    const hasMore = artifactHasMore || rows.length > pageLimit
     const remaining = await chat.countDocuments(filter, { session, hint: directIndex })
-    completion.historicalChatCitationsRedacted = remaining === 0
+    completion.historicalChatCitationsRedacted = remaining === 0 && !artifactHasMore
     return { ...completion, hasMore }
   }
 
@@ -266,6 +331,7 @@ export class MongoTakedownRepository {
     const targetIds = current.targetIds.map(objectId)
     const update = { status, decisionReasonCode: reasonCode, updatedAt: now }
     if (status === 'approved' || status === 'rejected') Object.assign(update, { reviewedBy: objectId(actor._id ?? actor.id), reviewedAt: now })
+    if (status === 'rejected') Object.assign(update, { completedAt: now, piiPurgeAfter: new Date(now.getTime() + 90 * 86400000), workflowPurgeAfter: new Date(now.getTime() + 180 * 86400000) })
     if (status === 'approved') { await this.hideTargets({ targetType: current.targetType, targetIds, reasonCode, session, now }); update['completion.hidden'] = true }
     if (status === 'completed') {
       const completion = current.completion ?? {}
@@ -288,10 +354,29 @@ export class MongoTakedownRepository {
   }
 
   async purgeWorkflows({ cutoff = this.clock(), limit = 100 } = {}) {
-    const filter = { status: 'completed', workflowPurgeAfter: { $lte: cutoff } }
+    const filter = { status: { $in: TERMINAL_TAKEDOWN_STATUSES }, workflowPurgeAfter: { $lte: cutoff } }
     const rows = await this.collection('takedownRequests').find(filter).sort({ workflowPurgeAfter: 1, _id: 1 }).limit(limit + 1).project({ _id: 1 }).toArray()
     const selected = rows.slice(0, limit)
     const result = selected.length ? await this.collection('takedownRequests').deleteMany({ ...filter, _id: { $in: selected.map(({ _id }) => _id) } }) : { deletedCount: 0 }
     return { inspected: selected.length, affected: result.deletedCount, hasMore: rows.length > limit }
+  }
+
+  async purgePii({ cutoff = this.clock(), limit = MAX_RETENTION_BATCH } = {}) {
+    if (!(cutoff instanceof Date) || Number.isNaN(cutoff.getTime())) throw Object.assign(new Error('Takedown PII cutoff is invalid'), { status: 422, code: 'validation_error' })
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RETENTION_BATCH) throw Object.assign(new Error('Takedown PII batch is invalid'), { status: 422, code: 'validation_error' })
+    const predicate = {
+      status: { $in: TERMINAL_TAKEDOWN_STATUSES },
+      piiPurgeAfter: { $exists: true, $lte: cutoff },
+    }
+    let query = this.collection('takedownRequests').find(predicate, { projection: { _id: 1, piiPurgeAfter: 1 } })
+    if (typeof query.hint === 'function') query = query.hint('takedown_pii_deadline')
+    const rows = await query.sort({ piiPurgeAfter: 1, _id: 1 }).limit(limit + 1).toArray()
+    const selected = rows.slice(0, limit)
+    if (selected.length === 0) return { inspected: 0, affected: 0, hasMore: false }
+    const result = await this.collection('takedownRequests').updateMany(
+      { ...predicate, _id: { $in: selected.map(({ _id }) => _id) } },
+      { $unset: { requesterName: '', requesterContact: '', reason: '', evidenceNote: '', piiPurgeAfter: '' } },
+    )
+    return { inspected: selected.length, affected: result.modifiedCount ?? 0, hasMore: rows.length > limit }
   }
 }

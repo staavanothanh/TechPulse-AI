@@ -8,6 +8,9 @@ import { buildIndexingJobsMigration, runIndexingJobsMigration } from './migratio
 import { buildChatSessionsMigration, runChatSessionsMigration } from './migrations/chat-sessions.js'
 import { buildGovernanceMigration, buildGovernanceDatabaseMigration, runGovernanceMigration, runGovernanceDatabaseMigration } from './migrations/governance.js'
 import { buildGovernanceHardeningMigration, runGovernanceHardeningMigration } from './migrations/governance-hardening.js'
+import { buildGovernanceCapabilityProbeMigration, runGovernanceCapabilityProbeMigration } from './migrations/governance-capability-probes.js'
+import { buildGovernanceRetentionHardeningMigration, runGovernanceRetentionHardeningMigration } from './migrations/governance-retention-hardening.js'
+import { buildArticleGovernanceHardeningMigration, runArticleGovernanceHardeningMigration } from './migrations/article-governance-hardening.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
@@ -69,15 +72,27 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
                 : runAuthCoreWithStep4Compatibility
     const plan = dryRun
       ? target === 'governance'
-        ? [...buildMigration({ dryRun: true }), ...buildGovernanceHardeningMigration({ dryRun: true }), ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' }))]
+        ? [
+            ...buildMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildGovernanceHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildGovernanceRetentionHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildArticleGovernanceHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
+            ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
+          ]
         : buildMigration({ dryRun: true })
       : await (async () => {
           const context = await getMongoContext(runtime)
           const plan = await runMigration({ db: context.db })
           if (target === 'governance') {
             plan.push(...await runGovernanceHardeningMigration({ db: context.db }))
+            plan.push(...await runGovernanceRetentionHardeningMigration({ db: context.db }))
+            plan.push(...await runArticleGovernanceHardeningMigration({ db: context.db }))
+            plan.push(...await runGovernanceCapabilityProbeMigration({ db: context.db }))
             const governanceDb = context.client.db('techpulse_governance')
             await runGovernanceDatabaseMigration({ db: governanceDb })
+            plan.push(...await runGovernanceCapabilityProbeMigration({ db: governanceDb }))
           }
           return plan
         })()

@@ -72,6 +72,16 @@ function idString(value) {
 
 function safeArticle(document, detail = false) {
   if (!document) return null
+  if (document.status === 'removed') {
+    return {
+      id: idString(document._id ?? document.id),
+      sourceId: idString(document.sourceId),
+      status: 'removed',
+      removalPolicyVersion: document.removalPolicyVersion,
+      removedAt: dateIso(document.removedAt),
+      updatedAt: dateIso(document.updatedAt),
+    }
+  }
   const base = {
     id: idString(document._id ?? document.id),
     sourceId: idString(document.sourceId),

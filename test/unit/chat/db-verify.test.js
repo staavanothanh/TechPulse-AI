@@ -41,6 +41,21 @@ describe('Step 10 chat database verification', () => {
     expect(source).toMatch(/governance.*chat citation.*explain|direct citation explain/i)
   })
 
+  it('requires committed and aborted cross-database post-checks before governance role verification', () => {
+    const source = fs.readFileSync(new URL('../../../scripts/db-verify.js', import.meta.url), 'utf8')
+    const probeSource = fs.readFileSync(new URL('../../../scripts/mongo-role-probe.js', import.meta.url), 'utf8')
+    expect(source).toContain('probeCrossDatabaseTransactionCapabilities')
+    expect(source).toContain('RUNTIME_CAPABILITY_PROBE_COLLECTION')
+    expect(source).toMatch(/runtime probe.*required: \['find', 'insert', 'remove'\]/)
+    expect(source).toContain("database: 'techpulse_governance'")
+    expect(source).toMatch(/governance cross-database capability failed/)
+    expect(probeSource).toContain("db.collection(RUNTIME_CAPABILITY_PROBE_COLLECTION)")
+    expect(probeSource).toContain("governanceDb.collection(RUNTIME_CAPABILITY_PROBE_COLLECTION)")
+    expect(probeSource).toMatch(/committedPostCheck/)
+    expect(probeSource).toMatch(/abortedPostCheck/)
+    expect(probeSource).toMatch(/committedCleanup/)
+  })
+
   it('fails closed with a safe not-verified result when Mongo is unreachable', () => {
     const result = spawnSync(process.execPath, ['scripts/db-verify.js', 'chat-sessions', '--require-role'], {
       cwd: process.cwd(),

@@ -8,6 +8,8 @@ import {
 } from '../../../scripts/migrations/governance.js'
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
 import { GOVERNANCE_HARDENING_INDEXES } from '../../../scripts/migrations/governance-hardening.js'
+import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from '../../../scripts/migrations/governance-retention-hardening.js'
+import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
 
 function materializedIndex(index) {
   return { name: index.name, key: index.key, ...(index.options ?? {}) }
@@ -22,7 +24,8 @@ function fakeDb(collections, indexes) {
 
 function readyContext() {
   const appCollections = [
-    ...Object.entries(GOVERNANCE_COLLECTIONS).map(([name, definition]) => [name, definition.validator]),
+    ...Object.entries(GOVERNANCE_COLLECTIONS).map(([name, definition]) => [name, name === 'takedownRequests' ? GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR : definition.validator]),
+    ['articles', ARTICLE_GOVERNANCE_HARDENING_VALIDATOR],
     ['adminAuditLogs', GOVERNANCE_AUDIT_VALIDATOR],
   ]
   const appIndexes = {
@@ -52,7 +55,7 @@ describe('Step 11 governance bootstrap readiness', () => {
   it('fails closed when app takedown indexes drift', async () => {
     const context = readyContext()
     context.db = fakeDb(
-      [...Object.entries(GOVERNANCE_COLLECTIONS).map(([name, definition]) => [name, definition.validator]), ['adminAuditLogs', GOVERNANCE_AUDIT_VALIDATOR]],
+      [...Object.entries(GOVERNANCE_COLLECTIONS).map(([name, definition]) => [name, name === 'takedownRequests' ? GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR : definition.validator]), ['articles', ARTICLE_GOVERNANCE_HARDENING_VALIDATOR], ['adminAuditLogs', GOVERNANCE_AUDIT_VALIDATOR]],
       { takedownRequests: [], accountDeletionRequests: GOVERNANCE_INDEXES.accountDeletionRequests, adminAuditLogs: GOVERNANCE_AUDIT_INDEXES },
     )
     await expect(assertGovernanceReady(context)).rejects.toThrow(/governance.*index/i)

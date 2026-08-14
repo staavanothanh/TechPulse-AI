@@ -5,6 +5,7 @@ import {
   probeAuditRoleCapabilities,
   probeHmacLifecycleRoleCapabilities,
   probeSourcesRoleCapabilities,
+  probeCrossDatabaseTransactionCapabilities,
 } from '../../scripts/mongo-role-probe.js'
 
 function deniedError() {
@@ -32,6 +33,9 @@ function createClient(sessionBehaviors = []) {
         startTransaction: vi.fn(() => {
           if (behavior.startTransactionError) throw behavior.startTransactionError
         }),
+        commitTransaction: vi.fn(async () => {
+          if (behavior.commitError) throw behavior.commitError
+        }),
         abortTransaction: vi.fn(async () => {
           if (behavior.abortError) throw behavior.abortError
         }),
@@ -51,6 +55,67 @@ describe('Mongo audit role capability probe', () => {
     expect(isAuthorizationDenied(deniedError())).toBe(true)
     expect(isAuthorizationDenied(atlasDeniedError('name'))).toBe(true)
     expect(isAuthorizationDenied(atlasDeniedError('codeName', 'not authorized to perform this operation'))).toBe(true)
+  })
+
+  it('proves cross-database commit and rollback with post-checks and idempotent cleanup', async () => {
+    const persisted = { app: new Map(), governance: new Map() }
+    const sessions = []
+    const client = {
+      startSession: vi.fn(() => {
+        const session = {
+          pending: [],
+          startTransaction: vi.fn(),
+          commitTransaction: vi.fn(async () => undefined),
+          abortTransaction: vi.fn(async () => {
+            for (const { store, key } of session.pending) store.delete(key)
+            session.pending = []
+          }),
+          endSession: vi.fn(async () => undefined),
+        }
+        sessions.push(session)
+        return session
+      }),
+    }
+    const collection = (store) => ({
+      insertOne: vi.fn(async (document, { session } = {}) => {
+        const key = document.probeId
+        store.set(key, document)
+        session?.pending.push({ store, key })
+        return { acknowledged: true, insertedId: document._id }
+      }),
+      findOne: vi.fn(async (filter) => store.get(filter.probeId) ?? null),
+      deleteOne: vi.fn(async (filter) => {
+        const key = filter.probeId
+        const existed = store.delete(key)
+        return { deletedCount: existed ? 1 : 0 }
+      }),
+    })
+    const appCollection = collection(persisted.app)
+    const governanceCollection = collection(persisted.governance)
+    const db = { collection: vi.fn(() => appCollection) }
+    const governanceDb = { collection: vi.fn(() => governanceCollection) }
+
+    await expect(probeCrossDatabaseTransactionCapabilities({ client, db, governanceDb })).resolves.toEqual({
+      committedTransaction: true,
+      committedAppVisible: true,
+      committedGovernanceVisible: true,
+      committedPostCheck: true,
+      committedCleanup: true,
+      abortedTransaction: true,
+      abortedAppAbsent: true,
+      abortedGovernanceAbsent: true,
+      abortedPostCheck: true,
+    })
+    expect(client.startSession).toHaveBeenCalledTimes(3)
+    expect(sessions[0].commitTransaction).toHaveBeenCalledOnce()
+    expect(sessions[1].commitTransaction).toHaveBeenCalledOnce()
+    expect(sessions[2].abortTransaction).toHaveBeenCalledOnce()
+    expect(db.collection).toHaveBeenCalledWith('runtimeCapabilityProbes')
+    expect(governanceDb.collection).toHaveBeenCalledWith('runtimeCapabilityProbes')
+    expect(db.collection).not.toHaveBeenCalledWith('takedownRequests')
+    expect(governanceDb.collection).not.toHaveBeenCalledWith('governanceSuppressions')
+    expect(persisted.app.size).toBe(0)
+    expect(persisted.governance.size).toBe(0)
   })
 
   it('rejects unrelated Atlas, network, transaction, validation and arbitrary errors', () => {

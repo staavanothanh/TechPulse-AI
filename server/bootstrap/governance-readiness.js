@@ -6,6 +6,8 @@ import {
 } from '../../scripts/migrations/governance.js'
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
 import { GOVERNANCE_HARDENING_INDEXES } from '../../scripts/migrations/governance-hardening.js'
+import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from '../../scripts/migrations/governance-retention-hardening.js'
+import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../scripts/migrations/article-governance-hardening.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
@@ -41,10 +43,18 @@ async function assertCollectionsAndIndexes(db, definitions, indexes, label) {
  */
 export async function assertGovernanceReady(context, { governanceDb } = {}) {
   if (!context?.db) throw new Error('Mongo context is required')
-  await assertCollectionsAndIndexes(context.db, GOVERNANCE_COLLECTIONS, {
+  await assertCollectionsAndIndexes(context.db, {
+    ...GOVERNANCE_COLLECTIONS,
+    takedownRequests: { ...GOVERNANCE_COLLECTIONS.takedownRequests, validator: GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR },
+  }, {
     ...GOVERNANCE_INDEXES,
     takedownRequests: [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests],
   }, 'governance')
+  const appCollections = await collectionMap(context.db)
+  const articles = appCollections.get('articles')
+  if (!articles || articles.options?.validationLevel !== 'strict' || articles.options?.validationAction !== 'error' || stableJson(articles.options?.validator) !== stableJson(ARTICLE_GOVERNANCE_HARDENING_VALIDATOR)) {
+    throw new Error('governance article tombstone validator is not ready')
+  }
   const auditCollections = await collectionMap(context.db)
   const audit = auditCollections.get('adminAuditLogs')
   if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || stableJson(audit.options?.validator) !== stableJson(GOVERNANCE_AUDIT_VALIDATOR)) {

@@ -10,13 +10,14 @@ import { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } from '../ser
 import { createSafeFetch } from '../server/infrastructure/http/safe-fetch.js'
 import { createSourceTechnicalCheckAdapter } from '../server/infrastructure/http/source-technical-check.js'
 import { createRateLimitAdmission } from '../server/security/rate-limit-admission.js'
+import { createProductionJobRuntime } from '../server/maintenance/job-runtime.js'
 
 let appPromise
 function loadApp() {
   if (!appPromise) {
     appPromise = createConfiguredAuthService().then(async ({ authService, context, runtime, authRepository, quotaKeyring, governanceKeyring }) => {
       let sourceService
-      let jobs = {}
+      let jobs
       let content = {}
       let qaService
       let adminGovernanceService
@@ -24,7 +25,11 @@ function loadApp() {
       const rateLimitAdmission = createRateLimitAdmission({ repository: authRepository, keyring: quotaKeyring })
       const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
       try { sourceService = (await createConfiguredSourceService({ context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.error('Source Registry service is unavailable') }
-      try { jobs = await createConfiguredJobRuntime({ context, rateLimitAdmission, quotaKeyring, governanceKeyring }) } catch { console.error('Durable job service is unavailable') }
+      jobs = (await createProductionJobRuntime({
+        runtimeConfig: runtime,
+        jobOptions: { context, rateLimitAdmission, quotaKeyring, governanceKeyring },
+        createJobRuntime: createConfiguredJobRuntime,
+      })).jobs
       let indexing = {}
       if (jobs.queueRegistry) {
         try {

@@ -21,6 +21,7 @@ const { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } = await impor
 const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
 const { createRateLimitAdmission } = await import('./security/rate-limit-admission.js')
+const { closeMaintenanceMongoContext, getMaintenanceMongoContext } = await import('./maintenance/mongo-context.js')
 let authService
 let sourceService
 let jobService
@@ -35,12 +36,17 @@ let queryEmbedding
 let qaService
 let adminGovernanceService
 let accountDeletionService
+let maintenanceContext
 let runtime
 try {
   const configured = await createConfiguredAuthService()
   authService = configured.authService
   runtime = configured.runtime
   const rateLimitAdmission = createRateLimitAdmission({ repository: configured.authRepository, keyring: configured.quotaKeyring })
+  try {
+    maintenanceContext = await getMaintenanceMongoContext({ runtimeConfig: configured.runtime, runtimeClient: configured.context.client })
+    if (!maintenanceContext) console.warn('Audit IP-HMAC maintenance is unavailable until MONGODB_MAINTENANCE_URI_ENV is configured')
+  } catch { console.warn('Audit IP-HMAC maintenance is unavailable until a separate maintenance credential is configured') }
   try {
     const governance = await createConfiguredAdminGovernanceService({ context: configured.context, rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring })
     adminGovernanceService = governance.adminGovernanceService
@@ -49,10 +55,11 @@ try {
   const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
   try { sourceService = (await createConfiguredSourceService({ context: configured.context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
   try {
-    const jobs = await createConfiguredJobRuntime({ context: configured.context, rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring })
+    const jobs = await createConfiguredJobRuntime({ context: configured.context, rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring, maintenanceContext })
     jobService = jobs.jobService
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner
+    maintenanceContext = jobs.maintenanceContext ?? maintenanceContext
     let adapters
     let indexing = {}
     try {
@@ -84,7 +91,10 @@ server.listen(port, () => {
 
 function shutdown(signal) {
   server.close(() => {
-    vite.close().finally(() => process.exit(0))
+    vite.close().finally(async () => {
+      try { await closeMaintenanceMongoContext(maintenanceContext) } catch { /* shutdown is best effort */ }
+      process.exit(0)
+    })
   })
   setTimeout(() => process.exit(1), 5000).unref()
   console.warn(`Received ${signal}; shutting down`)

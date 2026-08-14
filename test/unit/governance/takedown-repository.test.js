@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ObjectId } from 'mongodb'
 import { MongoTakedownRepository } from '../../../server/repositories/mongo/takedown-repository.js'
+import { createStep11Mongo } from '../../helpers/step11-mongo.js'
 
 const requestId = new ObjectId('507f1f77bcf86cd799439041')
 const firstTarget = new ObjectId('507f1f77bcf86cd799439042')
@@ -46,7 +47,7 @@ describe('Mongo takedown repository integrity', () => {
   })
 
   it('finalizes only persisted cleanup proof and does not rerun hide or cleanup work', async () => {
-    const fixture = makeContext()
+    const fixture = makeContext({ articleStatus: 'removed' })
     const workflow = {
       _id: requestId, status: 'approved', targetType: 'article', targetIds: [firstTarget], requestedScope: ['metadata'],
       completion: { hidden: true, metadataRemoved: true, mediaMetadataRemoved: false, summaryRemoved: false, embeddingRemoved: false, historicalChatCitationsRedacted: true },
@@ -111,7 +112,20 @@ describe('Mongo takedown repository integrity', () => {
     const repository = new MongoTakedownRepository(fixture.context)
 
     await expect(repository.purgeWorkflows({ cutoff: now, limit: 2 })).resolves.toEqual({ inspected: 2, affected: 2, hasMore: true })
-    expect(deleteMany).toHaveBeenCalledWith({ status: 'completed', workflowPurgeAfter: { $lte: now }, _id: { $in: ids.slice(0, 2) } })
+    expect(deleteMany).toHaveBeenCalledWith({ status: { $in: ['rejected', 'completed'] }, workflowPurgeAfter: { $lte: now }, _id: { $in: ids.slice(0, 2) } })
+  })
+
+  it('starts both retention deadlines when a takedown is rejected', async () => {
+    const fixture = makeContext()
+    const workflow = { _id: requestId, status: 'reviewing', targetType: 'article', targetIds: [firstTarget], requestedScope: ['metadata'], completion: { hidden: false, metadataRemoved: false, mediaMetadataRemoved: false, summaryRemoved: false, embeddingRemoved: false, historicalChatCitationsRedacted: false } }
+    const requests = { findOneAndUpdate: vi.fn(async (_filter, update) => ({ value: { ...workflow, ...update.$set } })) }
+    fixture.context.db.collection.mockImplementation((name) => name === 'takedownRequests' ? requests : name === 'articles' ? fixture.articles : { findOne: vi.fn() })
+    const repository = new MongoTakedownRepository(fixture.context)
+    repository.insertAudit = vi.fn(async () => ({}))
+    repository.insertSuppression = vi.fn(async () => ({}))
+    const rejected = await repository.transition({ current: workflow, status: 'rejected', reasonCode: 'takedown_rejected', actor: { _id: new ObjectId('507f1f77bcf86cd799439044') }, request: { serverRequestId: 'reject-1' }, session: {}, now })
+    expect(rejected).toEqual(expect.objectContaining({ status: 'rejected', completedAt: now, piiPurgeAfter: new Date(now.getTime() + 90 * 86400000), workflowPurgeAfter: new Date(now.getTime() + 180 * 86400000) }))
+    expect(repository.insertSuppression).not.toHaveBeenCalled()
   })
 
   it('redacts one bounded available-citation page and persists proof for the next invocation', async () => {
@@ -119,7 +133,7 @@ describe('Mongo takedown repository integrity', () => {
     const session = { withTransaction: vi.fn(async (work) => work(session)), endSession: vi.fn(async () => {}) }
     fixture.context.client = { startSession: vi.fn(() => session) }
     const workflow = {
-      _id: requestId, status: 'approved', updatedAt: now, targetType: 'article', targetIds: [firstTarget], requestedScope: ['metadata'],
+      _id: requestId, status: 'approved', updatedAt: now, targetType: 'article', targetIds: [firstTarget], requestedScope: ['summary'],
       completion: { hidden: true, metadataRemoved: false, mediaMetadataRemoved: false, summaryRemoved: false, embeddingRemoved: false, historicalChatCitationsRedacted: false },
     }
     const row = { _id: new ObjectId('507f1f77bcf86cd799439045'), updatedAt: now, messageCount: 2, messages: [{ role: 'assistant', status: 'answered', citations: [{ id: 'citation-1', articleId: firstTarget, status: 'available', originalUrl: 'https://example.test/private' }] }] }
@@ -130,7 +144,7 @@ describe('Mongo takedown repository integrity', () => {
     }
     const requests = {
       find: vi.fn(() => ({ sort: () => ({ limit: () => ({ toArray: async () => [workflow] }) }) })),
-      findOneAndUpdate: vi.fn(async (_filter, update) => ({ value: { ...workflow, ...update.$set, completion: { ...workflow.completion, metadataRemoved: true, historicalChatCitationsRedacted: true } } })),
+      findOneAndUpdate: vi.fn(async (_filter, update) => ({ value: { ...workflow, ...update.$set, completion: { ...workflow.completion, summaryRemoved: true, historicalChatCitationsRedacted: true } } })),
     }
     fixture.context.db.collection.mockImplementation((name) => name === 'takedownRequests' ? requests : name === 'chatSessions' ? chat : name === 'articles' ? fixture.articles : { findOne: vi.fn() })
     const repository = new MongoTakedownRepository(fixture.context)
@@ -166,20 +180,41 @@ describe('Mongo takedown repository integrity', () => {
     await expect(repository.cleanupArtifacts({ targetType: 'source', targetIds: [firstTarget], requestedScope: ['metadata'], session: {}, now })).rejects.toMatchObject({ status: 409, code: 'conflict' })
   })
 
-  it('marks requested metadata scope removed while retaining required identity fields', async () => {
-    const articles = {
-      updateMany: vi.fn(async (filter) => ({ matchedCount: filter.summaryStatus === 'removed' ? 0 : 1, modifiedCount: 1 })),
-      countDocuments: vi.fn(async () => 1),
+  it('physically replaces requested article metadata with the closed tombstone', async () => {
+    const mongo = createStep11Mongo({ app: {
+      articles: [{ _id: firstTarget, sourceId: secondTarget, connectorType: 'rss', status: 'hidden', evidenceEligible: false, titleOriginal: 'Private title', originalUrl: 'https://private.example/article', canonicalUrl: 'https://private.example/article', canonicalUrlHash: 'a'.repeat(64), author: 'Private author', provenance: [{ sourceId: secondTarget, originalUrl: 'https://private.example/article', observedAt: now }], excerptOriginal: 'Private excerpt', searchTextNormalized: 'private', summaryVi: 'Private summary', embedding: [0.1], rightsSnapshot: { sourcePolicyVersion: 4 }, createdAt: now, updatedAt: now }],
+      chatSessions: [],
+    } })
+    const repository = new MongoTakedownRepository({ db: mongo.db, client: mongo.client, now: () => now })
+    const completion = await repository.cleanupArtifacts({ targetType: 'article', targetIds: [firstTarget], requestedScope: ['metadata'], session: {}, now })
+    const tombstone = await mongo.db.collection('articles').findOne({ _id: firstTarget })
+    expect(completion).toEqual(expect.objectContaining({ metadataRemoved: true, historicalChatCitationsRedacted: true, hasMore: false }))
+    expect(tombstone).toEqual(expect.objectContaining({ _id: firstTarget, sourceId: secondTarget, status: 'removed', evidenceEligible: false, removalPolicyVersion: 4 }))
+    for (const field of ['titleOriginal', 'originalUrl', 'canonicalUrl', 'author', 'provenance', 'excerptOriginal', 'searchTextNormalized', 'summaryVi', 'embedding', 'rightsSnapshot']) expect(tombstone).not.toHaveProperty(field)
+    expect(tombstone.canonicalUrlHash).toBe('a'.repeat(64))
+  })
+
+  it('physically tombstones source articles in bounded pages before reporting metadata complete', async () => {
+    const articleIds = [new ObjectId(), new ObjectId(), new ObjectId()]
+    const articles = articleIds.map((_id) => ({ _id, sourceId: firstTarget, connectorType: 'rss', status: 'hidden', evidenceEligible: false, titleOriginal: `Private ${_id}`, originalUrl: `https://private.example/${_id}`, canonicalUrlHash: _id.toHexString().padEnd(64, 'a'), searchTextNormalized: 'private', rightsSnapshot: { sourcePolicyVersion: 4 }, createdAt: now, updatedAt: now }))
+    const mongo = createStep11Mongo({ app: {
+      sources: [{ _id: firstTarget, operationalStatus: 'paused', policyVersion: 4, updatedAt: now }],
+      articles,
+      chatSessions: [],
+    } })
+    const repository = new MongoTakedownRepository({ db: mongo.db, client: mongo.client, now: () => now })
+
+    const first = await repository.cleanupArtifacts({ targetType: 'source', targetIds: [firstTarget], requestedScope: ['metadata'], session: {}, now, limit: 2 })
+    expect(first).toEqual(expect.objectContaining({ metadataRemoved: false, historicalChatCitationsRedacted: false, hasMore: true }))
+    const second = await repository.cleanupArtifacts({ targetType: 'source', targetIds: [firstTarget], requestedScope: ['metadata'], session: {}, now, limit: 2 })
+    expect(second).toEqual(expect.objectContaining({ metadataRemoved: true, historicalChatCitationsRedacted: true, hasMore: false }))
+    const rows = await mongo.db.collection('articles').find({ sourceId: firstTarget }).toArray()
+    expect(rows).toHaveLength(3)
+    for (const row of rows) {
+      expect(row).toEqual(expect.objectContaining({ status: 'removed', evidenceEligible: false, removalPolicyVersion: 4 }))
+      expect(row).not.toHaveProperty('titleOriginal')
+      expect(row).not.toHaveProperty('originalUrl')
     }
-    const chats = { find: vi.fn(() => ({ hint: vi.fn(function () { return this }), sort: vi.fn(function () { return this }), limit: vi.fn(function () { return this }), toArray: vi.fn(async () => []) })), countDocuments: vi.fn(async () => 0) }
-    const context = { db: { collection: vi.fn((name) => name === 'articles' ? articles : chats) }, now: () => now }
-    const repository = new MongoTakedownRepository(context)
-    await repository.cleanupArtifacts({ targetType: 'article', targetIds: [firstTarget], requestedScope: ['metadata'], session: {}, now })
-    expect(articles.updateMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({ status: { $in: ['hidden', 'removed'] }, evidenceEligible: false }),
-      expect.objectContaining({ $set: expect.objectContaining({ status: 'removed', evidenceEligible: false, searchTextNormalized: '' }) }),
-      expect.anything(),
-    )
   })
 
   it('rejects terminal completion when a scoped summary artifact is restored', async () => {

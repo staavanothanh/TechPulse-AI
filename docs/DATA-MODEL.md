@@ -302,14 +302,14 @@ unique { sourceKey: 1 }
 ## 8. `articles`
 
 ```text
-type ArticleDocument = {
+type ActiveArticleDocument = {
   _id: ObjectId;
   sourceId: ObjectId;
   connectorType: "rss" | "arxiv" | "hacker-news";
   externalId?: string;
   sourceType: string;
   authorityTier: AuthorityTier;
-  status: "processing" | "review-needed" | "published" | "hidden" | "removed";
+  status: "processing" | "review-needed" | "published" | "hidden";
 
   titleOriginal: string;
   titleVi?: string;
@@ -378,6 +378,23 @@ type ArticleDocument = {
   createdAt: Date;
   updatedAt: Date;
 };
+
+type RemovedArticleTombstoneDocument = {
+  _id: ObjectId;
+  sourceId: ObjectId;
+  connectorType: "rss" | "arxiv" | "hacker-news";
+  externalId?: string;
+  externalIdVersion?: string;
+  canonicalUrlHash: string;
+  status: "removed";
+  evidenceEligible: false;
+  removalPolicyVersion: number;
+  removedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type ArticleDocument = ActiveArticleDocument | RemovedArticleTombstoneDocument;
 ```
 
 Rules:
@@ -396,6 +413,7 @@ Rules:
 - Policy thay đổi hoặc takedown có thể unset `leadMedia` mà không cần ẩn toàn article.
 - `summaryStatus=removed` bắt buộc unset `summaryVi`, basis/model/hash/generatedAt/error`; `embeddingStatus=removed` bắt buộc unset vector/model/dimensions/hash/version/embeddedAt/error.
 - Public serializer chỉ trả summary khi status `ready`; `removed` không phải public artifact status ngay cả khi article document chưa cleanup xong.
+- Takedown scope `metadata` thay toàn bộ active article bằng closed `RemovedArticleTombstoneDocument`. Tombstone giữ opaque external identity và `canonicalUrlHash` để chống re-ingest/resurrection, kể cả RSS item không có `guid`; không giữ title, URL thô, author, provenance, excerpt/search, topics, media, summary, embedding hoặc rights snapshot.
 
 Indexes:
 
@@ -753,7 +771,7 @@ unique { admissionDomainId: 1 }
 ## 14. `takedownRequests`
 
 ```text
-type TakedownRequestDocument = {
+type TakedownRequestPrePurgeDocument = {
   _id: ObjectId;
   status: "received" | "reviewing" | "approved" | "rejected" | "completed";
   requesterName: string;
@@ -780,6 +798,16 @@ type TakedownRequestDocument = {
   createdAt: Date;
   updatedAt: Date;
 };
+
+type TakedownRequestPostPurgeDocument = Omit<TakedownRequestPrePurgeDocument,
+  "requesterName" | "requesterContact" | "reason" | "evidenceNote" | "piiPurgeAfter"
+> & {
+  status: "rejected" | "completed";
+  completedAt: Date;
+  workflowPurgeAfter: Date;
+};
+
+type TakedownRequestDocument = TakedownRequestPrePurgeDocument | TakedownRequestPostPurgeDocument;
 ```
 
 Indexes:
@@ -791,7 +819,7 @@ partial { piiPurgeAfter: 1, _id: 1 } where piiPurgeAfter exists
 partial { workflowPurgeAfter: 1, _id: 1 } where workflowPurgeAfter exists
 ```
 
-Requester contact là dữ liệu cá nhân; không đưa vào provider/log và chỉ admin đọc.
+Requester contact là dữ liệu cá nhân; không đưa vào provider/log và chỉ admin đọc trước retention deadline. `rejected|completed` pre-purge bắt buộc `completedAt`, `piiPurgeAfter` và `workflowPurgeAfter` đều là `Date`; non-terminal có thể chưa có các deadline này. Sau `piiPurgeAfter`, fixed task unset toàn bộ requester name/contact/reason/evidence và deadline; detail endpoint chỉ trả canonical `TakedownRequestPostPurgeDocument` đến `workflowPurgeAfter`.
 
 MVP duyệt toàn bộ hoặc từ chối toàn bộ `requestedScope`; không có partial approval. `status=completed` luôn yêu cầu `hidden=true` và `historicalChatCitationsRedacted=true`, kể cả khi scan xác nhận không có citation lịch sử; từng scope còn yêu cầu cleanup flag tương ứng. Takedown hide/redaction và delayed chat append serialize bằng article/takedown lifecycle fence để Q&A cũ không thể ghi lại URL/title sau cleanup. `piiPurgeAfter` là terminal time +90 ngày để bounded worker unset requester contact/reason/evidence; `workflowPurgeAfter` là terminal time +180 ngày cho non-PII lifecycle record. List query chỉ project thành takedown summary không chứa requester contact, reason hoặc evidence. Detail endpoint mới được hydrate các field PII này.
 

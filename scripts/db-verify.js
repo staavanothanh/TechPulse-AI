@@ -22,12 +22,16 @@ import {
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_INDEXES, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES } from './migrations/governance.js'
 import { GOVERNANCE_AUDIT_VALIDATOR } from './migrations/governance-audit.js'
 import { GOVERNANCE_HARDENING_INDEXES } from './migrations/governance-hardening.js'
+import { RUNTIME_CAPABILITY_PROBE_COLLECTION, RUNTIME_CAPABILITY_PROBE_DEFINITION, RUNTIME_CAPABILITY_PROBE_INDEXES } from './migrations/governance-capability-probes.js'
+import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from './migrations/governance-retention-hardening.js'
+import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from './migrations/article-governance-hardening.js'
 import {
   actionsForCollection,
   probeAuditRoleCapabilities,
   probeHmacLifecycleRoleCapabilities,
   probeSourcesRoleCapabilities,
   probeGovernanceRoleCapabilities,
+  probeCrossDatabaseTransactionCapabilities,
 } from './mongo-role-probe.js'
 import { configureDns } from './configure-dns.js'
 import { exactMongoIndex } from '../server/repositories/mongo/index-contract.js'
@@ -183,7 +187,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
               ? INDEXING_JOB_COLLECTIONS
               : target === 'chat-sessions'
                 ? CHAT_SESSION_COLLECTIONS
-              : target === 'governance' ? GOVERNANCE_COLLECTIONS : AUTH_CORE_COLLECTIONS
+              : target === 'governance'
+                ? { ...GOVERNANCE_COLLECTIONS, takedownRequests: { ...GOVERNANCE_COLLECTIONS.takedownRequests, validator: GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } }
+                : AUTH_CORE_COLLECTIONS
     const expectedIndexes =
       target === 'sources'
         ? SOURCE_INDEXES
@@ -247,6 +253,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
     }
     if (target === 'governance') {
       verificationStage = 'schema-governance'
+      const articleCollection = collectionMap.get('articles')
+      if (!articleCollection) missing.push('articles:collection:governance-tombstone')
+      else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || stableJson(articleCollection.options?.validator) !== stableJson(ARTICLE_GOVERNANCE_HARDENING_VALIDATOR)) validatorProblems.push('articles:validator-definition:governance-tombstone')
       if (governanceMetadataUnavailable) validatorProblems.push('techpulse_governance:metadata-unavailable')
       for (const [name, definition] of governanceMetadataUnavailable ? [] : Object.entries(GOVERNANCE_DATABASE_COLLECTIONS)) {
         const collection = governanceMap.get(name)
@@ -254,6 +263,23 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
         if (collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || stableJson(collection.options?.validator) !== stableJson(definition.validator)) validatorProblems.push(`techpulse_governance:${name}:validator-definition`)
         const actual = new Map((await governanceContext.db.collection(name).indexes()).map((index) => [index.name, index]))
         for (const expected of GOVERNANCE_DATABASE_INDEXES[name]) if (!exactMongoIndex(actual.get(expected.name), expected)) missing.push(`techpulse_governance:${name}:index:${expected.name}`)
+      }
+      const appProbeCollection = collectionMap.get(RUNTIME_CAPABILITY_PROBE_COLLECTION)
+      if (!appProbeCollection) missing.push(`${context.database}:${RUNTIME_CAPABILITY_PROBE_COLLECTION}:collection`)
+      else {
+        if (appProbeCollection.options?.validationLevel !== 'strict' || appProbeCollection.options?.validationAction !== 'error' || stableJson(appProbeCollection.options?.validator) !== stableJson(RUNTIME_CAPABILITY_PROBE_DEFINITION.validator)) validatorProblems.push(`${context.database}:${RUNTIME_CAPABILITY_PROBE_COLLECTION}:validator-definition`)
+        const actual = new Map((await context.db.collection(RUNTIME_CAPABILITY_PROBE_COLLECTION).indexes()).map((index) => [index.name, index]))
+        for (const expected of RUNTIME_CAPABILITY_PROBE_INDEXES) if (!exactMongoIndex(actual.get(expected.name), expected)) missing.push(`${context.database}:${RUNTIME_CAPABILITY_PROBE_COLLECTION}:index:${expected.name}`)
+      }
+      if (governanceMetadataUnavailable) missing.push(`techpulse_governance:${RUNTIME_CAPABILITY_PROBE_COLLECTION}:metadata-unavailable`)
+      else {
+        const governanceProbeCollection = governanceMap.get(RUNTIME_CAPABILITY_PROBE_COLLECTION)
+        if (!governanceProbeCollection) missing.push(`techpulse_governance:${RUNTIME_CAPABILITY_PROBE_COLLECTION}:collection`)
+        else {
+          if (governanceProbeCollection.options?.validationLevel !== 'strict' || governanceProbeCollection.options?.validationAction !== 'error' || stableJson(governanceProbeCollection.options?.validator) !== stableJson(RUNTIME_CAPABILITY_PROBE_DEFINITION.validator)) validatorProblems.push(`techpulse_governance:${RUNTIME_CAPABILITY_PROBE_COLLECTION}:validator-definition`)
+          const actual = new Map((await governanceContext.db.collection(RUNTIME_CAPABILITY_PROBE_COLLECTION).indexes()).map((index) => [index.name, index]))
+          for (const expected of RUNTIME_CAPABILITY_PROBE_INDEXES) if (!exactMongoIndex(actual.get(expected.name), expected)) missing.push(`techpulse_governance:${RUNTIME_CAPABILITY_PROBE_COLLECTION}:index:${expected.name}`)
+        }
       }
       verificationStage = 'schema-citation-indexes'
       const chatCollection = collectionMap.get('chatSessions')
@@ -530,8 +556,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
               : target === 'governance'
                 ? [
                     ['takedown_cleanup_due', 'takedownRequests', { status: 'approved', 'completion.historicalChatCitationsRedacted': false }, { updatedAt: 1, _id: 1 }, 'takedown_cleanup_due'],
-                    ['takedown_pii_deadline', 'takedownRequests', { status: 'completed', piiPurgeAfter: { $lte: new Date() } }, { piiPurgeAfter: 1, _id: 1 }, 'takedown_pii_deadline'],
-                    ['takedown_workflow_deadline', 'takedownRequests', { status: 'completed', workflowPurgeAfter: { $lte: new Date() } }, { workflowPurgeAfter: 1, _id: 1 }, 'takedown_workflow_deadline'],
+                    ['takedown_pii_deadline', 'takedownRequests', { status: { $in: ['rejected', 'completed'] }, piiPurgeAfter: { $lte: new Date() } }, { piiPurgeAfter: 1, _id: 1 }, 'takedown_pii_deadline'],
+                    ['takedown_workflow_deadline', 'takedownRequests', { status: { $in: ['rejected', 'completed'] }, workflowPurgeAfter: { $lte: new Date() } }, { workflowPurgeAfter: 1, _id: 1 }, 'takedown_workflow_deadline'],
                     ['account_deletion_aged', 'accountDeletionRequests', { status: 'queued', agingEligibleAt: { $lte: new Date() }, availableAt: { $lte: new Date() } }, { agingEligibleAt: 1, availableAt: 1, requestedAt: 1, _id: 1 }, 'account_deletion_aged'],
                     // Takedown cleanup traverses historical citations directly
                     // by article/source. These direct citation explain probes
@@ -624,26 +650,27 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
       const privileges = connection.authInfo?.authenticatedUserPrivileges
       if (Array.isArray(privileges) && privileges.length > 0) {
         if (target === 'auth-core') roleStatus = 'verified'
-        for (const [collectionName, label] of target === 'sources'
+        const requirements = target === 'sources'
           ? [
-              ['sources', 'sources'],
-              ['adminAuditLogs', 'audit'],
+              { database: context.database, collection: 'sources', label: 'sources', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
+              { database: context.database, collection: 'adminAuditLogs', label: 'audit', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
             ]
           : ['durable-jobs', 'indexing-jobs', 'chat-sessions'].includes(target)
             ? []
             : [
-                ['adminAuditLogs', 'audit'],
-                ['hmacKeyLifecycleSnapshots', 'HMAC lifecycle'],
-              ]) {
-          const actions = actionsForCollection(privileges, context.database, collectionName)
-          const required =
-            collectionName === 'sources'
-              ? ['find', 'insert', 'update', 'listIndexes', 'listCollections']
-              : ['find', 'insert']
+                { database: context.database, collection: 'adminAuditLogs', label: 'audit', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
+                { database: context.database, collection: 'hmacKeyLifecycleSnapshots', label: 'HMAC lifecycle', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
+                ...(target === 'governance'
+                  ? [
+                      { database: context.database, collection: RUNTIME_CAPABILITY_PROBE_COLLECTION, label: 'app runtime probe', required: ['find', 'insert', 'remove'], forbidden: ['update', 'delete'] },
+                      { database: 'techpulse_governance', collection: RUNTIME_CAPABILITY_PROBE_COLLECTION, label: 'governance runtime probe', required: ['find', 'insert', 'remove'], forbidden: ['update', 'delete'] },
+                    ]
+                  : []),
+              ]
+        for (const { database, collection: collectionName, label, required, forbidden } of requirements) {
+          const actions = actionsForCollection(privileges, database, collectionName)
           for (const action of required)
             if (!actions.has(action)) roleProblems.push(`${label} role needs ${action}`)
-          const forbidden =
-            collectionName === 'sources' ? ['remove', 'delete'] : ['update', 'remove', 'delete']
           for (const action of forbidden)
             if (actions.has(action)) roleProblems.push(`${label} role has forbidden ${action}`)
         }
@@ -690,6 +717,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
       verificationStage = 'governance-role-probe'
       const probe = await probeGovernanceRoleCapabilities({ ...context, governanceDb: governanceContext.db })
       for (const [capability, passed] of Object.entries(probe)) if (!passed) roleProblems.push(`governance runtime capability failed: ${capability}`)
+      const crossDatabaseProbe = await probeCrossDatabaseTransactionCapabilities({ ...context, governanceDb: governanceContext.db })
+      for (const [capability, passed] of Object.entries(crossDatabaseProbe)) if (!passed) roleProblems.push(`governance cross-database capability failed: ${capability}`)
       roleStatus = roleProblems.length === 0 ? schemaReady ? 'verified' : 'capabilities-verified-schema-unverified' : 'unverified'
     } else if (requireRole) {
       roleProblems.push('durable-jobs runtime role capability probe is not registered')

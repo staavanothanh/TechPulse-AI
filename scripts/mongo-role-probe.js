@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { ObjectId } from 'mongodb'
+import { RUNTIME_CAPABILITY_PROBE_COLLECTION } from './migrations/governance-capability-probes.js'
 
 export function actionsForCollection(privileges, database, collection) {
   const scoped = privileges.filter((privilege) => {
@@ -76,37 +77,135 @@ export function isAuthorizationDenied(error) {
   return /\bnot authorized\b|\bunauthorized\b|\bnot allowed to (?:do|perform|execute)\b|\binsufficient (?:permissions?|privileges?)\b|\bpermission denied\b/i.test(message)
 }
 
-async function closeProbeSession(session) {
-  let healthy = true
-  try { await session.abortTransaction() } catch { healthy = false }
-  try { await session.endSession() } catch { healthy = false }
-  return healthy
-}
-
-async function runProbeTransaction(client, work) {
+async function runProbeTransaction(client, work, { commit = false } = {}) {
   let session
+  let transactionStarted = false
+  let transactionCommitted = false
+  let transactionAborted = false
+  let transactionAbortAttempted = false
+  let sessionHealthy = true
+  let operationFailed = false
+  let operationError
+  let value
   try {
     session = client.startSession()
   } catch {
-    return { sessionHealthy: false, operationFailed: false }
+    return { transactionStarted, transactionCommitted, transactionAborted, sessionHealthy: false, operationFailed }
   }
   try {
     await session.startTransaction()
-  } catch {
-    await closeProbeSession(session)
-    return { sessionHealthy: false, operationFailed: false }
-  }
-  let value
-  let operationError
-  let operationFailed = false
-  try {
+    transactionStarted = true
     value = await work(session)
+    if (commit) {
+      await session.commitTransaction()
+      transactionCommitted = true
+    } else {
+      transactionAbortAttempted = true
+      await session.abortTransaction()
+      transactionAborted = true
+    }
   } catch (error) {
     operationError = error
     operationFailed = true
+    if (!transactionStarted) {
+      // A session/transaction setup failure is not evidence that the
+      // requested mutation was denied.  Keep the role gate fail-closed.
+      operationFailed = false
+      operationError = undefined
+    }
+    if (transactionStarted && !transactionAbortAttempted && !transactionCommitted && !transactionAborted) {
+      transactionAbortAttempted = true
+      try { await session.abortTransaction(); transactionAborted = true } catch { sessionHealthy = false }
+    }
+  } finally {
+    try { await session.endSession() } catch { sessionHealthy = false }
   }
-  const sessionHealthy = await closeProbeSession(session)
-  return { sessionHealthy, operationFailed, operationError, value }
+  return { transactionStarted, transactionCommitted, transactionAborted, transactionAbortAttempted, sessionHealthy, operationFailed, operationError, value }
+}
+
+/*
+ * Probe collections are dedicated to this verification and grant the runtime
+ * role the narrow remove action. Cleanup is still part of the capability gate:
+ * a committed probe is not verified while either synthetic document remains.
+ * Repeating delete-by-probeId is safe when a previous cleanup was interrupted.
+ */
+async function cleanupCrossDatabaseProbe({ client, appCollection, governanceCollection, probeId }) {
+  const outcome = await runProbeTransaction(client, async (session) => {
+    const appResult = await appCollection.deleteOne({ probeId }, { session })
+    const governanceResult = await governanceCollection.deleteOne({ probeId }, { session })
+    return { appDeleted: appResult?.deletedCount === 1 || appResult?.deletedCount === 0, governanceDeleted: governanceResult?.deletedCount === 1 || governanceResult?.deletedCount === 0 }
+  }, { commit: true })
+  return outcome.sessionHealthy && !outcome.operationFailed && outcome.transactionCommitted && outcome.value?.appDeleted === true && outcome.value?.governanceDeleted === true
+}
+
+function crossDatabaseProbeDocuments(probeKind) {
+  const now = new Date()
+  const probeId = `runtime-capability:${randomUUID()}`
+  const document = { _id: new ObjectId(), probeId, probeKind, expiresAt: new Date(now.getTime() + 5 * 60 * 1000), createdAt: now }
+  return {
+    app: { ...document },
+    governance: { ...document, _id: new ObjectId() },
+  }
+}
+
+async function findProbeDocument(collection, filter) {
+  try {
+    return await collection.findOne(filter, { projection: { _id: 1 } })
+  } catch {
+    return null
+  }
+}
+
+export async function probeCrossDatabaseTransactionCapabilities({ client, db, governanceDb } = {}) {
+  if (!client?.startSession || !db?.collection || !governanceDb?.collection) {
+    return {
+      committedTransaction: false,
+      committedAppVisible: false,
+      committedGovernanceVisible: false,
+      committedPostCheck: false,
+      committedCleanup: false,
+      abortedTransaction: false,
+      abortedAppAbsent: false,
+      abortedGovernanceAbsent: false,
+      abortedPostCheck: false,
+    }
+  }
+  const appCollection = db.collection(RUNTIME_CAPABILITY_PROBE_COLLECTION)
+  const governanceCollection = governanceDb.collection(RUNTIME_CAPABILITY_PROBE_COLLECTION)
+  const committedDocuments = crossDatabaseProbeDocuments('commit')
+  const committed = await runProbeTransaction(client, async (session) => {
+    await appCollection.insertOne(committedDocuments.app, { session })
+    await governanceCollection.insertOne(committedDocuments.governance, { session })
+    return true
+  }, { commit: true })
+  const committedApp = committed.transactionCommitted && !committed.operationFailed ? await findProbeDocument(appCollection, { probeId: committedDocuments.app.probeId }) : null
+  const committedGovernance = committed.transactionCommitted && !committed.operationFailed ? await findProbeDocument(governanceCollection, { probeId: committedDocuments.governance.probeId }) : null
+  const committedAppVisible = Boolean(committedApp)
+  const committedGovernanceVisible = Boolean(committedGovernance)
+  const committedPostCheck = committedAppVisible && committedGovernanceVisible
+  const committedCleanup = await cleanupCrossDatabaseProbe({ client, appCollection, governanceCollection, probeId: committedDocuments.app.probeId })
+
+  const abortedDocuments = crossDatabaseProbeDocuments('abort')
+  const aborted = await runProbeTransaction(client, async (session) => {
+    await appCollection.insertOne(abortedDocuments.app, { session })
+    await governanceCollection.insertOne(abortedDocuments.governance, { session })
+    return true
+  })
+  const abortedApp = await findProbeDocument(appCollection, { probeId: abortedDocuments.app.probeId })
+  const abortedGovernance = await findProbeDocument(governanceCollection, { probeId: abortedDocuments.governance.probeId })
+  const abortedAppAbsent = !abortedApp
+  const abortedGovernanceAbsent = !abortedGovernance
+  return {
+    committedTransaction: committed.sessionHealthy && !committed.operationFailed && committed.transactionCommitted,
+    committedAppVisible,
+    committedGovernanceVisible,
+    committedPostCheck,
+    committedCleanup,
+    abortedTransaction: aborted.sessionHealthy && !aborted.operationFailed && aborted.transactionAborted,
+    abortedAppAbsent,
+    abortedGovernanceAbsent,
+    abortedPostCheck: abortedAppAbsent && abortedGovernanceAbsent,
+  }
 }
 
 async function deniedMutation(client, work) {

@@ -42,6 +42,12 @@ const DELETION = Object.freeze({
 })
 const ADMIN_USER = Object.freeze({ id: USER_ID, emailNormalized: 'user@example.com', emailDisplay: 'user@example.com', role: 'user', status: 'active', createdAt: new Date(NOW), updatedAt: new Date(NOW) })
 const AUDIT = Object.freeze({ id: '507f1f77bcf86cd799439016', actorType: 'admin', actorId: '507f1f77bcf86cd799439017', action: 'article_status_changed', targetType: 'article', targetId: ARTICLE_ID, changedFields: ['status'], stateTransition: { from: 'published', to: 'hidden' }, reasonCode: 'article_status_changed', requestId: 'contract-request-0001', result: 'succeeded', createdAt: NOW })
+const AUTH_AUDITS = Object.freeze([
+  Object.freeze({ id: '507f1f77bcf86cd799439023', actorType: 'user', actorId: USER_ID, action: 'user_registered', targetType: 'user', targetId: USER_ID, changedFields: ['status'], stateTransition: null, reasonCode: 'user_registered', requestId: 'contract-auth-register-0001', result: 'succeeded', createdAt: NOW }),
+  Object.freeze({ id: '507f1f77bcf86cd799439024', actorType: 'user', actorId: USER_ID, action: 'user_logged_in', targetType: 'user', targetId: USER_ID, changedFields: [], stateTransition: null, reasonCode: 'user_login', requestId: 'contract-auth-login-0001', result: 'succeeded', createdAt: NOW }),
+  Object.freeze({ id: '507f1f77bcf86cd799439025', actorType: 'user', actorId: USER_ID, action: 'user_logged_out', targetType: 'user', targetId: USER_ID, changedFields: [], stateTransition: null, reasonCode: 'user_logout', requestId: 'contract-auth-logout-0001', result: 'succeeded', createdAt: NOW }),
+  Object.freeze({ id: '507f1f77bcf86cd799439026', actorType: 'user', actorId: USER_ID, action: 'user_preferences_updated', targetType: 'user', targetId: USER_ID, changedFields: ['topicPreferences'], stateTransition: null, reasonCode: 'preferences_updated', requestId: 'contract-auth-preferences-0001', result: 'succeeded', createdAt: NOW }),
+])
 
 function responseValidator(document) {
   const ajv = new Ajv({ allErrors: true, strict: false })
@@ -87,7 +93,7 @@ function fixtureServices() {
     async listAccountDeletionRequests() { return { requests: [DELETION], hasNext: false, nextCursor: null } },
     async getAccountDeletionRequest({ deletionRequestId }) { if (deletionRequestId !== DELETION_ID) throw new AdminGovernanceError(404, 'not_found', 'Deletion request not found'); return DELETION },
     async retryAccountDeletionRequest({ deletionRequestId }) { if (deletionRequestId !== DELETION_ID) throw new AdminGovernanceError(404, 'not_found', 'Deletion request not found'); return { ...DELETION, status: 'queued', attempt: 3, error: null } },
-    async listAuditLogs({ query } = {}) { if (query?.actorType === 'system-worker') throw new AdminGovernanceError(422, 'validation_error', 'Audit filter is invalid'); return { logs: [AUDIT], hasNext: false, nextCursor: null } },
+    async listAuditLogs({ query } = {}) { if (query?.actorType === 'system-worker') throw new AdminGovernanceError(422, 'validation_error', 'Audit filter is invalid'); return { logs: [AUDIT, ...AUTH_AUDITS], hasNext: false, nextCursor: null } },
   }
   return { authService, adminGovernanceService }
 }

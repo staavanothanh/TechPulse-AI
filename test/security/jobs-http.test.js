@@ -143,7 +143,7 @@ describe('Step 4 jobs, cron and maintenance HTTP boundaries', () => {
   })
 
   it('keeps every Step 11 maintenance task behind the fixed machine boundary', async () => {
-    for (const taskName of ['purge-takedown-workflows', 'purge-account-deletion-workflows', 'purge-audit-ip-hmac']) {
+    for (const taskName of ['purge-takedown-pii', 'purge-takedown-workflows', 'purge-account-deletion-workflows', 'purge-audit-ip-hmac']) {
       maintenanceRunner.run.mockClear()
       const browser = await fetch(`${origin}/api/internal/maintenance/${taskName}`, { headers: { Cookie: `__Host-techpulse_session=${adminToken}` } })
       expect(browser.status).toBe(401)
@@ -151,6 +151,19 @@ describe('Step 4 jobs, cron and maintenance HTTP boundaries', () => {
 
       const polluted = await fetch(`${origin}/api/internal/maintenance/${taskName}?cutoff=2099-01-01`, { headers: { Authorization: 'Bearer step4-machine-secret' } })
       expect(polluted.status).toBe(400)
+      expect(maintenanceRunner.run).not.toHaveBeenCalled()
+    }
+  })
+
+  it('does not widen the fixed maintenance boundary through method, path or bearer variants', async () => {
+    for (const taskName of ['purge-takedown-pii', 'purge-takedown-workflows', 'purge-account-deletion-workflows', 'purge-audit-ip-hmac']) {
+      maintenanceRunner.run.mockClear()
+      const requests = [
+        fetch(`${origin}/api/internal/maintenance/${taskName}`, { method: 'POST', headers: { Authorization: 'Bearer step4-machine-secret' } }),
+        fetch(`${origin}/api/internal/maintenance/${taskName}/`, { headers: { Authorization: 'Bearer step4-machine-secret' } }),
+        fetch(`${origin}/api/internal/maintenance/${taskName}`, { headers: { Authorization: 'Bearer step4-machine-secret-invalid' } }),
+      ]
+      for (const request of requests) expect([400, 401, 404, 405]).toContain((await request).status)
       expect(maintenanceRunner.run).not.toHaveBeenCalled()
     }
   })

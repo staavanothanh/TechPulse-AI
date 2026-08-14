@@ -3811,7 +3811,11 @@ export const openApiDocument = {
               "lease_expired_recovered",
               "policy_version_mismatch",
               "workflow_completed",
-              "workflow_failed"
+              "workflow_failed",
+              "user_registered",
+              "user_login",
+              "user_logout",
+              "preferences_updated"
             ]
           }
         ],
@@ -7293,6 +7297,53 @@ export const openApiDocument = {
         }
       },
       "AdminArticle": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AdminArticleActive"
+          },
+          {
+            "$ref": "#/components/schemas/AdminArticleRemoved"
+          }
+        ],
+        "description": "Safe admin article summary. Removed articles use the metadata-free tombstone branch."
+      },
+      "AdminArticleRemoved": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "sourceId",
+          "status",
+          "removalPolicyVersion",
+          "removedAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "status": {
+            "const": "removed"
+          },
+          "removalPolicyVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "removedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Closed metadata-free article tombstone. Title, URL, author, provenance, topics, media and AI artifacts are forbidden."
+      },
+      "AdminArticleActive": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -7320,7 +7371,13 @@ export const openApiDocument = {
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/ArticleStatus"
+            "type": "string",
+            "enum": [
+              "processing",
+              "review-needed",
+              "published",
+              "hidden"
+            ]
           },
           "topics": {
             "type": "array",
@@ -7373,6 +7430,17 @@ export const openApiDocument = {
         }
       },
       "AdminArticleDetail": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AdminArticleDetailActive"
+          },
+          {
+            "$ref": "#/components/schemas/AdminArticleRemoved"
+          }
+        ],
+        "description": "Safe admin article detail. Removed articles expose only the metadata-free tombstone."
+      },
+      "AdminArticleDetailActive": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -7413,7 +7481,13 @@ export const openApiDocument = {
             "$ref": "#/components/schemas/HttpsUrl"
           },
           "status": {
-            "$ref": "#/components/schemas/ArticleStatus"
+            "type": "string",
+            "enum": [
+              "processing",
+              "review-needed",
+              "published",
+              "hidden"
+            ]
           },
           "topics": {
             "type": "array",
@@ -7815,6 +7889,17 @@ export const openApiDocument = {
         }
       },
       "TakedownRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/TakedownRequestPrePurge"
+          },
+          {
+            "$ref": "#/components/schemas/TakedownRequestPostPurge"
+          }
+        ],
+        "description": "Takedown detail before requester PII retention expiry or after the terminal PII fields are purged. The post-purge branch is terminal-only and contains no requester PII."
+      },
+      "TakedownRequestPrePurge": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -8061,6 +8146,238 @@ export const openApiDocument = {
             }
           }
         ]
+      },
+      "TakedownRequestPostPurge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "targetType",
+          "targetIds",
+          "requestedScope",
+          "decisionReasonCode",
+          "completion",
+          "completedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "rejected",
+              "completed"
+            ]
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "source",
+              "article"
+            ]
+          },
+          "targetIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "requestedScope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "metadata",
+                "media-metadata",
+                "summary",
+                "embedding"
+              ]
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "decisionReasonCode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminReasonCode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Allowlisted administrative transition reason. Free-form administrative decision text is not persisted or serialized."
+          },
+          "completion": {
+            "$ref": "#/components/schemas/TakedownCompletion"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "completion": {
+                  "properties": {
+                    "hidden": {
+                      "const": true
+                    },
+                    "historicalChatCitationsRedacted": {
+                      "const": true
+                    }
+                  }
+                },
+                "completedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "metadata"
+                  }
+                }
+              },
+              "required": [
+                "status",
+                "requestedScope"
+              ]
+            },
+            "then": {
+              "properties": {
+                "completion": {
+                  "properties": {
+                    "metadataRemoved": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "media-metadata"
+                  }
+                }
+              },
+              "required": [
+                "status",
+                "requestedScope"
+              ]
+            },
+            "then": {
+              "properties": {
+                "completion": {
+                  "properties": {
+                    "mediaMetadataRemoved": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "summary"
+                  }
+                }
+              },
+              "required": [
+                "status",
+                "requestedScope"
+              ]
+            },
+            "then": {
+              "properties": {
+                "completion": {
+                  "properties": {
+                    "summaryRemoved": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "embedding"
+                  }
+                }
+              },
+              "required": [
+                "status",
+                "requestedScope"
+              ]
+            },
+            "then": {
+              "properties": {
+                "completion": {
+                  "properties": {
+                    "embeddingRemoved": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "description": "Terminal takedown detail after requester PII fields are unset. Requester name/contact, reason and evidenceNote are forbidden."
       },
       "TakedownCreateRequest": {
         "type": "object",

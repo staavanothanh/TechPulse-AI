@@ -97,7 +97,7 @@ export function createCronDueWorkRunner({
   }
 }
 
-export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb } = {}) {
+export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb, maintenanceContext } = {}) {
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   if (!quotaKeyring?.versions?.length || typeof quotaKeyring.digest !== 'function' || !governanceKeyring?.versions?.length || typeof governanceKeyring.digest !== 'function') throw new Error('Quota and governance keyrings are required')
   const jobRepository = new MongoJobRepository(context)
@@ -117,8 +117,10 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
   const takedownRepository = context.db?.collection ? new MongoTakedownRepository({ ...context, governanceDb: deletionGovernanceDb, governanceKeyring }) : null
   const accountDeletionRepository = context.db?.collection ? new MongoAccountDeletionRepository({ ...context, quotaKeyring, governanceKeyring, governanceDb: deletionGovernanceDb }) : null
   if (accountDeletionRepository && typeof accountDeletionRepository.selectDue === 'function') queueRegistry.register(createAccountDeletionQueueAdapter({ repository: accountDeletionRepository }))
-  const adminAuditRepository = context.db?.collection ? new MongoAdminRepository(context) : null
+  if (maintenanceContext?.client && maintenanceContext.client === context.client) throw new Error('MongoDB maintenance client must be separate from runtime client')
+  const adminAuditRepository = maintenanceContext?.db?.collection && maintenanceContext?.client ? new MongoAdminRepository(maintenanceContext) : null
   if (takedownRepository) {
+    maintenanceRegistry.register('purge-takedown-pii', ({ cutoff, limit }) => takedownRepository.purgePii({ cutoff, limit }))
     maintenanceRegistry.register('purge-takedown-workflows', ({ cutoff, limit }) => takedownRepository.purgeWorkflows({ cutoff, limit }))
     cronMaterializers.push(() => takedownRepository.materializeCleanupBatch({ now: now(), limit: DAILY_MATERIALIZATION_PAGE_LIMIT }))
   }
@@ -136,5 +138,6 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
     coordinatorRunner,
     dueWorkRunner,
     cronMaterializers,
+    maintenanceContext: adminAuditRepository ? maintenanceContext : null,
   }
 }

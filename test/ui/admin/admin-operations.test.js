@@ -14,6 +14,12 @@ const api = {
 }
 
 describe('Step 11 admin operations UI', () => {
+  it('does not render a workspace for an unknown route', () => {
+    const html = renderToStaticMarkup(React.createElement(AdminOperations, { api, csrfToken: 'csrf', route: 'removed', onNavigate: vi.fn() }))
+    expect(html).not.toContain('admin-page-head')
+    expect(html).not.toContain('Điều hành trạng thái')
+  })
+
   it('does not expose arbitrary transport diagnostics in admin feedback', () => {
     expect(normalizeAdminFailure(new Error('mongodb://secret-host/private?token=secret'))).toEqual({ message: 'Không thể hoàn tất thao tác.' })
   })

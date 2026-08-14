@@ -30,7 +30,27 @@ export function serializeTakedownSummary(document) {
 
 export function serializeTakedownDetail(document) {
   if (!document) return null
-  return { id: String(document._id ?? document.id), status: document.status, requesterName: document.requesterName, requesterContact: document.requesterContact, targetType: document.targetType, targetIds: (document.targetIds ?? []).map(String), reason: document.reason, evidenceNote: document.evidenceNote ?? null, requestedScope: [...(document.requestedScope ?? [])], decisionReasonCode: document.decisionReasonCode ?? null, completion: { ...(document.completion ?? {}) }, completedAt: document.completedAt ? date(document.completedAt).toISOString() : null, createdAt: date(document.createdAt).toISOString(), updatedAt: date(document.updatedAt).toISOString() }
+  const base = {
+    id: String(document._id ?? document.id),
+    status: document.status,
+    targetType: document.targetType,
+    targetIds: (document.targetIds ?? []).map(String),
+    requestedScope: [...(document.requestedScope ?? [])],
+    decisionReasonCode: document.decisionReasonCode ?? null,
+    completion: { ...(document.completion ?? {}) },
+    completedAt: document.completedAt ? date(document.completedAt).toISOString() : null,
+    createdAt: date(document.createdAt).toISOString(),
+    updatedAt: date(document.updatedAt).toISOString(),
+  }
+  const piiFields = ['requesterName', 'requesterContact', 'reason', 'evidenceNote']
+  const hasAnyPii = piiFields.some((field) => Object.hasOwn(document, field))
+  const hasAllCorePii = ['requesterName', 'requesterContact', 'reason'].every((field) => typeof document[field] === 'string')
+  if (hasAnyPii && !hasAllCorePii) throw new Error('Takedown retention shape is invalid')
+  if (!hasAnyPii) {
+    if (!['rejected', 'completed'].includes(document.status)) throw new Error('Takedown retention shape is invalid')
+    return base
+  }
+  return { ...base, requesterName: document.requesterName, requesterContact: document.requesterContact, reason: document.reason, evidenceNote: document.evidenceNote ?? null }
 }
 
 export function redactCitationsForTarget(citations = [], { targetType, targetIds = [] } = {}) {

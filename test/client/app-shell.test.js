@@ -14,9 +14,18 @@ describe('admin shell navigation', () => {
     expect(html).toContain('aria-label="Điều hướng quản trị"')
     expect(html).toContain('<button')
     expect(html).toContain('>Jobs<')
+    expect((html.match(/<button/g) ?? [])).toHaveLength(6)
     expect(html).not.toContain('Source Registry')
     expect(html).not.toContain('Step 04')
     expect(html).not.toContain('Source policy, durable jobs')
+  })
+
+  it('does not expose an unknown destination', () => {
+    const html = renderToStaticMarkup(React.createElement(AdminNavigation, {
+      route: 'removed',
+      onNavigate: vi.fn(),
+    }))
+    expect(html).not.toContain('aria-current="page"')
   })
 
   it('uses local button selection without adding a route', () => {

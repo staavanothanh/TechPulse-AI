@@ -14,6 +14,7 @@ import { validateVietnameseSummary } from '../../ai/summary.js'
 import { cosineSimilarity, rankQnaEvidence } from '../../ai/retrieval.js'
 import { buildPolicyDerivedInput } from '../../ai/policy-input.js'
 import { buildIngestionArtifactJobs, indexingJobDocument } from './indexing-job-repository.js'
+import { buildRemovedArticleTombstone, serializeRemovedArticleTombstone, validateRemovedArticleTombstone } from '../../domain/article/removed-tombstone.js'
 
 const COUNTER_KEYS = Object.freeze(['fetched', 'created', 'updated', 'duplicate', 'skipped', 'failed'])
 const FORBIDDEN_FIELDS = Object.freeze(['raw', 'rawHtml', 'html', 'body', 'content', 'fullText', 'translatedFullText', 'mediaBinary', 'binary', 'imageBinary', 'videoBinary', 'audioBinary', 'base64', 'gridFsId', 'providerPayload'])
@@ -61,6 +62,12 @@ function safeCheckpoint(value, fallback) {
 }
 
 function articleDocument(article, id = new ObjectId()) {
+  if (article?.status === 'removed') {
+    const tombstone = buildRemovedArticleTombstone(article, { id, now: article.updatedAt })
+    const validation = validateRemovedArticleTombstone(tombstone)
+    if (!validation.valid) throw new ArticleError('article_invalid', 'Removed article tombstone is invalid', { status: 422, details: validation.errors })
+    return tombstone
+  }
   const value = { ...article, _id: idValue(article._id ?? id), sourceId: idValue(article.sourceId), provenance: (article.provenance ?? []).map((entry) => ({ ...entry, sourceId: idValue(entry.sourceId), originalUrl: String(entry.originalUrl), observedAt: dateValue(entry.observedAt) })), createdAt: dateValue(article.createdAt), updatedAt: dateValue(article.updatedAt), publishedAt: dateValue(article.publishedAt), retrievedAt: dateValue(article.retrievedAt) }
   delete value.id
   if (value.duplicateOfId) value.duplicateOfId = idValue(value.duplicateOfId)
@@ -72,6 +79,7 @@ function articleDocument(article, id = new ObjectId()) {
 
 export function serializeArticle(document) {
   if (!document) return null
+  if (document.status === 'removed') return serializeRemovedArticleTombstone(document)
   const value = { ...document, id: document._id?.toHexString?.() ?? String(document.id), sourceId: document.sourceId?.toHexString?.() ?? String(document.sourceId), provenance: (document.provenance ?? []).map((entry) => ({ ...entry, sourceId: entry.sourceId?.toHexString?.() ?? String(entry.sourceId) })) }
   delete value._id
   if (value.duplicateOfId) value.duplicateOfId = value.duplicateOfId.toHexString?.() ?? String(value.duplicateOfId)

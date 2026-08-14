@@ -4,6 +4,8 @@ import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEX
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES, GOVERNANCE_INDEXES } from '../../../scripts/migrations/governance.js'
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
 import { GOVERNANCE_HARDENING_INDEXES } from '../../../scripts/migrations/governance-hardening.js'
+import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from '../../../scripts/migrations/governance-retention-hardening.js'
+import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
 
 function readyContext({ auditValidator = DURABLE_JOB_AUDIT_VALIDATOR, indexOverride } = {}) {
   const collections = Object.entries(DURABLE_JOB_COLLECTIONS).map(([name, definition]) => ({
@@ -11,7 +13,8 @@ function readyContext({ auditValidator = DURABLE_JOB_AUDIT_VALIDATOR, indexOverr
     options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' },
   }))
   collections.push({ name: 'adminAuditLogs', options: { validator: auditValidator, validationLevel: 'strict', validationAction: 'error' } })
-  for (const [name, definition] of Object.entries(GOVERNANCE_COLLECTIONS)) collections.push({ name, options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } })
+  for (const [name, definition] of Object.entries(GOVERNANCE_COLLECTIONS)) collections.push({ name, options: { validator: name === 'takedownRequests' ? GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR : definition.validator, validationLevel: 'strict', validationAction: 'error' } })
+  collections.push({ name: 'articles', options: { validator: ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, validationLevel: 'strict', validationAction: 'error' } })
   const governanceCollections = Object.entries(GOVERNANCE_DATABASE_COLLECTIONS).map(([name, definition]) => ({ name, options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } }))
   const governanceDb = {
     listCollections: () => ({ toArray: async () => governanceCollections }),
@@ -45,14 +48,91 @@ describe('durable-jobs bootstrap readiness', () => {
     const quotaKeyring = { currentVersion: 1, versions: [1], digest: vi.fn(() => 'a'.repeat(64)) }
     const governanceKeyring = { currentVersion: 1, versions: [1], digest: vi.fn(() => 'b'.repeat(64)) }
     const governanceContext = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
-    const runtime = await createConfiguredJobRuntime({ context: governanceContext, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb: governanceContext.governanceDb })
+    const maintenanceContext = { ...governanceContext, client: { db: () => governanceContext.governanceDb } }
+    const runtime = await createConfiguredJobRuntime({ context: governanceContext, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb: governanceContext.governanceDb, maintenanceContext })
     expect(runtime.queueRegistry.registered().map(({ queueName }) => queueName)).toEqual(['account-deletion', 'ingestion'])
     expect(runtime.maintenanceRegistry.has('purge-ingestion-jobs')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-indexing-jobs')).toBe(false)
-    expect(runtime.maintenanceRegistry.has('purge-takedown-pii')).toBe(false)
+    expect(runtime.maintenanceRegistry.has('purge-takedown-pii')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-takedown-workflows')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-account-deletion-workflows')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-audit-ip-hmac')).toBe(true)
+  })
+
+  it('runs takedown PII cleanup through the runtime takedown repository', async () => {
+    const context = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
+    const baseCollection = context.db.collection.bind(context.db)
+    const takedownCollection = {
+      indexes: async () => [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests].map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })),
+      find: vi.fn(() => ({
+        hint() { return this },
+        sort() { return this },
+        limit() { return this },
+        toArray: async () => [],
+      })),
+    }
+    context.db.collection = (name) => name === 'takedownRequests' ? takedownCollection : baseCollection(name)
+    const maintenanceContext = {
+      ...context,
+      client: { id: 'maintenance' },
+      db: { collection(name) { if (name === 'takedownRequests') throw new Error('maintenance takedown access is forbidden'); return baseCollection(name) } },
+    }
+    const runtime = await createConfiguredJobRuntime({
+      context,
+      rateLimitAdmission: { reserve: async () => ({ allowed: true }) },
+      quotaKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'a'.repeat(64)) },
+      governanceKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'b'.repeat(64)) },
+      governanceDb: context.governanceDb,
+      maintenanceContext,
+    })
+
+    await expect(runtime.maintenanceRegistry.get('purge-takedown-pii')({ cutoff: new Date('2026-08-14T00:00:00.000Z'), limit: 100 })).resolves.toEqual({ inspected: 0, affected: 0, hasMore: false })
+    expect(takedownCollection.find).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed for audit IP-HMAC cleanup when only the append-only runtime client exists', async () => {
+    const governanceContext = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
+    const runtime = await createConfiguredJobRuntime({
+      context: governanceContext,
+      rateLimitAdmission: { reserve: async () => ({ allowed: true }) },
+      quotaKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'a'.repeat(64)) },
+      governanceKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'b'.repeat(64)) },
+      governanceDb: governanceContext.governanceDb,
+    })
+    expect(runtime.maintenanceRegistry.has('purge-audit-ip-hmac')).toBe(false)
+    expect(runtime.maintenanceContext).toBeNull()
+  })
+
+  it('executes audit IP-HMAC cleanup through the separate maintenance context', async () => {
+    const governanceContext = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
+    const baseDb = governanceContext.db
+    const auditCollection = {
+      indexes: async () => GOVERNANCE_AUDIT_INDEXES.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })),
+      find: vi.fn(() => ({
+        sort: () => ({
+          limit: () => ({
+            project: () => ({ toArray: async () => [{ _id: 'audit-1' }] }),
+          }),
+        }),
+      })),
+      updateMany: vi.fn(async () => ({ modifiedCount: 1 })),
+    }
+    const maintenanceContext = {
+      ...governanceContext,
+      client: { db: () => governanceContext.governanceDb },
+      db: { ...baseDb, collection: (name) => name === 'adminAuditLogs' ? auditCollection : baseDb.collection(name) },
+    }
+    const runtime = await createConfiguredJobRuntime({
+      context: governanceContext,
+      rateLimitAdmission: { reserve: async () => ({ allowed: true }) },
+      quotaKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'a'.repeat(64)) },
+      governanceKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'b'.repeat(64)) },
+      governanceDb: governanceContext.governanceDb,
+      maintenanceContext,
+    })
+    const result = await runtime.maintenanceRegistry.get('purge-audit-ip-hmac')({ cutoff: new Date('2026-08-14T00:00:00.000Z'), limit: 100 })
+    expect(result).toEqual({ inspected: 1, affected: 1, hasMore: false })
+    expect(auditCollection.updateMany).toHaveBeenCalledOnce()
   })
 
   it('fails closed instead of registering deletion cleanup without quota and governance keys', async () => {

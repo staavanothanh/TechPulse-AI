@@ -92,18 +92,18 @@ describe('Step 11 mounted admin interactions', () => {
     expect(api.getAdminOverview).toHaveBeenCalledTimes(1)
   })
 
-  it('does not fetch an unrelated overview for the read-only States route', async () => {
+  it('renders no workspace for an unknown admin route without fetching another route', async () => {
     previousDocument = globalThis.document; previousWindow = globalThis.window
     const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
     host = fakeDocument.createElement('div'); fakeDocument.body.appendChild(host); root = createRoot(host)
     const api = { getAdminOverview: vi.fn() }
-    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'states', onNavigate: vi.fn() })))
+    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'removed', onNavigate: vi.fn() })))
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     expect(api.getAdminOverview).not.toHaveBeenCalled()
-    expect(host.textContent).toContain('Trạng thái vận hành')
+    expect(host.textContent).not.toContain('Việc cần xử lý')
   })
 
-  it('clears a previous route failure when navigating to the read-only States route', async () => {
+  it('does not retain a previous route failure when navigating to an unknown route', async () => {
     previousDocument = globalThis.document; previousWindow = globalThis.window
     const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
     host = fakeDocument.createElement('div'); fakeDocument.body.appendChild(host); root = createRoot(host)
@@ -112,14 +112,14 @@ describe('Step 11 mounted admin interactions', () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     expect(host.textContent).toContain('Dịch vụ tạm thời không sẵn sàng')
 
-    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'states', onNavigate: vi.fn() })))
+    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'removed', onNavigate: vi.fn() })))
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     expect(api.getAdminOverview).toHaveBeenCalledTimes(1)
-    expect(host.textContent).toContain('Trạng thái vận hành')
+    expect(host.textContent).not.toContain('Việc cần xử lý')
     expect(host.textContent).not.toContain('Dịch vụ tạm thời không sẵn sàng')
   })
 
-  it('ignores a pending route response before the read-only States load timer runs', async () => {
+  it('ignores a pending route response before an unknown route renders', async () => {
     vi.useFakeTimers()
     previousDocument = globalThis.document; previousWindow = globalThis.window
     const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
@@ -130,15 +130,15 @@ describe('Step 11 mounted admin interactions', () => {
     await act(async () => vi.runOnlyPendingTimersAsync())
     expect(api.getAdminOverview).toHaveBeenCalledTimes(1)
 
-    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'states', onNavigate: vi.fn() })))
+    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'removed', onNavigate: vi.fn() })))
     await act(async () => resolvers[0]({ data: { activeSources: 99, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, failedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null } }))
-    expect(host.textContent).toContain('Đang tải trạng thái UI')
+    expect(host.textContent).not.toContain('Việc cần xử lý')
 
     await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'overview', onNavigate: vi.fn() })))
     expect(host.textContent).toContain('Đang tải tổng quan')
   })
 
-  it('ignores a pending route failure before the read-only States load timer runs', async () => {
+  it('ignores a pending route failure before an unknown route renders', async () => {
     vi.useFakeTimers()
     previousDocument = globalThis.document; previousWindow = globalThis.window
     const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
@@ -149,10 +149,10 @@ describe('Step 11 mounted admin interactions', () => {
     await act(async () => vi.runOnlyPendingTimersAsync())
     expect(api.getAdminOverview).toHaveBeenCalledTimes(1)
 
-    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'states', onNavigate: vi.fn() })))
+    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'removed', onNavigate: vi.fn() })))
     await act(async () => rejectors[0]({ status: 503 }))
     expect(api.getAdminOverview).toHaveBeenCalledTimes(1)
-    expect(host.textContent).toContain('Đang tải trạng thái UI')
+    expect(host.textContent).not.toContain('Việc cần xử lý')
     expect(host.textContent).not.toContain('Dịch vụ tạm thời không sẵn sàng')
   })
 
@@ -165,7 +165,7 @@ describe('Step 11 mounted admin interactions', () => {
     const api = { getAdminOverview: vi.fn(() => new Promise((resolve) => { resolveOverview = resolve })) }
     function Harness({ route }) {
       React.useLayoutEffect(() => {
-        if (route === 'states') resolveOverview?.({ data: { activeSources: 99, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, failedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null } })
+        if (route === 'removed') resolveOverview?.({ data: { activeSources: 99, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, failedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null } })
       }, [route])
       return React.createElement(AdminOperations, { api, route, onNavigate: vi.fn() })
     }
@@ -173,8 +173,7 @@ describe('Step 11 mounted admin interactions', () => {
     await act(async () => vi.runOnlyPendingTimersAsync())
     expect(api.getAdminOverview).toHaveBeenCalledTimes(1)
 
-    await act(async () => root.render(React.createElement(Harness, { route: 'states' })))
-    expect(host.textContent).toContain('Đang tải trạng thái UI')
+    await act(async () => root.render(React.createElement(Harness, { route: 'removed' })))
     expect(host.textContent).not.toContain('99')
   })
 
@@ -285,6 +284,27 @@ describe('Step 11 mounted admin interactions', () => {
     expect(host.textContent).toContain('Article a1')
     expect(findButton(host, 'Đổi hiển thị media')).toBeNull()
     expect(host.textContent).toContain('không có lead media')
+  })
+
+  it('renders a removed article tombstone without metadata or mutation controls', async () => {
+    previousDocument = globalThis.document; previousWindow = globalThis.window
+    const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
+    host = fakeDocument.createElement('div'); fakeDocument.body.appendChild(host); root = createRoot(host)
+    const tombstone = { id: 'a-removed', sourceId: 's1', status: 'removed', removalPolicyVersion: 4, removedAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z' }
+    const api = {
+      listAdminArticles: vi.fn(async () => ({ data: [tombstone], meta: { hasNext: false } })),
+      getAdminArticle: vi.fn(async () => ({ data: tombstone })),
+    }
+    await act(async () => root.render(React.createElement(AdminOperations, { api, route: 'articles', onNavigate: vi.fn() })))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    const openButton = findButton(host, 'Mở a-removed')
+    await act(async () => openButton.dispatchEvent({ type: 'click', target: openButton, bubbles: true, cancelable: true }))
+    expect(host.textContent).toContain('Metadata của article đã được xóa')
+    expect(host.textContent).toContain('Không có mutation control')
+    expect(findButton(host, 'Ẩn article')).toBeNull()
+    expect(findButton(host, 'Sửa topics')).toBeNull()
+    expect(findButton(host, 'Tạo summary job')).toBeNull()
+    expect(host.textContent).not.toContain('private.example')
   })
 
   it('restores the exact dialog trigger after the parent unmounts the dialog', async () => {

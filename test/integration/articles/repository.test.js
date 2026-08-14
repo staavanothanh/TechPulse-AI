@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { assertArticleMatchesCurrent, MongoArticleRepository } from '../../../server/repositories/mongo/article-repository.js'
 import { makeCandidate, makeJob, makeSource, RETRIEVED_AT } from '../../unit/articles/fixtures.js'
 import { normalizeCandidateToArticle } from '../../../server/domain/article/normalization.js'
+import { buildRemovedArticleTombstone } from '../../../server/domain/article/removed-tombstone.js'
 import { SOURCE_ID } from '../../unit/articles/fixtures.js'
 
 function fakeCommitRepository({ leaseMatched = 1, currentSource = makeSource() } = {}) {
@@ -128,6 +129,19 @@ describe('article repository fence contract', () => {
     expect(result.created).toBe(1)
     expect(repository.withTransaction).toHaveBeenCalledTimes(2)
     expect(articles.insertOne).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not recreate an RSS article without guid after its metadata becomes a tombstone', async () => {
+    const { repository, source, articles } = fakeCommitRepository()
+    const candidate = makeCandidate({ externalId: undefined })
+    const normalized = normalizeCandidateToArticle(candidate, { source, now: RETRIEVED_AT })
+    const tombstone = buildRemovedArticleTombstone({ ...normalized, _id: new ObjectId() }, { now: RETRIEVED_AT })
+    articles.findOne.mockImplementation(async (filter) => filter.$or.some((entry) => entry.canonicalUrlHash === tombstone.canonicalUrlHash) ? tombstone : null)
+
+    const result = await repository.upsertCandidate({ article: normalized, session: {} })
+
+    expect(result).toMatchObject({ created: 0, updated: 0, duplicate: 1, article: { status: 'removed' } })
+    expect(articles.insertOne).not.toHaveBeenCalled()
   })
 
   it('filters current source state and redacts stale media metadata at visible read time', async () => {
