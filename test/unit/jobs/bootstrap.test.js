@@ -3,6 +3,7 @@ import { assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJob
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES, GOVERNANCE_INDEXES } from '../../../scripts/migrations/governance.js'
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
+import { GOVERNANCE_HARDENING_INDEXES } from '../../../scripts/migrations/governance-hardening.js'
 
 function readyContext({ auditValidator = DURABLE_JOB_AUDIT_VALIDATOR, indexOverride } = {}) {
   const collections = Object.entries(DURABLE_JOB_COLLECTIONS).map(([name, definition]) => ({
@@ -16,12 +17,14 @@ function readyContext({ auditValidator = DURABLE_JOB_AUDIT_VALIDATOR, indexOverr
     listCollections: () => ({ toArray: async () => governanceCollections }),
     collection: (name) => ({ indexes: async () => GOVERNANCE_DATABASE_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? [] }),
   }
+  const appIndexes = Object.fromEntries(Object.keys({ ...GOVERNANCE_INDEXES, ...GOVERNANCE_HARDENING_INDEXES }).map((name) => [name, [...(GOVERNANCE_INDEXES[name] ?? []), ...(GOVERNANCE_HARDENING_INDEXES[name] ?? [])].map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) }))]))
+  const auditIndexes = GOVERNANCE_AUDIT_INDEXES.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) }))
   return {
     client: { db: () => governanceDb },
     db: {
       listCollections: () => ({ toArray: async () => collections }),
       collection: (name) => ({
-        indexes: async () => indexOverride?.[name] ?? GOVERNANCE_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? (name === 'adminAuditLogs' ? GOVERNANCE_AUDIT_INDEXES.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) : DURABLE_JOB_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? []),
+        indexes: async () => indexOverride?.[name] ?? (name === 'adminAuditLogs' ? auditIndexes : appIndexes[name] ?? DURABLE_JOB_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? []),
       }),
     },
     governanceDb,
