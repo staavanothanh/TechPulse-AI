@@ -136,15 +136,15 @@ function unavailable() { throw new AdminGovernanceError(503, 'service_unavailabl
 export function createAdminGovernanceService({ repository, rateLimitAdmission } = {}) {
   const repo = repository ?? {}
   return Object.freeze({
-    async getAdminOverview({ auth } = {}) { requireAdmin(auth); return safeOverview(await (repo.getOverview ?? unavailable)()) },
+    async getAdminOverview({ auth } = {}) { requireAdmin(auth); return safeOverview(await (repo.getOverview ?? unavailable).call(repo)) },
     async listAdminArticles({ auth, query } = {}) {
       requireAdmin(auth)
-      const result = await (repo.listAdminArticles ?? unavailable)(query)
+      const result = await (repo.listAdminArticles ?? unavailable).call(repo, query)
       return { articles: (result?.articles ?? []).map((item) => safeArticle(item)), hasNext: Boolean(result?.hasNext), nextCursor: result?.nextCursor ?? null }
     },
     async getAdminArticle({ auth, articleId: value } = {}) {
       requireAdmin(auth)
-      const item = await (repo.findAdminArticle ?? unavailable)(articleId(value))
+      const item = await (repo.findAdminArticle ?? unavailable).call(repo, articleId(value))
       if (!item) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(item, true)
     },
@@ -152,7 +152,7 @@ export function createAdminGovernanceService({ repository, rateLimitAdmission } 
       requireAdmin(auth)
       const id = articleId(value)
       const category = validateArticlePatch(patch)
-      const item = await (repo.updateAdminArticle ?? unavailable)(id, { category, value: patch[category], reasonCode: patch.reasonCode, actor: auth.user, actorFence: { userId: auth.user.id ?? auth.user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request, rateLimitAdmission })
+      const item = await (repo.updateAdminArticle ?? unavailable).call(repo, id, { category, value: patch[category], reasonCode: patch.reasonCode, actor: auth.user, actorFence: { userId: auth.user.id ?? auth.user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request, rateLimitAdmission })
       if (!item) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(item)
     },
@@ -160,13 +160,13 @@ export function createAdminGovernanceService({ repository, rateLimitAdmission } 
       requireAdmin(auth)
       if (!input || typeof input.canonicalArticleId !== 'string' || !Array.isArray(input.duplicateArticleIds) || input.reasonCode !== 'duplicate_merge_confirmed') throw new AdminGovernanceError(422, 'validation_error', 'Duplicate merge request is invalid')
       if (!idempotencyKey) throw new AdminGovernanceError(400, 'bad_request', 'Idempotency-Key is invalid')
-      const result = await (repo.mergeDuplicateArticles ?? unavailable)({ ...input, idempotencyKey, actor: auth.user, actorFence: { userId: auth.user.id ?? auth.user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request: { serverRequestId: request?.requestId ?? request?.serverRequestId, idempotencyKey }, rateLimitAdmission, reasonCode: input.reasonCode })
+      const result = await (repo.mergeDuplicateArticles ?? unavailable).call(repo, { ...input, idempotencyKey, actor: auth.user, actorFence: { userId: auth.user.id ?? auth.user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request: { serverRequestId: request?.requestId ?? request?.serverRequestId, idempotencyKey }, rateLimitAdmission, reasonCode: input.reasonCode })
       if (!result?.canonical) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(result.canonical)
     },
     async listAuditLogs({ auth, query } = {}) {
       requireAdmin(auth)
-      const result = await (repo.listAuditLogs ?? unavailable)(query)
+      const result = await (repo.listAuditLogs ?? unavailable).call(repo, query)
       return { logs: (result?.logs ?? []).map(safeAudit), hasNext: Boolean(result?.hasNext), nextCursor: result?.nextCursor ?? null }
     },
   })

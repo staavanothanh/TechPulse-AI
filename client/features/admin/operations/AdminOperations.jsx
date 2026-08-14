@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { normalizeAdminFailure, projectTakedownDetail } from './admin-utils.js'
 import { createAdminReadApi } from './admin-api.js'
 
@@ -30,6 +30,10 @@ const TERMINAL_WORKFLOW_STATES = new Set(['completed', 'failed', 'rejected', 'ca
 function idempotencyKey(intent) {
   const suffix = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return `admin-${intent}-${suffix}`
+}
+
+function invalidateRequest(requestId) {
+  requestId.current += 1
 }
 
 function useRetryAfterCooldown() {
@@ -1290,6 +1294,9 @@ export default function AdminOperations({ api, csrfToken, route = 'overview', on
   const wasMoreOpen = useRef(false)
   const requestId = useRef(0)
   const queryRef = useRef({})
+  const onSessionExpiredRef = useRef(onSessionExpired)
+  const previousRouteRef = useRef(route)
+  const initialDataRouteRef = useRef(initialData ? route : null)
   const operationFor = useMemo(
     () =>
       ({
@@ -1306,6 +1313,8 @@ export default function AdminOperations({ api, csrfToken, route = 'overview', on
   const load = useCallback(
     async ({ nextQuery = queryRef.current, append = false } = {}) => {
       if (!operationFor || !readApi?.[operationFor]) {
+        ++requestId.current
+        setFailure(null)
         setState('ready')
         return
       }
@@ -1330,22 +1339,41 @@ export default function AdminOperations({ api, csrfToken, route = 'overview', on
         setState('ready')
       } catch (error) {
         if (current !== requestId.current) return
-        if (error.status === 401) onSessionExpired?.('Phiên đăng nhập đã hết hạn khi mở admin workspace.')
+        if (error.status === 401) onSessionExpiredRef.current?.('Phiên đăng nhập đã hết hạn khi mở admin workspace.')
         setFailure(normalizeAdminFailure(error))
         if (!append) setState('error')
       } finally {
-        if (append) setLoadingMore(false)
+        if (append && current === requestId.current) setLoadingMore(false)
       }
     },
-    [onSessionExpired, operationFor, readApi],
+    [operationFor, readApi],
   )
+  useLayoutEffect(() => {
+    onSessionExpiredRef.current = onSessionExpired
+  }, [onSessionExpired])
+  useLayoutEffect(() => {
+    const routeChanged = previousRouteRef.current !== route
+    previousRouteRef.current = route
+    if (!routeChanged) return
+    invalidateRequest(requestId)
+    initialDataRouteRef.current = null
+    queryRef.current = {}
+    setQuery({})
+    setData(null)
+    setFailure(null)
+    setLoadingMore(false)
+    setState('loading')
+  }, [route])
   useEffect(() => {
-    if (initialData) return undefined
+    if (initialData && initialDataRouteRef.current === route) return undefined
     const timer = globalThis.setTimeout(() => {
       void load()
     }, 0)
-    return () => globalThis.clearTimeout(timer)
-  }, [initialData, load])
+    return () => {
+      globalThis.clearTimeout(timer)
+      invalidateRequest(requestId)
+    }
+  }, [initialData, load, route])
   useEffect(() => {
     if (!mobileMoreOpen) {
       if (wasMoreOpen.current) moreTriggerRef.current?.focus?.({ preventScroll: true })

@@ -6,7 +6,7 @@ export function createDevViteOptions(httpServer) {
   return {
     server: {
       middlewareMode: true,
-      hmr: { server: httpServer },
+      ws: { server: httpServer },
     },
     appType: 'spa',
   }
