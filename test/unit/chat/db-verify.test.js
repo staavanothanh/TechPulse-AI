@@ -30,6 +30,17 @@ describe('Step 10 chat database verification', () => {
     expect(source).toMatch(/abortTransaction\(\)/)
   })
 
+  it('includes governance direct citation explain probes for article and source takedown cleanup', () => {
+    const source = fs.readFileSync(new URL('../../../scripts/db-verify.js', import.meta.url), 'utf8')
+    expect(source).toContain("'governance_chat_citation_article'")
+    expect(source).toContain("'governance_chat_citation_source'")
+    expect(source).toMatch(/governance_chat_citation_article[\s\S]*messages\.citations\.articleId[\s\S]*chat_sessions_citation_article/)
+    expect(source).toMatch(/governance_chat_citation_source[\s\S]*messages\.citations\.sourceId[\s\S]*chat_sessions_citation_source/)
+    expect(source).toMatch(/takedown_cleanup_due[\s\S]*completion\.historicalChatCitationsRedacted[\s\S]*updatedAt:[\s\S]*takedown_cleanup_due/)
+    expect(source).toMatch(/governance_source_article_hide[\s\S]*articles_status_source_time/)
+    expect(source).toMatch(/governance.*chat citation.*explain|direct citation explain/i)
+  })
+
   it('fails closed with a safe not-verified result when Mongo is unreachable', () => {
     const result = spawnSync(process.execPath, ['scripts/db-verify.js', 'chat-sessions', '--require-role'], {
       cwd: process.cwd(),
@@ -40,7 +51,7 @@ describe('Step 10 chat database verification', () => {
       },
     })
     expect(result.status).toBe(1)
-    expect(result.stderr.trim()).toBe('Verification failed: runtime_or_database_error')
+    expect(result.stderr.trim()).toBe('Verification failed: connection_error')
     expect(result.stderr).not.toMatch(/mongodb(?:\+srv)?:\/\//i)
   })
 })

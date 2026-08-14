@@ -18,7 +18,7 @@ export function jobsErrorState(error) {
   else if (error?.status === 422) message = 'Yêu cầu job chưa hợp lệ.'
   else if (error?.status === 429) message = `Đã chạm giới hạn thao tác. Thử lại sau ${error?.retryAfter ?? error?.retryAfterSeconds ?? 'ít phút'}.`
   else if (error?.status === 503) message = 'Durable job service đang tạm thời không sẵn sàng.'
-  else message = error?.message ?? 'Không thể hoàn tất thao tác durable job.'
+  else message = 'Không thể hoàn tất thao tác durable job.'
   return { message, sessionExpiredNotice: error?.status === 401 ? 'Phiên đăng nhập đã hết hạn khi quản lý jobs.' : null }
 }
 

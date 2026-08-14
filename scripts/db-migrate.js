@@ -6,12 +6,15 @@ import { buildDurableJobsMigration } from './migrations/durable-jobs.js'
 import { buildArticlesMigration, runArticlesMigration } from './migrations/articles.js'
 import { buildIndexingJobsMigration, runIndexingJobsMigration } from './migrations/indexing-jobs.js'
 import { buildChatSessionsMigration, runChatSessionsMigration } from './migrations/chat-sessions.js'
+import { buildGovernanceMigration, buildGovernanceDatabaseMigration, runGovernanceMigration, runGovernanceDatabaseMigration } from './migrations/governance.js'
+import { buildGovernanceHardeningMigration, runGovernanceHardeningMigration } from './migrations/governance-hardening.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
   runSourcesWithStep4Compatibility,
 } from './migrations/step4-compatibility.js'
 import { configureDns } from './configure-dns.js'
+import { migrationUriEnvName } from './migration-credential.js'
 
 configureDns()
 
@@ -20,9 +23,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat-sessions'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat-sessions', 'governance'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, chat-sessions',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, chat-sessions, governance',
   )
   process.exitCode = 2
 } else {
@@ -30,7 +33,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
     const runtime = {
       mongo: validateMongoConfiguration({
         ...process.env,
-        MONGODB_URI_ENV: process.env.MONGODB_OPERATOR_URI_ENV,
+        // Every migration target mutates schema and therefore must use the
+        // separately scoped operator credential.  Runtime credentials are
+        // intentionally reserved for read/probe verification in db-verify.
+        MONGODB_URI_ENV: migrationUriEnvName(target),
       }),
     }
     const buildMigration =
@@ -44,7 +50,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
               ? buildIndexingJobsMigration
               : target === 'chat-sessions'
                 ? buildChatSessionsMigration
-              : buildAuthCoreMigration
+              : target === 'governance'
+                ? buildGovernanceMigration
+                : buildAuthCoreMigration
     const runMigration =
       target === 'sources'
         ? runSourcesWithStep4Compatibility
@@ -56,12 +64,22 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
               ? runIndexingJobsMigration
               : target === 'chat-sessions'
                 ? runChatSessionsMigration
-              : runAuthCoreWithStep4Compatibility
+              : target === 'governance'
+                ? runGovernanceMigration
+                : runAuthCoreWithStep4Compatibility
     const plan = dryRun
-      ? buildMigration({ dryRun: true })
+      ? target === 'governance'
+        ? [...buildMigration({ dryRun: true }), ...buildGovernanceHardeningMigration({ dryRun: true }), ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' }))]
+        : buildMigration({ dryRun: true })
       : await (async () => {
           const context = await getMongoContext(runtime)
-          return runMigration({ db: context.db })
+          const plan = await runMigration({ db: context.db })
+          if (target === 'governance') {
+            plan.push(...await runGovernanceHardeningMigration({ db: context.db }))
+            const governanceDb = context.client.db('techpulse_governance')
+            await runGovernanceDatabaseMigration({ db: governanceDb })
+          }
+          return plan
         })()
     console.log(JSON.stringify({ migration: target, dryRun, operations: plan.length }))
   } catch {

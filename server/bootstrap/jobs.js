@@ -5,11 +5,17 @@ import { MongoSourceRepository } from '../repositories/mongo/source-repository.j
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../scripts/migrations/durable-jobs.js'
 import { createQueueRegistry } from '../jobs/queue-registry.js'
 import { createIngestionQueueAdapter } from '../jobs/ingestion-queue.js'
+import { createAccountDeletionQueueAdapter } from '../jobs/account-deletion-queue.js'
 import { runDueWork } from '../jobs/due-work-coordinator.js'
 import { createMaintenanceRegistry } from '../maintenance/task-registry.js'
 import { createMaintenanceRunner } from '../maintenance/runner.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/indexing-jobs.js'
+import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
+import { MongoTakedownRepository } from '../repositories/mongo/takedown-repository.js'
+import { MongoAccountDeletionRepository } from '../repositories/mongo/account-deletion-repository.js'
+import { MongoAdminRepository } from '../repositories/mongo/admin-repository.js'
+import { assertGovernanceReady } from './governance-readiness.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -29,7 +35,7 @@ export async function assertDurableJobsReady(context) {
     if (name === 'jobLeases' && [...actualByName.values()].some((index) => index.expireAfterSeconds !== undefined)) throw new Error('durable-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('durable-jobs audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('durable-jobs audit validator is not ready')
 }
 
 export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork } = {}) {
@@ -72,6 +78,10 @@ export function createCronDueWorkRunner({
     const startedAt = now()
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
     const deadline = startedAt.getTime() + materializationBudgetMs
+    // Give every fixed governance materializer one bounded turn first. Daily
+    // ingestion pagination can otherwise consume the full serverless budget on
+    // every invocation and starve hide-first cleanup indefinitely.
+    for (const materializer of materializers) await materializer()
     let hasMore = true
     let pages = 0
     while (hasMore && pages < maxMaterializationPages) {
@@ -83,26 +93,39 @@ export function createCronDueWorkRunner({
       hasMore = result?.hasMore === true
       if (hasMore && now().getTime() >= deadline) break
     }
-    for (const materializer of materializers) {
-      if (now().getTime() >= deadline) break
-      await materializer()
-    }
     return coordinatorRunner()
   }
 }
 
-export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission } = {}) {
+export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb } = {}) {
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
+  if (!quotaKeyring?.versions?.length || typeof quotaKeyring.digest !== 'function' || !governanceKeyring?.versions?.length || typeof governanceKeyring.digest !== 'function') throw new Error('Quota and governance keyrings are required')
   const jobRepository = new MongoJobRepository(context)
   const leaseRepository = new MongoLeaseRepository(context)
   await assertDurableJobsReady(context)
+  const deletionGovernanceDb = governanceDb ?? context.client?.db?.('techpulse_governance')
+  if (!deletionGovernanceDb) throw new Error('Account deletion quota and governance capabilities are required')
+  // Validate every governance collection/index before registering any queue or
+  // maintenance handler. A partial migration must not expose a half-started
+  // runtime to callers.
+  await assertGovernanceReady(context, { governanceDb: deletionGovernanceDb })
   const queueRegistry = createQueueRegistry()
   queueRegistry.register(createIngestionQueueAdapter({ jobRepository, leaseRepository, executor }))
   const maintenanceRegistry = createMaintenanceRegistry()
+  const cronMaterializers = []
   maintenanceRegistry.register('purge-ingestion-jobs', ({ cutoff, limit }) => jobRepository.purgeDueIngestionJobs({ cutoff, limit }))
+  const takedownRepository = context.db?.collection ? new MongoTakedownRepository({ ...context, governanceDb: deletionGovernanceDb, governanceKeyring }) : null
+  const accountDeletionRepository = context.db?.collection ? new MongoAccountDeletionRepository({ ...context, quotaKeyring, governanceKeyring, governanceDb: deletionGovernanceDb }) : null
+  if (accountDeletionRepository && typeof accountDeletionRepository.selectDue === 'function') queueRegistry.register(createAccountDeletionQueueAdapter({ repository: accountDeletionRepository }))
+  const adminAuditRepository = context.db?.collection ? new MongoAdminRepository(context) : null
+  if (takedownRepository) {
+    maintenanceRegistry.register('purge-takedown-workflows', ({ cutoff, limit }) => takedownRepository.purgeWorkflows({ cutoff, limit }))
+    cronMaterializers.push(() => takedownRepository.materializeCleanupBatch({ now: now(), limit: DAILY_MATERIALIZATION_PAGE_LIMIT }))
+  }
+  if (accountDeletionRepository) maintenanceRegistry.register('purge-account-deletion-workflows', ({ cutoff, limit }) => accountDeletionRepository.purge({ cutoff, limit }))
+  if (adminAuditRepository) maintenanceRegistry.register('purge-audit-ip-hmac', ({ cutoff, limit }) => adminAuditRepository.purgeAuditIpHmac({ cutoff, limit }))
   const maintenanceRunner = createMaintenanceRunner({ registry: maintenanceRegistry, now })
   const coordinatorRunner = createCoordinatorRunner({ queueRegistry, now })
-  const cronMaterializers = []
   const dueWorkRunner = createCronDueWorkRunner({ jobRepository, coordinatorRunner, now, materializers: cronMaterializers })
   const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner })
   return {

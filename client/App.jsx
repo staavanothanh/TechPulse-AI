@@ -2,19 +2,23 @@ import { useCallback, useEffect, useState } from 'react'
 import { createApiClient } from '../shared/generated/api-client.js'
 import AuthAccount from './features/auth/AuthAccount.jsx'
 import SourceRegistry from './features/admin/sources/SourceRegistry.jsx'
-import JobsPanel from './features/admin/jobs/JobsPanel.jsx'
-import IndexingJobsPanel from './features/admin/jobs/indexing/IndexingJobsPanel.jsx'
+import AdminOperations from './features/admin/operations/AdminOperations.jsx'
+import AdminJobsWorkspace from './features/admin/operations/AdminJobsWorkspace.jsx'
 import { bootstrapSessionFailure } from './features/auth/session-state.js'
 import ContentWorkspace from './features/feed/ContentWorkspace.jsx'
 
 const api = createApiClient()
 
 const ADMIN_DESTINATIONS = Object.freeze([
-  { id: 'sources', label: 'Source Registry' },
-  { id: 'jobs', label: 'Durable jobs' },
-  { id: 'indexing', label: 'Indexing jobs' },
-  { id: 'account', label: 'Tài khoản' },
+  { id: 'overview', label: 'Tổng quan' },
+  { id: 'jobs', label: 'Jobs' },
+  { id: 'articles', label: 'Articles & AI index' },
+  { id: 'governance', label: 'Governance' },
+  { id: 'users', label: 'Người dùng' },
+  { id: 'audit', label: 'Audit bất biến' },
+  { id: 'states', label: 'States' },
 ])
+const ADMIN_INTERNAL_ROUTES = Object.freeze(new Set(['sources', 'account', 'deletions']))
 
 export function AdminNavigation({ route, onNavigate }) {
   return (
@@ -42,7 +46,7 @@ export default function App() {
   const [health, setHealth] = useState({ status: 'loading', message: 'Đang kiểm tra API…' })
   const [session, setSession] = useState({ status: 'loading', user: null, csrfToken: null, error: null, notice: null })
   const [contentRoute, setContentRoute] = useState('feed')
-  const [adminRoute, setAdminRoute] = useState('sources')
+  const [adminRoute, setAdminRoute] = useState('overview')
   const [adminNotice, setAdminNotice] = useState('')
 
   useEffect(() => {
@@ -85,9 +89,9 @@ export default function App() {
 
   function navigateAdmin(nextRoute) {
     const destination = ADMIN_DESTINATIONS.find((item) => item.id === nextRoute)
-    if (!destination) return
-    setAdminRoute(destination.id)
-    setAdminNotice(`Đang mở ${destination.label}.`)
+    if (!destination && !ADMIN_INTERNAL_ROUTES.has(nextRoute)) return
+    setAdminRoute(destination?.id ?? nextRoute)
+    setAdminNotice(`Đang mở ${destination?.label ?? (nextRoute === 'deletions' ? 'Xóa tài khoản' : nextRoute === 'sources' ? 'Source Registry' : 'Tài khoản')}.`)
     if (typeof window === 'undefined') return
     window.requestAnimationFrame(() => {
       document.getElementById('main-content')?.focus({ preventScroll: true })
@@ -119,7 +123,7 @@ export default function App() {
 
       <div className={`app-layout ${admin ? 'admin-app-layout' : reader ? 'reader-app-layout' : 'guest-app-layout'}`}>
         {admin ? <AdminNavigation route={adminRoute} onNavigate={navigateAdmin} /> : null}
-        {admin ? <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{adminNotice}</p> : null}
+        {admin ? <p className="sr-only" aria-hidden="true">{adminNotice}</p> : null}
 
         <main id="main-content" tabIndex="-1">
           {session.status === 'loading' ? <section className="hero-card" aria-busy="true"><p>Đang khôi phục phiên…</p></section> : null}
@@ -134,9 +138,9 @@ export default function App() {
           {session.status === 'ready' && !session.user ? accountPanel : null}
           {reader ? <ContentWorkspace generatedApi={api} csrfToken={session.csrfToken} route={contentRoute} onRouteChange={setContentRoute} accountPanel={accountPanel} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {admin && adminRoute === 'account' ? accountPanel : null}
+          {admin && ['overview', 'articles', 'governance', 'users', 'deletions', 'audit', 'states'].includes(adminRoute) ? <AdminOperations api={api} csrfToken={session.csrfToken} route={adminRoute} onNavigate={navigateAdmin} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
+          {admin && adminRoute === 'jobs' ? <AdminJobsWorkspace api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {admin && adminRoute === 'sources' ? <SourceRegistry api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
-          {admin && adminRoute === 'jobs' ? <JobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
-          {admin && adminRoute === 'indexing' ? <IndexingJobsPanel api={api} csrfToken={session.csrfToken} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
         </main>
       </div>
     </>

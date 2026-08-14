@@ -39,6 +39,7 @@ const authService = {
   updatePreferences: vi.fn(async () => ({
     id: 'user-1', email: 'new@example.com', role: 'user', status: 'active', topicPreferences: ['AI'], createdAt: '2026-08-09T00:00:00.000Z',
   })),
+  listAdminUsers: vi.fn(async () => ({ users: [{ id: '507f1f77bcf86cd799439010', email: 'admin@example.com', role: 'admin', status: 'active', createdAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z' }], hasNext: false, nextCursor: null })),
 }
 
 beforeAll(async () => {
@@ -90,5 +91,12 @@ describe('Step 2 auth HTTP boundary', () => {
     expect(response.status).toBe(401)
     expect(validateErrorResponse(payload)).toBe(true)
     expect(payload.error.code).toBe('unauthorized')
+  })
+
+  it('validates the full admin user response contract at the router boundary', async () => {
+    authService.listAdminUsers.mockResolvedValueOnce({ users: [{ id: '507f1f77bcf86cd799439010', email: 'admin@example.com', role: 'admin', status: 'private-status', createdAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z' }], hasNext: false, nextCursor: null })
+    const response = await fetch(`${origin}/api/v1/admin/users`, { headers: { Cookie: '__Host-techpulse_session=opaque-session-token-1234' } })
+    expect(response.status).toBe(500)
+    expect((await response.json()).error.code).toBe('internal_error')
   })
 })

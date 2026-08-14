@@ -11,6 +11,7 @@ addFormats(ajv)
 for (const [name, schema] of Object.entries(OPENAPI.components.schemas)) ajv.addSchema(schema, `#/components/schemas/${name}`)
 const validators = new Map()
 for (const name of ['RegisterRequest', 'LoginRequest', 'PreferencesRequest', 'AdminUserUpdateRequest']) validators.set(name, ajv.compile({ $ref: `#/components/schemas/${name}` }))
+const responseValidators = new Map(['AdminUserListResponse', 'AdminUserResponse'].map((name) => [name, ajv.compile({ $ref: `#/components/schemas/${name}` })]))
 
 function noStore(res) {
   res.set('Cache-Control', 'no-store, private')
@@ -20,6 +21,12 @@ function validateBody(name, body) {
   const validate = validators.get(name)
   if (validate(body)) return
   throw new AuthError(422, 'validation_error', 'Request body is invalid', { details: validate.errors?.map(({ instancePath, message, keyword }) => ({ field: instancePath || 'body', message, code: `invalid_${keyword}` })) })
+}
+
+function sendValidated(res, status, name, payload) {
+  if (!responseValidators.get(name)?.(payload)) throw new AuthError(500, 'internal_error', 'Authentication response failed contract validation')
+  noStore(res)
+  return res.status(status).json(payload)
 }
 
 function sessionToken(req) {
@@ -97,23 +104,20 @@ export function createAuthRouter({ authService } = {}) {
   router.get('/api/v1/admin/users', asyncRoute(async (req, res) => {
     const auth = await requireAuth(service, req)
     const result = await service.listAdminUsers({ auth, query: req.query })
-    noStore(res)
-    res.status(200).json({ data: (result.users ?? []).map(adminUser), meta: { hasNext: Boolean(result.hasNext), nextCursor: result.nextCursor ?? null } })
+    sendValidated(res, 200, 'AdminUserListResponse', { data: (result.users ?? []).map(adminUser), meta: { hasNext: Boolean(result.hasNext), nextCursor: result.nextCursor ?? null } })
   }))
 
   router.get('/api/v1/admin/users/:userId', asyncRoute(async (req, res) => {
     const auth = await requireAuth(service, req)
     const user = await service.getAdminUser({ auth, userId: req.params.userId })
-    noStore(res)
-    res.status(200).json({ data: adminUser(user) })
+    sendValidated(res, 200, 'AdminUserResponse', { data: adminUser(user) })
   }))
 
   router.patch('/api/v1/admin/users/:userId', asyncRoute(async (req, res) => {
     validateBody('AdminUserUpdateRequest', req.body)
     const auth = await requireAuth(service, req)
     const user = await service.updateUserStatus({ auth, userId: req.params.userId, ...req.body, csrfToken: req.get('X-CSRF-Token'), request: req })
-    noStore(res)
-    res.status(200).json({ data: adminUser(user) })
+    sendValidated(res, 200, 'AdminUserResponse', { data: adminUser(user) })
   }))
 
   return router

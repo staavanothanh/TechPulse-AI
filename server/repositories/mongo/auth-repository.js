@@ -369,9 +369,12 @@ export class MongoAuthRepository {
     return options.session ? work(options.session) : this.withTransaction(work)
   }
 
-  async assertActiveSessionForUser({ sessionId, userId, sessionVersion, now = new Date() } = {}, options = {}) {
-    const session = await this.collection('sessions').findOne({ _id: idValue(sessionId), userId: idValue(userId), userSessionVersion: sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, options)
-    return Boolean(session)
+  async assertActiveSessionForUser({ sessionId, userId, sessionVersion, role, now = new Date() } = {}, options = {}) {
+    const session = options.session
+    const touchedSession = await this.collection('sessions').updateOne({ _id: idValue(sessionId), userId: idValue(userId), userSessionVersion: sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, { $set: { lastSeenAt: now } }, { ...(session ? { session } : {}) })
+    if (touchedSession.matchedCount !== 1) return false
+    const touchedUser = await this.collection('users').updateOne({ _id: idValue(userId), status: 'active', sessionVersion, ...(role ? { role } : {}) }, { $set: { updatedAt: now } }, { ...(session ? { session } : {}) })
+    return touchedUser.matchedCount === 1
   }
 
   async insertAudit(document, options = {}) {

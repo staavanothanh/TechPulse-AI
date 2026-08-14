@@ -18,7 +18,7 @@ export function indexingJobsErrorState(error) {
   if (error?.status === 422) return { message: 'Bộ lọc hoặc thao tác indexing chưa hợp lệ.', sessionExpiredNotice: null }
   if (error?.status === 429) return { message: `Đã chạm giới hạn thao tác. Thử lại sau ${error.retryAfter ?? 'ít phút'}.`, sessionExpiredNotice: null }
   if (error?.status === 503) return { message: 'Indexing service đang tạm thời không sẵn sàng.', sessionExpiredNotice: null }
-  return { message: error?.message ?? 'Không thể hoàn tất thao tác indexing.', sessionExpiredNotice: null }
+  return { message: 'Không thể hoàn tất thao tác indexing.', sessionExpiredNotice: null }
 }
 
 export function createIndexingJobActions({ api, csrfToken, mutate, intentKeys = new Map(), createIdempotencyKey = (intent) => `indexing-${intent}-${globalThis.crypto?.randomUUID?.() ?? Date.now()}` } = {}) {

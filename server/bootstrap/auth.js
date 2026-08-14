@@ -9,6 +9,7 @@ import { AUTH_CORE_COLLECTIONS, AUTH_CORE_INDEXES } from '../../scripts/migratio
 import { SOURCE_AUDIT_VALIDATOR } from '../../scripts/migrations/sources.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/durable-jobs.js'
 import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/indexing-jobs.js'
+import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
@@ -22,7 +23,7 @@ export async function assertAuthCoreReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const name of Object.keys(AUTH_CORE_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    const acceptedValidators = name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR] : [AUTH_CORE_COLLECTIONS[name].validator]
+    const acceptedValidators = name === 'adminAuditLogs' ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR] : [AUTH_CORE_COLLECTIONS[name].validator]
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || !acceptedValidators.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) {
       throw new Error('auth-core validator is not ready')
     }
@@ -34,7 +35,7 @@ export async function assertAuthCoreReady(context) {
   }
 }
 
-export async function createConfiguredAuthService({ environment = process.env } = {}) {
+export async function createConfiguredAuthService({ environment = process.env, rateLimitAdmission } = {}) {
   const runtime = validateRuntimeConfiguration(environment)
   const context = await getMongoContext(runtime, environment)
   const repository = new MongoAuthRepository(context)
@@ -46,6 +47,13 @@ export async function createConfiguredAuthService({ environment = process.env } 
     retiringVersions: runtime.quotaKeyring.retiringVersions,
     values: environment,
   })
+  const governanceKeyring = createHmacKeyring({
+    currentEnv: runtime.governanceKeyring.currentEnv,
+    retiringEnvs: runtime.governanceKeyring.retiringEnvs,
+    currentVersion: runtime.governanceKeyring.currentVersion,
+    retiringVersions: runtime.governanceKeyring.retiringVersions,
+    values: environment,
+  })
   await reconcileQuotaHmacLifecycle({ repository, keyring: quotaKeyring })
   const unknownRateLimitVersions = await repository.countUnknownRateLimitKeyVersions(quotaKeyring.versions)
   if (unknownRateLimitVersions > 0) throw new Error('quota HMAC retirement gate failed: dependent rate-limit records remain')
@@ -55,9 +63,10 @@ export async function createConfiguredAuthService({ environment = process.env } 
   if (unknownIpHmacVersions > 0) throw new Error('quota HMAC retirement gate failed: dependent IP HMAC records remain')
   const mode = environment.VERCEL === '1' || environment.VERCEL === 'true' ? 'production' : environment.NODE_ENV === 'test' ? 'test' : 'local'
   return {
-    authService: createAuthService({ repository, runtime, quotaKeyring, clientIpAdapter: createClientIpAdapter({ mode }) }),
+    authService: createAuthService({ repository, runtime, quotaKeyring, rateLimitAdmission, clientIpAdapter: createClientIpAdapter({ mode }) }),
     authRepository: repository,
     quotaKeyring,
+    governanceKeyring,
     context,
     runtime,
   }

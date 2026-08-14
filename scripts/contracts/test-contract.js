@@ -11,6 +11,7 @@ import { runStep8ContentContractFixtures } from './step8-content-fixtures.js'
 import { runStep9IndexingContractFixtures } from './step9-indexing-fixtures.js'
 import { runChatSessionsContractFixtures } from './chat-sessions-fixtures.js'
 import { runAnswersContractFixtures } from './answers-fixtures.js'
+import { runAdminGovernanceContractFixtures } from './admin-governance-fixtures.js'
 
 const document = loadOpenApi()
 const result = runContractChecks(document)
@@ -63,5 +64,7 @@ const shouldRunChatSessions = selection.length === 0 || selection.includes('chat
 const chatSessionsResult = shouldRunChatSessions ? await runChatSessionsContractFixtures({ document }) : { cases: 0 }
 const shouldRunAnswers = selection.length === 0 || selection.includes('answers')
 const answersResult = shouldRunAnswers ? await runAnswersContractFixtures({ document }) : { cases: 0 }
+const shouldRunAdminGovernance = selection.length === 0 || selection.includes('admin')
+const adminGovernanceResult = shouldRunAdminGovernance ? await runAdminGovernanceContractFixtures({ document }) : { cases: 0 }
 
-console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}, Step 4 runtime fixtures: ${step4Result.cases}, Step 8 content runtime fixtures: ${step8ContentResult.cases}, Step 9 indexing runtime fixtures: ${step9IndexingResult.cases}, chat-session contract fixtures: ${chatSessionsResult.cases}, answers contract fixtures: ${answersResult.cases}`)
+console.log(`Contract artifacts valid: ${result.operations.length} operations, health fixture, auth/account runtime fixtures: ${authAccountResult.cases}, admin-sources runtime fixtures: ${adminSourcesResult.cases}, Step 4 runtime fixtures: ${step4Result.cases}, Step 8 content runtime fixtures: ${step8ContentResult.cases}, Step 9 indexing runtime fixtures: ${step9IndexingResult.cases}, chat-session contract fixtures: ${chatSessionsResult.cases}, answers contract fixtures: ${answersResult.cases}, admin-governance runtime fixtures: ${adminGovernanceResult.cases}`)

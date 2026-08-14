@@ -26,6 +26,9 @@ describe('minimal durable jobs UI', () => {
     expect(html).toContain('lease_expired')
     expect(html).toContain('Eligible source · rss:eligible')
     expect(html).not.toMatch(/actorScope|requestHash/)
+    expect(html).not.toContain('lease 1')
+    expect(html).not.toContain('<dt>Policy</dt>')
+    expect(html).not.toContain('>v2<')
   })
 
   it('connects disabled action prerequisites and native buttons', () => {
@@ -75,7 +78,7 @@ describe('minimal durable jobs UI', () => {
     expect(jobsErrorState({ status: 422 }).message).toMatch(/hợp lệ/i)
     expect(jobsErrorState({ status: 429, retryAfter: 30 }).message).toMatch(/giới hạn|30/i)
     expect(jobsErrorState({ status: 403, code: 'csrf_invalid' }).message).toMatch(/CSRF/i)
-    expect(jobsErrorState(new Error('custom failure')).message).toBe('custom failure')
+    expect(jobsErrorState(new Error('mongodb://private/?token=secret')).message).toBe('Không thể hoàn tất thao tác durable job.')
     expect(jobsErrorState({}).message).toMatch(/Không thể/i)
   })
 

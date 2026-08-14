@@ -2,7 +2,7 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { IndexingActionDialog, IndexingJobDetails, IndexingJobsPanelView } from '../../client/features/admin/jobs/indexing/IndexingJobsPanel.jsx'
-import { createIndexingJobActions, indexingJobPrerequisites } from '../../client/features/admin/jobs/indexing/indexing-job-actions.js'
+import { createIndexingJobActions, indexingJobPrerequisites, indexingJobsErrorState } from '../../client/features/admin/jobs/indexing/indexing-job-actions.js'
 import { createIndexingApi, createIndexingRequestGate } from '../../client/features/admin/jobs/indexing/indexing-api.js'
 import { nextIndexingPollDelay } from '../../client/features/admin/jobs/indexing/polling.js'
 import { focusTrapTarget } from '../../client/features/saved/dialog-focus.js'
@@ -16,6 +16,9 @@ const job = {
 const handlers = { onReload: vi.fn(), onSelect: vi.fn(), onRetry: vi.fn(), onCancel: vi.fn(), onCreate: vi.fn(), onFilterChange: vi.fn(), onApplyFilters: vi.fn() }
 
 describe('Step 9 minimalist indexing jobs UI', () => {
+  it('does not expose unknown transport diagnostics', () => {
+    expect(indexingJobsErrorState(new Error('https://private.example/?token=secret')).message).toBe('Không thể hoàn tất thao tác indexing.')
+  })
   it('renders safe task/status context and never exposes coordination/provider fields', () => {
     const html = renderToStaticMarkup(React.createElement(IndexingJobsPanelView, { state: 'ready', jobs: [job], selected: job, filters: { status: '', task: '', articleId: '', sourceId: '' }, handlers }))
     expect(html).toContain('Indexing jobs')

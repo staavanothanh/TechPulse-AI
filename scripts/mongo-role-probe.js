@@ -193,3 +193,46 @@ export async function probeSourcesRoleCapabilities({ client, db } = {}) {
     deleteDenied,
   }
 }
+
+export async function probeGovernanceRoleCapabilities({ client, db, governanceDb } = {}) {
+  if (!client?.startSession || !db?.collection || !governanceDb?.collection) throw new Error('Mongo client and governance databases are required')
+  const now = new Date()
+  const requestId = new ObjectId()
+  const takedown = {
+    _id: requestId, status: 'received', requesterName: 'Role probe', requesterContact: 'probe@example.com', targetType: 'article', targetIds: [new ObjectId()], reason: 'Role probe only', requestedScope: ['metadata'],
+    decisionReasonCode: null, completion: { hidden: false, metadataRemoved: false, mediaMetadataRemoved: false, summaryRemoved: false, embeddingRemoved: false, historicalChatCitationsRedacted: false }, completedAt: null, createdAt: now, updatedAt: now,
+  }
+  const suppression = {
+    _id: new ObjectId(), eventId: `role-probe:${requestId.toHexString()}`, kind: 'takedown', requestId, targetType: 'article', targetIds: takedown.targetIds, requestedScope: ['metadata'], effectiveAt: now, payloadDigest: 'a'.repeat(64), signatureKeyVersion: 1, signature: 'probe', createdAt: now,
+  }
+  const outcome = await runProbeTransaction(client, async (session) => {
+    await db.collection('takedownRequests').insertOne(takedown, { session })
+    await governanceDb.collection('governanceSuppressions').insertOne(suppression, { session })
+    const appFound = await db.collection('takedownRequests').findOne({ _id: requestId }, { session, projection: { _id: 1 } })
+    const governanceFound = await governanceDb.collection('governanceSuppressions').findOne({ _id: suppression._id }, { session, projection: { _id: 1 } })
+    const workflowUpdate = await db.collection('takedownRequests').updateOne({ _id: requestId, status: 'received' }, { $set: { status: 'reviewing', updatedAt: now } }, { session })
+    return { appWrite: Boolean(appFound), governanceWrite: Boolean(governanceFound), workflowUpdate: workflowUpdate.matchedCount === 1 }
+  })
+  const suppressionUpdateDenied = await deniedMutationAfterSetup(client, (session) => governanceDb.collection('governanceSuppressions').insertOne(suppression, { session }), (session) => governanceDb.collection('governanceSuppressions').updateOne({ _id: suppression._id }, { $set: { signature: 'denied' } }, { session }))
+  const suppressionDeleteDenied = await deniedMutationAfterSetup(client, (session) => governanceDb.collection('governanceSuppressions').insertOne(suppression, { session }), (session) => governanceDb.collection('governanceSuppressions').deleteOne({ _id: suppression._id }, { session }))
+  const auditEvent = `governance-role-probe:${randomUUID()}`
+  const auditOutcome = await runProbeTransaction(client, async (session) => {
+    const collection = db.collection('adminAuditLogs')
+    await collection.insertOne(probeDocument(auditEvent), { session })
+    return Boolean(await collection.findOne({ eventId: auditEvent }, { session, projection: { _id: 1 } }))
+  })
+  const auditUpdateDenied = await deniedMutationAfterSetup(client, (session) => db.collection('adminAuditLogs').insertOne(probeDocument(auditEvent), { session }), (session) => db.collection('adminAuditLogs').updateOne({ eventId: auditEvent }, { $set: { result: 'failed' } }, { session }))
+  const auditDeleteDenied = await deniedMutationAfterSetup(client, (session) => db.collection('adminAuditLogs').insertOne(probeDocument(auditEvent), { session }), (session) => db.collection('adminAuditLogs').deleteOne({ eventId: auditEvent }, { session }))
+  return {
+    transaction: outcome.sessionHealthy && !outcome.operationFailed,
+    appWrite: outcome.value?.appWrite === true,
+    workflowUpdate: outcome.value?.workflowUpdate === true,
+    governanceWrite: outcome.value?.governanceWrite === true,
+    suppressionUpdateDenied,
+    suppressionDeleteDenied,
+    auditInsert: auditOutcome.sessionHealthy && !auditOutcome.operationFailed && auditOutcome.value === true,
+    auditUpdateDenied,
+    auditDeleteDenied,
+    rolledBack: outcome.sessionHealthy && auditOutcome.sessionHealthy,
+  }
+}

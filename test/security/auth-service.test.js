@@ -29,7 +29,7 @@ describe('Step 2 auth application service', () => {
       findSessionByTokenHash: vi.fn(async () => ({ _id: 'session-1', userId: 'user-1', userSessionVersion: 0, expiresAt: new Date(Date.now() + 60_000), absoluteExpiresAt: new Date(Date.now() + 60_000) })),
       findUserById: vi.fn(async () => ({ ...user, status: 'suspended', sessionVersion: 1 })),
     }
-    const service = createAuthService({ repository })
+    const service = createAuthService({ repository, quotaKeyring: keyring() })
     await expect(service.authenticate({ token: 'opaque-session-token-1234' })).rejects.toMatchObject({ status: 401 })
   })
 
@@ -64,35 +64,85 @@ describe('Step 2 auth application service', () => {
   it('keeps admin status mutation and audit in one repository transaction', async () => {
     const repository = {
       withTransaction: vi.fn(async (work) => work('mongo-session')),
+      assertActiveSessionForUser: vi.fn(async () => true),
+      reserveRateLimit: vi.fn(async () => ({ allowed: true })),
       updateUserStatus: vi.fn(async () => ({ ...user, role: 'user', status: 'suspended', sessionVersion: 1 })),
       revokeSessionsByUserId: vi.fn(async () => undefined),
       insertAudit: vi.fn(async () => undefined),
     }
-    const service = createAuthService({ repository })
-    const admin = { ...user, _id: 'admin-1', role: 'admin' }
+    const service = createAuthService({ repository, quotaKeyring: keyring() })
+    const admin = { ...user, _id: '507f1f77bcf86cd799439010', role: 'admin' }
     const csrfToken = 'csrf-token-for-admin-1234567890'
-    const auth = { user: admin, session: { csrfSecretHash: hashCsrfToken(csrfToken) } }
+    const auth = { user: admin, session: { _id: '507f1f77bcf86cd799439012', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
     const targetUserId = '507f1f77bcf86cd799439011'
     const result = await service.updateUserStatus({ auth, userId: targetUserId, status: 'suspended', reasonCode: 'user_suspended', csrfToken })
     expect(result.status).toBe('suspended')
     expect(repository.updateUserStatus).toHaveBeenCalledWith(targetUserId, 'suspended', 'user_suspended', { session: 'mongo-session' })
     expect(repository.revokeSessionsByUserId).toHaveBeenCalledWith(targetUserId, { session: 'mongo-session' })
     expect(repository.insertAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'user_suspended' }), { session: 'mongo-session' })
+    expect(repository.assertActiveSessionForUser).toHaveBeenCalledWith(expect.objectContaining({ sessionVersion: 0, role: 'admin' }), { session: 'mongo-session' })
+    expect(repository.reserveRateLimit).toHaveBeenCalledWith(expect.objectContaining({ scope: 'admin-trigger', subjectType: 'admin' }), { session: 'mongo-session' })
   })
 
-  it('persists a failed audit event before reporting a conflicting privileged transition', async () => {
+  it('does not require the admin role when a normal user logs out', async () => {
     const repository = {
       withTransaction: vi.fn(async (work) => work('mongo-session')),
-      updateUserStatus: vi.fn(async () => ({ conflict: true })),
+      assertActiveSessionForUser: vi.fn(async () => true),
+      revokeSession: vi.fn(async () => undefined),
       insertAudit: vi.fn(async () => undefined),
     }
     const service = createAuthService({ repository })
+    const csrfToken = 'csrf-token-for-user-1234567890'
+    const auth = { user: { ...user, _id: '507f1f77bcf86cd799439010' }, session: { _id: '507f1f77bcf86cd799439012', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+
+    await service.logout({ auth, csrfToken })
+
+    expect(repository.assertActiveSessionForUser).toHaveBeenCalledWith({ sessionId: auth.session._id, userId: auth.user._id, sessionVersion: 0 }, { session: 'mongo-session' })
+  })
+
+  it('rejects an admin user mutation when transactional admission is denied', async () => {
+    const repository = {
+      withTransaction: vi.fn(async (work) => work('mongo-session')),
+      assertActiveSessionForUser: vi.fn(async () => true),
+      reserveRateLimit: vi.fn(async () => ({ allowed: false, retryAfterSeconds: 12 })),
+      updateUserStatus: vi.fn(),
+    }
+    const service = createAuthService({ repository, quotaKeyring: { currentVersion: 1, versions: [1], digest: () => 'a'.repeat(64) } })
     const csrfToken = 'csrf-token-for-admin-1234567890'
-    const auth = { user: { ...user, _id: 'admin-1', role: 'admin' }, session: { csrfSecretHash: hashCsrfToken(csrfToken) } }
+    const auth = { user: { ...user, _id: '507f1f77bcf86cd799439010', role: 'admin' }, session: { _id: '507f1f77bcf86cd799439012', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+    await expect(service.updateUserStatus({ auth, userId: '507f1f77bcf86cd799439011', status: 'suspended', reasonCode: 'user_suspended', csrfToken })).rejects.toMatchObject({ status: 429, retryAfter: 12 })
+    expect(repository.updateUserStatus).not.toHaveBeenCalled()
+  })
+
+  it('maps an admin admission outage to canonical service unavailable', async () => {
+    const repository = {
+      withTransaction: vi.fn(async (work) => work('mongo-session')),
+      assertActiveSessionForUser: vi.fn(async () => true),
+      updateUserStatus: vi.fn(),
+    }
+    const service = createAuthService({ repository, rateLimitAdmission: { reserve: vi.fn(async () => { throw new Error('private limiter diagnostic') }) } })
+    const csrfToken = 'csrf-token-for-admin-1234567890'
+    const auth = { user: { ...user, _id: '507f1f77bcf86cd799439010', role: 'admin' }, session: { _id: '507f1f77bcf86cd799439012', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+
+    await expect(service.updateUserStatus({ auth, userId: '507f1f77bcf86cd799439011', status: 'suspended', reasonCode: 'user_suspended', csrfToken })).rejects.toMatchObject({ status: 503, code: 'service_unavailable', message: 'Admin admission is unavailable' })
+    expect(repository.updateUserStatus).not.toHaveBeenCalled()
+  })
+
+  it('does not create a conflicting audit identity when a privileged transition does not commit', async () => {
+    const repository = {
+      withTransaction: vi.fn(async (work) => work('mongo-session')),
+      assertActiveSessionForUser: vi.fn(async () => true),
+      reserveRateLimit: vi.fn(async () => ({ allowed: true })),
+      updateUserStatus: vi.fn(async () => ({ conflict: true })),
+      insertAudit: vi.fn(async () => undefined),
+    }
+    const service = createAuthService({ repository, quotaKeyring: keyring() })
+    const csrfToken = 'csrf-token-for-admin-1234567890'
+    const auth = { user: { ...user, _id: '507f1f77bcf86cd799439010', role: 'admin' }, session: { _id: '507f1f77bcf86cd799439012', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
     const targetUserId = '507f1f77bcf86cd799439011'
 
     await expect(service.updateUserStatus({ auth, userId: targetUserId, status: 'suspended', reasonCode: 'user_suspended', csrfToken })).rejects.toMatchObject({ status: 409 })
-    expect(repository.insertAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'user_suspended', result: 'failed' }), { session: 'mongo-session' })
+    expect(repository.insertAudit).not.toHaveBeenCalled()
   })
 
   it('maps a malformed admin target identifier to canonical not-found without invoking Mongo', async () => {

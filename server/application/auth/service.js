@@ -61,7 +61,7 @@ function requireAdminTargetId(userId) {
   return userId
 }
 
-export function createAuthService({ repository, runtime, clock = () => new Date(), clientIpAdapter, quotaKeyring } = {}) {
+export function createAuthService({ repository, runtime, clock = () => new Date(), clientIpAdapter, quotaKeyring, rateLimitAdmission } = {}) {
   if (!repository) throw new Error('auth repository is required')
   const keyring = quotaKeyring ?? (runtime?.quotaKeyring ? createHmacKeyring({ ...runtime.quotaKeyring }) : null)
 
@@ -79,6 +79,19 @@ export function createAuthService({ repository, runtime, clock = () => new Date(
     for (const version of currentKeyring.versions ?? []) if (version !== currentKeyring.currentVersion) rotationKeyHashes.push(currentKeyring.digest(subject, version))
     const result = await repository.reserveRateLimit({ scope, subjectType: 'ip', keyHash, keyVersion: currentKeyring.currentVersion, keyring: currentKeyring, rotationKeyHashes, now: clock() })
     if (!result.allowed) throw new AuthError(429, 'rate_limit_exceeded', 'Too many attempts', { retryAfter: result.retryAfterSeconds })
+  }
+
+  async function reserveAdmin(userId, session) {
+    try {
+      if (rateLimitAdmission?.reserve) return await rateLimitAdmission.reserve({ scope: 'admin-trigger', subject: String(userId), session })
+      const currentKeyring = requireKeyring()
+      const raw = String(userId)
+      const rotationKeyHashes = (currentKeyring.versions ?? []).filter((version) => version !== currentKeyring.currentVersion).map((version) => currentKeyring.digest(raw, version))
+      return await repository.reserveRateLimit({ scope: 'admin-trigger', subjectType: 'admin', keyHash: currentKeyring.digest(raw), keyVersion: currentKeyring.currentVersion, keyring: currentKeyring, rotationKeyHashes, now: clock() }, { session })
+    } catch (error) {
+      if (error instanceof AuthError) throw error
+      throw new AuthError(503, 'service_unavailable', 'Admin admission is unavailable')
+    }
   }
 
   async function createSession(user, request, transactionSession) {
@@ -242,7 +255,9 @@ export function createAuthService({ repository, runtime, clock = () => new Date(
     const action = status === 'suspended' ? 'user_suspended' : 'user_restored'
     const stateTransition = { from: status === 'suspended' ? 'active' : 'suspended', to: status }
     const outcome = await inTransaction(async (session) => {
-      if (repository.assertActiveSessionForUser && !(await repository.assertActiveSessionForUser({ sessionId: auth.session._id, userId: auth.user._id, sessionVersion: auth.session.userSessionVersion }, { session }))) throw new AuthError(401, 'unauthorized', 'Session is no longer active')
+      if (repository.assertActiveSessionForUser && !(await repository.assertActiveSessionForUser({ sessionId: auth.session._id, userId: auth.user._id, sessionVersion: auth.session.userSessionVersion, role: 'admin' }, { session }))) throw new AuthError(401, 'unauthorized', 'Session is no longer active')
+      const admission = await reserveAdmin(auth.user._id ?? auth.user.id, session)
+      if (admission?.allowed === false) throw new AuthError(429, 'rate_limit_exceeded', 'Request rate limit exceeded', { retryAfter: admission.retryAfterSeconds })
       const updated = await repository.updateUserStatus(targetId, status, reasonCode, { session })
       if (updated?.conflict) return { conflict: true }
       if (!updated) throw new AuthError(404, 'not_found', 'User not found')
@@ -251,7 +266,6 @@ export function createAuthService({ repository, runtime, clock = () => new Date(
       return { user: serializeAdminUser(updated) }
     })
     if (outcome.conflict) {
-      await inTransaction((session) => repository.insertAudit(createAuditEvent({ actor: auth.user, action, targetId, changedFields: ['status', 'sessionVersion'], reasonCode, stateTransition, request, result: 'failed' }), { session }))
       throw new AuthError(409, 'conflict', 'User status transition conflicts with current state')
     }
     return outcome.user

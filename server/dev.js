@@ -16,6 +16,7 @@ const { createConfiguredJobRuntime } = await import('./bootstrap/jobs.js')
 const { createConfiguredContentServices } = await import('./bootstrap/content.js')
 const { createConfiguredIndexingRuntime } = await import('./bootstrap/indexing.js')
 const { createConfiguredQaService } = await import('./bootstrap/qa.js')
+const { createConfiguredAdminGovernanceService } = await import('./bootstrap/admin.js')
 const { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } = await import('./ai/provider-adapters.js')
 const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
@@ -32,16 +33,23 @@ let imageCspHosts
 let indexingJobService
 let queryEmbedding
 let qaService
+let adminGovernanceService
+let accountDeletionService
 let runtime
 try {
   const configured = await createConfiguredAuthService()
   authService = configured.authService
   runtime = configured.runtime
   const rateLimitAdmission = createRateLimitAdmission({ repository: configured.authRepository, keyring: configured.quotaKeyring })
+  try {
+    const governance = await createConfiguredAdminGovernanceService({ context: configured.context, rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring })
+    adminGovernanceService = governance.adminGovernanceService
+    accountDeletionService = governance.accountDeletionService
+  } catch { console.warn('Admin governance service is unavailable until article/auth migrations are applied') }
   const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
   try { sourceService = (await createConfiguredSourceService({ context: configured.context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
   try {
-    const jobs = await createConfiguredJobRuntime({ context: configured.context, rateLimitAdmission })
+    const jobs = await createConfiguredJobRuntime({ context: configured.context, rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring })
     jobService = jobs.jobService
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner
@@ -68,7 +76,7 @@ try {
 } catch {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
-const app = createApp({ authService, sourceService, jobService, indexingJobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, qaService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
+const app = createApp({ authService, sourceService, jobService, indexingJobService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, qaService, adminGovernanceService, accountDeletionService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
 server.on('request', app)
 server.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)

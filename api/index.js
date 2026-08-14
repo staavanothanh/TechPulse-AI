@@ -5,6 +5,7 @@ import { createConfiguredJobRuntime } from '../server/bootstrap/jobs.js'
 import { createConfiguredContentServices } from '../server/bootstrap/content.js'
 import { createConfiguredIndexingRuntime } from '../server/bootstrap/indexing.js'
 import { createConfiguredQaService } from '../server/bootstrap/qa.js'
+import { createConfiguredAdminGovernanceService } from '../server/bootstrap/admin.js'
 import { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } from '../server/ai/provider-adapters.js'
 import { createSafeFetch } from '../server/infrastructure/http/safe-fetch.js'
 import { createSourceTechnicalCheckAdapter } from '../server/infrastructure/http/source-technical-check.js'
@@ -13,16 +14,17 @@ import { createRateLimitAdmission } from '../server/security/rate-limit-admissio
 let appPromise
 function loadApp() {
   if (!appPromise) {
-    appPromise = createConfiguredAuthService().then(async ({ authService, context, runtime, authRepository, quotaKeyring }) => {
+    appPromise = createConfiguredAuthService().then(async ({ authService, context, runtime, authRepository, quotaKeyring, governanceKeyring }) => {
       let sourceService
       let jobs = {}
       let content = {}
       let qaService
+      let adminGovernanceService
       let providerAdapters
       const rateLimitAdmission = createRateLimitAdmission({ repository: authRepository, keyring: quotaKeyring })
       const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
       try { sourceService = (await createConfiguredSourceService({ context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.error('Source Registry service is unavailable') }
-      try { jobs = await createConfiguredJobRuntime({ context, rateLimitAdmission }) } catch { console.error('Durable job service is unavailable') }
+      try { jobs = await createConfiguredJobRuntime({ context, rateLimitAdmission, quotaKeyring, governanceKeyring }) } catch { console.error('Durable job service is unavailable') }
       let indexing = {}
       if (jobs.queueRegistry) {
         try {
@@ -35,9 +37,15 @@ function loadApp() {
         qaService = await createConfiguredQaService({ context, providerRegistry: runtime.providerAdmissionDomains, providerAdapters, providerAdmission: indexing.providerAdmission, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
       } catch { console.error('Grounded Q&A service is unavailable') }
       try { content = await createConfiguredContentServices({ context, queryEmbedding: indexing.queryEmbedding }) } catch { console.error('Content service is unavailable') }
+      let accountDeletionService
+      try {
+        const governance = await createConfiguredAdminGovernanceService({ context, rateLimitAdmission, quotaKeyring, governanceKeyring })
+        adminGovernanceService = governance.adminGovernanceService
+        accountDeletionService = governance.accountDeletionService
+      } catch { console.error('Admin governance service is unavailable') }
       return createApp({
         authService, sourceService, jobService: jobs.jobService, indexingJobService: indexing.indexingJobService, dueWorkRunner: jobs.dueWorkRunner, maintenanceRunner: jobs.maintenanceRunner,
-        articleService: content.articleService, searchService: content.searchService, savedService: content.savedService, qaService,
+        articleService: content.articleService, searchService: content.searchService, savedService: content.savedService, qaService, adminGovernanceService, accountDeletionService,
         imageCspHosts: content.imageCspHosts,
         allowedOrigins: runtime.origins.join(','), machineSecretEnv: runtime.internalMachineSecretEnv,
       })

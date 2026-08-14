@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner } from '../../../server/bootstrap/jobs.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
+import { GOVERNANCE_COLLECTIONS, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES, GOVERNANCE_INDEXES } from '../../../scripts/migrations/governance.js'
+import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
 
 function readyContext({ auditValidator = DURABLE_JOB_AUDIT_VALIDATOR, indexOverride } = {}) {
   const collections = Object.entries(DURABLE_JOB_COLLECTIONS).map(([name, definition]) => ({
@@ -8,14 +10,21 @@ function readyContext({ auditValidator = DURABLE_JOB_AUDIT_VALIDATOR, indexOverr
     options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' },
   }))
   collections.push({ name: 'adminAuditLogs', options: { validator: auditValidator, validationLevel: 'strict', validationAction: 'error' } })
+  for (const [name, definition] of Object.entries(GOVERNANCE_COLLECTIONS)) collections.push({ name, options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } })
+  const governanceCollections = Object.entries(GOVERNANCE_DATABASE_COLLECTIONS).map(([name, definition]) => ({ name, options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } }))
+  const governanceDb = {
+    listCollections: () => ({ toArray: async () => governanceCollections }),
+    collection: (name) => ({ indexes: async () => GOVERNANCE_DATABASE_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? [] }),
+  }
   return {
-    client: {},
+    client: { db: () => governanceDb },
     db: {
       listCollections: () => ({ toArray: async () => collections }),
       collection: (name) => ({
-        indexes: async () => indexOverride?.[name] ?? DURABLE_JOB_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? [],
+        indexes: async () => indexOverride?.[name] ?? GOVERNANCE_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? (name === 'adminAuditLogs' ? GOVERNANCE_AUDIT_INDEXES.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) : DURABLE_JOB_INDEXES[name]?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? []),
       }),
     },
+    governanceDb,
   }
 }
 
@@ -30,10 +39,21 @@ describe('durable-jobs bootstrap readiness', () => {
       jobRepository: expect.any(Object),
       leaseRepository: expect.any(Object),
     }))
-    const runtime = await createConfiguredJobRuntime({ context, rateLimitAdmission })
-    expect(runtime.queueRegistry.registered().map(({ queueName }) => queueName)).toEqual(['ingestion'])
+    const quotaKeyring = { currentVersion: 1, versions: [1], digest: vi.fn(() => 'a'.repeat(64)) }
+    const governanceKeyring = { currentVersion: 1, versions: [1], digest: vi.fn(() => 'b'.repeat(64)) }
+    const governanceContext = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
+    const runtime = await createConfiguredJobRuntime({ context: governanceContext, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb: governanceContext.governanceDb })
+    expect(runtime.queueRegistry.registered().map(({ queueName }) => queueName)).toEqual(['account-deletion', 'ingestion'])
     expect(runtime.maintenanceRegistry.has('purge-ingestion-jobs')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-indexing-jobs')).toBe(false)
+    expect(runtime.maintenanceRegistry.has('purge-takedown-pii')).toBe(false)
+    expect(runtime.maintenanceRegistry.has('purge-takedown-workflows')).toBe(true)
+    expect(runtime.maintenanceRegistry.has('purge-account-deletion-workflows')).toBe(true)
+    expect(runtime.maintenanceRegistry.has('purge-audit-ip-hmac')).toBe(true)
+  })
+
+  it('fails closed instead of registering deletion cleanup without quota and governance keys', async () => {
+    await expect(createConfiguredJobRuntime({ context: readyContext(), rateLimitAdmission: { reserve: async () => ({ allowed: true }) } })).rejects.toThrow(/quota.*governance/i)
   })
 
   it('fails closed for stale audit validators or index drift', async () => {
@@ -74,6 +94,22 @@ describe('durable-jobs bootstrap readiness', () => {
     await cron()
     expect(materializeDailyIngestion).toHaveBeenCalledTimes(2)
     expect(coordinatorRunner).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives each fixed materializer one bounded turn before ingestion can exhaust the budget', async () => {
+    const calls = []
+    let tick = 0
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => { calls.push('ingestion'); return { hasMore: true } } },
+      coordinatorRunner: async () => { calls.push('coordinate') },
+      materializers: [async () => { calls.push('takedown') }],
+      now: () => new Date(Date.UTC(2026, 7, 10, 0, 0, tick++ === 0 ? 0 : 5)),
+      maxMaterializationPages: 10,
+      materializationBudgetMs: 4_000,
+    })
+    await cron()
+    expect(calls[0]).toBe('takedown')
+    expect(calls).toContain('coordinate')
   })
 
   it('rejects an unexpected partial filter on the actor-idempotency unique index', async () => {

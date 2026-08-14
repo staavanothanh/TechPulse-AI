@@ -63,6 +63,16 @@ describe('Step 4 jobs, cron and maintenance HTTP boundaries', () => {
     expect(response.headers.get('cache-control')).toBe('no-store, private')
   })
 
+  it('does not serialize arbitrary persisted job diagnostic text', async () => {
+    jobService.getIngestionJob.mockResolvedValueOnce({ ...job, status: 'failed', error: { code: 'private', message: 'mongodb://user:secret@private/db', retryable: true, occurredAt: '2026-08-10T00:00:00.000Z' } })
+    const response = await fetch(`${origin}/api/v1/admin/ingestion-jobs/${job.id}`, { headers: { Cookie: `__Host-techpulse_session=${adminToken}` } })
+    const payload = await response.json()
+    expect(response.status).toBe(200)
+    expect(payload.data.error.message).toBe('Ingestion job did not complete safely')
+    expect(JSON.stringify(payload)).not.toContain('secret')
+    expect(JSON.stringify(payload)).not.toContain('mongodb://')
+  })
+
   it('enforces admin, CSRF and Idempotency-Key on manual job creation', async () => {
     const regular = await fetch(`${origin}/api/v1/admin/ingestion-jobs`, { method: 'POST', headers: { Origin: 'http://localhost:3000', Cookie: `__Host-techpulse_session=${userToken}`, 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'step4-job-key-0002', 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceId: job.sourceId }) })
     expect(regular.status).toBe(403)
@@ -130,6 +140,19 @@ describe('Step 4 jobs, cron and maintenance HTTP boundaries', () => {
     expect(response.status).toBe(202)
     expect(validateMaintenance(payload), JSON.stringify(validateMaintenance.errors)).toBe(true)
     expect(payload.data).not.toHaveProperty('cursor')
+  })
+
+  it('keeps every Step 11 maintenance task behind the fixed machine boundary', async () => {
+    for (const taskName of ['purge-takedown-workflows', 'purge-account-deletion-workflows', 'purge-audit-ip-hmac']) {
+      maintenanceRunner.run.mockClear()
+      const browser = await fetch(`${origin}/api/internal/maintenance/${taskName}`, { headers: { Cookie: `__Host-techpulse_session=${adminToken}` } })
+      expect(browser.status).toBe(401)
+      expect(maintenanceRunner.run).not.toHaveBeenCalled()
+
+      const polluted = await fetch(`${origin}/api/internal/maintenance/${taskName}?cutoff=2099-01-01`, { headers: { Authorization: 'Bearer step4-machine-secret' } })
+      expect(polluted.status).toBe(400)
+      expect(maintenanceRunner.run).not.toHaveBeenCalled()
+    }
   })
 
   it('preserves fixed future-task conflict and unavailable-service failures', async () => {

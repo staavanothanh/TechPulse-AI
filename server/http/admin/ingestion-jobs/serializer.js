@@ -3,6 +3,11 @@ function iso(value) {
   return value instanceof Date ? value.toISOString() : String(value)
 }
 
+function safeError(error) {
+  if (!error) return null
+  return { code: 'job_failed', message: 'Ingestion job did not complete safely', retryable: Boolean(error.retryable), occurredAt: iso(error.occurredAt), ...(Number.isInteger(error.upstreamStatus) ? { upstreamStatus: error.upstreamStatus } : {}) }
+}
+
 export function serializeIngestionJobResponse(job) {
   return {
     id: job.id,
@@ -18,7 +23,7 @@ export function serializeIngestionJobResponse(job) {
     batchSize: job.batchSize,
     parentJobId: job.parentJobId ?? null,
     counters: { ...job.counters },
-    error: job.error ? { ...job.error, occurredAt: iso(job.error.occurredAt) } : null,
+    error: safeError(job.error),
     createdAt: iso(job.createdAt),
     startedAt: iso(job.startedAt),
     finishedAt: iso(job.finishedAt),

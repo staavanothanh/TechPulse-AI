@@ -3,6 +3,11 @@ function iso(value) {
   return value instanceof Date ? value.toISOString() : String(value)
 }
 
+function safeError(error) {
+  if (!error) return null
+  return { code: 'job_failed', message: 'Indexing job did not complete safely', retryable: Boolean(error.retryable), occurredAt: iso(error.occurredAt), ...(Number.isInteger(error.upstreamStatus) ? { upstreamStatus: error.upstreamStatus } : {}) }
+}
+
 export function serializeIndexingJobResponse(job) {
   return {
     id: job.id,
@@ -17,7 +22,7 @@ export function serializeIndexingJobResponse(job) {
     availableAt: iso(job.availableAt),
     leaseGeneration: job.leaseGeneration,
     parentJobId: job.parentJobId ?? null,
-    error: job.error ? { ...job.error, occurredAt: iso(job.error.occurredAt) } : null,
+    error: safeError(job.error),
     createdAt: iso(job.createdAt),
     startedAt: iso(job.startedAt),
     finishedAt: iso(job.finishedAt),
