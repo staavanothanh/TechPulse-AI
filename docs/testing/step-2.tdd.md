@@ -1,5 +1,7 @@
 # Step 2 TDD evidence — MongoDB core, auth và session
 
+> Historical snapshot: operation counts below were correct when recorded. Current canonical OpenAPI has 55 operations.
+
 ## Phạm vi
 
 Step này chỉ implement MongoDB core, server-side opaque session, CSRF bootstrap, register/login/logout/current-user/preferences, RBAC admin foundation, rate-limit primitives và audit transaction. Account deletion workflow, Source Registry, content, connector, provider, MFA và password reset vẫn ngoài phạm vi.

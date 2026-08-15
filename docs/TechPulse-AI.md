@@ -2,7 +2,7 @@
 
 > Trạng thái: Phạm vi MVP đã chốt / tài liệu sống
 > Cập nhật lần đầu: 07/08/2026
-> Cập nhật gần nhất: 09/08/2026
+> Cập nhật gần nhất: 15/08/2026
 > Mục đích: Lưu định hướng sản phẩm, phạm vi MVP, hướng phát triển và các ràng buộc quan trọng trước khi viết PRD hoặc thiết kế kỹ thuật chi tiết.
 > Bộ tài liệu triển khai: [README.md](./README.md)
 
@@ -430,9 +430,9 @@ MVP không cần `superadmin`, phân quyền chi tiết cho từng admin, SSO ho
 - **Hosting:** một Vercel Hobby project cho frontend, API và cron endpoint; đây là deployment phi thương mại, tạm thời phục vụ demo/chấm đồ án.
 - **Database:** MongoDB Atlas Free; không lưu session, job hoặc dữ liệu lâu dài trên filesystem của function.
 - **Keyword search:** MongoDB text index với `default_language: "none"`, trường `searchTextNormalized` và index cho status/source/topic/time.
-- **Embedding:** OpenRouter Embeddings API với model `baai/bge-m3`, 1024 dimensions; input gồm title, `summaryVi` và topics.
+- **Embedding:** workload route cấu hình server-side với pinned `artifactCompatibilityId`; OpenRouter/BGE-M3 là deployment baseline lịch sử, không là architecture invariant. Input gồm title, `summaryVi` và topics.
 - **Semantic retrieval:** lưu vector trong MongoDB và tính cosine similarity trong Node.js cho tập dữ liệu khoảng 250–400 bài; MongoDB Atlas Vector Search chưa phải dependency của MVP.
-- **LLM:** OpenCode Zen free mặc định là `nonconfidential`, chỉ dùng source-derived input được Source Policy cho phép. Raw Q&A chỉ đi route có current `zdr-verified` evidence; fallback `deepseek-v4-flash` không được hạ privacy capability hoặc bypass admission/support gate.
+- **LLM:** workload router theo ADR-0013 chọn route từ adapter/provider/admission-domain config. OpenCode Zen/DeepSeek là deployment example lịch sử. Raw Q&A chỉ đi route có current `zdr-verified` evidence; model/provider fallback không được hạ privacy capability hoặc bypass admission/support gate.
 - **Scheduler:** Vercel Cron một lần mỗi ngày và endpoint chạy thủ công có bảo vệ cho admin.
 - **MVP connectors:** RSS/Atom, arXiv API và Hacker News API.
 
@@ -448,13 +448,13 @@ Ràng buộc triển khai Vercel:
 - không dùng rate-limit/quota counter theo process; login, AI Q&A, admin trigger và source test dùng shared Mongo bucket hoặc platform limiter tương đương;
 - protected `GET /api/internal/cron/due-work` recover expired jobs rồi xử lý ingestion/indexing/account-deletion queues và trả aggregate; admin POST trigger gọi chung runner nhưng dùng trust boundary riêng;
 - mỗi job có actor/key/request-hash idempotency, `availableAt`, lease generation, batch size và trạng thái bền vững trong MongoDB;
-- Q&A có actor/session-scoped idempotency receipt 24 giờ, một quota reservation và Mongo admission domain: mọi route dùng cùng provider credential tranh chung concurrency/budget, circuit vẫn per-route; cùng key/hash không gọi provider hoặc append chat lần hai;
+- Q&A có actor/session-scoped idempotency receipt 24 giờ, một quota reservation và Mongo admission domain: mọi route dùng cùng credential tranh chung concurrency/budget; route circuit cô lập model và provider-domain circuit cô lập shared outage; cùng key/hash không gọi provider hoặc append chat lần hai;
 - mỗi canonical logical lease key giữ persistent `generationHighWater` và nullable active owner, không dùng TTL; ingestion/indexing crash recovery terminal parent + linked retry, account deletion requeue same request; exact owner/generation heartbeat không được resurrect expired lease;
 - coordinator đăng ký ingestion/indexing/account-deletion adapters, cấp reserved progress cho mỗi due queue rồi spill capacity; unregistered queue trả zero counter mà không query collection;
 - ứng dụng tự quản lý retry vì Vercel không tự retry cron thất bại;
 - code phải chịu được việc cùng một cron event được gửi nhiều lần;
 - summary chạy non-streaming; Q&A có thể streaming nhưng phải fallback sang non-streaming khi cần;
-- API key và provider URL chỉ nằm trong Vercel Environment Variables.
+- API key chỉ được resolve từ Vercel Environment Variables. Provider instance chỉ chọn installed trusted endpoint profile ID; không nhận raw/arbitrary provider URL từ env, HTTP hoặc admin.
 
 Các collection MongoDB dự kiến:
 
@@ -474,7 +474,7 @@ accountDeletionRequests
 adminAuditLogs
 ```
 
-Mỗi embedding phải lưu kèm `embeddingModel`, `embeddingDimensions`, `embeddingInputHash`, `embeddingVersion`, `embeddingSourcePolicyVersion` và `embeddedAt`. Indexing job capture `expectedSourcePolicyVersion`; document/query phải dùng cùng model/version và artifact commit phải match current source policy. Đổi model bắt buộc tạo lại toàn bộ vector liên quan.
+Mỗi embedding phải lưu kèm `embeddingModel`, `embeddingDimensions`, `embeddingArtifactCompatibilityId`, `embeddingInputHash`, `embeddingVersion`, `embeddingSourcePolicyVersion` và `embeddedAt`. Indexing job capture `expectedSourcePolicyVersion`; document/query phải dùng cùng compatibility identity/model/version và artifact commit phải match current source policy. Đổi vector space bắt buộc tạo lại toàn bộ vector liên quan.
 
 `nvidia/nemotron-3-embed-1b` là ứng viên thay thế nếu benchmark tiếng Việt tốt hơn hoặc BGE-M3 không khả dụng. Đây không phải runtime fallback: chuyển sang model khác phải tăng `embeddingVersion` và re-index toàn bộ corpus.
 
@@ -494,14 +494,14 @@ MVP được xem là hoàn thành khi:
 - Vercel Cron chạy được một batch mỗi ngày; admin trigger dùng chung logic, có lock và không tạo bản ghi trùng khi gọi lặp.
 - Ứng dụng được deploy trên Vercel Hobby và toàn bộ state bền vững nằm trong MongoDB Atlas.
 - Người dùng có thể tìm, lọc và lưu bài bằng text search ngay cả khi embedding provider không khả dụng.
-- Semantic retrieval tạo được embedding BGE-M3, lưu đúng model/version và tìm top candidate bằng cosine similarity.
+- Semantic retrieval tạo được embedding theo configured compatibility identity, lưu đúng model/version/dimensions và tìm top candidate bằng cosine similarity.
 - AI tạo được title/summary tiếng Việt ngắn cho nội dung hợp lệ mà không lưu hoặc hiển thị toàn văn.
 - AI Q&A trả lời bằng tiếng Việt từ dữ liệu truy xuất, dùng citation cấp đoạn; trang chi tiết/summary dùng citation cấp bài.
 - Hệ thống từ chối trả lời khi không có bằng chứng phù hợp.
 - Không gửi raw HTML hoặc phần không liên quan tới AI; `fulltext-temporary` chỉ dùng cho nguồn được phép và bị loại bỏ sau khi xử lý.
 - MongoDB/log không có binary/base64 media; media host ngoài policy không xuất hiện trong user response và media không được dùng làm AI evidence.
 - Có bộ câu hỏi kiểm thử để đánh giá độ đúng của citation, độ bám nguồn và khả năng từ chối.
-- LLM provider có thể đổi bằng environment variable; lỗi Zen có thể fallback sang DeepSeek mà không đổi code nghiệp vụ.
+- Provider/model đã có installed adapter có thể đổi bằng server config mà không đổi business service. Model fallback ở cùng provider failure domain; provider fallback ở domain khác; cả hai bị giới hạn bởi failure class và max attempt.
 - Admin đăng nhập được bằng tài khoản được seed; user thông thường bị từ chối tại mọi endpoint admin.
 - Admin có thể tạo nguồn hợp lệ, yêu cầu chạy ingestion, xem lỗi, ẩn bài và retry indexing mà không truy cập trực tiếp vào worker hoặc secret.
 - Chỉ bài `published` xuất hiện trong feed, search và AI retrieval; bài `review-needed`, `hidden` hoặc `removed` không bị rò rỉ qua bất kỳ bề mặt nào.
@@ -694,8 +694,8 @@ Quy tắc vận hành:
 - Nguồn `metadata-only` chỉ được gửi metadata; nguồn `blocked`, `review-needed` hoặc `llmInputScope: none` không được gửi dữ liệu nguồn tới provider.
 - `fulltext-temporary` chỉ dùng cho nguồn có bằng chứng quyền xử lý rõ ràng, được làm sạch/chia chunk, không lưu lâu dài và không được dùng để thay thế bài gốc.
 - Embedding không tạo thêm quyền sử dụng dữ liệu; input embedding phải tuân cùng Source Registry policy như input LLM.
-- Với OpenCode Zen, model miễn phí có thể chỉ tồn tại tạm thời và một số free endpoint có thể dùng dữ liệu để cải thiện model; không gửi dữ liệu cá nhân, bí mật hoặc toàn văn chưa được phép. Xem [OpenCode Zen](https://opencode.ai/docs/zen).
-- Với OpenRouter, tắt input/output logging, không opt-in dùng dữ liệu và ưu tiên endpoint [Zero Data Retention](https://openrouter.ai/docs/guides/features/zdr); dữ liệu vẫn được chuyển tới model provider nên phải kiểm tra policy của endpoint đó.
+- Với mọi provider route, evidence phải ghi capability, review time và expiry; route hết evidence bị disable. Các ghi chú OpenCode Zen/OpenRouter trước đây là evidence của deployment profile cụ thể, không cấp quyền cho provider khác.
+- Provider fallback phải thẩm định endpoint/account đích riêng; không suy privacy capability từ adapter protocol hoặc model name.
 
 ### 10.5. Bảo vệ dữ liệu cá nhân
 
@@ -759,8 +759,8 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 
 - chọn chính xác 8–10 RSS/Atom feed và hoàn thành hồ sơ Terms/License cho từng feed;
 - seed ba arXiv query ban đầu (`cs.AI`, `cs.MA`, `cs.RO`) và điều chỉnh nếu dữ liệu demo mất cân bằng;
-- kiểm tra availability/quota hiện tại của OpenCode Zen, DeepSeek, OpenRouter và Vercel trước ngày demo;
-- benchmark BGE-M3 bằng một bộ câu hỏi tiếng Việt nhỏ trước khi cố định `embeddingVersion: 1`;
+- kiểm tra availability/quota/capability evidence của mọi configured provider/admission domain và Vercel trước ngày demo;
+- benchmark configured embedding route bằng một bộ câu hỏi tiếng Việt nhỏ trước khi cố định `embeddingVersion`/`artifactCompatibilityId`;
 - chốt thời điểm tắt deployment Vercel tạm thời sau khi hoàn thành việc chấm đồ án.
 
 ## 13. Quyết định hiện tại
@@ -776,8 +776,8 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Implementation dùng JavaScript/JSX (`.js`, `.jsx`), không dùng TypeScript/TSX trong MVP; contract được bảo vệ bằng OpenAPI/runtime validation/JSDoc và test.
 - Ingestion chạy một lần mỗi ngày bằng protected Vercel Cron GET adapter và có admin POST trigger; job có actor/key/request-hash idempotency, due-time coordinator, lease-generation fencing và batch giới hạn.
 - Keyword search dùng MongoDB text index và trường bỏ dấu; không phụ thuộc MongoDB Atlas Search/Vector Search trong MVP.
-- Semantic retrieval dùng `baai/bge-m3` qua OpenRouter, lưu vector 1024 chiều trong MongoDB và tính cosine similarity trong Node.js; đây là planned-MVP release gate của grounded Q&A, còn text search là degradation fallback.
-- LLM ưu tiên `deepseek-v4-flash-free` qua OpenCode Zen và có fallback cấu hình sang `deepseek-v4-flash` trả phí thấp.
+- Semantic retrieval dùng configured embedding workload route với pinned compatibility identity và cosine similarity trong Node.js. BGE-M3/1024 là baseline deployment hiện có; vector space khác phải tăng version/re-index, còn text search là degradation fallback.
+- LLM route cụ thể là deployment config. Current implementation từng ưu tiên DeepSeek qua OpenCode Zen; ADR-0013 supersede lựa chọn cố định này bằng model fallback và provider fallback có failure domain độc lập.
 - UI, summary và AI Q&A dùng tiếng Việt; giữ nguyên title, ngôn ngữ và URL nguồn; chỉ dịch/tạo summary, không dịch toàn văn.
 - Citation cấp bài được dùng ở trang chi tiết/summary; citation cấp đoạn được dùng trong AI Q&A; citation cấp từng claim là hậu MVP.
 - Source Registry phân biệt publisher, license, access method và operational status; không tìm thấy quyền rõ ràng thì mặc định `metadata-only`.
@@ -793,4 +793,4 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Grounded answer dùng hai contract state loại trừ nhau: answered bắt buộc paragraph/citation, refused bắt buộc reason và không có factual paragraph.
 - Xem quản trị nguồn và responsible AI là năng lực cốt lõi của sản phẩm.
 - Không xây sản phẩm dựa trên việc “lách luật” hoặc giả định rằng phi thương mại đồng nghĩa với được phép sử dụng mọi nội dung.
-- Bộ tài liệu PRD, architecture, data model, OpenAPI, ADR và kế hoạch 4 tuần đã phản ánh Plan-of-Record baseline v1.7: JavaScript/JSX, strict browser/API/XML/provider boundaries, indexed governance cleanup/restore gate, ADR-0010 persistent fencing, ADR-0011 canonical coordination/recovery/fairness và ADR-0012 privacy cleanup/retention boundary. Step 1 phải đóng contract classification/400/503 cùng ingress fixtures trước Step 2.
+- Bộ authority docs hiện ở baseline v1.8. Steps 1–11 đã có implementation; Step 12 còn chờ ADR-0013 provider-routing remediation và release evidence. ADR-0014 ghi account-deletion inline lease exception; historical Step-1 contract gates không còn là current blocker.

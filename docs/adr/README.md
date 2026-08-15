@@ -10,12 +10,14 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0004](0004-use-rest-v1-and-server-side-sessions.md) | Use REST v1 and server-side cookie sessions | accepted | 2026-08-08 |
 | [0005](0005-use-hybrid-search-with-application-cosine.md) | Use hybrid search with application-level cosine similarity | accepted | 2026-08-08 |
 | [0006](0006-enforce-source-rights-as-executable-policy.md) | Enforce source rights as executable policy | accepted | 2026-08-08 |
-| [0007](0007-isolate-ai-providers-behind-adapters.md) | Isolate AI providers behind controlled adapters | accepted | 2026-08-08 |
+| [0007](0007-isolate-ai-providers-behind-adapters.md) | Isolate AI providers behind controlled adapters | superseded by ADR-0013 | 2026-08-08 |
 | [0008](0008-use-javascript-and-jsx-for-implementation.md) | Use JavaScript and JSX for implementation | accepted | 2026-08-08 |
 | [0009](0009-display-permitted-external-media-without-rehosting.md) | Display permitted external media without rehosting | accepted | 2026-08-08 |
 | [0010](0010-preserve-durable-fencing-and-recover-expired-jobs.md) | Preserve durable fencing and recover expired serverless jobs | accepted | 2026-08-08 |
 | [0011](0011-coordinate-durable-work-scopes-recovery-and-fairness.md) | Coordinate durable work scopes, recovery and queue fairness | accepted | 2026-08-08 |
 | [0012](0012-separate-privacy-cleanup-and-retention-boundaries.md) | Separate privacy cleanup and retention boundaries | accepted | 2026-08-08 |
+| [0013](0013-use-config-driven-provider-routing.md) | Use configuration-driven provider routing and bounded failover | accepted | 2026-08-15 |
+| [0014](0014-use-inline-leases-for-stable-deletion-workflows.md) | Use inline leases for stable account-deletion workflows | accepted | 2026-08-15 |
 
 ## Lifecycle
 

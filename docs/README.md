@@ -1,7 +1,7 @@
 # TechPulse AI — Documentation Index
 
-> Trạng thái: Plan-of-Record baseline v1.7 — GO WITH CONDITIONS cho Step 1; Step 2 chờ extended contract/security gates
-> Cập nhật: 09/08/2026
+> Trạng thái: Plan-of-Record v1.8 — Steps 1–11 đã implement; ADR-0013 remediation và Step 12 release evidence đang chờ
+> Cập nhật: 15/08/2026
 > Phạm vi: MVP solo-owner + coding-agent, React (JavaScript/JSX) + Node.js/Express (JavaScript) + MongoDB + AI; bốn tuần là planning horizon
 
 ## 1. Đọc theo thứ tự nào?
@@ -50,7 +50,7 @@ docs/
 ├── adr/
 │   ├── README.md
 │   ├── template.md
-│   └── 0001..0012
+│   └── 0001..0014
 └── plans/
     └── techpulse-ai-mvp.md
 ```
@@ -67,12 +67,12 @@ docs/
 - Không lưu full text; chỉ xử lý tạm khi source policy cho phép.
 - Ảnh nguồn chỉ được remote-preview khi Source Registry cho phép; video quan trọng là link-only và phải ghi rõ AI chưa phân tích video. Không tải về/rehost binary ảnh hoặc video trong MongoDB.
 - Vercel Hobby host React/Express/cron; MongoDB Atlas là SoR duy nhất với `techpulse_app` runtime DB và `techpulse_governance` signed restore/audit boundary DB.
-- Text search là degradation baseline; BGE-M3/cosine là planned-MVP predecessor/release gate của grounded Q&A.
+- Text search là degradation baseline; semantic retrieval dùng pinned embedding compatibility identity và không runtime-fallback qua vector space khác.
 - Admin/user dùng server-side session; system worker không phải login account.
 - `/me` bootstrap CSRF token gắn ổn định với session sau reload; token chỉ ở memory, không ở localStorage và bootstrap ở tab khác không revoke token đang hợp lệ.
 - Source text/media rights là executable policy, không phải ghi chú tùy chọn.
 - Vercel Cron dùng protected `GET /api/internal/cron/due-work`, recover expired work rồi trả aggregate cho ingestion/indexing/account-deletion; admin manual POST gọi cùng runner qua trust boundary riêng.
-- Job có `availableAt`, actor-scoped idempotency/request hash và persistent lease high-water không TTL; canonical resource key làm cron/admin/retry cùng target tranh chấp đúng fence.
+- Ingestion/indexing/reconciliation có `availableAt`, actor-scoped idempotency/request hash và shared persistent lease high-water không TTL. Account deletion là ADR-0014 stable-workflow exception với inline exact lease.
 - Ingestion/indexing crash recovery tạo linked retry; account deletion requeue cùng stable request và giữ completion flags. Queue-local priority + reserved slot bảo đảm mỗi registered due queue tiến triển hữu hạn.
 - Source re-review atomically ghi reconciliation marker; mọi marker mutation CAS exact version/status/cursor. Ingestion/AI job capture expected policy version và stale-policy output/candidate không được commit hoặc advance checkpoint.
 - Mọi rendered/fetched external URL là canonical HTTPS không credential; safe-fetch pin actual connection vào validated public IP để chặn DNS rebinding.
@@ -80,8 +80,11 @@ docs/
 - Account deletion tách `sessionsRevoked` khỏi direct `sessionsDeleted`; xóa direct user-owned chat/saved/answer-attempt data và mọi user Q&A quota bucket theo các HMAC key version còn hiệu lực, còn shared IP anti-abuse bucket có `subjectType=ip` và không thuộc cleanup.
 - Retention schedule cho session/quota/chat/job/governance đã khóa theo ADR-0012; TTL không là deletion-completion hoặc fencing evidence.
 - Browser API same-origin với exact Origin, `__Host-` cookie, no-store auth response và strict target/JSON/query ingress; RSS XML parser fail closed dưới entity/decompression input.
-- Q&A dùng 24h idempotent attempt, privacy-verified route, aggregate provider-account admission domain + per-route circuit và exact evidence-block support; `community-signal` chỉ feed/search.
+- Q&A dùng 24h idempotent attempt, privacy-verified route, credential admission domain, route/provider failure-domain circuits và exact evidence-block support; `community-signal` chỉ feed/search.
+- ADR-0013 tách protocol adapter, provider failure domain, credential admission domain, route và workload policy. Model fallback và provider fallback dùng failure class riêng, cùng admitted input và tối đa hai external attempts trong MVP.
 - Cleanup có fixed machine-only task table + deadline/source-citation indexes; HMAC keyring, closed tombstone và signed `techpulse_governance` checkpoint/suppression state ngăn app restore làm dữ liệu đã xóa xuất hiện lại.
+- Mirrored `runtimeCapabilityProbes` ở hai logical DB chứng minh runtime cross-database transaction/role; probe chỉ có opaque ID/timestamps, TTL 5 phút và immediate cleanup/abort zero residue.
+- Audit IP-HMAC field cleanup dùng Mongo maintenance client/credential riêng; thiếu credential không được fallback sang runtime identity.
 - Audit chỉ lưu safe changed fields/state transition/action-specific `reasonCode`; không snapshot arbitrary document hoặc free-form case text.
 - Blueprint có 12 step, direct mode và milestone cutline Day 5/10/15; coding-agent support không hạ verification gate.
 
@@ -96,19 +99,20 @@ docs/
 | Step dependency/scope | Blueprint mutation record | Orchestration Guide |
 | Provider/source policy | Source Registry contract/ADR nếu architectural | Tests, runbook và affected artifacts |
 
-## 6. Bắt đầu implementation
+## 6. Trạng thái implementation và bước tiếp theo
 
-Điểm bắt đầu duy nhất là [Step 1 — Scaffold application and contract toolchain](./plans/techpulse-ai-mvp.md#step-1). Không paste toàn bộ batch orchestration cùng lúc; chỉ chạy step tiếp theo khi dependency có verification evidence và handoff.
+Steps 1–11 đã có implementation commits và focused verification. Canonical OpenAPI hiện có 55 operations. Step 12 chưa được handoff và không được coi là release pass trước khi rerun full contract/integration/E2E/security, Atlas role/capability, restore và deployment evidence.
 
-Plan-of-Record baseline v1.7 trước Step 1 đã hoàn tất security-boundary authority cho browser/API/XML/provider/Mongo maintenance/backup cùng các control v1.6. OpenAPI hiện có 54 operations và 413/415 cho mọi JSON-body operation; Step 1 phải đóng `x-persistence`, 400/503 completeness và generated ingress/auth/idempotency fixtures trước handoff Step 2.
+ADR-0013 là architecture amendment trước Step 12. Current code vẫn có provider/model selection cụ thể trong provider bootstrap, nên Step 9/10 owner phải remediate routing thành workload config trước khi Step 12 có thể chứng minh provider outage fallback. Đây không đổi HTTP contract và không tạo client/admin model picker.
 
-Các item execution chưa chặn Step 1:
+Các release item còn mở:
 
 - chọn và review chính xác 8–10 RSS feed;
-- benchmark BGE-M3 trước khi khóa `embeddingVersion=1`;
-- kiểm tra quota/availability Vercel, OpenCode Zen, DeepSeek và OpenRouter gần ngày demo;
+- benchmark embedding route theo compatibility identity trước khi khóa version;
+- cấu hình ít nhất hai provider failure domain độc lập và kiểm tra quota/capability evidence gần ngày demo;
+- verify account-deletion inline recovery index/query plan và mirrored capability-probe role trên Atlas;
 - chốt ngày tắt public deployment sau khi chấm.
 
-### Step 1–2 implementation status
+### Historical implementation status
 
-Step 1 đã tạo scaffold JavaScript/JSX với React/Vite, Express/Vercel entrypoint, generated OpenAPI client/schema, strict ingress boundary, health route và contract/test/lint/build scripts. Step 2 đã thêm Mongo connection/migration/repository, auth/session/RBAC boundary và account surface; source/content/provider vẫn thuộc các step sau. Local command baseline là Node.js `24.14.1` + npm `11`; chạy `npm ci`, `npm run db:migrate -- --to auth-core`, rồi `npm run dev` trên port 3000.
+Step 1 đã đóng contract/ingress toolchain; Steps 2–11 đã thêm auth, source/content, connectors, feed/search, indexing, grounded Q&A và governance/admin. Các con số operation/gate trong review record cũ là historical evidence tại thời điểm đó, không là current contract status. Local command baseline là Node.js `24.14.1` + npm `11`.

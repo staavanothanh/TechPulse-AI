@@ -1,5 +1,7 @@
 # Step 4 — TDD evidence
 
+> Historical snapshot: operation counts below were correct when recorded. Current canonical OpenAPI has 55 operations.
+
 ## Phạm vi
 
 Step 4 triển khai durable ingestion jobs, persistent lease fencing, bounded due-work/maintenance, SSRF-safe source fetch, source technical check và giao diện jobs tối thiểu. Connector parse và article persistence vẫn thuộc Step 5 và không được triển khai ở đây. Khi Step 5 executor chưa đăng ký, runner lấy exact lease/fence rồi requeue job với `availableAt` server-derived trước khi release, nên một due item không bị xử lý lặp trong cùng cron run.

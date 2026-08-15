@@ -1,9 +1,11 @@
 # ADR-0007: Isolate AI providers behind controlled adapters
 
 **Date**: 2026-08-08  
-**Status**: accepted  
+**Status**: superseded by [ADR-0013](0013-use-config-driven-provider-routing.md)
 **Deciders**: Project owner  
 **Record type**: Backfill of an approved MVP decision
+
+ADR-0013 giu adapter isolation nhung thay the quyet dinh fixed OpenCode/DeepSeek routing bang config-driven model/provider fallback.
 
 ## Context
 

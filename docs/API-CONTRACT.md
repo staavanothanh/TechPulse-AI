@@ -1,6 +1,6 @@
 # TechPulse AI — HTTP Contract Guide
 
-> Trạng thái: Contract-first security baseline v1.7 cho MVP
+> Trạng thái: Contract-first security baseline v1.8; canonical OpenAPI có 55 operations
 > Canonical artifact: [contracts/openapi.json](./contracts/openapi.json)  
 > Consumer: React user/admin application  
 > Provider: Node.js/Express API  
@@ -76,7 +76,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - Mọi external URL được serialize/render dùng canonical `HttpsUrl`: HTTPS, không username/password credential; runtime parse URL thay vì chỉ tin `format: uri`/regex.
 - Ingestion/indexing job expose server-captured `expectedSourcePolicyVersion`; article/checkpoint/artifact commit phải match current source version/state/config hoặc discard output mà không advance checkpoint.
 - `answered` và `refused` là hai schema loại trừ nhau. Runtime phải kiểm tra citation ID resolve tới retrieved article đang visible, loại `authorityTier=community-signal`, rồi yêu cầu mỗi paragraph có internal evidence-block IDs và một conservative support verdict trước persistence. Public response vẫn citation cấp đoạn, không expose block ID.
-- Q&A privacy gate từ chối credential/high-risk identifier bằng `sensitive-input`. Raw question chỉ được gửi route có current `zdr-verified` evidence; primary/fallback nhận cùng admitted input, routes cùng provider credential tranh một aggregate admission-domain cap/budget và không route nào được hạ capability để bypass gate.
+- Q&A privacy gate từ chối credential/high-risk identifier bằng `sensitive-input`. Raw question chỉ được gửi route có current `zdr-verified` evidence. Model/provider fallback nhận cùng admitted input, lặp lại capability/evidence/admission checks và không được client chọn provider/model.
 - Historical chat citation có discriminated `available|unavailable` shape; unavailable không có URL/title/publishedAt. Takedown completion luôn có `historicalChatCitationsRedacted=true`.
 - Account deletion response phân biệt `sessionsRevoked` với `sessionsDeleted`; completion chỉ đạt sau direct delete/zero-match session documents. `userQuotaDataDeleted` chỉ bao phủ user-scoped Q&A quota, không bao giờ là shared IP anti-abuse bucket.
 - Account deletion POST không nhận free-form reason; server derive safe category `user-request`. Takedown response dùng nullable `decisionReasonCode`, không có `decisionReason` free-form.
@@ -107,7 +107,7 @@ Audit event dùng `AuditReasonCode`: union của admin code ở trên và system
 | Surface | Operations |
 |---|---|
 | Auth/account | register, login, logout, current user, preferences, account deletion |
-| Saved/chat | list/save/unsave saved article; list/delete chat session |
+| Saved/chat | list/save/unsave saved article; list/read-own/delete chat session |
 | Content | article list/detail, search results, grounded answers |
 | Sources | list/create/read/update, technical check, policy review |
 | Jobs | create/list/read/retry/cancel ingestion và indexing jobs; account-deletion progress/retry |
@@ -179,7 +179,7 @@ Expected behavior:
 
 Generator chạy không network/secret và generated diff phải được review. Cho đến khi scaffold tồn tại, JSON parse và local `$ref` audit là validation tối thiểu.
 
-Residual TP-M01: current v1.7 document baseline có 54 operations nhưng chưa có per-operation `x-persistence` và chưa chứng minh `400/503` về zero. Canonical OpenAPI đã có `413/415` cho 22 JSON-body operations; Step 1 vẫn phải bắt đầu bằng RED completeness audit, thêm classification, negative fixtures (missing classification, mongo without `503`, JSON body missing `400|413|415`) rồi repair về zero trước `contract:generate` hoặc Step 2 handoff.
+TP-M01 là historical Step-1 gate và đã đóng. Canonical OpenAPI hiện có 55 operations, per-operation `x-persistence`, required `400|413|415` cho JSON-body operations và `503` cho Mongo-backed operations. Mọi thay đổi tiếp theo phải giữ lint/fixture/runtime response validation về zero drift.
 
 ## 10. Contract acceptance gate
 

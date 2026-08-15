@@ -1,5 +1,7 @@
 # Step 3 TDD matrix — Source Registry và executable rights policy
 
+> Historical snapshot: operation counts below were correct when recorded. Current canonical OpenAPI has 55 operations.
+
 > Trạng thái: remediation và local verification hoàn tất; Atlas deployment gate đang bị chặn vì migration/role chưa được áp dụng
 > Authority HTTP: `docs/contracts/openapi.json`
 > Source plan: `docs/plans/techpulse-ai-mvp.md`, Step 3

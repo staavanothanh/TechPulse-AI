@@ -1,5 +1,7 @@
 # Step 1 TDD evidence
 
+> Historical snapshot: operation counts below were correct when recorded. Current canonical OpenAPI has 55 operations.
+
 Nguồn: [Step 1 blueprint](../plans/techpulse-ai-mvp.md#step-1). Đây là evidence cho scaffold/contract boundary, không phải bằng chứng Step 2 hoặc production release.
 
 ## RED → GREEN

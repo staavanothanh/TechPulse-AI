@@ -1,8 +1,8 @@
 # TechPulse AI — Product Requirements & Capability Contract
 
-> Trạng thái: Plan-of-Record repair locked for implementation
-> Phiên bản: 1.7
-> Cập nhật: 09/08/2026
+> Trạng thái: Plan-of-Record; Steps 1–11 đã implement, ADR-0013/0014 là pre-Step-12 architecture amendment
+> Phiên bản: 1.8
+> Cập nhật: 15/08/2026
 > Product rationale: [PRODUCT-BRIEF.md](./PRODUCT-BRIEF.md)  
 > Nguồn quyết định chi tiết: [TechPulse-AI.md](./TechPulse-AI.md)
 
@@ -48,10 +48,11 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 |---|---|---|
 | Database | MongoDB Atlas | Chỉ đổi sau MVP |
 | Keyword search | MongoDB text index | Có thể chuyển Atlas Search khi scale tăng |
-| Embedding | OpenRouter `baai/bge-m3` | Đổi model phải re-index toàn corpus |
+| Embedding | Route cấu hình theo workload, với pinned compatibility identity | Đổi vector space phải tăng version và re-index toàn corpus |
 | Semantic search | Cosine similarity trong Node.js | Chuyển Vector Search khi dataset lớn |
-| LLM primary | OpenCode Zen `deepseek-v4-flash-free` cho source-derived input được phép; mặc định nonconfidential | Phụ thuộc availability/quota và current provider capability evidence |
-| LLM fallback | `deepseek-v4-flash` qua configured route | Chỉ lỗi retryable; không được hạ privacy capability hoặc bypass admission/support gate |
+| LLM primary | Server chọn route từ workload policy; route chứa provider, model, operation và capability evidence | Provider/model cụ thể là deployment config, không là business invariant |
+| Model fallback | Model khác trong cùng provider failure domain | Chỉ lỗi `model-retryable`; không được hạ privacy capability |
+| Provider fallback | Route thuộc provider failure domain khác | Chỉ lỗi `provider-retryable` hoặc domain unavailable; vẫn pass admission/support gate |
 | Q&A provider route | Chỉ route có current `zdr-verified` evidence | Không có route phù hợp thì refuse/unavailable, không gửi raw question |
 | Scheduler | Vercel Cron + admin trigger | Có thể chuyển durable worker hậu MVP |
 
@@ -197,7 +198,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AI-007 | AI không dùng chi tiết chỉ tồn tại trong media chưa xử lý | Không claim từ ảnh/video có `mediaEvidenceStatus=not-analyzed` |
 | AI-008 | AI artifact commit match current Source Policy version | Policy đổi trong lúc provider chạy làm output cũ bị discard, không persist |
 | AI-009 | Provider route có capability evidence và expiry | Q&A raw question chỉ đi `zdr-verified`; nonconfidential route không được chọn/fallback |
-| AI-010 | Provider-account-wide admission/circuit bảo vệ cost và availability | Routes dùng cùng credential tranh chung Mongo admission-domain concurrency/budget; circuit per route; một logical request tối đa một fallback |
+| AI-010 | Admission và route/provider circuits bảo vệ cost và availability | Routes dùng cùng credential tranh chung Mongo admission-domain concurrency/budget; route circuit tách provider-domain circuit; một logical operation tối đa hai external attempts |
 
 ### 4.8. AI Q&A và citation
 
@@ -210,7 +211,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | QA-005 | Conflicting sources được trình bày riêng | Không tự che giấu mâu thuẫn |
 | QA-006 | Thiếu evidence dẫn tới refusal | Không bịa câu trả lời |
 | QA-007 | Prompt injection trong evidence không thay đổi instruction/tool use | External text chỉ là quoted data |
-| QA-008 | Primary provider lỗi retryable có thể dùng configured fallback | Không fallback khi lỗi policy/validation |
+| QA-008 | Lỗi retryable có thể dùng đúng model hoặc provider fallback theo failure class | Không fallback khi lỗi policy/privacy/validation/schema/support hoặc ambiguous outcome |
 | QA-009 | Delayed Q&A không tái tạo dữ liệu sau deletion/takedown | Final write match active user + exact sessionVersion + current article lifecycle; CAS miss discard output |
 | QA-010 | Grounded answer có actor/session-scoped idempotency | Same key/hash chỉ reserve một quota/provider/chat result; khác hash trả `409` |
 | QA-011 | Community signal chỉ dùng discovery | HN vẫn ở feed/search nhưng không eligible cho Q&A evidence/citation |
@@ -287,9 +288,9 @@ failed | partial → queued (retry mới)
 - Retry tạo attempt mới, giữ link tới original job.
 - `running` quá timeout được bounded recovery transaction đánh dấu `failed/lease_expired` trước khi tạo tối đa một linked retry.
 - `queued` có `availableAt`; từng queue sort theo effective priority, `availableAt`, creation time và `_id`. Coordinator reserve deadline/claim margin rồi cấp một selection attempt cho mỗi registered due queue trước khi spill slot; budget không đủ thì fail safe, priority không so trực tiếp xuyên queue.
-- Mỗi logical lease key giữ persistent `generationHighWater` không TTL; acquisition sau recovery tăng generation, release chỉ clear active owner.
-- Lease key derive server-side theo canonical resource: source ingestion, article indexing, source reconciliation hoặc user account deletion; cấm actor/invocation/random job ID.
-- Mọi checkpoint, transition, article/artifact commit conditionally touch exact active owner + generation + unexpired lease trong cùng transaction; ingestion còn match current source version/state/config.
+- Mỗi shared logical lease key giữ persistent `generationHighWater` không TTL; acquisition sau recovery tăng generation, release chỉ clear active owner.
+- Shared lease key derive server-side cho source ingestion, article indexing và source reconciliation; cấm actor/invocation/random job ID. Account deletion là ADR-0014 stable-request exception với inline owner/generation/deadline.
+- Ingestion/indexing/reconciliation checkpoint, transition và article/artifact commit conditionally touch exact shared active owner + generation + unexpired lease trong cùng transaction; account deletion cleanup/terminal commit conditionally touch exact inline lease. Ingestion còn match current source version/state/config.
 
 #### 5.3.1. Account deletion recovery
 
@@ -381,7 +382,7 @@ approved → completed
 | Chat history | User/TechPulse AI | User xóa trực tiếp; tự hết hạn 30 ngày sau hoạt động cuối |
 | User Q&A quota | TechPulse AI / MongoDB | TTL theo window; direct delete khi account deletion |
 | Q&A answer-attempt receipt | TechPulse AI / MongoDB | Không raw question; 24 giờ; direct delete khi account deletion |
-| Provider admission/circuit | TechPulse AI / `techpulse_app` MongoDB | Per provider-account admission domain; no raw input; project lifetime |
+| Provider admission/circuit | TechPulse AI / `techpulse_app` MongoDB | Per credential admission domain + route/provider-domain circuits; no raw input; project lifetime |
 | Shared IP anti-abuse state | TechPulse AI / MongoDB | TTL 24h; không bị xóa theo user |
 | Audit log | TechPulse AI / `techpulse_app` MongoDB | Minimized event 180 ngày; IP HMAC unset sau 30 ngày; digest anchored vào signed governance checkpoint |
 | Suppression/checkpoint/manifest | TechPulse AI / `techpulse_governance` MongoDB | Signed actionable opaque targets + continuity; app dump/restore không overwrite; không case text/PII trực tiếp |
@@ -399,9 +400,9 @@ approved → completed
 - Media URL phải là HTTPS, thuộc exact canonical public-host allowlist của source; wildcard/IP literal/localhost/private resolution bị cấm. Client dùng `referrerPolicy=no-referrer`, không gửi credential và CSP `img-src` chỉ allow `'self'` + reviewed hosts, không blanket `https:`; backend không làm arbitrary media proxy.
 - Server-side DNS pinning chỉ bảo vệ server safe-fetch, không bảo vệ direct browser preview; remote media không được coi là trusted evidence và luôn có visual fallback.
 - CRON_SECRET/service secret tách khỏi admin/user credential.
-- Provider API key chỉ ở Vercel Environment Variables.
+- Provider credential chỉ được resolve từ environment/secret-store reference; endpoint profile là server-owned và không nhận từ HTTP/admin.
 - Không gửi credential/high-risk identifier, email, token, private chat hoặc unapproved full text tới provider. Raw Q&A chỉ dùng current `zdr-verified` route; không có route phù hợp thì fail closed.
-- OpenRouter logging/opt-in tắt; ZDR evidence có reviewed/expiry và fallback không được hạ capability.
+- Mọi route có privacy evidence được review và có expiry; model/provider fallback không được hạ capability hoặc đổi admitted input.
 - RSS/Atom XML parser không network/DOCTYPE/entity/XInclude và có wire/decoded/depth/node/field/deadline bounds.
 - Quota/IP HMAC keyring có một current + tối đa hai retiring versions; rate-limit bucket lưu fingerprint để phát hiện đổi secret khi giữ nguyên version. Stable version config không làm lifecycle authority: append-only Mongo snapshot revision/hash-chain giữ history và runtime role chỉ được find/insert. Governance runtime signer dùng keyring tách biệt; offline checkpoint keys chỉ owner giữ ngoài repo/runtime/DB và retire theo checkpoint/manifest/sidecar retention. Không lưu raw subject/secret/key material.
 - Direct domain mutation/audit dùng một transaction-capable runtime Mongo identity/session với per-collection role: domain mutation cần thiết nhưng audit/suppression chỉ insert/find. Separate maintenance/offline credentials không tham gia direct transaction.
@@ -428,7 +429,7 @@ approved → completed
 | NFR-013 | Audit minimization | Audit chỉ lưu allowlisted reasonCode; requester/account case text có access/retention riêng và không được copy |
 | NFR-014 | Privacy retention | Retention duration được khóa trước migration của collection owner; TTL chỉ cleanup best-effort, không thay correctness check |
 | NFR-015 | Secure ingress | Cookie/CORS/Origin/cache, target/body/query parser và 413/415 được test như common boundary trước business route |
-| NFR-016 | Provider safety | Privacy capability, provider-account admission domain/circuit, idempotency và evidence-block support fail closed trên mọi route |
+| NFR-016 | Provider safety | Privacy capability, credential admission domain, route/provider failure-domain circuit, idempotency và evidence-block support fail closed trên mọi candidate route |
 | NFR-017 | Recoverable governance | Indexed cleanup, HMAC rotation, tamper-evident audit và restore reconciliation không resurrect deleted/taken-down data |
 
 Canonical media attribution do server resolve theo thứ tự media credit → source `attributionText` → source name và luôn trả non-empty `leadMedia.attribution`; frontend không tự dựng attribution từ field nullable.
@@ -454,7 +455,7 @@ MVP chỉ được xem là hoàn thành khi tất cả gate sau đạt:
 ### AI/retrieval gate
 
 - Text search hoạt động độc lập embedding.
-- BGE-M3 retrieval trả source relevant trong top 5 cho bộ test đã chốt.
+- Configured embedding route trả source relevant trong top 5 cho bộ test/version đã chốt.
 - Citation precision mục tiêu ≥90% trên evaluation set.
 - Refusal cases không tạo unsupported claim.
 - Hidden/removed/review-needed article không xuất hiện trong context.
@@ -519,7 +520,7 @@ Evaluation protocol được version-control cùng fixture:
 Các semantics account deletion, takedown all-or-nothing, audit atomicity và scope MVP đã được chốt. Các item sau chỉ cần xác nhận gần step sở hữu:
 
 1. Danh sách cuối cùng của 8–10 RSS feed và evidence đi kèm.
-2. Benchmark retrieval để chốt BGE-M3 version/dimensions cho corpus tiếng Việt.
+2. Benchmark retrieval để chốt embedding compatibility identity/version/dimensions cho corpus tiếng Việt.
 3. Availability/quota của free LLM endpoint tại thời điểm triển khai.
 4. Ngày tắt deployment sau khi chấm đồ án.
 

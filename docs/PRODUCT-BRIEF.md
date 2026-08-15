@@ -7,7 +7,7 @@
 
 ## 1. Kết luận product-lens
 
-**Khuyến nghị: GO WITH CONDITIONS — Plan-of-Record baseline v1.7 cho phép bắt đầu Step 1 sau security-architecture repair; Step 2 vẫn bị chặn tới khi `x-persistence`, 400/503 và generated ingress/auth/idempotency fixtures đều pass.**
+**Khuyến nghị hiện tại: GO WITH CONDITIONS — Steps 1–11 đã implement; Step 12 chỉ bắt đầu sau ADR-0013 provider-routing remediation và release evidence.**
 
 TechPulse AI có một vấn đề đủ rõ để làm đồ án: người đọc công nghệ phải theo dõi nhiều nguồn, khó loại tin trùng và khó kiểm chứng câu trả lời AI. Điểm chứng minh giá trị không phải số lượng nguồn mà là một luồng hoàn chỉnh từ nguồn đã duyệt đến summary tiếng Việt và AI Q&A có citation.
 
@@ -86,7 +86,7 @@ Phạm vi cố định:
 - user/admin authentication;
 - Source Registry và admin operations;
 - Vercel Hobby + MongoDB Atlas;
-- MongoDB text search và BGE-M3/cosine retrieval.
+- MongoDB text search và compatibility-pinned embedding/cosine retrieval.
 
 ### 2.6. Anti-goals
 
@@ -186,7 +186,7 @@ Các session với 3–5 người là **learning/demo evidence ở Step 12**, kh
 | Nguồn nhiều nhưng chất lượng thấp | Authority tier và allowlist; HN chỉ discovery, bị loại khỏi Q&A evidence |
 | License không rõ | Mặc định `metadata-only`; admin phê duyệt scope |
 | Scope/verification trượt dù có coding agent | Giữ safety/contract/thesis; streaming/polish hoặc bất kỳ MVP-P1 nào chỉ được cắt bằng PRD mutation có ghi nhận; semantic retrieval/citation gate không tự biến thành optional |
-| Free AI provider không ổn định | Capability evidence, provider-account admission domain + per-route circuit, privacy-equivalent fallback và text-search fallback |
+| AI model hoặc provider không ổn định | Server-owned model/provider fallback theo failure class, capability evidence, admission/provider-domain circuit và text-search degradation |
 
 ## 6. Handoff
 
