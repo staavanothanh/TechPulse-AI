@@ -4,6 +4,7 @@ import { createSearchService } from '../application/search/service.js'
 import { MongoArticleRepository } from '../repositories/mongo/article-repository.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { normalizeReviewedHostname } from '../domain/source/validation.js'
+import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../scripts/migrations/article-governance-hardening.js'
 import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from '../../scripts/migrations/articles.js'
 
 function stableJson(value) {
@@ -12,10 +13,15 @@ function stableJson(value) {
   return JSON.stringify(value)
 }
 
+const ARTICLE_VALIDATOR_FINGERPRINTS = Object.freeze([
+  ARTICLE_COLLECTIONS.articles.validator,
+  ARTICLE_GOVERNANCE_HARDENING_VALIDATOR,
+].map(stableJson))
+
 export async function assertArticlesReady(context) {
   if (!context?.db) throw new Error('Mongo context is required')
   const collection = (await context.db.listCollections({ name: 'articles' }, { nameOnly: false }).toArray())[0]
-  if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || stableJson(collection.options?.validator) !== stableJson(ARTICLE_COLLECTIONS.articles.validator)) throw new Error('article validator is not ready')
+  if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !ARTICLE_VALIDATOR_FINGERPRINTS.includes(stableJson(collection.options?.validator))) throw new Error('article validator is not ready')
   const actualByName = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
   if (ARTICLE_INDEXES.articles.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('article indexes are not ready')
 }

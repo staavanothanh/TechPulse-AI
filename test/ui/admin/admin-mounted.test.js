@@ -1,6 +1,7 @@
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import AuthAccount from '../../../client/features/auth/AuthAccount.jsx'
 import AdminOperations, { AdminConfirmationDialog } from '../../../client/features/admin/operations/AdminOperations.jsx'
 import { projectTakedownDetail } from '../../../client/features/admin/operations/admin-utils.js'
 
@@ -55,6 +56,60 @@ function findNode(node, predicate) {
 describe('Step 11 mounted admin interactions', () => {
   let previousDocument; let previousWindow; let previousFetch; let root; let host
   afterEach(async () => { if (root) await act(async () => root.unmount()); vi.useRealTimers(); if (previousFetch) globalThis.fetch = previousFetch; previousFetch = undefined; globalThis.document = previousDocument; globalThis.window = previousWindow; root = null })
+
+  it('keeps admin workspace destinations reachable from the mobile More menu', async () => {
+    previousDocument = globalThis.document; previousWindow = globalThis.window
+    const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
+    host = fakeDocument.createElement('div'); fakeDocument.body.appendChild(host); root = createRoot(host)
+    const onNavigate = vi.fn()
+    const initialData = { activeSources: 1, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, failedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null }
+
+    await act(async () => root.render(React.createElement(AdminOperations, { api: {}, route: 'overview', initialData, onNavigate })))
+    const more = findButton(host, 'Thêm')
+    expect(more).not.toBeNull()
+    await act(async () => more.dispatchEvent({ type: 'click', target: more, bubbles: true, cancelable: true }))
+
+    const governance = findButton(host, 'Governance')
+    expect(governance).not.toBeNull()
+    await act(async () => governance.dispatchEvent({ type: 'click', target: governance, bubbles: true, cancelable: true }))
+
+    expect(onNavigate).toHaveBeenCalledWith('governance')
+  })
+
+  it('logs an admin out through the existing same-origin API and returns to login', async () => {
+    previousDocument = globalThis.document; previousWindow = globalThis.window
+    const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
+    host = fakeDocument.createElement('div'); fakeDocument.body.appendChild(host); root = createRoot(host)
+    const onSession = vi.fn()
+    const api = { logout: vi.fn(async () => ({ data: null })) }
+    await act(async () => root.render(React.createElement(AuthAccount, { api, initialUser: { id: 'admin-1', email: 'admin@example.test', role: 'admin' }, initialCsrfToken: 'csrf-admin', onSession })))
+
+    const logout = findButton(host, 'Đăng xuất')
+    expect(logout).not.toBeNull()
+    await act(async () => logout.dispatchEvent({ type: 'click', target: logout, bubbles: true, cancelable: true }))
+
+    expect(api.logout).toHaveBeenCalledWith({ headers: { 'X-CSRF-Token': 'csrf-admin' }, credentials: 'same-origin' })
+    expect(onSession).toHaveBeenCalledWith(null, null, null)
+    expect(host.textContent).toContain('Đăng nhập')
+    expect(host.textContent).not.toContain('admin@example.test')
+  })
+
+  it('keeps the admin session visible and shows a safe error when logout fails', async () => {
+    previousDocument = globalThis.document; previousWindow = globalThis.window
+    const fakeDocument = new FakeDocument(); globalThis.document = fakeDocument; globalThis.window = fakeDocument.defaultView
+    host = fakeDocument.createElement('div'); fakeDocument.body.appendChild(host); root = createRoot(host)
+    const onSession = vi.fn()
+    const api = { logout: vi.fn(async () => { throw { status: 503, message: 'Dịch vụ tạm thời không sẵn sàng.' } }) }
+    await act(async () => root.render(React.createElement(AuthAccount, { api, initialUser: { id: 'admin-1', email: 'admin@example.test', role: 'admin' }, initialCsrfToken: 'csrf-admin', onSession })))
+
+    const logout = findButton(host, 'Đăng xuất')
+    await act(async () => logout.dispatchEvent({ type: 'click', target: logout, bubbles: true, cancelable: true }))
+
+    expect(api.logout).toHaveBeenCalledWith({ headers: { 'X-CSRF-Token': 'csrf-admin' }, credentials: 'same-origin' })
+    expect(onSession).not.toHaveBeenCalled()
+    expect(host.textContent).toContain('admin@example.test')
+    expect(host.textContent).toContain('Dịch vụ tạm thời không sẵn sàng.')
+  })
 
   it('mounts loading then resolves canonical overview without exposing debug fields', async () => {
     previousDocument = globalThis.document; previousWindow = globalThis.window

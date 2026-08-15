@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { assertArticlesReady, createConfiguredContentServices } from '../../../server/bootstrap/content.js'
+import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
 import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from '../../../scripts/migrations/articles.js'
 
 function readyContext({ validator = ARTICLE_COLLECTIONS.articles.validator, indexes, sources = [] } = {}) {
@@ -37,6 +38,12 @@ describe('Step 8 content bootstrap readiness', () => {
     expect(configured.articleService).toEqual(expect.objectContaining({ list: expect.any(Function), get: expect.any(Function) }))
     expect(configured.savedService).toEqual(expect.objectContaining({ save: expect.any(Function) }))
     expect(configured.imageCspHosts).toEqual(['cdn.example.com', 'media.example.com'])
+  })
+
+  it('accepts the current governance-hardened article validator', async () => {
+    await expect(assertArticlesReady(readyContext({
+      validator: ARTICLE_GOVERNANCE_HARDENING_VALIDATOR,
+    }))).resolves.toBeUndefined()
   })
 
   it('fails closed when the article validator or any exact index is not ready', async () => {

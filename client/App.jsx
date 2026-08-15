@@ -16,6 +16,7 @@ const ADMIN_DESTINATIONS = Object.freeze([
   { id: 'governance', label: 'Governance' },
   { id: 'users', label: 'Người dùng' },
   { id: 'audit', label: 'Audit bất biến' },
+  { id: 'account', label: 'Tài khoản' },
 ])
 const ADMIN_INTERNAL_ROUTES = Object.freeze(new Set(['sources', 'account', 'deletions']))
 
@@ -37,6 +38,21 @@ export function AdminNavigation({ route, onNavigate }) {
           </button>
         )
       })}
+    </nav>
+  )
+}
+
+export function AdminMobileAccountNavigation({ route, onNavigate }) {
+  const accountRoute = route === 'account'
+  return (
+    <nav className="admin-mobile-account-nav" aria-label="Điều hướng quản trị mobile">
+      <button
+        className="admin-button"
+        type="button"
+        onClick={() => onNavigate?.(accountRoute ? 'overview' : 'account')}
+      >
+        {accountRoute ? 'Quay lại admin' : 'Tài khoản'}
+      </button>
     </nav>
   )
 }
@@ -135,6 +151,7 @@ export default function App() {
             </section>
           ) : null}
           {session.status === 'ready' && !session.user ? accountPanel : null}
+          {admin ? <AdminMobileAccountNavigation route={adminRoute} onNavigate={navigateAdmin} /> : null}
           {reader ? <ContentWorkspace generatedApi={api} csrfToken={session.csrfToken} route={contentRoute} onRouteChange={setContentRoute} accountPanel={accountPanel} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
           {admin && adminRoute === 'account' ? accountPanel : null}
           {admin && ['overview', 'articles', 'governance', 'users', 'deletions', 'audit'].includes(adminRoute) ? <AdminOperations api={api} csrfToken={session.csrfToken} route={adminRoute} onNavigate={navigateAdmin} onSessionExpired={(notice) => applySession(null, null, notice)} /> : null}
