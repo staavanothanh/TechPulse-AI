@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createQaService } from '../../../server/application/qa/service.js'
+import { createQaService as createQaServiceImpl } from '../../../server/application/qa/service.js'
+import { createProviderRouterFixture } from './provider-router-fixture.js'
 
 const auth = {
   user: { id: 'user-retrieval', status: 'active', sessionVersion: 1 },
   session: { id: 'session-retrieval', userSessionVersion: 1 },
+}
+
+function createQaService(options = {}) {
+  return createQaServiceImpl({ ...options, providerRouter: options.providerRouter ?? createProviderRouterFixture(options) })
 }
 
 function evidence() {

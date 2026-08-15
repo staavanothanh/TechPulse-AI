@@ -22,13 +22,18 @@ function windowMs(window) {
 }
 
 function sameDomain(state, domain) {
+  const providerId = domain?.providerId ?? domain?.provider
+  const stateProviderId = state?.providerId ?? state?.provider
   return !state || state.admissionDomainId === domain.admissionDomainId
-    && state.provider === domain.provider
+    && stateProviderId === providerId
     && state.maxConcurrency === domain.maxConcurrency
     && Number(state.budgetLimit) === Number(domain.budgetLimit)
 }
 
 function baseState(state, domain, now) {
+  const providerId = domain?.providerId ?? domain?.provider
+  const usesTargetIdentity = typeof domain?.providerId === 'string' || typeof state?.providerId === 'string'
+  if (typeof providerId !== 'string' || providerId.length < 1 || providerId.length > 64) throw new Error('Provider admission identity is invalid')
   if (!sameDomain(state, domain)) throw new Error('Provider admission state does not match static configuration')
   const previousStart = state?.budgetWindowStart ? dateValue(state.budgetWindowStart, 'Provider budget window') : now
   const resetBudget = now.getTime() - previousStart.getTime() >= windowMs(domain.budgetWindow)
@@ -37,10 +42,10 @@ function baseState(state, domain, now) {
   for (const circuit of routeCircuits) {
     if (circuit.state === 'half-open' && circuit.halfOpenProbeReservationId && !activeReservations.some((reservation) => reservation.reservationId === circuit.halfOpenProbeReservationId)) delete circuit.halfOpenProbeReservationId
   }
-  return {
-    ...(state ?? {}),
+  const { provider: _legacyProvider, providerId: _targetProviderId, ...previous } = state ?? {}
+  const next = {
+    ...previous,
     admissionDomainId: domain.admissionDomainId,
-    provider: domain.provider,
     activeReservations,
     maxConcurrency: domain.maxConcurrency,
     budgetWindowStart: resetBudget ? now : previousStart,
@@ -49,6 +54,7 @@ function baseState(state, domain, now) {
     routeCircuits,
     updatedAt: now,
   }
+  return usesTargetIdentity ? { ...next, providerId } : { ...next, provider: providerId }
 }
 
 function circuitFor(state, routeId) {
@@ -104,7 +110,7 @@ export function applyProviderRelease(state, { routeId, reservationId, outcome, n
       circuit.consecutiveRetryableFailures = 3
       circuit.cooldownUntil = new Date(now.getTime() + COOLDOWN_MS)
     } else circuit.state = 'closed'
-  } else {
+  } else if (outcome === 'succeeded') {
     circuit.state = 'closed'
     circuit.consecutiveRetryableFailures = 0
     delete circuit.cooldownUntil

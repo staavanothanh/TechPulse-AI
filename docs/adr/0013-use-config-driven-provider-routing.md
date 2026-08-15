@@ -1,70 +1,70 @@
-# ADR-0013: Use configuration-driven provider routing and bounded failover
+# ADR-0013: Sử dụng configuration-driven provider routing và bounded failover
 
-**Date**: 2026-08-15
-**Status**: accepted
-**Deciders**: Project owner
-**Supersedes**: [ADR-0007](0007-isolate-ai-providers-behind-adapters.md)
+**Ngày**: 2026-08-15
+**Trạng thái**: accepted
+**Người quyết định**: Project owner
+**Thay thế**: [ADR-0007](0007-isolate-ai-providers-behind-adapters.md)
 
-## Context
+## Bối cảnh
 
-ADR-0007 tach provider payload khoi business flow, nhung van chot OpenCode Zen va hai model DeepSeek trong routing decision. Implementation sau Step 11 cho thay hai route LLM cung endpoint, credential va failure domain, nen chi la model fallback va khong chong duoc provider outage. Project owner yeu cau provider/model co the thay bang server config ma khong sua application/bootstrap routing logic, dong thoi van giu privacy, cost va bounded-call invariants.
+ADR-0007 đã tách provider payload khỏi business flow, nhưng vẫn khóa OpenCode Zen và hai model DeepSeek trong routing decision. Implementation sau Step 11 cho thấy hai route LLM dùng chung endpoint, credential và failure domain, nên chỉ là model fallback và không chống được provider outage. Project owner yêu cầu provider/model có thể được thay đổi bằng server config mà không cần sửa application / bootstrap routing logic, đồng thời vẫn giữ privacy, cost và bounded-call invariants.
 
-## Decision
+## Quyết định
 
-Application chi goi workload routing policy va normalized `LlmProvider`/`EmbeddingProvider` ports; khong hard-code vendor, endpoint hoac model. Provider boundary tach nam khai niem server-owned:
+Application chỉ gọi workload routing policy và các normalized `LlmProvider` / `EmbeddingProvider` ports; không hard-code vendor, endpoint hoặc model. Provider boundary tách thành năm khái niệm server-owned:
 
-1. installed adapter catalog map protocol sang auth, request, response, timeout va safe error taxonomy;
-2. provider instance/failure domain map mot dich vu van hanh cu the vao adapter;
-3. admission domain map credential/billing pool vao concurrency va budget;
-4. route map model + operation + capability evidence vao provider/admission domain;
-5. workload policy sap thu tu primary, model fallback va provider fallback cho summary, Q&A generation/support va embedding.
+1. installed adapter catalog ánh xạ protocol sang auth, request, response, timeout và safe error taxonomy;
+2. provider instance / failure domain ánh xạ một dịch vụ vận hành cụ thể vào adapter;
+3. admission domain ánh xạ credential / billing pool vào concurrency và budget;
+4. route ánh xạ model + operation + capability evidence vào provider / admission domain;
+5. workload policy sắp xếp thứ tự primary, model fallback và provider fallback cho summary, Q&A generation / support và embedding.
 
-Model fallback phai dung model khac trong cung provider failure domain. Provider fallback phai dung failure domain khac va thong thuong credential/admission domain khac. MVP Q&A generation va summary co `maxExternalAttempts=2`: mot loi retryable cap model chon mot model fallback; mot loi retryable cap provider hoac provider-domain circuit chon mot provider fallback. Khong goi ca hai fallback trong cung logical operation. Policy/privacy/sensitive-input/config/schema/support failure va ambiguous in-flight outcome la terminal, khong fallback.
+Model fallback phải sử dụng một model khác trong cùng provider failure domain. Provider fallback phải sử dụng failure domain khác và thông thường credential / admission domain khác. MVP Q&A generation và summary có `maxExternalAttempts=2`: một lỗi retryable ở cấp model sẽ chọn một model fallback; một lỗi retryable ở cấp provider hoặc provider-domain circuit sẽ chọn một provider fallback. Không gọi cả hai fallback trong cùng một logical operation. Policy / privacy / sensitive-input / config / schema / support failure và ambiguous in-flight outcome là terminal, không được fallback.
 
-Moi candidate lap lai current source-policy, privacy capability, evidence-expiry, admission/budget/circuit va output validation tren cung immutable admitted input. Route circuit theo model van ton tai; provider failure domain co circuit rieng de transport outage khong thu lan luot moi model cua cung provider. Credential chi duoc resolve tu env name; provider payload, prompt va secret khong vao log/state.
+Mỗi candidate lặp lại current source-policy, privacy capability, evidence-expiry, admission / budget / circuit và output validation trên cùng immutable admitted input. Route circuit theo model vẫn tồn tại; provider failure domain có circuit riêng để transport outage không thử lần lượt từng model của cùng provider. Credential chỉ được resolve từ env name; provider payload, prompt và secret không được ghi vào log / state.
 
-Embedding chi provider-fallback khi hai route co cung `artifactCompatibilityId` gom model revision, dimensions, preprocessing/normalization va embedding version. Doi embedding model/compatibility identity la controlled cutover, tang version va full re-index; neu khong co route tuong thich thi degrade ve text search.
+Embedding chỉ được provider-fallback khi hai route có cùng `artifactCompatibilityId` bao gồm model revision, dimensions, preprocessing / normalization và embedding version. Việc thay đổi embedding model / compatibility identity là controlled cutover, tăng version và full re-index; nếu không có route tương thích thì degrade về text search.
 
-Swapping provider/model da duoc cai adapter la config-only. Adapter co the la protocol-level nhu `openai-compatible-chat`, `openai-compatible-embedding` hoac native nhu `gemini-native`. OpenCode Zen, DeepSeek, OpenAI, OpenRouter hoac provider tuong thich co the map vao adapter phu hop qua provider-instance config. Them protocol moi can mot adapter plugin va contract tests, nhung khong sua business service. Provider instance/endpoint config chi do server operator quan ly, khong nhan tu HTTP/admin, khong co URL credential/redirect va phai qua exact trusted HTTPS profile; client/admin khong co model picker.
+Việc swapping provider/model đã cài adapter chỉ là config-only. Adapter có thể là protocol-level như `openai-compatible-chat`, `openai-compatible-embedding` hoặc native như `gemini-native`. OpenCode Zen, DeepSeek, OpenAI, OpenRouter hoặc provider tương thích có thể được map vào adapter phù hợp qua provider-instance config. Thêm protocol mới cần một adapter plugin và contract tests, nhưng không cần sửa business service. Provider instance / endpoint config chỉ do server operator quản lý, không nhận từ HTTP / admin, không có URL credential / redirect và phải thông qua exact trusted HTTPS profile; client / admin không có model picker.
 
-## Alternatives Considered
+## Các phương án đã cân nhắc
 
-### Alternative 1: Giu OpenCode Zen primary va paid model fallback
+### Phương án 1: Giữ OpenCode Zen primary và paid model fallback
 
-- **Pros**: Khong doi code/config contract.
-- **Cons**: Hai model chung failure domain; provider outage lam ca hai route hong.
-- **Why not**: Khong dat yeu cau provider-level fallback va portability NFR-008.
+- **Ưu điểm**: Không cần thay đổi code / config contract.
+- **Nhược điểm**: Hai model chung failure domain; provider outage làm cả hai route đều hỏng.
+- **Lý do không chọn**: Không đáp ứng yêu cầu provider-level fallback và portability NFR-008.
 
-### Alternative 2: Cho admin/env truyen arbitrary provider URL va model
+### Phương án 2: Cho phép admin / env truyền arbitrary provider URL và model
 
-- **Pros**: Them provider khong can deployment.
-- **Cons**: Co the gui credential/input toi endpoint sai, mo SSRF/exfiltration va tang test surface.
-- **Why not**: Provider modularity phai server-owned va allowlisted, khong phai arbitrary runtime routing.
+- **Ưu điểm**: Thêm provider mà không cần deployment.
+- **Nhược điểm**: Có thể gửi credential / input đến sai endpoint, gây SSRF / exfiltration và tăng test surface.
+- **Lý do không chọn**: Provider modularity phải là server-owned và allowlisted, không phải arbitrary runtime routing.
 
-### Alternative 3: Goi SDK vendor truc tiep trong tung service
+### Phương án 3: Gọi SDK vendor trực tiếp trong từng service
 
-- **Pros**: Nhanh cho mot provider.
-- **Cons**: Vendor error/payload lan vao application va moi lan doi provider phai sua business flow.
-- **Why not**: Trai dependency direction va lam fallback khong the kiem thu doc lap.
+- **Ưu điểm**: Nhanh cho một provider.
+- **Nhược điểm**: Vendor error / payload lan vào application và mỗi lần đổi provider phải sửa business flow.
+- **Lý do không chọn**: Vi phạm dependency direction và khiến fallback không thể kiểm thử độc lập.
 
-## Consequences
+## Hệ quả
 
-### Positive
+### Tích cực
 
-- Doi provider/model da cai dat chi can config va evidence hien hanh.
-- Model outage va provider outage co fallback semantics khac nhau, bounded va testable.
-- Admission/budget/circuit theo dung credential va failure domain thay vi dong nhat route voi provider.
-- Business services, HTTP contract va UI khong phu thuoc vendor.
+- Việc đổi provider/model đã cài đặt chỉ cần config và evidence hiện hành.
+- Model outage và provider outage có fallback semantics khác nhau, bounded và testable.
+- Admission / budget / circuit hoạt động theo đúng credential và failure domain thay vì đồng nhất route với provider.
+- Business services, HTTP contract và UI không phụ thuộc vendor.
 
-### Negative
+### Tiêu cực
 
-- Config graph va startup validation phuc tap hon mot danh sach route.
-- Moi adapter/protocol can normalized schema, error taxonomy va privacy evidence tests.
-- Provider fallback co the doi chat luong/latency, nen eval phai chay theo workload policy va route class.
+- Config graph và startup validation phức tạp hơn một danh sách route đơn giản.
+- Mỗi adapter / protocol cần normalized schema, error taxonomy và privacy evidence tests.
+- Provider fallback có thể thay đổi chất lượng / latency, do đó eval phải chạy theo workload policy và route class.
 
-### Risks
+### Rủi ro
 
-- Misclassify model/provider failure co the goi sai fallback; adapter chi tra closed error taxonomy va router co table-driven tests.
-- Provider fallback ha privacy capability; startup va per-call gate yeu cau capability khong thap hon workload.
-- Embedding khac vector space bi tron; `artifactCompatibilityId` bat buoc va mismatch chi cho phep text fallback/re-index.
-- Config endpoint lam lo credential; chi exact trusted server-owned profile duoc phep, khong redirect hoac arbitrary URL.
+- Misclassify model / provider failure có thể gọi sai fallback; adapter chỉ trả về closed error taxonomy và router có table-driven tests.
+- Provider fallback làm giảm privacy capability; startup và per-call gate yêu cầu capability không thấp hơn workload.
+- Embedding khác vector space có thể bị trộn lẫn; `artifactCompatibilityId` là bắt buộc và mismatch chỉ cho phép text fallback / re-index.
+- Config endpoint có thể làm lộ credential; chỉ exact trusted server-owned profile được phép, không redirect hoặc arbitrary URL.

@@ -1,16 +1,46 @@
 import { describe, expect, it, vi } from 'vitest'
 import { assertIndexingJobsReady, createConfiguredIndexingRuntime } from '../../../server/bootstrap/indexing.js'
 import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from '../../../scripts/migrations/indexing-jobs.js'
+import { PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../../scripts/migrations/provider-routing-v2.js'
+
+function indexesFor(name) {
+  const base = name === 'articles' ? INDEXING_ARTICLE_INDEXES : INDEXING_JOB_INDEXES[name] ?? []
+  const merged = new Map([...base, ...(PROVIDER_ROUTING_V2_INDEXES[name] ?? [])].map((index) => [index.name, index]))
+  return [...merged.values()].map((index) => index.name === 'articles_search_text'
+    ? { name: index.name, key: { _fts: 'text', _ftsx: 1 }, weights: Object.fromEntries(Object.keys(index.key).map((field) => [field, 1])), ...(index.options ?? {}) }
+    : { name: index.name, key: index.key, ...(index.options ?? {}) })
+}
 
 function readyContext({ auditValidator = INDEXING_JOB_AUDIT_VALIDATOR, indexOverride } = {}) {
-  const collections = Object.entries(INDEXING_JOB_COLLECTIONS).map(([name, definition]) => ({ name, options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } }))
+  const definitions = new Map(Object.entries(INDEXING_JOB_COLLECTIONS))
+  for (const entry of Object.entries(PROVIDER_ROUTING_V2_COLLECTIONS)) definitions.set(entry[0], entry[1])
+  const collections = [...definitions].map(([name, definition]) => ({ name, options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } }))
   collections.push({ name: 'adminAuditLogs', options: { validator: auditValidator, validationLevel: 'strict', validationAction: 'error' } })
   return {
     client: {},
     db: {
       listCollections: () => ({ toArray: async () => collections }),
-      collection: (name) => ({ indexes: async () => indexOverride?.[name] ?? (name === 'articles' ? INDEXING_ARTICLE_INDEXES : INDEXING_JOB_INDEXES[name])?.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })) ?? [] }),
+      collection: (name) => ({ indexes: async () => indexOverride?.[name] ?? indexesFor(name) }),
     },
+  }
+}
+
+function providerGraph() {
+  const evidenceExpiresAt = '2026-09-01T00:00:00.000Z'
+  return {
+    domains: [
+      { admissionDomainId: 'summary-admission', providerId: 'summary-provider', credentialEnvName: 'SUMMARY_KEY_ENV', maxConcurrency: 1, budgetLimit: 10, budgetWindow: 'day' },
+      { admissionDomainId: 'embedding-admission', providerId: 'embedding-provider', credentialEnvName: 'EMBEDDING_KEY_ENV', maxConcurrency: 1, budgetLimit: 10, budgetWindow: 'day' },
+    ],
+    providerFailureDomains: [],
+    routes: [
+      { routeId: 'summary-primary', admissionDomainId: 'summary-admission', providerId: 'summary-provider', model: 'summary-model-v1', operations: ['summary'], capability: 'nonconfidential', enabled: true, evidenceExpiresAt },
+      { routeId: 'embedding-primary', admissionDomainId: 'embedding-admission', providerId: 'embedding-provider', model: 'embedding-model-v1', operations: ['embedding'], capability: 'nonconfidential', artifactCompatibilityId: 'embedding-compat-v1', embeddingDimensions: 3, embeddingVersion: 7, enabled: true, evidenceExpiresAt },
+    ],
+    workloadPolicies: [
+      { workloadId: 'summary', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'summary-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+      { workloadId: 'embedding', operation: 'embedding', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'embedding-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+    ],
   }
 }
 
@@ -34,19 +64,18 @@ describe('Step 9 indexing bootstrap readiness', () => {
     }
     const runtime = await createConfiguredIndexingRuntime({
       context: readyContext(), jobRuntime, rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) },
-      providerRegistry: { domains: [{ admissionDomainId: 'zen', provider: 'opencode-zen', credentialEnvName: 'ZEN_KEY', maxConcurrency: 1, budgetLimit: 10, budgetWindow: 'day' }, { admissionDomainId: 'router', provider: 'openrouter', credentialEnvName: 'ROUTER_KEY', maxConcurrency: 1, budgetLimit: 10, budgetWindow: 'day' }], routes: [
-        { routeId: 'zen-primary', admissionDomainId: 'zen', provider: 'opencode-zen', model: 'deepseek-v4-flash-free', capability: 'nonconfidential', enabled: true },
-        { routeId: 'embedding-bge-m3', admissionDomainId: 'router', provider: 'openrouter', model: 'baai/bge-m3', capability: 'nonconfidential', enabled: true },
-      ] },
+      providerRegistry: providerGraph(),
     })
     expect(registered.map(({ queueName }) => queueName)).toEqual(['indexing'])
     expect(maintenance.map(([name]) => name)).toEqual(['purge-indexing-jobs'])
     expect(jobRuntime.cronMaterializers).toHaveLength(1)
     expect(runtime.indexingJobService).toEqual(expect.objectContaining({ createSummaryJob: expect.any(Function), createIndexingJob: expect.any(Function) }))
+    expect(runtime.queryEmbedding.capability).toBe('nonconfidential')
+    expect(Object.isFrozen(runtime.queryEmbedding)).toBe(true)
   })
 
-  it('fails startup when the approved OpenCode Zen primary is absent', async () => {
+  it('fails startup when the configured embedding workload is absent', async () => {
     const jobRuntime = { queueRegistry: { register: vi.fn() }, maintenanceRegistry: { register: vi.fn() }, coordinatorRunner: vi.fn(), leaseRepository: {}, cronMaterializers: [] }
-    await expect(createConfiguredIndexingRuntime({ context: readyContext(), jobRuntime, rateLimitAdmission: { reserve: vi.fn() }, providerRegistry: { domains: [], routes: [] } })).rejects.toThrow(/OpenCode Zen primary/)
+    await expect(createConfiguredIndexingRuntime({ context: readyContext(), jobRuntime, rateLimitAdmission: { reserve: vi.fn() }, providerRegistry: { domains: [], routes: [], workloadPolicies: [] } })).rejects.toThrow(/workload embedding/)
   })
 })

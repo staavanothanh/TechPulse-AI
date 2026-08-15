@@ -80,10 +80,12 @@ export function validateMongoConfiguration(input = process.env) {
   return mongoConfiguration(input)
 }
 
-function providerDomains(value) {
+function providerConfiguration(value, input) {
   const parsed = JSON.parse(value || '[]')
-  if (!Array.isArray(parsed)) throw new Error('PROVIDER_ADMISSION_DOMAINS_JSON must be an array')
-  return validateProviderConfiguration(parsed)
+  const credentialEnvNames = Object.entries(input)
+    .filter(([, secret]) => typeof secret === 'string' && secret.length > 0)
+    .map(([name]) => name)
+  return validateProviderConfiguration(parsed, { credentialEnvNames })
 }
 
 export function validateRuntimeConfiguration(input = process.env) {
@@ -111,7 +113,7 @@ export function validateRuntimeConfiguration(input = process.env) {
     quotaKeyring,
     governanceKeyring,
     checkpointKeyIds,
-    providerAdmissionDomains: providerDomains(input.PROVIDER_ADMISSION_DOMAINS_JSON),
+    providerRegistry: providerConfiguration(input.PROVIDER_ADMISSION_DOMAINS_JSON, input),
     internalMachineSecretEnv: machineSecretEnv,
   }
 }

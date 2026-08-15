@@ -5,10 +5,27 @@ import { admitQuestion, PrivacyAdmissionError } from '../../domain/qa/privacy.js
 import { buildGroundedPrompt, evidenceAdmissionFence, filterQnaEvidence, EvidenceSelectionError } from '../../domain/qa/evidence.js'
 import { hydrateAnswerCitations, validateParagraphCitations } from '../../domain/qa/citations.js'
 import { assertSupportedAnswer, deterministicRefusal } from '../../domain/qa/support.js'
+import { ProviderAdapterError } from '../../ai/provider-error-taxonomy.js'
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
 
 function sha256(value) { return createHash('sha256').update(value).digest('hex') }
+
+function freezeDeep(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const nested of Object.values(value)) freezeDeep(nested)
+  return Object.freeze(value)
+}
+
+function providerMetadataUpdate(metadata) {
+  if (!metadata?.routeId || !metadata?.providerFailureDomainId) return null
+  const fallbackKind = metadata.fallback === 'model' || metadata.fallback === 'provider' ? metadata.fallback : 'none'
+  return { providerRouteId: metadata.routeId, providerFailureDomainId: metadata.providerFailureDomainId, fallbackKind }
+}
+
+function isLocalControlFailure(error) {
+  return error instanceof EvidenceSelectionError || error instanceof ContentError && [401, 409].includes(error.status)
+}
 
 function scopeValue(scope = {}) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new ContentError(422, 'validation_error', 'Answer scope is invalid')
@@ -45,21 +62,19 @@ function scopeHashValue(scope) {
   }
 }
 
-export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerAdmission, providerAdapters = {}, rateLimitAdmission, queryEmbedding, routes = {}, supportVerifier, now = () => new Date() } = {}) {
+export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerRouter, providerAdapters = {}, rateLimitAdmission, queryEmbedding, privacyCapability = 'zdr-verified', supportVerifier, now = () => new Date() } = {}) {
   if (!chatRepository || typeof chatRepository.reserveAnswerAttempt !== 'function') throw new Error('Chat repository is required')
+  if (!providerRouter || typeof providerRouter.execute !== 'function') throw new Error('Provider router is required')
   const articleRepo = articleRepository ?? { findQnaEvidence: async () => [] }
   const adapters = providerAdapters
-  const primaryRoute = routes.primary ?? routes.answerPrimary ?? routes.summary
-  const fallbackRoute = routes.fallback ?? routes.answerFallback
-  const supportRoute = routes.support ?? routes.answerSupport
   const verifySupport = supportVerifier ?? (async () => ({ verdict: 'uncertain' }))
 
-  async function prepareProviderInput({ question, scope, expectedFence }) {
-    const admitted = admitQuestion(question, { capability: 'zdr-verified' })
+  async function prepareProviderInput({ question, admittedQuestion, scope, expectedFence }) {
+    const admitted = admittedQuestion ?? admitQuestion(question, { capability: privacyCapability })
     let embedding
     if (typeof queryEmbedding === 'function') {
       try { embedding = await queryEmbedding(admitted.question) } catch { embedding = undefined }
-      if (embedding && (embedding.model !== 'baai/bge-m3' || embedding.dimensions !== 1024 || embedding.version !== 1 || !Array.isArray(embedding.embedding) || embedding.embedding.length !== 1024)) embedding = undefined
+      if (embedding && (typeof embedding.model !== 'string' || !Number.isInteger(embedding.dimensions) || embedding.dimensions < 1 || !Number.isInteger(embedding.version) || embedding.version < 1 || !Array.isArray(embedding.embedding) || embedding.embedding.length !== embedding.dimensions || embedding.embedding.some((value) => typeof value !== 'number' || !Number.isFinite(value)))) embedding = undefined
     }
     const records = await articleRepo.findQnaEvidence({ question: admitted.question, queryEmbedding: embedding, scope, limit: 50, includeSource: true })
     let evidence
@@ -81,7 +96,35 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       error.discard = true
       throw error
     }
-    return Object.freeze({ admitted, evidence, fence: Object.freeze(fence), prompt: buildGroundedPrompt({ question: admitted.question, evidence }) })
+    const prompt = buildGroundedPrompt({ question: admitted.question, evidence })
+    return Object.freeze({
+      admitted,
+      evidence,
+      fence: Object.freeze(fence),
+      prompt,
+      routerInput: freezeDeep({ question: admitted.question, prompt }),
+      embedding,
+    })
+  }
+
+  async function assertCurrentEvidenceFence({ providerInput, scope }) {
+    const records = await articleRepo.findQnaEvidence({ question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope, limit: 50, includeSource: true })
+    let currentEvidence
+    try { currentEvidence = filterQnaEvidence(records) } catch (error) {
+      if (error instanceof EvidenceSelectionError) error.discard = true
+      throw error
+    }
+    let currentFence
+    try { currentFence = evidenceAdmissionFence(currentEvidence) } catch (error) {
+      if (error instanceof EvidenceSelectionError) error.discard = true
+      throw error
+    }
+    if (currentFence.digest !== providerInput.fence.digest) {
+      const error = new EvidenceSelectionError('policy-blocked', 'Evidence policy changed during answer generation')
+      error.discard = true
+      throw error
+    }
+    return currentFence
   }
 
   async function refusal({ actor, attempt, reason, scope, question, expectedEvidenceFence }) {
@@ -101,6 +144,22 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     return chat?.answer ?? { ...answer, chatSessionId: chat?.chatSessionId ?? chatSessionId }
   }
 
+  function routeFromInvocation(invocation) {
+    return invocation && typeof invocation === 'object' && Object.hasOwn(invocation, 'route') ? invocation.route : invocation
+  }
+
+  function inputFromInvocation(invocation, fallback) {
+    return invocation && typeof invocation === 'object' && Object.hasOwn(invocation, 'admittedInput') ? invocation.admittedInput : fallback
+  }
+
+  async function markAmbiguousAttempt(attempt) {
+    const error = { code: 'ambiguous_provider_outcome', message: 'Provider outcome is unavailable', retryable: false, occurredAt: now() }
+    if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') {
+      try { await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error }, { expectedStatuses: ['reserved', 'provider-running'] }) } catch { /* an earlier CAS may have completed the terminal transition */ }
+    }
+    throw new ContentError(503, 'service_unavailable', 'Answer outcome is unavailable')
+  }
+
   async function createAnswer({ auth, question, scope, chatSessionId, idempotencyKey } = {}) {
     let actor
     try { actor = contentActorFence(auth) } catch { throw new ContentError(401, 'unauthorized', 'Authentication is required') }
@@ -108,7 +167,8 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     const safeScope = scopeValue(scope)
     if (typeof question !== 'string' || question.length < 3 || question.length > 1000) throw new ContentError(422, 'validation_error', 'Question is invalid')
     let privacyError
-    try { admitQuestion(question, { capability: 'zdr-verified' }) } catch (error) {
+    let admittedQuestion
+    try { admittedQuestion = admitQuestion(question, { capability: privacyCapability }) } catch (error) {
       if (error instanceof PrivacyAdmissionError && error.code === 'sensitive-input') privacyError = error
       else throw error
     }
@@ -122,7 +182,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       }
     }
     const idempotencyKeyHash = sha256(String(idempotencyKey))
-    const requestHash = canonicalRequestHash({ question, scope: scopeHashValue(safeScope), chatSessionId: chatSessionId ?? null })
+    const requestHash = canonicalRequestHash({ question: admittedQuestion?.question ?? question, scope: scopeHashValue(safeScope), chatSessionId: chatSessionId ?? null })
     let attempt = await answerAttemptRepository.reserveAnswerAttempt({ actor, idempotencyKeyHash, requestHash, chatSessionId, quotaReservationKey: `answer:${actor.userId}`, rateLimitAdmission, quotaScopes: ['answer-minute', 'answer-daily'], now: now() })
     if (attempt?.status === 'mismatch') throw new ContentError(409, 'idempotency_mismatch', 'Answer request conflicts with current idempotency intent')
     if (['completed', 'refused', 'failed'].includes(attempt.status)) {
@@ -139,64 +199,102 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     }
     if (privacyError) return { answer: await privacyRefusal({ actor, attempt, scope: safeScope, chatSessionId }) }
     let providerInput
+    let localControlFailure
     try {
       if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) {
         if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' })
         throw new ContentError(401, 'unauthorized', 'Authentication is required')
       }
-      providerInput = await prepareProviderInput({ question, scope: safeScope })
-      const renewProviderStage = async () => {
+      providerInput = await prepareProviderInput({ question, admittedQuestion, scope: safeScope })
+      let primaryGenerationRoute
+      function routeMetadata(route) {
+        if (!route || typeof route !== 'object' || !route.routeId || !route.providerFailureDomainId) return {}
+        if (!primaryGenerationRoute) {
+          primaryGenerationRoute = { routeId: route.routeId, providerFailureDomainId: route.providerFailureDomainId, model: route.model }
+          return { providerRouteId: route.routeId, providerFailureDomainId: route.providerFailureDomainId, fallbackKind: 'none' }
+        }
+        const fallbackKind = route.providerFailureDomainId === primaryGenerationRoute.providerFailureDomainId
+          ? route.model !== primaryGenerationRoute.model ? 'model' : attempt.fallbackKind ?? 'none'
+          : 'provider'
+        return { providerRouteId: route.routeId, providerFailureDomainId: route.providerFailureDomainId, fallbackKind }
+      }
+      const renewProviderStage = async (route, { recordRoute = true } = {}) => {
         if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) throw new ContentError(401, 'unauthorized', 'Authentication is required')
         if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') {
-          attempt = await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'provider-running', providerReservationExpiresAt: new Date(now().getTime() + 60_000) }, { expectedStatuses: ['reserved', 'provider-running'] })
+          const metadata = recordRoute ? routeMetadata(route) : {}
+          attempt = await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'provider-running', providerReservationExpiresAt: new Date(now().getTime() + 60_000), ...metadata }, { expectedStatuses: ['reserved', 'provider-running'] })
         }
       }
-      const invokeAnswer = async (route) => {
-        await renewProviderStage()
-        providerInput = await prepareProviderInput({ question, scope: safeScope, expectedFence: providerInput.fence })
-        if (!adapters.llmProvider?.answer) throw Object.assign(new Error('Provider unavailable'), { code: 'provider_unavailable', retryable: true })
-        return adapters.llmProvider.answer({ route, input: providerInput.prompt.prompt, locale: 'vi', tools: [] })
+      const invokeAnswer = async (invocation) => {
+        const route = routeFromInvocation(invocation)
+        const admittedInput = inputFromInvocation(invocation, providerInput.routerInput)
+        try {
+          await renewProviderStage(route)
+          await assertCurrentEvidenceFence({ providerInput, scope: safeScope })
+        } catch (error) {
+          if (isLocalControlFailure(error)) {
+            localControlFailure = error
+            throw new ProviderAdapterError('policy')
+          }
+          throw error
+        }
+        if (!adapters.llmProvider?.answer) throw new ProviderAdapterError('config')
+        return adapters.llmProvider.answer({ route, input: admittedInput.prompt.prompt, locale: 'vi', tools: [] })
+      }
+      const validateGenerationOutput = ({ output: candidate }) => {
+        if (candidate?.status === 'refused') return candidate
+        const parsedCandidate = candidate?.status === 'answered' ? candidate : { ...candidate, status: 'answered' }
+        if (parsedCandidate.status !== 'answered' || !Array.isArray(parsedCandidate.paragraphs)) throw new ProviderAdapterError('schema')
+        try {
+          return { ...parsedCandidate, paragraphs: validateParagraphCitations({ paragraphs: parsedCandidate.paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks }) }
+        } catch { throw new ProviderAdapterError('schema') }
       }
       let output
-      try {
-        output = providerAdmission ? await providerAdmission.run({ routeId: primaryRoute, capability: 'zdr-verified', attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), kind: 'answer-primary', invoke: invokeAnswer }) : await invokeAnswer(primaryRoute)
-      } catch (error) {
-        if (!error?.retryable || !fallbackRoute) throw error
-        if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) {
-          if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' })
-          throw new ContentError(401, 'unauthorized', 'Authentication is required')
-        }
-        output = providerAdmission ? await providerAdmission.run({ routeId: fallbackRoute, capability: 'zdr-verified', attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), kind: 'answer-fallback', invoke: invokeAnswer }) : await invokeAnswer(fallbackRoute)
+      const generation = await providerRouter.execute({ workloadId: 'qa-generation', admittedInput: providerInput.routerInput, attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), invoke: invokeAnswer, validateOutput: validateGenerationOutput })
+      output = generation?.output
+      const metadata = providerMetadataUpdate(generation?.metadata)
+      if (metadata && typeof answerAttemptRepository.updateAnswerAttempt === 'function') {
+        attempt = await answerAttemptRepository.updateAnswerAttempt(attempt._id, metadata, { expectedStatuses: ['reserved', 'provider-running'] })
       }
       if (output?.status === 'refused') return { answer: await refusal({ actor, attempt, reason: ['insufficient-evidence', 'policy-blocked', 'sensitive-input', 'provider-unavailable'].includes(output.refusalReason) ? output.refusalReason : 'insufficient-evidence', scope: safeScope, question, expectedEvidenceFence: providerInput?.fence }) }
-      const parsed = output?.status === 'answered' ? output : { ...output, status: 'answered' }
-      if (parsed.status !== 'answered' || !Array.isArray(parsed.paragraphs)) {
-        const shapeError = new Error('Provider answer shape is invalid')
-        shapeError.code = 'provider_response_invalid'
-        throw shapeError
-      }
+      const parsed = output
       let paragraphs
-      try {
-        paragraphs = validateParagraphCitations({ paragraphs: parsed.paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks })
-      } catch {
-        const shapeError = new Error('Provider answer evidence references are invalid')
-        shapeError.code = 'provider_response_invalid'
-        throw shapeError
-      }
+      paragraphs = parsed.paragraphs
       {
         if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) {
           if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' })
           throw new ContentError(401, 'unauthorized', 'Authentication is required')
         }
-        const invokeSupport = async (route) => {
-          await renewProviderStage()
-          providerInput = await prepareProviderInput({ question, scope: safeScope, expectedFence: providerInput.fence })
-          paragraphs = validateParagraphCitations({ paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks })
-          return verifySupport({ route, question: providerInput.admitted.question, addressesQuestion: true, paragraphs, evidenceBlocks: providerInput.prompt.blocks, evidenceMap: providerInput.prompt.evidenceMap })
+        const supportInput = freezeDeep({
+          question: providerInput.admitted.question,
+          addressesQuestion: true,
+          paragraphs: paragraphs.map(({ text, citationIds, evidenceBlockIds }) => ({ text, citationIds: [...citationIds], evidenceBlockIds: [...evidenceBlockIds] })),
+          evidenceBlocks: providerInput.prompt.blocks.map(({ id, citationId, text }) => ({ id, citationId, text })),
+          evidenceMap: { ...providerInput.prompt.evidenceMap },
+        })
+        const invokeSupport = async (invocation) => {
+          const route = routeFromInvocation(invocation)
+          const admittedInput = inputFromInvocation(invocation, supportInput)
+          try {
+            await renewProviderStage(route, { recordRoute: false })
+            await assertCurrentEvidenceFence({ providerInput, scope: safeScope })
+          } catch (error) {
+            if (isLocalControlFailure(error)) {
+              localControlFailure = error
+              throw new ProviderAdapterError('policy')
+            }
+            throw error
+          }
+          return (adapters.llmProvider?.verifySupport
+            ? adapters.llmProvider.verifySupport({ route, input: JSON.stringify(admittedInput), locale: 'vi', tools: [] })
+            : verifySupport({ route, question: admittedInput.question, addressesQuestion: admittedInput.addressesQuestion, paragraphs: admittedInput.paragraphs, evidenceBlocks: admittedInput.evidenceBlocks, evidenceMap: admittedInput.evidenceMap }))
         }
-        const verdict = providerAdmission && supportRoute
-          ? await providerAdmission.run({ routeId: supportRoute, capability: 'zdr-verified', attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), kind: 'answer-support', invoke: invokeSupport })
-          : await invokeSupport(supportRoute)
+        const validateSupportOutput = ({ output: candidate }) => {
+          if (!candidate || typeof candidate !== 'object' || !['supported', 'unsupported', 'uncertain'].includes(candidate.verdict) || typeof candidate.addressesQuestion !== 'boolean' || !Array.isArray(candidate.evidenceBlockIds)) throw new ProviderAdapterError('support')
+          return candidate
+        }
+        const support = await providerRouter.execute({ workloadId: 'qa-support', admittedInput: supportInput, attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), invoke: invokeSupport, validateOutput: validateSupportOutput })
+        const verdict = support?.output
         const verdictValue = verdict?.verdict ?? verdict
         if (verdict?.addressesQuestion !== true || ['unsupported', 'uncertain'].includes(verdictValue)) {
           const supportError = new Error('Answer support verdict is insufficient')
@@ -211,6 +309,17 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       if (!chat?.attemptCommitted && typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'completed', resultStatus: 'answered', chatSessionId: chat.chatSessionId, messageId: chat.messageId }, { expectedStatus: 'provider-running' })
       return { answer: { ...answer, chatSessionId: chat.chatSessionId } }
     } catch (error) {
+      if (localControlFailure) {
+        const controlFailure = localControlFailure
+        if (controlFailure instanceof EvidenceSelectionError && controlFailure.discard) throw new ContentError(409, 'conflict', 'Answer evidence changed during processing')
+        throw controlFailure
+      }
+      if (error?.name === 'ProviderRoutingError') {
+        if (error.failureClass === 'ambiguous') return markAmbiguousAttempt(attempt)
+        if (error.failureClass === 'policy') return { answer: await refusal({ actor, attempt, reason: 'policy-blocked', scope: safeScope, question, expectedEvidenceFence: providerInput?.fence }) }
+        if (error.failureClass === 'sensitive-input') return { answer: await privacyRefusal({ actor, attempt, scope: safeScope, chatSessionId }) }
+        return { answer: await refusal({ actor, attempt, reason: 'provider-unavailable', scope: safeScope, question, expectedEvidenceFence: providerInput?.fence }) }
+      }
       if (error instanceof PrivacyAdmissionError) return { answer: await refusal({ actor, attempt, reason: error.code === 'sensitive-input' ? 'sensitive-input' : 'provider-unavailable', scope: safeScope, question }) }
       if (error instanceof EvidenceSelectionError) {
         if (error.discard) {

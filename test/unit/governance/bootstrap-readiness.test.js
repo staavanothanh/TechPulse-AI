@@ -10,6 +10,7 @@ import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../s
 import { GOVERNANCE_HARDENING_INDEXES } from '../../../scripts/migrations/governance-hardening.js'
 import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from '../../../scripts/migrations/governance-retention-hardening.js'
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
+import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../../scripts/migrations/provider-routing-v2.js'
 
 function materializedIndex(index) {
   return { name: index.name, key: index.key, ...(index.options ?? {}) }
@@ -22,10 +23,10 @@ function fakeDb(collections, indexes) {
   }
 }
 
-function readyContext() {
+function readyContext({ articleValidator = ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } = {}) {
   const appCollections = [
     ...Object.entries(GOVERNANCE_COLLECTIONS).map(([name, definition]) => [name, name === 'takedownRequests' ? GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR : definition.validator]),
-    ['articles', ARTICLE_GOVERNANCE_HARDENING_VALIDATOR],
+    ['articles', articleValidator],
     ['adminAuditLogs', GOVERNANCE_AUDIT_VALIDATOR],
   ]
   const appIndexes = {
@@ -44,6 +45,10 @@ function readyContext() {
 describe('Step 11 governance bootstrap readiness', () => {
   it('requires exact app and governance database validators and indexes', async () => {
     await expect(assertGovernanceReady(readyContext())).resolves.toEqual({ ready: true })
+  })
+
+  it('accepts the exact provider-routing-v2 article validator without weakening tombstones', async () => {
+    await expect(assertGovernanceReady(readyContext({ articleValidator: PROVIDER_ROUTING_ARTICLE_VALIDATOR }))).resolves.toEqual({ ready: true })
   })
 
   it('fails closed when governance suppression storage is only partially migrated', async () => {

@@ -1,54 +1,54 @@
-# ADR-0014: Use inline leases for stable account-deletion workflows
+# ADR-0014: Sử dụng inline leases cho stable account-deletion workflows
 
-**Date**: 2026-08-15
-**Status**: accepted
-**Deciders**: Project owner
-**Refines**: [ADR-0011](0011-coordinate-durable-work-scopes-recovery-and-fairness.md)
+**Ngày**: 2026-08-15
+**Trạng thái**: accepted
+**Người quyết định**: Project owner
+**Làm rõ**: [ADR-0011](0011-coordinate-durable-work-scopes-recovery-and-fairness.md)
 
-## Context
+## Bối cảnh
 
-ADR-0011 dung shared `jobLeases` cho ingestion, indexing va reconciliation. Cac job nay co parent/child retry va can generation high-water tach khoi job document. Account deletion lai co mot stable workflow document. Workflow nay giu tung cleanup checkpoint va duoc requeue tren cung request sau crash.
+ADR-0011 sử dụng shared `jobLeases` cho ingestion, indexing và reconciliation. Các job này có parent/child retry và cần generation high-water tách khỏi job document. Account deletion lại có một stable workflow document. Workflow này giữ từng cleanup checkpoint và được requeue trên cùng request sau crash.
 
-Implementation Step 11 da dung lease noi tuyen tren `accountDeletionRequests`. Tai lieu cu van gan workflow nay vao canonical `jobLeases`, nen khong mo ta dung transaction fence va recovery behavior.
+Implementation Step 11 đã dùng inline lease trên `accountDeletionRequests`. Tài liệu cũ vẫn gán workflow này vào canonical `jobLeases`, nên không mô tả đúng transaction fence và recovery behavior.
 
-## Decision
+## Quyết định
 
-`accountDeletionRequests` giu `leaseOwner`, `leaseExpiresAt` va `leaseGeneration` tren stable workflow document. Claim, cleanup checkpoint, fail, complete va recovery phai match exact owner token, generation va unexpired lease trong cung transaction voi domain mutation.
+`accountDeletionRequests` giữ `leaseOwner`, `leaseExpiresAt` và `leaseGeneration` trên stable workflow document. Claim, cleanup checkpoint, fail, complete và recovery phải match exact owner token, generation và unexpired lease trong cùng transaction với domain mutation.
 
-Expired recovery dung compare-and-set de chuyen cung request tu `running` ve `queued`, tang attempt va giu cac cleanup flag da hoan tat. Recovery khong tao parent/child request va khong reset completion evidence.
+Expired recovery dùng compare-and-set để chuyển cùng request từ `running` về `queued`, tăng attempt và giữ các cleanup flag đã hoàn tất. Recovery không tạo parent/child request và không reset completion evidence.
 
-Shared `jobLeases` chi dieu phoi ingestion, article indexing va source reconciliation. ADR-0011 van la authority cho generation high-water, fairness va shared-scope coordination cua ba queue nay.
+Shared `jobLeases` chỉ điều phối ingestion, article indexing và source reconciliation. ADR-0011 vẫn là authority cho generation high-water, fairness và shared-scope coordination của ba queue này.
 
-Recovery scan cua account deletion can indexed predicate theo status, lease deadline va stable `_id`. Thieu exact index hoac query-plan evidence la implementation gate, khong duoc thay bang unbounded scan.
+Recovery scan của account deletion cần indexed predicate theo status, lease deadline và stable `_id`. Thiếu exact index hoặc query-plan evidence là implementation gate, không được thay bằng unbounded scan.
 
-## Alternatives Considered
+## Các phương án đã cân nhắc
 
-### Alternative 1: Dung shared `jobLeases` cho account deletion
+### Phương án 1: Dùng shared `jobLeases` cho account deletion
 
-- **Pros**: Mot lease model cho moi queue.
-- **Cons**: Tach owner khoi stable cleanup checkpoints va them parent/child semantics khong can thiet.
-- **Why not**: Account deletion can resume cung request va giu per-item completion evidence.
+- **Ưu điểm**: Một lease model cho mọi queue.
+- **Nhược điểm**: Tách owner khỏi stable cleanup checkpoints và thêm parent/child semantics không cần thiết.
+- **Lý do không chọn**: Account deletion cần resume cùng request và giữ per-item completion evidence.
 
-### Alternative 2: Khong persist lease
+### Phương án 2: Không persist lease
 
-- **Pros**: Repository don gian hon.
-- **Cons**: Serverless invocation overlap co the cleanup va terminalize cung workflow hai lan.
-- **Why not**: Khong co exact stale-worker fence hoac crash recovery.
+- **Ưu điểm**: Repository đơn giản hơn.
+- **Nhược điểm**: Serverless invocation overlap có thể cleanup và terminalize cùng workflow hai lần.
+- **Lý do không chọn**: Không có exact stale-worker fence hoặc crash recovery.
 
-## Consequences
+## Hệ quả
 
-### Positive
+### Tích cực
 
-- Cleanup checkpoint va lease fence nam tren cung stable workflow.
-- Recovery khong tao duplicate deletion request.
-- Shared `jobLeases` giu dung pham vi coordination da thiet ke.
+- Cleanup checkpoint và lease fence nằm trên cùng stable workflow.
+- Recovery không tạo duplicate deletion request.
+- Shared `jobLeases` giữ đúng phạm vi coordination đã thiết kế.
 
-### Negative
+### Tiêu cực
 
-- He thong co hai lease storage shapes.
-- Migration, readiness va query-plan verification phai cover inline recovery index rieng.
+- Hệ thống có hai lease storage shapes.
+- Migration, readiness và query-plan verification phải cover inline recovery index riêng.
 
-### Risks
+### Rủi ro
 
-- Repository co the chi read lease ma khong conditional touch; transaction tests phai assert exact owner/generation/deadline filter.
-- Recovery scan co the thanh collection scan; migration va `db:verify` phai require intended index.
+- Repository có thể chỉ đọc lease mà không conditional touch; transaction tests phải assert exact owner/generation/deadline filter.
+- Recovery scan có thể thành collection scan; migration và `db:verify` phải require intended index.

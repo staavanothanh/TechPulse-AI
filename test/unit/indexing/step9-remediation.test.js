@@ -16,48 +16,80 @@ const source = {
   storageScope: { metadata: true, excerpt: false, summary: true, embedding: true }, mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false },
 }
 const article = { id: ARTICLE_ID, sourceId: SOURCE_ID, titleOriginal: 'An toàn AI', topics: ['ai'], publishedAt: now, summaryStatus: 'pending' }
-const domain = { admissionDomainId: 'zen-main', provider: 'opencode-zen', maxConcurrency: 1, budgetLimit: 5, budgetWindow: 'day' }
-const route = { routeId: 'zen-primary', admissionDomainId: 'zen-main' }
+const installedAdapters = [{ adapterId: 'openai-compatible', protocol: 'openai-compatible-v1', supportedOperations: ['summary', 'embedding'] }]
+const trustedEndpointProfiles = [
+  { trustedEndpointProfileId: 'summary-endpoint', adapterId: 'openai-compatible', operationEndpoints: { summary: 'https://summary.example/v1/chat/completions' }, allowRedirects: false },
+  { trustedEndpointProfileId: 'embedding-endpoint', adapterId: 'openai-compatible', operationEndpoints: { embedding: 'https://embedding.example/v1/embeddings' }, allowRedirects: false },
+]
+const domain = { admissionDomainId: 'summary-admission', providerId: 'summary-provider', credentialEnvName: 'SUMMARY_KEY_ENV', maxConcurrency: 1, budgetLimit: 5, budgetWindow: 'day' }
+const route = { routeId: 'summary-primary', providerId: 'summary-provider', admissionDomainId: 'summary-admission', model: 'summary-model-v1' }
+
+function providerGraph(overrides = {}) {
+  return {
+    providerFailureDomains: [{ providerFailureDomainId: 'summary-failure-domain', configVersion: 1, failureThreshold: 3, cooldownSeconds: 60 }, { providerFailureDomainId: 'embedding-failure-domain', configVersion: 1, failureThreshold: 3, cooldownSeconds: 60 }],
+    providers: [
+      { providerId: 'summary-provider', providerFailureDomainId: 'summary-failure-domain', adapterId: 'openai-compatible', trustedEndpointProfileId: 'summary-endpoint' },
+      { providerId: 'embedding-provider', providerFailureDomainId: 'embedding-failure-domain', adapterId: 'openai-compatible', trustedEndpointProfileId: 'embedding-endpoint' },
+    ],
+    admissionDomains: [domain, { admissionDomainId: 'embedding-admission', providerId: 'embedding-provider', credentialEnvName: 'EMBEDDING_KEY_ENV', maxConcurrency: 1, budgetLimit: 5, budgetWindow: 'day' }],
+    routes: [
+      { ...route, operations: ['summary'], capability: 'nonconfidential', evidenceUrl: 'https://evidence.example/summary', reviewedAt: '2026-08-01T00:00:00.000Z', evidenceExpiresAt: '2026-09-01T00:00:00.000Z', artifactCompatibilityId: null, enabled: true, routeFailureThreshold: 3, routeCooldownSeconds: 60 },
+      { routeId: 'embedding-primary', providerId: 'embedding-provider', admissionDomainId: 'embedding-admission', model: 'embedding-model-v1', operations: ['embedding'], capability: 'nonconfidential', evidenceUrl: 'https://evidence.example/embedding', reviewedAt: '2026-08-01T00:00:00.000Z', evidenceExpiresAt: '2026-09-01T00:00:00.000Z', artifactCompatibilityId: 'embedding-compat-v1', embeddingDimensions: 3, embeddingVersion: 7, enabled: true, routeFailureThreshold: 3, routeCooldownSeconds: 60 },
+    ],
+    workloadPolicies: [
+      { workloadId: 'summary', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'summary-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+      { workloadId: 'embedding', operation: 'embedding', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'embedding-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+    ],
+    ...overrides,
+  }
+}
+
+function validatedProviderGraph(overrides = {}) {
+  return validateProviderConfiguration(providerGraph(overrides), { now, installedAdapters, trustedEndpointProfiles })
+}
 
 describe('Step 9 remediation adversarial regressions', () => {
-  it('projects an adapter summary before strict validation and keeps the Zen summary timeout at thirty seconds', async () => {
+  it('projects an adapter summary before strict validation and keeps the configured summary timeout bounded', async () => {
     const harness = readFileSync(new URL('../../../scripts/step9-real-provider-smoke.js', import.meta.url), 'utf8')
-    const adapterResult = { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tiếng Việt an toàn có nguồn.', model: 'deepseek-v4-flash-free' }
+    const adapterResult = { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tiếng Việt an toàn có nguồn.', model: 'summary-model-v1' }
     expect(validateVietnameseSummary({ titleVi: adapterResult.titleVi, summaryVi: adapterResult.summaryVi })).toEqual({ titleVi: adapterResult.titleVi, summaryVi: adapterResult.summaryVi })
     expect(() => validateVietnameseSummary(adapterResult)).toThrow(/shape/i)
-    expect(harness).toContain('validateVietnameseSummary({ titleVi: summaryResult.titleVi, summaryVi: summaryResult.summaryVi })')
+    expect(harness).toContain('validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi })')
 
-    const registry = { domains: [{ ...domain, credentialEnvName: 'ZEN_KEY_ENV' }], routes: [{ ...route, provider: 'opencode-zen', model: 'deepseek-v4-flash-free' }] }
+    const registry = validatedProviderGraph()
     const abortTimeout = vi.spyOn(globalThis.AbortSignal, 'timeout').mockReturnValue(new globalThis.AbortController().signal)
-    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(adapterResult) } }] }), { headers: { 'Content-Type': 'application/json' } })), resolveCredential: () => 'secret' })
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(adapterResult) } }] }), { headers: { 'Content-Type': 'application/json' } }))
+    const adapters = createConfiguredProviderAdapters({ registry, trustedEndpointProfiles, fetchImpl, resolveCredential: () => 'secret' })
     await adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })
     expect(abortTimeout).toHaveBeenCalledWith(30_000)
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://summary.example/v1/chat/completions')
     abortTimeout.mockRestore()
   })
 
-  it('binds the approved OpenCode Zen primary adapter and rejects unknown provider startup routes', async () => {
-    const registry = { domains: [{ ...domain, credentialEnvName: 'ZEN_KEY_ENV' }], routes: [{ ...route, provider: 'opencode-zen', model: 'deepseek-v4-flash-free' }] }
+  it('binds the configured adapter profile and rejects unknown provider startup routes', async () => {
+    const registry = validatedProviderGraph()
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ titleVi: 'Tieu de', summaryVi: 'Tom tat.' }) } }] }), { headers: { 'Content-Type': 'application/json' } }))
-    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl, resolveCredential: () => 'secret' })
-    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).resolves.toMatchObject({ model: 'deepseek-v4-flash-free' })
-    expect(fetchImpl.mock.calls[0][0]).toBe('https://opencode.ai/zen/v1/chat/completions')
-    expect(() => validateProviderConfiguration([{ ...domain, provider: 'unknown-provider', credentialEnvName: 'UNKNOWN_KEY_ENV', routes: [{ ...route, model: 'model', capability: 'nonconfidential', enabled: true, evidenceUrl: 'https://evidence.example/route', reviewedAt: '2026-08-01T00:00:00.000Z', evidenceExpiresAt: '2026-09-01T00:00:00.000Z', retryableFailureThreshold: 3, cooldownSeconds: 60 }] }], { now })).toThrow(/adapter/i)
+    const adapters = createConfiguredProviderAdapters({ registry, trustedEndpointProfiles, fetchImpl, resolveCredential: () => 'secret' })
+    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).resolves.toMatchObject({ model: 'summary-model-v1' })
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://summary.example/v1/chat/completions')
+    expect(() => validateProviderConfiguration(providerGraph({ providers: [{ ...providerGraph().providers[0], adapterId: 'missing-adapter' }, providerGraph().providers[1]] }), { now, installedAdapters, trustedEndpointProfiles })).toThrow(/adapter/i)
   })
 
-  it('sends a bounded BGE-M3 batch in one adapter request and preserves every vector', async () => {
-    const registry = { domains: [{ admissionDomainId: 'router-main', provider: 'openrouter', credentialEnvName: 'ROUTER_KEY_ENV', maxConcurrency: 1, budgetLimit: 5, budgetWindow: 'day' }], routes: [{ routeId: 'bge-m3', admissionDomainId: 'router-main', provider: 'openrouter', model: 'baai/bge-m3' }] }
-    const vectors = [Array(1024).fill(0.01), Array(1024).fill(0.02)]
+  it('sends a bounded configured embedding batch in one adapter request and preserves every vector', async () => {
+    const registry = validatedProviderGraph()
+    const vectors = [Array(3).fill(0.01), Array(3).fill(0.02)]
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: vectors.map((embedding) => ({ embedding })) }), { headers: { 'Content-Type': 'application/json' } }))
-    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl, resolveCredential: () => 'secret' })
-    await expect(adapters.embeddingProvider.embedBatch({ route: registry.routes[0], inputs: ['truy vấn tiếng Việt', 'tài liệu tiếng Việt'], model: 'baai/bge-m3', dimensions: 1024 }))
-      .resolves.toEqual({ model: 'baai/bge-m3', embeddings: vectors })
+    const adapters = createConfiguredProviderAdapters({ registry, trustedEndpointProfiles, fetchImpl, resolveCredential: () => 'secret' })
+    await expect(adapters.embeddingProvider.embedBatch({ route: registry.routes[1], inputs: ['truy vấn tiếng Việt', 'tài liệu tiếng Việt'], model: 'embedding-model-v1', dimensions: 3 }))
+      .resolves.toEqual({ model: 'embedding-model-v1', embeddings: vectors })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ model: 'baai/bge-m3', input: ['truy vấn tiếng Việt', 'tài liệu tiếng Việt'], dimensions: 1024 })
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://embedding.example/v1/embeddings')
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ model: 'embedding-model-v1', input: ['truy vấn tiếng Việt', 'tài liệu tiếng Việt'], dimensions: 3 })
   })
 
   it('recovers an expired half-open probe so its route cannot remain permanently stuck', () => {
     const state = {
-      admissionDomainId: domain.admissionDomainId, provider: domain.provider, maxConcurrency: 1, budgetWindowStart: now, spentUnits: 0, budgetLimit: 5,
+      admissionDomainId: domain.admissionDomainId, providerId: domain.providerId, maxConcurrency: 1, budgetWindowStart: now, spentUnits: 0, budgetLimit: 5,
       activeReservations: [{ reservationId: 'expired-probe', routeId: route.routeId, attemptId: '507f1f77bcf86cd799439041', kind: 'summary', expiresAt: new Date(now.getTime() - 1) }],
       routeCircuits: [{ routeId: route.routeId, state: 'half-open', consecutiveRetryableFailures: 3, halfOpenProbeReservationId: 'expired-probe' }], updatedAt: now,
     }
@@ -88,5 +120,18 @@ describe('Step 9 remediation adversarial regressions', () => {
     const repository = new MongoIndexingJobRepository({ db: {}, client: {} })
     await expect(repository.listIndexingJobs({ articleId: 'not-an-object-id' })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
     await expect(repository.listIndexingJobs({ limit: '0' })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+  })
+
+  it('keeps indexing and retrieval integration free of vendor/model literals', () => {
+    const ownedFiles = [
+      '../../../server/bootstrap/indexing.js',
+      '../../../server/application/indexing/artifact-processor.js',
+      '../../../server/application/indexing/service.js',
+      '../../../server/repositories/mongo/article-repository.js',
+      '../../../server/repositories/mongo/indexing-job-repository.js',
+      '../../../server/application/search/service.js',
+      '../../../server/ai/retrieval.js',
+    ]
+    for (const file of ownedFiles) expect(readFileSync(new URL(file, import.meta.url), 'utf8')).not.toMatch(/opencode|openrouter|deepseek|baai|bge-m3/i)
   })
 })

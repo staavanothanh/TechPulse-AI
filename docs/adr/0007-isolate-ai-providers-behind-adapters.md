@@ -5,7 +5,7 @@
 **Deciders**: Project owner  
 **Record type**: Backfill of an approved MVP decision
 
-ADR-0013 giu adapter isolation nhung thay the quyet dinh fixed OpenCode/DeepSeek routing bang config-driven model/provider fallback.
+ADR-0013 giữ adapter isolation nhưng thay thế quyết định fixed OpenCode/DeepSeek routing bằng config-driven model/provider fallback.
 
 ## Context
 

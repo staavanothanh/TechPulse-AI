@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createConfiguredProviderAdapters } from '../../../server/ai/provider-adapters.js'
+import { createConfiguredProviderAdapters, OPENAI_COMPATIBLE_PROTOCOL_ADAPTER } from '../../../server/ai/provider-adapters.js'
 
 const registry = {
-  domains: [{ admissionDomainId: 'openrouter-main', provider: 'openrouter', credentialEnvName: 'OPENROUTER_KEY_ENV' }],
+  providers: [{ providerId: 'router', providerFailureDomainId: 'router-control-plane', adapterId: 'openai-compatible', trustedEndpointProfileId: 'openrouter-v1' }],
+  admissionDomains: [{ admissionDomainId: 'openrouter-main', providerId: 'router', credentialEnvName: 'OPENROUTER_KEY_ENV' }],
   routes: [
-    { routeId: 'summary-primary', admissionDomainId: 'openrouter-main', provider: 'openrouter', model: 'summary/model' },
-    { routeId: 'embedding-bge-m3', admissionDomainId: 'openrouter-main', provider: 'openrouter', model: 'baai/bge-m3' },
+    { routeId: 'summary-primary', admissionDomainId: 'openrouter-main', providerId: 'router', adapterId: 'openai-compatible', trustedEndpointProfileId: 'openrouter-v1', model: 'summary/model', operations: ['summary'] },
+    { routeId: 'embedding-primary', admissionDomainId: 'openrouter-main', providerId: 'router', adapterId: 'openai-compatible', trustedEndpointProfileId: 'openrouter-v1', model: 'embed/model-v1', operations: ['embedding'], artifactCompatibilityId: 'vi-embed-v1-3', embeddingDimensions: 3, embeddingVersion: 1 },
   ],
 }
 
@@ -24,28 +25,28 @@ describe('Step 9 controlled provider adapters', () => {
     expect(JSON.stringify(body)).not.toMatch(/leadMedia|providerPayload|secret-value/)
   })
 
-  it('pins embedding requests to BGE-M3/1024 and maps retryable failures safely', async () => {
-    const vector = Array(1024).fill(0.01)
+  it('uses route embedding metadata without a hardcoded model and maps retryable failures safely', async () => {
+    const vector = Array(3).fill(0.01)
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ embedding: vector }], model: 'baai/bge-m3' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response('raw provider secret payload', { status: 503 }))
     const adapters = createConfiguredProviderAdapters({ registry, fetchImpl, resolveCredential: () => 'secret-value' })
-    await expect(adapters.embeddingProvider.embed({ route: registry.routes[1], input: 'safe input', model: 'baai/bge-m3', dimensions: 1024 })).resolves.toEqual({ model: 'baai/bge-m3', embedding: vector })
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ model: 'baai/bge-m3', input: ['safe input'], dimensions: 1024 })
-    await expect(adapters.embeddingProvider.embed({ route: registry.routes[1], input: 'safe input', model: 'baai/bge-m3', dimensions: 1024 })).rejects.toMatchObject({ code: 'provider_http_error', retryable: true, message: 'AI provider request failed safely' })
+    await expect(adapters.embeddingProvider.embed({ route: registry.routes[1], input: 'safe input', model: 'embed/model-v1', dimensions: 3 })).resolves.toEqual({ model: 'embed/model-v1', embedding: vector })
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ model: 'embed/model-v1', input: ['safe input'], dimensions: 3 })
+    await expect(adapters.embeddingProvider.embed({ route: registry.routes[1], input: 'safe input', model: 'embed/model-v1', dimensions: 3 })).rejects.toMatchObject({ code: 'provider_domain_unavailable', failureClass: 'provider-retryable', retryable: true, message: 'AI provider request failed safely' })
   })
 
   it('fails closed before network I/O when credential or route/model binding is invalid', async () => {
     const fetchImpl = vi.fn()
     const missing = createConfiguredProviderAdapters({ registry, fetchImpl, resolveCredential: () => null })
     await expect(missing.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ retryable: false })
-    await expect(missing.embeddingProvider.embed({ route: { ...registry.routes[1], model: 'alternate' }, input: 'safe', model: 'baai/bge-m3', dimensions: 1024 })).rejects.toMatchObject({ retryable: false })
+    await expect(missing.embeddingProvider.embed({ route: { ...registry.routes[1], model: 'alternate' }, input: 'safe', model: 'embed/model-v1', dimensions: 3 })).rejects.toMatchObject({ retryable: false })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('instructs the answer provider to return exact evidence block IDs for every cited paragraph', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ status: 'answered', paragraphs: [] }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-    const answerRoute = { routeId: 'answer-primary', admissionDomainId: 'openrouter-main', provider: 'openrouter', model: 'summary/model' }
+    const answerRoute = { routeId: 'answer-primary', admissionDomainId: 'openrouter-main', providerId: 'router', adapterId: 'openai-compatible', trustedEndpointProfileId: 'openrouter-v1', model: 'summary/model', operations: ['answer'] }
     const adapters = createConfiguredProviderAdapters({ registry: { ...registry, routes: [...registry.routes, answerRoute] }, fetchImpl, resolveCredential: () => 'secret-value' })
 
     await adapters.llmProvider.answer({ route: answerRoute, input: '<evidence-block id="E1" citation="C1">du lieu</evidence-block>', locale: 'vi', tools: [] })
@@ -56,12 +57,72 @@ describe('Step 9 controlled provider adapters', () => {
 
   it('requires the support provider to bind its verdict to the exact evidence block set', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: 'supported', evidenceBlockIds: ['E1'] }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-    const supportRoute = { routeId: 'answer-support', admissionDomainId: 'openrouter-main', provider: 'openrouter', model: 'summary/model' }
+    const supportRoute = { routeId: 'answer-support', admissionDomainId: 'openrouter-main', providerId: 'router', adapterId: 'openai-compatible', trustedEndpointProfileId: 'openrouter-v1', model: 'summary/model', operations: ['support'] }
     const adapters = createConfiguredProviderAdapters({ registry: { ...registry, routes: [...registry.routes, supportRoute] }, fetchImpl, resolveCredential: () => 'secret-value' })
 
     await expect(adapters.llmProvider.verifySupport({ route: supportRoute, input: JSON.stringify({ evidenceBlocks: [{ id: 'E1', citationId: 'C1', text: 'exact admitted block' }], evidenceMap: { E1: 'C1' }, paragraphs: [] }), locale: 'vi', tools: [] })).resolves.toMatchObject({ verdict: 'supported', evidenceBlockIds: ['E1'] })
 
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
     expect(body.messages[0].content).toMatch(/evidenceBlockIds/)
+  })
+
+  it('rejects redirects and oversized provider output without exposing response data', async () => {
+    const redirecting = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => new Response('', { status: 302, headers: { Location: 'https://attacker.example' } })), resolveCredential: () => 'secret-value' })
+    await expect(redirecting.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ code: 'provider_config_invalid', failureClass: 'config', message: 'AI provider request failed safely' })
+
+    const oversized = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => new Response('x'.repeat(300_000), { status: 200, headers: { 'Content-Type': 'application/json' } })), resolveCredential: () => 'secret-value' })
+    await expect(oversized.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ code: 'provider_schema_invalid', failureClass: 'schema', message: 'AI provider request failed safely' })
+  })
+
+  it('uses the closed taxonomy for model, ambiguous transport, and credential failures', async () => {
+    const modelUnavailable = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => new Response('', { status: 404 })), resolveCredential: () => 'secret-value' })
+    await expect(modelUnavailable.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'model-retryable', retryable: true })
+
+    const ambiguous = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => { throw new Error('raw transport detail') }), resolveCredential: () => 'secret-value' })
+    await expect(ambiguous.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'ambiguous', retryable: false, message: 'AI provider request failed safely' })
+
+    const credentialFailure = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(), resolveCredential: () => { throw new Error('secret store detail') } })
+    await expect(credentialFailure.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'config', retryable: false, message: 'AI provider request failed safely' })
+  })
+
+  it.each(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT'])('classifies definite pre-dispatch %s as provider-retryable', async (code) => {
+    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => { throw Object.assign(new Error('safe'), { code }) }), resolveCredential: () => 'secret-value' })
+    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'provider-retryable', retryable: true })
+  })
+
+  it('classifies an explicit connect timeout as provider-retryable', async () => {
+    const error = Object.assign(new Error('connect timeout'), { code: 'ETIMEDOUT', syscall: 'connect' })
+    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => { throw error }), resolveCredential: () => 'secret-value' })
+    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'provider-retryable' })
+  })
+
+  it.each([
+    Object.assign(new Error('reset'), { code: 'ECONNRESET' }),
+    Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }),
+    new Error('unknown'),
+  ])('keeps uncertain dispatched transport outcomes ambiguous', async (transportError) => {
+    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => { throw transportError }), resolveCredential: () => 'secret-value' })
+    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'ambiguous', retryable: false })
+  })
+
+  it('lets a protocol plugin classify documented model-scoped HTTP failures without response data', async () => {
+    const classifyHttpFailure = vi.fn(() => 'model-retryable')
+    const plugin = { ...OPENAI_COMPATIBLE_PROTOCOL_ADAPTER, classifyHttpFailure }
+    const adapters = createConfiguredProviderAdapters({ registry, adapterPlugins: [plugin], fetchImpl: vi.fn(async () => new Response('', { status: 429 })), resolveCredential: () => 'secret-value' })
+    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'model-retryable' })
+    expect(classifyHttpFailure).toHaveBeenCalledWith(expect.objectContaining({ operation: 'summary', status: 429 }))
+  })
+
+  it('uses installed-profile reviewed HTTP classification without reading provider bodies', async () => {
+    for (const [status, errorCode] of [[429, 'model_rate_limited'], [408, 'model_unavailable'], [503, 'model_unavailable']]) {
+      const modelScoped = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => new Response('secret body', { status, headers: { 'x-provider-error-code': errorCode } })), resolveCredential: () => 'secret-value' })
+      await expect(modelScoped.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'model-retryable' })
+    }
+
+    const providerOutage = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => new Response('secret body', { status: 503 })), resolveCredential: () => 'secret-value' })
+    await expect(providerOutage.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'provider-retryable' })
+
+    const ambiguous = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => { throw Object.assign(new Error('after dispatch'), { code: 'ECONNRESET' }) }), resolveCredential: () => 'secret-value' })
+    await expect(ambiguous.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'ambiguous' })
   })
 })

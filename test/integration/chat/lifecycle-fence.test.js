@@ -4,6 +4,7 @@ import { ObjectId } from 'mongodb'
 import { createQaService } from '../../../server/application/qa/service.js'
 import { MongoChatRepository } from '../../../server/repositories/mongo/chat-repository.js'
 import { createStep11Mongo } from '../../helpers/step11-mongo.js'
+import { createProviderRouterFixture } from '../../unit/qa/provider-router-fixture.js'
 
 const now = new Date('2026-08-14T00:00:00.000Z')
 const userId = new ObjectId('507f1f77bcf86cd799439101')
@@ -54,6 +55,7 @@ describe('Step 11 delayed Q&A lifecycle fence', () => {
     const service = createQaService({
       articleRepository: fixture.evidenceRepository,
       chatRepository: fixture.repository,
+      providerRouter: createProviderRouterFixture(),
       providerAdapters: { llmProvider: { answer: provider } },
       routes: { primary: 'primary' },
       supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }),

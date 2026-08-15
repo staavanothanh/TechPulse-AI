@@ -9,7 +9,7 @@ import { evaluateMediaPolicy } from '../../domain/policy/media-policy.js'
 import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
 import { canUseQnaEvidence, currentArticleVisibilityFilter, isSourceProductionEligible, qnaEvidenceFilter } from '../../domain/article/visibility.js'
 import { validateArticleDocument } from '../../../scripts/migrations/articles.js'
-import { BGE_M3, validateBgeM3Embedding } from '../../ai/embedding.js'
+import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_VERSION, validateEmbeddingVector } from '../../ai/embedding.js'
 import { validateVietnameseSummary } from '../../ai/summary.js'
 import { cosineSimilarity, rankQnaEvidence } from '../../ai/retrieval.js'
 import { buildPolicyDerivedInput } from '../../ai/policy-input.js'
@@ -179,6 +179,37 @@ function serializeSourceForQna(source) {
 
 const PUBLIC_SUMMARY_STATUSES = new Set(['pending', 'processing', 'ready', 'failed'])
 const SUMMARY_BASES = new Set(['metadata', 'excerpt', 'fulltext-temporary'])
+const EMBEDDING_COMPATIBILITY_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/
+
+function embeddingTargetValue(value = {}) {
+  const dimensions = value.dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS
+  const version = value.version ?? DEFAULT_EMBEDDING_VERSION
+  if (!Number.isInteger(dimensions) || dimensions < 1 || !Number.isInteger(version) || version < 1) throw new Error('Embedding target is invalid')
+  return Object.freeze({
+    ...(typeof value.model === 'string' && value.model ? { model: value.model } : {}),
+    dimensions,
+    version,
+    ...(typeof value.artifactCompatibilityId === 'string' && value.artifactCompatibilityId ? { artifactCompatibilityId: value.artifactCompatibilityId } : {}),
+  })
+}
+
+function embeddingQueryCompatible(value, { expectedCompatibilityId } = {}) {
+  if (!value || typeof value.model !== 'string' || !value.model || !Number.isInteger(value.dimensions) || value.dimensions < 1 || !Number.isInteger(value.version) || value.version < 1 || !Array.isArray(value.embedding) || value.embedding.length !== value.dimensions || value.embedding.some((item) => typeof item !== 'number' || !Number.isFinite(item))) return false
+  if (value.artifactCompatibilityId !== undefined && (typeof value.artifactCompatibilityId !== 'string' || !EMBEDDING_COMPATIBILITY_ID.test(value.artifactCompatibilityId))) return false
+  if (expectedCompatibilityId && value.artifactCompatibilityId !== expectedCompatibilityId) return false
+  return true
+}
+
+function embeddingArtifactCompatible(document, query) {
+  return document?.embeddingStatus === 'ready'
+    && document.embeddingModel === query.model
+    && document.embeddingDimensions === query.dimensions
+    && document.embeddingVersion === query.version
+    && (document.embeddingArtifactCompatibilityId === query.artifactCompatibilityId || document.embeddingArtifactCompatibilityId === undefined && query.artifactCompatibilityId === undefined)
+    && Array.isArray(document.embedding)
+    && document.embedding.length === query.embedding.length
+    && document.embedding.every((item) => typeof item === 'number' && Number.isFinite(item))
+}
 
 function contentQueryInvalid(message = 'Content cursor is invalid') {
   return new ArticleError('validation_error', message, { status: 422 })
@@ -350,11 +381,12 @@ function visibilityPipeline({ match, userId, limit } = {}) {
 }
 
 export class MongoArticleRepository {
-  constructor(context) {
+  constructor(context, { embeddingTarget } = {}) {
     if (!context?.db || !context?.client) throw new Error('Mongo context is required')
     this.db = context.db
     this.client = context.client
     this.clock = typeof context.now === 'function' ? context.now : () => new Date()
+    this.embeddingTarget = embeddingTargetValue(embeddingTarget)
   }
 
   collection(name = 'articles') { return this.db.collection(name) }
@@ -435,7 +467,7 @@ export class MongoArticleRepository {
           result.updated += saved.updated
           result.duplicate += saved.duplicate
           result.candidates.push(saved.article)
-          for (const indexingJob of buildIngestionArtifactJobs({ source: { ...currentSource, id: currentSource._id.toHexString() }, article: saved.article, now })) {
+          for (const indexingJob of buildIngestionArtifactJobs({ source: { ...currentSource, id: currentSource._id.toHexString() }, article: saved.article, now, embeddingTarget: this.embeddingTarget })) {
             await this.indexingJobs().updateOne(
               { actorScope: indexingJob.actorScope, idempotencyKey: indexingJob.idempotencyKey },
               { $setOnInsert: indexingJobDocument(indexingJob) },
@@ -566,7 +598,7 @@ export class MongoArticleRepository {
     return serializeArticle(await this.articles().findOne({ _id: id, status: { $ne: 'removed' } }, options))
   }
 
-  async commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, onCommitted } = {}) {
+  async commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, unsetFields = [], onCommitted } = {}) {
     const articleId = contentObjectId(job?.articleId, { nullable: true })
     const sourceId = contentObjectId(job?.sourceId, { nullable: true })
     const jobId = contentObjectId(job?.id, { nullable: true })
@@ -600,9 +632,11 @@ export class MongoArticleRepository {
         if (currentInput.inputHash !== inputHash) return false
       } catch { return false }
       const filter = { _id: articleId, sourceId, status: 'published', ...(currentArticle.updatedAt ? { updatedAt: currentArticle.updatedAt } : {}) }
-      const updated = await this.articles().updateOne(filter, { $set: { ...fields, updatedAt: now } }, { session })
+      const update = { $set: { ...fields, updatedAt: now }, ...(unsetFields.length > 0 ? { $unset: Object.fromEntries(unsetFields.map((field) => [field, ''])) } : {}) }
+      const updated = await this.articles().updateOne(filter, update, { session })
       if (updated.matchedCount !== 1) return false
-      await onCommitted?.({ session, source, article: serializeArticle({ ...currentArticle, ...fields, updatedAt: now }), now })
+      const committedDocument = Object.fromEntries(Object.entries({ ...currentArticle, ...fields, updatedAt: now }).filter(([field]) => !unsetFields.includes(field)))
+      await onCommitted?.({ session, source, article: serializeArticle(committedDocument), now })
       return true
     })
   }
@@ -616,7 +650,7 @@ export class MongoArticleRepository {
       inputHash,
       fields: { ...output, summaryStatus: 'ready', summaryBasis: summary.summaryBasis, summaryModel: summary.summaryModel, summaryInputHash: inputHash, summarySourcePolicyVersion: expectedSourcePolicyVersion, summaryGeneratedAt: summary.summaryGeneratedAt, summaryError: null },
       onCommitted: async ({ session, source, article: committedArticle, now }) => {
-        for (const successor of buildIngestionArtifactJobs({ source: { ...source, id: source._id.toHexString() }, article: committedArticle, now }).filter((item) => item.task === 'embedding')) {
+        for (const successor of buildIngestionArtifactJobs({ source: { ...source, id: source._id.toHexString() }, article: committedArticle, now, embeddingTarget: this.embeddingTarget }).filter((item) => item.task === 'embedding')) {
           await this.indexingJobs().updateOne({ actorScope: successor.actorScope, idempotencyKey: successor.idempotencyKey }, { $setOnInsert: indexingJobDocument(successor) }, { upsert: true, session })
         }
       },
@@ -624,12 +658,12 @@ export class MongoArticleRepository {
   }
 
   async commitEmbeddingArtifact({ job, fence, expectedSourcePolicyVersion, inputHash, embedding } = {}) {
-    try { validateBgeM3Embedding({ model: embedding?.embeddingModel, embedding: embedding?.embedding }) } catch { return false }
-    if (embedding?.embeddingStatus !== 'ready' || embedding.embeddingDimensions !== BGE_M3.dimensions || embedding.embeddingVersion !== BGE_M3.version || embedding.embeddingInputHash !== inputHash || embedding.embeddingSourcePolicyVersion !== expectedSourcePolicyVersion || !(embedding.embeddedAt instanceof Date)) return false
+    try { validateEmbeddingVector(embedding?.embedding, { dimensions: this.embeddingTarget.dimensions }) } catch { return false }
+    if (embedding?.embeddingStatus !== 'ready' || typeof embedding.embeddingModel !== 'string' || !embedding.embeddingModel || embedding.embeddingDimensions !== this.embeddingTarget.dimensions || embedding.embeddingVersion !== this.embeddingTarget.version || typeof embedding.embeddingArtifactCompatibilityId !== 'string' || !EMBEDDING_COMPATIBILITY_ID.test(embedding.embeddingArtifactCompatibilityId) || this.embeddingTarget.artifactCompatibilityId && embedding.embeddingArtifactCompatibilityId !== this.embeddingTarget.artifactCompatibilityId || embedding.embeddingInputHash !== inputHash || embedding.embeddingSourcePolicyVersion !== expectedSourcePolicyVersion || !(embedding.embeddedAt instanceof Date)) return false
     return this.commitArtifact({
       job, fence, expectedSourcePolicyVersion, purpose: 'embedding',
       inputHash,
-      fields: { embeddingStatus: 'ready', embedding: [...embedding.embedding], embeddingModel: BGE_M3.model, embeddingDimensions: BGE_M3.dimensions, embeddingInputHash: inputHash, embeddingVersion: BGE_M3.version, embeddingSourcePolicyVersion: expectedSourcePolicyVersion, embeddedAt: embedding.embeddedAt, embeddingError: null },
+      fields: { embeddingStatus: 'ready', embedding: [...embedding.embedding], embeddingModel: embedding.embeddingModel, embeddingDimensions: this.embeddingTarget.dimensions, embeddingArtifactCompatibilityId: embedding.embeddingArtifactCompatibilityId, embeddingInputHash: inputHash, embeddingVersion: this.embeddingTarget.version, embeddingSourcePolicyVersion: expectedSourcePolicyVersion, embeddedAt: embedding.embeddedAt, embeddingError: null },
     })
   }
 
@@ -638,7 +672,7 @@ export class MongoArticleRepository {
     const fields = purpose === 'summary'
       ? { titleVi: null, summaryVi: null, summaryStatus: 'processing', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
       : { embeddingStatus: 'processing', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null }
-    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields })
+    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
 
   async resetArtifactPending({ job, fence, expectedSourcePolicyVersion, purpose, inputHash } = {}) {
@@ -646,7 +680,7 @@ export class MongoArticleRepository {
     const fields = purpose === 'summary'
       ? { titleVi: null, summaryVi: null, summaryStatus: 'pending', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
       : { embeddingStatus: 'pending', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null }
-    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields })
+    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
 
   async markArtifactFailed({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, error } = {}) {
@@ -656,7 +690,7 @@ export class MongoArticleRepository {
     const fields = purpose === 'summary'
       ? { titleVi: null, summaryVi: null, summaryStatus: 'failed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: safe }
       : { embeddingStatus: 'failed', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: safe }
-    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields })
+    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
 
   async reconcileArticleVisibility({ job, fence, expectedSourcePolicyVersion, now: suppliedNow } = {}) {
@@ -680,7 +714,7 @@ export class MongoArticleRepository {
       const embeddingAllowed = evaluateContentPolicy(source, 'embedding').allowed
       const excerptAllowed = evaluateContentPolicy(source, 'excerpt').allowed
       const summaryCurrent = summaryAllowed && article.summaryStatus === 'ready' && article.summarySourcePolicyVersion === expectedSourcePolicyVersion
-      const embeddingCurrent = embeddingAllowed && article.embeddingStatus === 'ready' && article.embeddingSourcePolicyVersion === expectedSourcePolicyVersion && article.embeddingModel === BGE_M3.model && article.embeddingDimensions === BGE_M3.dimensions && article.embeddingVersion === BGE_M3.version
+      const embeddingCurrent = embeddingAllowed && article.embeddingStatus === 'ready' && article.embeddingSourcePolicyVersion === expectedSourcePolicyVersion && article.embeddingDimensions === this.embeddingTarget.dimensions && article.embeddingVersion === this.embeddingTarget.version && (!this.embeddingTarget.artifactCompatibilityId || article.embeddingArtifactCompatibilityId === this.embeddingTarget.artifactCompatibilityId)
       const mediaAllowed = article.leadMedia ? evaluateMediaPolicy(source, article.leadMedia).allowed : false
       const set = {
         rightsSnapshot: { sourcePolicyVersion: expectedSourcePolicyVersion, licenseStatus: source.licenseStatus, llmInputScope: source.llmInputScope, capturedAt: now },
@@ -696,7 +730,8 @@ export class MongoArticleRepository {
         embeddingStatus: embeddingAllowed ? 'pending' : 'removed', embedding: null, embeddingModel: null, embeddingDimensions: null,
         embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null,
       })
-      const update = { $set: set, ...(!excerptAllowed && article.excerptOriginal !== undefined ? { $unset: { excerptOriginal: '' } } : {}) }
+      const unset = { ...(!excerptAllowed && article.excerptOriginal !== undefined ? { excerptOriginal: '' } : {}), ...(!embeddingCurrent ? { embeddingArtifactCompatibilityId: '' } : {}) }
+      const update = { $set: set, ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}) }
       if (!excerptAllowed) set.contentScope = 'metadata'
       const result = await this.articles().updateOne({ _id: articleId, sourceId, status: article.status }, update, { session })
       return result.matchedCount === 1
@@ -707,8 +742,8 @@ export class MongoArticleRepository {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw contentQueryInvalid('Search limit is invalid')
     const normalizedQuery = normalizedSearchText(q)
     if (normalizedQuery.length < 2 || normalizedQuery.length > 300) throw contentQueryInvalid('Search query is invalid')
-    const hybrid = mode === 'hybrid' && queryEmbedding?.model === BGE_M3.model && queryEmbedding?.dimensions === BGE_M3.dimensions && queryEmbedding?.version === BGE_M3.version && Array.isArray(queryEmbedding.embedding) && queryEmbedding.embedding.length === BGE_M3.dimensions
-    const fingerprint = cursorFingerprint('search', { userId, q: normalizedQuery, mode: hybrid ? 'hybrid' : 'text', topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit })
+    const hybrid = mode === 'hybrid' && embeddingQueryCompatible(queryEmbedding, { expectedCompatibilityId: this.embeddingTarget.artifactCompatibilityId })
+    const fingerprint = cursorFingerprint('search', { userId, q: normalizedQuery, mode: hybrid ? 'hybrid' : 'text', topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit, queryEmbedding: hybrid ? { model: queryEmbedding.model, dimensions: queryEmbedding.dimensions, version: queryEmbedding.version, artifactCompatibilityId: queryEmbedding.artifactCompatibilityId ?? null } : null })
     const cursorPosition = decodeContentCursor(cursor, 'search', fingerprint)
     const match = contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore })
     const textMatch = match.$and ? { $and: [...match.$and, { $text: { $search: normalizedQuery } }] } : { ...match, $text: { $search: normalizedQuery } }
@@ -734,8 +769,9 @@ export class MongoArticleRepository {
     }).filter((result) => result.article)
     if (hybrid) {
       const semanticFilter = {
-        embeddingStatus: 'ready', embeddingModel: BGE_M3.model, embeddingDimensions: BGE_M3.dimensions,
-        embeddingVersion: BGE_M3.version, embedding: { $type: 'array' },
+        embeddingStatus: 'ready', embeddingModel: queryEmbedding.model, embeddingDimensions: queryEmbedding.dimensions,
+        embeddingVersion: queryEmbedding.version, embedding: { $type: 'array' },
+        ...(queryEmbedding.artifactCompatibilityId !== undefined ? { embeddingArtifactCompatibilityId: queryEmbedding.artifactCompatibilityId } : {}),
       }
       const semanticMatch = match.$and ? { $and: [...match.$and, semanticFilter] } : { $and: [match, semanticFilter] }
       const semanticDocuments = await this.articles().aggregate(visibilityPipeline({ match: semanticMatch, userId, limit: 400 })).toArray()
@@ -757,7 +793,7 @@ export class MongoArticleRepository {
         const article = publicArticleCard(document)
         if (!article) return []
         const textScore = Math.max(0, Math.min(1, rawTextScore / (rawTextScore + 1)))
-        const compatible = document.embeddingStatus === 'ready' && document.embeddingModel === BGE_M3.model && document.embeddingDimensions === BGE_M3.dimensions && document.embeddingVersion === BGE_M3.version && Array.isArray(document.embedding) && document.embedding.length === BGE_M3.dimensions
+        const compatible = embeddingArtifactCompatible(document, queryEmbedding)
         const semanticScore = compatible ? Math.max(0, cosineSimilarity(queryEmbedding.embedding, document.embedding)) : null
         const score = compatible ? 0.45 * textScore + 0.55 * semanticScore : 0.45 * textScore
         return [{ document, article, score: Number(score.toFixed(12)), textScore, semanticScore }]
@@ -787,6 +823,7 @@ export class MongoArticleRepository {
       results: page.map(({ article, score, textScore, semanticScore }) => ({ article, score, textScore, semanticScore })),
       hasNext,
       nextCursor: hasNext && last ? encodeContentCursor('search', fingerprint, { id: last.document._id.toHexString(), publishedAt: publicDate(last.document.publishedAt), rawScore: Number(last.document._textScore ?? 0) }) : null,
+      ...(mode === 'hybrid' && !hybrid ? { fallbackReason: 'no-compatible-vectors' } : {}),
     }
   }
 

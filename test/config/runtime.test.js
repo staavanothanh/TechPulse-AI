@@ -12,53 +12,48 @@ const validEnvironment = {
   GOVERNANCE_SIGNING_CURRENT_KEY_ENV: 'GOVERNANCE_SIGNING_CURRENT_KEY',
   GOVERNANCE_SIGNING_RETIRING_KEY_ENVS: 'GOVERNANCE_SIGNING_OLD',
   OFFLINE_CHECKPOINT_KEY_IDS: 'checkpoint-current,checkpoint-old',
-  PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify([
-    {
-      admissionDomainId: 'open-code-zen',
-      provider: 'opencode-zen',
-      credentialEnvName: 'OPENCODE_ZEN_API_KEY',
-      maxConcurrency: 4,
-      budgetLimit: 1000,
-      budgetWindow: 'day',
-      routes: [{ routeId: 'zen-summary', admissionDomainId: 'open-code-zen', model: 'deepseek-v4-flash-free', capability: 'nonconfidential', evidenceUrl: 'https://opencode.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
-    },
-  ]),
+  PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify({
+    providerFailureDomains: [
+      { providerFailureDomainId: 'provider-main', configVersion: 1, failureThreshold: 3, cooldownSeconds: 60 },
+    ],
+    providers: [
+      { providerId: 'provider-main', providerFailureDomainId: 'provider-main', adapterId: 'openai-compatible', trustedEndpointProfileId: 'opencode-zen-v1' },
+    ],
+    admissionDomains: [
+      { admissionDomainId: 'provider-main', providerId: 'provider-main', credentialEnvName: 'PROVIDER_MAIN_API_KEY', maxConcurrency: 4, budgetLimit: 1000, budgetWindow: 'day' },
+    ],
+    routes: [
+      { routeId: 'summary-primary', providerId: 'provider-main', admissionDomainId: 'provider-main', model: 'model-a', operations: ['summary'], capability: 'nonconfidential', evidenceUrl: 'https://privacy.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', artifactCompatibilityId: null, enabled: true, routeFailureThreshold: 3, routeCooldownSeconds: 60 },
+      { routeId: 'summary-model-fallback', providerId: 'provider-main', admissionDomainId: 'provider-main', model: 'model-b', operations: ['summary'], capability: 'nonconfidential', evidenceUrl: 'https://privacy.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', artifactCompatibilityId: null, enabled: true, routeFailureThreshold: 3, routeCooldownSeconds: 60 },
+    ],
+    workloadPolicies: [
+      { workloadId: 'summary', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'summary-primary', modelFallbackRouteIds: ['summary-model-fallback'], providerFallbackRouteIds: [] },
+    ],
+  }),
+  PROVIDER_MAIN_API_KEY: 'test-only-secret',
   INTERNAL_MACHINE_SECRET_ENV: 'CRON_SECRET',
 }
 
 describe('Step 1 runtime configuration contract', () => {
-  it('accepts names and non-secret provider metadata without reading secret values', () => {
-    expect(validateRuntimeConfiguration(validEnvironment).origins).toEqual([
+  it('accepts provider metadata without returning credential values', () => {
+    const runtime = validateRuntimeConfiguration(validEnvironment)
+    expect(runtime.origins).toEqual([
       'http://localhost:3000',
       'https://techpulse.example',
     ])
+    expect(runtime.providerRegistry.workloadPolicies[0]).toMatchObject({
+      workloadId: 'summary',
+      modelFallbackRouteIds: ['summary-model-fallback'],
+    })
+    expect(runtime).not.toHaveProperty('providerAdmissionDomains')
   })
 
-  it('rejects a credential split across provider admission domains', () => {
+  it('rejects a missing credential reference without exposing its value', () => {
     const environment = {
       ...validEnvironment,
-      PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify([
-        {
-          admissionDomainId: 'one',
-          provider: 'openrouter',
-          credentialEnvName: 'SAME_KEY',
-          maxConcurrency: 1,
-          budgetLimit: 10,
-          budgetWindow: 'day',
-          routes: [{ routeId: 'one-route', admissionDomainId: 'one', model: 'model-one', capability: 'nonconfidential', evidenceUrl: 'https://one.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
-        },
-        {
-          admissionDomainId: 'two',
-          provider: 'openrouter',
-          credentialEnvName: 'SAME_KEY',
-          maxConcurrency: 1,
-          budgetLimit: 10,
-          budgetWindow: 'day',
-          routes: [{ routeId: 'two-route', admissionDomainId: 'two', model: 'model-two', capability: 'nonconfidential', evidenceUrl: 'https://two.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
-        },
-      ]),
     }
-    expect(() => validateRuntimeConfiguration(environment)).toThrow(/credential split/)
+    delete environment.PROVIDER_MAIN_API_KEY
+    expect(() => validateRuntimeConfiguration(environment)).toThrow(/credential.*missing/i)
   })
 
   it('rejects unsafe origins, keyrings, checkpoint ids and provider bounds', () => {
@@ -67,18 +62,6 @@ describe('Step 1 runtime configuration contract', () => {
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, QUOTA_HMAC_RETIRING_KEY_ENVS: 'OLD_A,OLD_B,OLD_C' })).toThrow(/at most 2/)
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, QUOTA_HMAC_RETIRING_KEY_ENVS: 'QUOTA_HMAC_CURRENT_KEY' })).toThrow(/duplicate\/current/)
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, INTERNAL_MACHINE_SECRET_ENV: 'bad-name' })).toThrow(/environment variable name/)
-    expect(() => validateRuntimeConfiguration({ ...validEnvironment, PROVIDER_ADMISSION_DOMAINS_JSON: '{}' })).toThrow(/must be an array/)
-    expect(() => validateRuntimeConfiguration({
-      ...validEnvironment,
-      PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify([{
-        admissionDomainId: 'bad',
-        provider: 'openrouter',
-        credentialEnvName: 'KEY',
-        maxConcurrency: 9,
-        budgetLimit: 10,
-        budgetWindow: 'day',
-        routes: [{ routeId: 'route', admissionDomainId: 'bad', model: 'model', capability: 'nonconfidential', evidenceUrl: 'https://bad.example/evidence', reviewedAt: '2026-01-01T00:00:00.000Z', evidenceExpiresAt: '2099-01-01T00:00:00.000Z', enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60 }],
-      }]),
-    })).toThrow(/maxConcurrency|concurrency/)
+    expect(() => validateRuntimeConfiguration({ ...validEnvironment, PROVIDER_ADMISSION_DOMAINS_JSON: '[{}]' })).toThrow(/legacy|graph/i)
   })
 })

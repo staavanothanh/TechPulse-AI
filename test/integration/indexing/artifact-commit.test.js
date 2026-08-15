@@ -8,8 +8,9 @@ const SOURCE_ID = '507f1f77bcf86cd799439021'
 const JOB_ID = '507f1f77bcf86cd799439041'
 const now = new Date('2026-08-10T01:00:00.000Z')
 const fence = { key: `indexing:article:${ARTICLE_ID}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2 }
+const embeddingTarget = { model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1' }
 
-function setup({ leaseMatched = 1, task = 'summary', source, article } = {}) {
+function setup({ leaseMatched = 1, task = 'summary', source, article, target = embeddingTarget } = {}) {
   const session = { withTransaction: vi.fn(async (work) => work()), endSession: vi.fn(async () => undefined) }
   const collections = {
     jobLeases: { updateOne: vi.fn(async () => ({ matchedCount: leaseMatched })) },
@@ -20,9 +21,7 @@ function setup({ leaseMatched = 1, task = 'summary', source, article } = {}) {
       updateOne: vi.fn(async () => ({ matchedCount: 1 })),
     },
   }
-  const repository = new MongoArticleRepository({
-    db: { collection: (name) => collections[name] }, client: { startSession: () => session }, now: () => now,
-  })
+  const repository = new MongoArticleRepository({ db: { collection: (name) => collections[name] }, client: { startSession: () => session }, now: () => now }, { embeddingTarget: target })
   return { repository, collections, session }
 }
 
@@ -51,8 +50,19 @@ describe('Step 9 Mongo artifact commit fence', () => {
     const { repository, collections } = setup({ leaseMatched: 0, task: 'embedding' })
     await expect(repository.commitEmbeddingArtifact({
       job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'embedding' }, fence, expectedSourcePolicyVersion: 4, inputHash: 'b'.repeat(64),
-      embedding: { embeddingStatus: 'ready', embedding: Array(1024).fill(0), embeddingModel: 'baai/bge-m3', embeddingDimensions: 1024, embeddingInputHash: 'b'.repeat(64), embeddingVersion: 1, embeddingSourcePolicyVersion: 4, embeddedAt: now, embeddingError: null },
+      embedding: { embeddingStatus: 'ready', embedding: Array(3).fill(0), embeddingModel: embeddingTarget.model, embeddingDimensions: embeddingTarget.dimensions, embeddingArtifactCompatibilityId: embeddingTarget.artifactCompatibilityId, embeddingInputHash: 'b'.repeat(64), embeddingVersion: embeddingTarget.version, embeddingSourcePolicyVersion: 4, embeddedAt: now, embeddingError: null },
     })).resolves.toBe(false)
+    expect(collections.articles.updateOne).not.toHaveBeenCalled()
+  })
+
+  it('persists the exact embedding artifact compatibility identity and rejects a mismatched identity', async () => {
+    const { repository, collections, session } = setup({ task: 'embedding' })
+    const inputHash = buildPolicyDerivedInput({ article: { sourceId: SOURCE_ID, titleOriginal: 'Article', topics: [], publishedAt: now, summaryStatus: 'pending' }, source: { id: SOURCE_ID, name: 'Tech Review', policyVersion: 4, operationalStatus: 'active', licenseStatus: 'permitted', llmInputScope: 'metadata', technicalCheck: { status: 'passed' }, storageScope: { metadata: true, excerpt: false, summary: true, embedding: true }, mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false } }, purpose: 'embedding' }).inputHash
+    const valid = { embeddingStatus: 'ready', embedding: [0.1, 0.2, 0.3], embeddingModel: embeddingTarget.model, embeddingDimensions: embeddingTarget.dimensions, embeddingArtifactCompatibilityId: embeddingTarget.artifactCompatibilityId, embeddingInputHash: inputHash, embeddingVersion: embeddingTarget.version, embeddingSourcePolicyVersion: 4, embeddedAt: now, embeddingError: null }
+    await expect(repository.commitEmbeddingArtifact({ job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'embedding' }, fence, expectedSourcePolicyVersion: 4, inputHash, embedding: valid })).resolves.toBe(true)
+    expect(collections.articles.updateOne).toHaveBeenCalledWith(expect.any(Object), { $set: expect.objectContaining({ embeddingArtifactCompatibilityId: embeddingTarget.artifactCompatibilityId }) }, expect.objectContaining({ session }))
+    collections.articles.updateOne.mockClear()
+    await expect(repository.commitEmbeddingArtifact({ job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'embedding' }, fence, expectedSourcePolicyVersion: 4, inputHash, embedding: { ...valid, embeddingArtifactCompatibilityId: 'other-compatibility' } })).resolves.toBe(false)
     expect(collections.articles.updateOne).not.toHaveBeenCalled()
   })
 

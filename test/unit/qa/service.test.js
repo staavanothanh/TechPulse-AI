@@ -1,9 +1,43 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createQaService, scopeValue } from '../../../server/application/qa/service.js'
+import { createQaService as createQaServiceImpl, scopeValue } from '../../../server/application/qa/service.js'
+import { ProviderRoutingError } from '../../../server/ai/provider-router.js'
+import { ProviderAdapterError } from '../../../server/ai/provider-error-taxonomy.js'
 
 const auth = {
   user: { id: 'user-1', status: 'active', sessionVersion: 3 },
   session: { id: 'session-1', userSessionVersion: 3 },
+}
+
+function routerFixture({ routes = {}, providerAdmission } = {}) {
+  const route = (routeId, providerFailureDomainId = 'domain-a', model = `${routeId}-model`) => ({ routeId: routeId ?? 'qa-primary', providerFailureDomainId, model })
+  const primary = route(routes.primary ?? 'primary')
+  const fallback = routes.fallback ? route(routes.fallback, routes.fallbackDomain ?? primary.providerFailureDomainId, `${routes.fallback}-model`) : null
+  const support = route(routes.support ?? 'support', routes.supportDomain ?? primary.providerFailureDomainId, 'support-model')
+  const call = async ({ routeValue, workloadId, admittedInput, invoke }) => {
+    const kind = workloadId === 'qa-generation' ? 'answer-primary' : 'answer-support'
+    if (providerAdmission?.run) return providerAdmission.run({ routeId: routeValue.routeId, capability: 'zdr-verified', attemptId: 'test-attempt', kind, invoke: () => invoke({ route: routeValue, admittedInput }) })
+    return invoke({ route: routeValue, admittedInput })
+  }
+  return {
+    async execute({ workloadId, admittedInput, invoke, validateOutput }) {
+      if (workloadId === 'qa-support') {
+        const output = await call({ routeValue: support, workloadId, admittedInput, invoke })
+        return { output: validateOutput({ route: support, output, admittedInput }), metadata: { routeId: support.routeId, providerFailureDomainId: support.providerFailureDomainId, fallback: 'none' } }
+      }
+      try {
+        const output = await call({ routeValue: primary, workloadId, admittedInput, invoke })
+        return { output: validateOutput({ route: primary, output, admittedInput }), metadata: { routeId: primary.routeId, providerFailureDomainId: primary.providerFailureDomainId, fallback: 'none' } }
+      } catch (error) {
+        if (!fallback || !error?.retryable && !['model-retryable', 'provider-retryable'].includes(error?.failureClass)) throw error
+        const output = await call({ routeValue: fallback, workloadId, admittedInput, invoke })
+        return { output: validateOutput({ route: fallback, output, admittedInput }), metadata: { routeId: fallback.routeId, providerFailureDomainId: fallback.providerFailureDomainId, fallback: fallback.providerFailureDomainId === primary.providerFailureDomainId ? 'model' : 'provider' } }
+      }
+    },
+  }
+}
+
+function createQaService(options = {}) {
+  return createQaServiceImpl({ ...options, providerRouter: options.providerRouter ?? routerFixture(options) })
 }
 
 function repository({ records = [] } = {}) {
@@ -53,6 +87,10 @@ function evidence() {
 }
 
 describe('Step 10 grounded answer service', () => {
+  it('requires the workload provider router boundary', () => {
+    expect(() => createQaServiceImpl({ chatRepository: repository() })).toThrow(/provider router/i)
+  })
+
   it('normalizes topics before validation and rejects empty or duplicate topics', () => {
     expect(() => scopeValue({ topics: [' AI ', 'ai'] })).toThrowError(expect.objectContaining({ status: 422 }))
     expect(() => scopeValue({ topics: ['   '] })).toThrowError(expect.objectContaining({ status: 422 }))
@@ -122,7 +160,7 @@ describe('Step 10 grounded answer service', () => {
     await service.createAnswer({ auth, question: 'Kết luận là gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'atomic-receipt-key' })
 
     expect(repo.appendAnswer).toHaveBeenCalledWith(expect.objectContaining({ attempt: expect.objectContaining({ outcome: 'completed' }) }))
-    expect(updateAttempt).toHaveBeenCalledTimes(2)
+    expect(updateAttempt).toHaveBeenCalledTimes(3)
   })
 
   it('rejects a provider paragraph that lacks the exact internal evidence block ID', async () => {
@@ -245,7 +283,7 @@ describe('Step 10 grounded answer service', () => {
       .mockResolvedValueOnce(false)
     const primary = vi.fn(async () => { throw Object.assign(new Error('retryable'), { retryable: true }) })
     const fallback = vi.fn()
-    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: vi.fn(async ({ route }) => route === 'primary' ? primary() : fallback()) } }, routes: { primary: 'primary', fallback: 'fallback' } })
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: vi.fn(async ({ route }) => route.routeId === 'primary' ? primary() : fallback()) } }, routes: { primary: 'primary', fallback: 'fallback' } })
 
     await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'lost-before-fallback-key' })).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
 
@@ -279,7 +317,7 @@ describe('Step 10 grounded answer service', () => {
       throw Object.assign(new Error('retryable'), { retryable: true })
     })
     const fallback = vi.fn()
-    const answer = vi.fn(async ({ route }) => route === 'primary' ? primary() : fallback())
+    const answer = vi.fn(async ({ route }) => route.routeId === 'primary' ? primary() : fallback())
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', fallback: 'fallback' } })
 
     await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'policy-before-fallback' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
@@ -341,7 +379,7 @@ describe('Step 10 grounded answer service', () => {
 
     const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'missing-address-confirmation' })
 
-    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence' })
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'provider-unavailable' })
     expect(repo.sessions[0].answer.paragraphs).toEqual([])
   })
 
@@ -483,7 +521,7 @@ describe('Step 10 grounded answer service', () => {
     repo.assertActorFence = vi.fn(async () => true)
     const updateAttempt = vi.spyOn(repo, 'updateAnswerAttempt')
     const answer = vi.fn(async ({ route }) => {
-      if (route === 'primary') throw Object.assign(new Error('retryable'), { retryable: true })
+      if (route.routeId === 'primary') throw Object.assign(new Error('retryable'), { retryable: true })
       return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
     })
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', fallback: 'fallback', support: 'support' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
@@ -502,5 +540,162 @@ describe('Step 10 grounded answer service', () => {
 
     await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'invoke-actor-fence' })).rejects.toMatchObject({ status: 401 })
     expect(answer).not.toHaveBeenCalled()
+  })
+
+  it('delegates generation and support to workload router with one immutable input and safe route metadata', async () => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async ({ route }) => {
+      if (route.routeId === 'qa-primary') throw Object.assign(new Error('model unavailable'), { failureClass: 'model-retryable' })
+      return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
+    })
+    const verifySupport = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const generationInputs = []
+    const invocationInputs = []
+    const providerRouter = {
+      execute: vi.fn(async ({ workloadId, admittedInput, invoke, validateOutput }) => {
+        if (workloadId === 'qa-generation') {
+          generationInputs.push(admittedInput)
+          const primary = { routeId: 'qa-primary', providerId: 'provider-a', providerFailureDomainId: 'domain-a', model: 'model-a' }
+          const fallback = { routeId: 'qa-model-fallback', providerId: 'provider-a', providerFailureDomainId: 'domain-a', model: 'model-b' }
+          invocationInputs.push(admittedInput)
+          await expect(invoke({ route: primary, admittedInput })).rejects.toMatchObject({ failureClass: 'model-retryable' })
+          invocationInputs.push(admittedInput)
+          const output = await invoke({ route: fallback, admittedInput })
+          return { output: validateOutput({ route: fallback, output, admittedInput }), metadata: { workloadId, operation: 'answer', routeId: fallback.routeId, providerId: fallback.providerId, providerFailureDomainId: fallback.providerFailureDomainId, model: fallback.model, externalAttempts: 2, fallback: 'model' } }
+        }
+        const route = { routeId: 'qa-support', providerId: 'provider-a', providerFailureDomainId: 'domain-a', model: 'support-model' }
+        const output = await invoke({ route, admittedInput })
+        return { output, metadata: { workloadId, operation: 'support', routeId: route.routeId, providerId: route.providerId, providerFailureDomainId: route.providerFailureDomainId, model: route.model, externalAttempts: 1, fallback: 'none' } }
+      }),
+    }
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      providerRouter,
+      providerAdapters: { llmProvider: { answer, verifySupport } },
+      supportVerifier: verifySupport,
+    })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'router-integration-key' })
+
+    expect(result.answer.status).toBe('answered')
+    expect(providerRouter.execute.mock.calls.map(([input]) => input.workloadId)).toEqual(['qa-generation', 'qa-support'])
+    expect(generationInputs).toHaveLength(1)
+    expect(Object.isFrozen(generationInputs[0])).toBe(true)
+    expect(invocationInputs[1]).toBe(invocationInputs[0])
+    expect(Object.isFrozen(invocationInputs[0].prompt)).toBe(true)
+    expect(generationInputs[0].question).toBe('Bài viết kết luận gì?')
+    expect(answer).toHaveBeenCalledTimes(2)
+    expect(answer.mock.calls[0][0].input).toBe(answer.mock.calls[1][0].input)
+    expect([...repo.attempts.values()][0]).toMatchObject({ providerRouteId: 'qa-model-fallback', providerFailureDomainId: 'domain-a', fallbackKind: 'model' })
+  })
+
+  it.each([
+    ['policy', 'policy-blocked'],
+    ['privacy', 'provider-unavailable'],
+    ['sensitive-input', 'sensitive-input'],
+    ['schema', 'provider-unavailable'],
+    ['support', 'provider-unavailable'],
+  ])('keeps %s routing errors terminal without a fallback call', async (failureClass, expectedReason) => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn()
+    const providerRouter = { execute: vi.fn(async () => { throw new ProviderRoutingError({ failureClass, code: `provider_${failureClass}`, retryable: false }) }) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } } })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: `terminal-${failureClass}` })
+
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: expectedReason })
+    expect(providerRouter.execute).toHaveBeenCalledTimes(1)
+    expect(answer).not.toHaveBeenCalled()
+  })
+
+  it('persists cross-provider fallback metadata without starting a second fallback family', async () => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async ({ route }) => route.routeId === 'qa-provider-primary'
+      ? Promise.reject(Object.assign(new Error('provider domain unavailable'), { failureClass: 'provider-retryable' }))
+      : { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] })
+    const providerRouter = {
+      execute: vi.fn(async ({ workloadId, admittedInput, invoke, validateOutput }) => {
+        if (workloadId === 'qa-generation') {
+          const primary = { routeId: 'qa-provider-primary', providerId: 'provider-a', providerFailureDomainId: 'domain-a', model: 'model-a' }
+          const fallback = { routeId: 'qa-provider-fallback', providerId: 'provider-b', providerFailureDomainId: 'domain-b', model: 'model-b' }
+          await expect(invoke({ route: primary, admittedInput })).rejects.toMatchObject({ failureClass: 'provider-retryable' })
+          const output = await invoke({ route: fallback, admittedInput })
+          return { output: validateOutput({ route: fallback, output, admittedInput }), metadata: { workloadId, operation: 'answer', routeId: fallback.routeId, providerId: fallback.providerId, providerFailureDomainId: fallback.providerFailureDomainId, model: fallback.model, externalAttempts: 2, fallback: 'provider' } }
+        }
+        const route = { routeId: 'qa-provider-support', providerId: 'provider-b', providerFailureDomainId: 'domain-b', model: 'support-model' }
+        return { output: await invoke({ route, admittedInput }), metadata: { workloadId, operation: 'support', routeId: route.routeId, providerId: route.providerId, providerFailureDomainId: route.providerFailureDomainId, model: route.model, externalAttempts: 1, fallback: 'none' } }
+      }),
+    }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer, verifySupport: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) } } })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'provider-fallback-metadata' })).resolves.toMatchObject({ answer: { status: 'answered' } })
+    expect(answer).toHaveBeenCalledTimes(2)
+    expect([...repo.attempts.values()][0]).toMatchObject({ providerRouteId: 'qa-provider-fallback', providerFailureDomainId: 'domain-b', fallbackKind: 'provider' })
+  })
+
+  it('keeps an ambiguous provider outcome terminal and does not start a second provider operation', async () => {
+    const repo = repository({ records: evidence() })
+    const providerRouter = { execute: vi.fn(async () => { throw new ProviderRoutingError({ failureClass: 'ambiguous', code: 'ambiguous_provider_outcome', retryable: false }) }) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer: vi.fn() } } })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'ambiguous-router-key' })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+    expect(providerRouter.execute).toHaveBeenCalledTimes(1)
+    expect([...repo.attempts.values()][0]).toMatchObject({ status: 'failed', error: expect.objectContaining({ code: 'ambiguous_provider_outcome', retryable: false }) })
+  })
+
+  it('keeps actor fence loss as canonical unauthorized instead of ambiguous provider outcome', async () => {
+    const repo = repository({ records: evidence() })
+    repo.assertActorFence = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const providerRouter = {
+      execute: vi.fn(async ({ invoke, admittedInput }) => {
+        try { return { output: await invoke({ route: { routeId: 'qa-primary', providerFailureDomainId: 'domain-a' }, admittedInput }) } } catch { throw new ProviderRoutingError({ failureClass: 'ambiguous', code: 'ambiguous_provider_outcome', retryable: false }) }
+      }),
+    }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer: vi.fn() } } })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'router-actor-fence' })).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    expect([...repo.attempts.values()][0]).not.toMatchObject({ error: expect.objectContaining({ code: 'ambiguous_provider_outcome' }) })
+  })
+
+  it('keeps evidence fence loss as canonical conflict instead of ambiguous provider outcome', async () => {
+    const repo = repository({ records: evidence() })
+    repo.findQnaEvidence = vi.fn()
+      .mockResolvedValueOnce(evidence())
+      .mockResolvedValueOnce([])
+    const providerRouter = {
+      execute: vi.fn(async ({ invoke, admittedInput }) => {
+        try { return { output: await invoke({ route: { routeId: 'qa-primary', providerFailureDomainId: 'domain-a' }, admittedInput }) } } catch { throw new ProviderRoutingError({ failureClass: 'ambiguous', code: 'ambiguous_provider_outcome', retryable: false }) }
+      }),
+    }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer: vi.fn() } } })
+
+    await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'router-evidence-fence' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
+    expect([...repo.attempts.values()][0]).not.toMatchObject({ error: expect.objectContaining({ code: 'ambiguous_provider_outcome' }) })
+  })
+
+  it.each([
+    ['schema', 'refused'],
+    ['ambiguous', 'failed'],
+  ])('persists fallback route/domain/kind when fallback ends %s', async (failureClass, status) => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async ({ route }) => {
+      if (route.routeId === 'qa-primary') throw new ProviderAdapterError('model-retryable')
+      throw new ProviderAdapterError('schema')
+    })
+    const providerRouter = {
+      execute: vi.fn(async ({ invoke, admittedInput }) => {
+        const primary = { routeId: 'qa-primary', providerFailureDomainId: 'domain-a', model: 'model-a' }
+        const fallback = { routeId: 'qa-model-fallback', providerFailureDomainId: 'domain-a', model: 'model-b' }
+        await expect(invoke({ route: primary, admittedInput })).rejects.toMatchObject({ failureClass: 'model-retryable' })
+        await expect(invoke({ route: fallback, admittedInput })).rejects.toMatchObject({ failureClass: 'schema' })
+        throw new ProviderRoutingError({ failureClass, code: failureClass === 'ambiguous' ? 'ambiguous_provider_outcome' : 'provider_schema_invalid', retryable: false })
+      }),
+    }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } } })
+
+    if (failureClass === 'schema') await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: `terminal-fallback-${failureClass}` })).resolves.toMatchObject({ answer: { status } })
+    else await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: `terminal-fallback-${failureClass}` })).rejects.toMatchObject({ status: 503 })
+    expect([...repo.attempts.values()][0]).toMatchObject({ status, providerRouteId: 'qa-model-fallback', providerFailureDomainId: 'domain-a', fallbackKind: 'model' })
   })
 })

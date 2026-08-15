@@ -103,7 +103,7 @@ docs/
 
 Steps 1–11 đã có implementation commits và focused verification. Canonical OpenAPI hiện có 55 operations. Step 12 chưa được handoff và không được coi là release pass trước khi rerun full contract/integration/E2E/security, Atlas role/capability, restore và deployment evidence.
 
-ADR-0013 là architecture amendment trước Step 12. Current code vẫn có provider/model selection cụ thể trong provider bootstrap, nên Step 9/10 owner phải remediate routing thành workload config trước khi Step 12 có thể chứng minh provider outage fallback. Đây không đổi HTTP contract và không tạo client/admin model picker.
+ADR-0013 đã được implement trước Step 12 bằng provider graph, protocol adapter, workload router, route/provider-domain circuit và migration `provider-routing-v2`. Provider/model selection không còn nằm trong application/bootstrap routing; deployment phải áp migration v2, cập nhật graph environment và verify runtime role trước khi bật provider workloads. Thay đổi này không đổi HTTP contract và không tạo client/admin model picker.
 
 Các release item còn mở:
 

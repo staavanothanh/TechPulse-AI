@@ -31,4 +31,45 @@ describe('Step 9 retrieval top-five eval harness', () => {
     const invalid = { ...fixture(), fixtureDigest: '0'.repeat(64) }
     expect(runRetrievalEvaluation({ fixture: invalid })).toMatchObject({ passed: false, reason: 'fixture_unavailable' })
   })
+
+  it('uses fixture provenance instead of a vendor or model constant', () => {
+    const value = fixture()
+    const configured = {
+      ...value,
+      provenance: {
+        ...value.provenance,
+        providerId: 'configured-provider',
+        endpointId: 'configured-embedding-endpoint',
+        model: 'configured-embedding-model',
+        artifactCompatibilityId: 'configured-embedding-v1',
+      },
+    }
+    const report = runRetrievalEvaluation({ fixture: { ...configured, fixtureDigest: retrievalFixtureDigest(configured) } })
+    expect(report).toEqual(expect.objectContaining({
+      providerId: 'configured-provider',
+      endpointId: 'configured-embedding-endpoint',
+      model: 'configured-embedding-model',
+      artifactCompatibilityId: 'configured-embedding-v1',
+      passed: true,
+    }))
+  })
+
+  it('rejects a fixture when an explicitly expected route identity differs', () => {
+    const value = fixture()
+    const configured = {
+      ...value,
+      provenance: {
+        ...value.provenance,
+        providerId: 'configured-provider',
+        endpointId: 'configured-embedding-endpoint',
+        model: 'configured-embedding-model',
+        artifactCompatibilityId: 'configured-embedding-v1',
+      },
+    }
+    const valid = { ...configured, fixtureDigest: retrievalFixtureDigest(configured) }
+    expect(runRetrievalEvaluation({
+      fixture: valid,
+      embeddingSpec: { providerId: 'other-provider', endpointId: 'configured-embedding-endpoint', model: 'configured-embedding-model', dimensions: 1024, version: 1, artifactCompatibilityId: 'configured-embedding-v1' },
+    })).toMatchObject({ passed: false, reason: 'fixture_unavailable' })
+  })
 })

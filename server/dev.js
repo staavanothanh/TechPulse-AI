@@ -17,7 +17,7 @@ const { createConfiguredContentServices } = await import('./bootstrap/content.js
 const { createConfiguredIndexingRuntime } = await import('./bootstrap/indexing.js')
 const { createConfiguredQaService } = await import('./bootstrap/qa.js')
 const { createConfiguredAdminGovernanceService } = await import('./bootstrap/admin.js')
-const { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } = await import('./ai/provider-adapters.js')
+const { createConfiguredProviderAdapters, DEFAULT_CHAT_TIMEOUT_MS } = await import('./ai/provider-adapters.js')
 const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
 const { createRateLimitAdmission } = await import('./security/rate-limit-admission.js')
@@ -63,14 +63,14 @@ try {
     let adapters
     let indexing = {}
     try {
-      adapters = createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
-      indexing = await createConfiguredIndexingRuntime({ context: configured.context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerAdmissionDomains, ...adapters })
+      adapters = createConfiguredProviderAdapters({ registry: runtime.providerRegistry, summaryTimeoutMs: DEFAULT_CHAT_TIMEOUT_MS })
+      indexing = await createConfiguredIndexingRuntime({ context: configured.context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerRegistry, ...adapters })
       indexingJobService = indexing.indexingJobService
       queryEmbedding = indexing.queryEmbedding
     } catch { console.warn('Indexing service is unavailable until the Step 9 migration/provider configuration is ready') }
     try {
-      adapters ??= createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
-      qaService = await createConfiguredQaService({ context: configured.context, providerRegistry: runtime.providerAdmissionDomains, providerAdapters: adapters, providerAdmission: indexing.providerAdmission, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
+      adapters ??= createConfiguredProviderAdapters({ registry: runtime.providerRegistry, summaryTimeoutMs: DEFAULT_CHAT_TIMEOUT_MS })
+      qaService = await createConfiguredQaService({ context: configured.context, providerRegistry: runtime.providerRegistry, providerAdapters: adapters, providerAdmission: indexing.providerAdmission, queryEmbedding: indexing.queryEmbedding, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
     } catch { console.warn('Grounded Q&A service is unavailable until the Step 10 migration/provider configuration is ready') }
   } catch { console.warn('Durable job service is unavailable until its migration is applied') }
   try {

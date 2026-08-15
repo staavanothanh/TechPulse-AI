@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { assertArticlesReady, createConfiguredContentServices } from '../../../server/bootstrap/content.js'
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
 import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from '../../../scripts/migrations/articles.js'
+import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../../scripts/migrations/provider-routing-v2.js'
 
 function readyContext({ validator = ARTICLE_COLLECTIONS.articles.validator, indexes, sources = [] } = {}) {
   const actualIndexes = indexes ?? ARTICLE_INDEXES.articles.map((index) => index.name === 'articles_search_text'
@@ -44,6 +45,10 @@ describe('Step 8 content bootstrap readiness', () => {
     await expect(assertArticlesReady(readyContext({
       validator: ARTICLE_GOVERNANCE_HARDENING_VALIDATOR,
     }))).resolves.toBeUndefined()
+  })
+
+  it('accepts the exact provider-routing-v2 article validator', async () => {
+    await expect(assertArticlesReady(readyContext({ validator: PROVIDER_ROUTING_ARTICLE_VALIDATOR }))).resolves.toBeUndefined()
   })
 
   it('fails closed when the article validator or any exact index is not ready', async () => {

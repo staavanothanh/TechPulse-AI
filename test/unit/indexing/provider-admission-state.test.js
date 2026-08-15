@@ -43,4 +43,19 @@ describe('Step 9 aggregate provider admission state', () => {
     expect(probe.state.routeCircuits[0]).toEqual(expect.objectContaining({ state: 'half-open', halfOpenProbeReservationId: 'half-open-probe' }))
     expect(applyProviderReservation(probe.state, { domain, route: primary, reservationId: 'second-probe', attemptId: '507f1f77bcf86cd799439043', kind: 'summary', units: 1, now, expiresAt: new Date(now.getTime() + 60_000) })).toEqual(expect.objectContaining({ allowed: false, reason: 'circuit-open' }))
   })
+
+  it('preserves route failure history for terminal outcomes and resets only on success', () => {
+    const state = {
+      admissionDomainId: 'shared', provider: 'openrouter', maxConcurrency: 1, budgetWindowStart: now,
+      spentUnits: 1, budgetLimit: 2,
+      activeReservations: [{ reservationId: 'half-open-probe', routeId: 'primary', attemptId: '507f1f77bcf86cd799439041', kind: 'summary', expiresAt: new Date(now.getTime() + 60_000) }],
+      routeCircuits: [{ routeId: 'primary', state: 'half-open', consecutiveRetryableFailures: 3, halfOpenProbeReservationId: 'half-open-probe' }], updatedAt: now,
+    }
+    const terminal = applyProviderRelease(state, { routeId: 'primary', reservationId: 'half-open-probe', outcome: 'nonretryable-failure', now }).state
+    expect(terminal.routeCircuits[0]).toEqual({ routeId: 'primary', state: 'half-open', consecutiveRetryableFailures: 3 })
+
+    const reprobe = applyProviderReservation(terminal, { domain, route: primary, reservationId: 'next-probe', attemptId: '507f1f77bcf86cd799439042', kind: 'summary', units: 1, now, expiresAt: new Date(now.getTime() + 60_000) })
+    const succeeded = applyProviderRelease(reprobe.state, { routeId: 'primary', reservationId: 'next-probe', outcome: 'succeeded', now }).state
+    expect(succeeded.routeCircuits[0]).toEqual({ routeId: 'primary', state: 'closed', consecutiveRetryableFailures: 0 })
+  })
 })

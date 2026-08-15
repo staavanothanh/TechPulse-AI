@@ -1,46 +1,50 @@
 import { describe, expect, it } from 'vitest'
 import { validateProviderConfiguration } from '../../../server/ai/provider-registry.js'
 
-const future = '2027-08-10T00:00:00.000Z'
-const reviewed = '2026-08-01T00:00:00.000Z'
-const evidence = 'https://privacy.example.com/evidence'
+const now = new Date('2026-08-10T00:00:00.000Z')
 
-function domain(overrides = {}) {
+function configuration() {
   return {
-    admissionDomainId: 'openrouter-main',
-    provider: 'openrouter',
-    credentialEnvName: 'OPENROUTER_KEY_ENV',
-    maxConcurrency: 2,
-    budgetLimit: 1000,
-    budgetWindow: 'day',
+    providerFailureDomains: [{ providerFailureDomainId: 'router-control-plane', configVersion: 1, failureThreshold: 3, cooldownSeconds: 60 }],
+    providers: [{ providerId: 'router', providerFailureDomainId: 'router-control-plane', adapterId: 'openai-compatible', trustedEndpointProfileId: 'openrouter-v1' }],
+    admissionDomains: [{ admissionDomainId: 'router-main', providerId: 'router', credentialEnvName: 'ROUTER_KEY_ENV', maxConcurrency: 2, budgetLimit: 1000, budgetWindow: 'day' }],
     routes: [{
-      routeId: 'summary-primary', admissionDomainId: 'openrouter-main', model: 'deepseek/chat',
-      capability: 'nonconfidential', evidenceUrl: evidence, reviewedAt: reviewed,
-      evidenceExpiresAt: future, enabled: true, retryableFailureThreshold: 3, cooldownSeconds: 60,
+      routeId: 'summary-primary', providerId: 'router', admissionDomainId: 'router-main', model: 'summary/model', operations: ['summary'],
+      capability: 'nonconfidential', evidenceUrl: 'https://privacy.example/evidence', reviewedAt: '2026-08-01T00:00:00.000Z',
+      evidenceExpiresAt: '2027-08-01T00:00:00.000Z', artifactCompatibilityId: null, enabled: true,
+      routeFailureThreshold: 3, routeCooldownSeconds: 60,
     }],
-    ...overrides,
+    workloadPolicies: [{ workloadId: 'summary', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'summary-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] }],
   }
 }
 
-describe('Step 9 static provider capability registry', () => {
-  it('accepts reviewed exact routes and freezes the normalized tables', () => {
-    const result = validateProviderConfiguration([domain()], { now: new Date('2026-08-10T00:00:00.000Z') })
-    expect(result.domains[0]).toEqual(expect.objectContaining({ maxConcurrency: 2, budgetLimit: 1000 }))
-    expect(result.routes[0]).toEqual(expect.objectContaining({ capability: 'nonconfidential', retryableFailureThreshold: 3, cooldownSeconds: 60 }))
+describe('Step 9 provider configuration boundaries', () => {
+  it('accepts reviewed exact routes and freezes normalized admission tables', () => {
+    const result = validateProviderConfiguration(configuration(), { now })
+
+    expect(result.domains[0]).toEqual(expect.objectContaining({ maxConcurrency: 2, budgetLimit: 1000, providerId: 'router' }))
+    expect(result.routes[0]).toEqual(expect.objectContaining({ capability: 'nonconfidential', providerFailureDomainId: 'router-control-plane' }))
     expect(Object.isFrozen(result.routes)).toBe(true)
   })
 
   it('rejects a credential split across admission domains', () => {
-    const split = domain({
-      admissionDomainId: 'second-domain',
-      routes: [{ ...domain().routes[0], routeId: 'summary-fallback', admissionDomainId: 'second-domain', model: 'fallback/chat' }],
-    })
-    expect(() => validateProviderConfiguration([domain(), split], { now: new Date('2026-08-10T00:00:00.000Z') })).toThrow(/credential/i)
+    const value = configuration()
+    value.admissionDomains.push({ ...value.admissionDomains[0], admissionDomainId: 'router-secondary' })
+
+    expect(() => validateProviderConfiguration(value, { now })).toThrow(/credential/i)
   })
 
-  it('rejects expired evidence, arbitrary circuit settings and concurrency above eight', () => {
-    expect(() => validateProviderConfiguration([domain({ routes: [{ ...domain().routes[0], evidenceExpiresAt: reviewed }] })], { now: new Date('2026-08-10T00:00:00.000Z') })).toThrow(/evidence/i)
-    expect(() => validateProviderConfiguration([domain({ routes: [{ ...domain().routes[0], cooldownSeconds: 30 }] })])).toThrow(/cooldown/i)
-    expect(() => validateProviderConfiguration([domain({ maxConcurrency: 9 })])).toThrow(/concurrency/i)
+  it('rejects expired evidence and arbitrary circuit or concurrency settings', () => {
+    const expired = configuration()
+    expired.routes[0] = { ...expired.routes[0], evidenceExpiresAt: now.toISOString() }
+    expect(() => validateProviderConfiguration(expired, { now })).toThrow(/evidence/i)
+
+    const cooldown = configuration()
+    cooldown.routes[0] = { ...cooldown.routes[0], routeCooldownSeconds: 30 }
+    expect(() => validateProviderConfiguration(cooldown, { now })).toThrow(/cooldown/i)
+
+    const concurrency = configuration()
+    concurrency.admissionDomains[0] = { ...concurrency.admissionDomains[0], maxConcurrency: 9 }
+    expect(() => validateProviderConfiguration(concurrency, { now })).toThrow(/concurrency/i)
   })
 })

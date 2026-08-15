@@ -1,6 +1,8 @@
 import { createProviderAdmission } from '../ai/provider-admission.js'
+import { createProviderRouter } from '../ai/provider-router.js'
 import { ObjectId } from 'mongodb'
-import { BGE_M3, validateBgeM3Embedding } from '../ai/embedding.js'
+import { validateEmbeddingVector } from '../ai/embedding.js'
+import { ProviderAdapterError } from '../ai/provider-error-taxonomy.js'
 import { sanitizeText } from '../domain/article/normalization.js'
 import { createArtifactProcessor } from '../application/indexing/artifact-processor.js'
 import { createIndexingJobService } from '../application/indexing/service.js'
@@ -9,10 +11,13 @@ import { createIndexingQueueAdapter } from '../jobs/indexing-queue.js'
 import { MongoArticleRepository } from '../repositories/mongo/article-repository.js'
 import { MongoIndexingJobRepository } from '../repositories/mongo/indexing-job-repository.js'
 import { MongoProviderAdmissionRepository } from '../repositories/mongo/provider-admission-repository.js'
+import { MongoProviderFailureDomainRepository } from '../repositories/mongo/provider-failure-domain-repository.js'
 import { MongoSourceRepository } from '../repositories/mongo/source-repository.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from '../../scripts/migrations/indexing-jobs.js'
 import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
+import { PROVIDER_ADMISSION_STATE_VALIDATOR_V2, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
+import { assertProviderRoutingReady } from './provider-routing.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -26,7 +31,8 @@ export async function assertIndexingJobsReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const [name, definition] of Object.entries(INDEXING_JOB_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || stableJson(collection.options?.validator) !== stableJson(definition.validator)) throw new Error('indexing-jobs validator is not ready')
+    const acceptedValidators = name === 'providerAdmissionStates' ? [definition.validator, PROVIDER_ADMISSION_STATE_VALIDATOR_V2] : name === 'indexingJobs' ? [definition.validator, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR] : [definition.validator]
+    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !acceptedValidators.some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs validator is not ready')
     const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
     if (INDEXING_JOB_INDEXES[name].some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('indexing-jobs indexes are not ready')
   }
@@ -36,44 +42,64 @@ export async function assertIndexingJobsReady(context) {
   if (INDEXING_ARTICLE_INDEXES.some((expected) => !exactMongoIndex(articleIndexes.get(expected.name), expected))) throw new Error('article reconciliation index is not ready')
 }
 
-function configuredRoutes(registry) {
-  const enabled = (registry?.routes ?? []).filter((route) => route.enabled === true)
-  const primary = enabled.find((route) => route.provider === 'opencode-zen' && route.model === 'deepseek-v4-flash-free')
-  if (!primary) throw new Error('OpenCode Zen primary summary route is not configured')
-  const fallback = enabled.find((route) => route.routeId !== primary.routeId && route.model === 'deepseek-v4-flash')
-  return {
-    summary: [primary, fallback].filter(Boolean).map((route) => route.routeId),
-    embedding: enabled.find((route) => route.model === 'baai/bge-m3')?.routeId,
-  }
+function workloadPolicy(registry, workloadId) {
+  const policy = (registry?.workloadPolicies ?? []).find((item) => item.workloadId === workloadId)
+  if (!policy) throw new Error(`Provider workload ${workloadId} is not configured`)
+  return policy
+}
+
+function configuredEmbeddingTarget(registry) {
+  const policy = workloadPolicy(registry, 'embedding')
+  const route = (registry?.routes ?? []).find((item) => item.routeId === policy.primaryRouteId)
+  if (!route || typeof route.model !== 'string' || !route.artifactCompatibilityId || !Number.isInteger(route.embeddingDimensions) || route.embeddingDimensions < 1 || !Number.isInteger(route.embeddingVersion) || route.embeddingVersion < 1) throw new Error('Embedding workload route is not configured')
+  return Object.freeze({ model: route.model, dimensions: route.embeddingDimensions, version: route.embeddingVersion, artifactCompatibilityId: route.artifactCompatibilityId })
+}
+
+function configuredEmbeddingRoute(registry) {
+  const policy = workloadPolicy(registry, 'embedding')
+  const route = (registry?.routes ?? []).find((item) => item.routeId === policy.primaryRouteId)
+  if (!route) throw new Error('Embedding workload route is not configured')
+  return route
 }
 
 export async function createConfiguredIndexingRuntime({
-  context, jobRuntime, rateLimitAdmission, providerRegistry = { domains: [], routes: [] }, llmProvider, embeddingProvider, now = () => new Date(),
+  context, jobRuntime, rateLimitAdmission, providerRegistry = { admissionDomains: [], providerFailureDomains: [], routes: [], workloadPolicies: [] }, llmProvider, embeddingProvider, now = () => new Date(),
 } = {}) {
   if (!jobRuntime?.queueRegistry || !jobRuntime?.maintenanceRegistry || !jobRuntime?.leaseRepository || typeof jobRuntime.coordinatorRunner !== 'function') throw new Error('Shared durable job runtime is required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   await assertIndexingJobsReady(context)
-  const indexingJobRepository = new MongoIndexingJobRepository(context)
-  const articleRepository = new MongoArticleRepository(context)
+  await assertProviderRoutingReady(context)
+  const embeddingTarget = configuredEmbeddingTarget(providerRegistry)
+  const indexingJobRepository = new MongoIndexingJobRepository(context, { embeddingTarget })
+  const articleRepository = new MongoArticleRepository(context, { embeddingTarget })
   const sourceRepository = new MongoSourceRepository(context)
   const providerAdmissionRepository = new MongoProviderAdmissionRepository(context)
-  const providerAdmission = createProviderAdmission({ repository: providerAdmissionRepository, registry: providerRegistry, now })
-  const artifactProcessor = createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerAdmission, llmProvider, embeddingProvider, routes: configuredRoutes(providerRegistry), now })
+  const providerFailureDomainRepository = new MongoProviderFailureDomainRepository(context)
+  const providerAdmission = createProviderAdmission({ repository: providerAdmissionRepository, failureDomainRepository: providerFailureDomainRepository, registry: providerRegistry, now })
+  const providerRouter = createProviderRouter({ workloadPolicies: providerRegistry.workloadPolicies ?? [], admission: providerAdmission, now })
+  const artifactProcessor = createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerRouter, llmProvider, embeddingProvider, embeddingTarget, now })
   jobRuntime.queueRegistry.register(createIndexingQueueAdapter({ indexingJobRepository, jobRepository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, executor: (input) => artifactProcessor.execute(input) }))
   jobRuntime.maintenanceRegistry.register('purge-indexing-jobs', ({ cutoff, limit }) => indexingJobRepository.purgeDueIndexingJobs({ cutoff, limit }))
   const reconciliationRunner = createReconciliationRunner({ repository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
   if (Array.isArray(jobRuntime.cronMaterializers)) jobRuntime.cronMaterializers.push(() => reconciliationRunner.runDueSources())
-  const indexingJobService = createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork: jobRuntime.coordinatorRunner, now })
-  const embeddingRoute = configuredRoutes(providerRegistry).embedding
+  const indexingJobService = createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork: jobRuntime.coordinatorRunner, embeddingTarget, now })
+  workloadPolicy(providerRegistry, 'summary')
+  const embeddingRoute = configuredEmbeddingRoute(providerRegistry)
   const queryEmbedding = async (query) => {
-    if (!embeddingRoute || !embeddingProvider) throw new Error('Query embedding is unavailable')
+    if (!embeddingProvider || typeof embeddingProvider.embed !== 'function') throw new Error('Query embedding is unavailable')
     const input = sanitizeText(query, 300)
-    const result = await providerAdmission.run({
-      routeId: embeddingRoute, capability: 'nonconfidential', attemptId: new ObjectId().toHexString(), kind: 'embedding',
-      invoke: (route) => embeddingProvider.embed({ route, input, model: BGE_M3.model, dimensions: BGE_M3.dimensions }),
+    const result = await providerRouter.execute({
+      workloadId: 'embedding', admittedInput: { purpose: 'retrieval', text: input }, attemptId: new ObjectId().toHexString(),
+      invoke: ({ route, admittedInput }) => embeddingProvider.embed({ route, input: admittedInput.text, model: route.model, dimensions: embeddingTarget.dimensions }),
+      validateOutput: ({ route, output }) => {
+        if (typeof route?.model !== 'string' || !route.model || typeof route.artifactCompatibilityId !== 'string' || !route.artifactCompatibilityId || route.artifactCompatibilityId !== embeddingTarget.artifactCompatibilityId) throw new ProviderAdapterError('config')
+        if (output?.model !== undefined && output.model !== route.model) throw new ProviderAdapterError('schema')
+        return { model: route.model, dimensions: embeddingTarget.dimensions, version: embeddingTarget.version, artifactCompatibilityId: route.artifactCompatibilityId, embedding: validateEmbeddingVector(output?.embedding, { dimensions: embeddingTarget.dimensions }) }
+      },
     })
-    const vector = validateBgeM3Embedding(result)
-    return { model: BGE_M3.model, dimensions: BGE_M3.dimensions, version: BGE_M3.version, embedding: vector }
+    return result.output
   }
-  return { indexingJobService, indexingJobRepository, providerAdmissionRepository, providerAdmission, artifactProcessor, reconciliationRunner, queryEmbedding }
+  Object.defineProperty(queryEmbedding, 'capability', { value: embeddingRoute.capability, enumerable: true, writable: false, configurable: false })
+  Object.freeze(queryEmbedding)
+  return { indexingJobService, indexingJobRepository, providerAdmissionRepository, providerFailureDomainRepository, providerAdmission, providerRouter, artifactProcessor, reconciliationRunner, queryEmbedding }
 }

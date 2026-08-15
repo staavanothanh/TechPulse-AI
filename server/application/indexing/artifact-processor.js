@@ -1,4 +1,5 @@
-import { BGE_M3, validateBgeM3Embedding } from '../../ai/embedding.js'
+import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_VERSION, validateEmbeddingVector } from '../../ai/embedding.js'
+import { ProviderAdapterError } from '../../ai/provider-error-taxonomy.js'
 import { buildPolicyDerivedInput, PolicyInputError } from '../../ai/policy-input.js'
 import { validateVietnameseSummary } from '../../ai/summary.js'
 
@@ -13,8 +14,24 @@ export class ArtifactProcessingError extends Error {
 
 function sourceId(value) { return value?.id ?? value?._id ?? value?.sourceId }
 
-export function createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerAdmission, llmProvider, embeddingProvider, routes = {}, now = () => new Date() } = {}) {
-  if (!articleRepository || !sourceRepository || !providerAdmission) throw new Error('Artifact processor dependencies are required')
+function embeddingTargetValue(value = {}) {
+  const dimensions = value.dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS
+  const version = value.version ?? DEFAULT_EMBEDDING_VERSION
+  if (!Number.isInteger(dimensions) || dimensions < 1 || !Number.isInteger(version) || version < 1) throw new Error('Embedding target is invalid')
+  return Object.freeze({
+    ...(typeof value.model === 'string' && value.model ? { model: value.model } : {}),
+    dimensions,
+    version,
+    ...(typeof value.artifactCompatibilityId === 'string' && value.artifactCompatibilityId ? { artifactCompatibilityId: value.artifactCompatibilityId } : {}),
+  })
+}
+
+function policyChanged() { return new ProviderAdapterError('policy') }
+
+export function createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerRouter, llmProvider, embeddingProvider, embeddingTarget, now = () => new Date() } = {}) {
+  if (!articleRepository || !sourceRepository || !providerRouter) throw new Error('Artifact processor dependencies are required')
+  const target = embeddingTargetValue(embeddingTarget)
+
   return Object.freeze({
     async execute({ job, fence } = {}) {
       const article = await articleRepository.findArticleForIndexing(job?.articleId)
@@ -28,13 +45,29 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
         return { status: 'succeeded' }
       }
       if (!['summary', 'embedding'].includes(job.task)) throw new ArtifactProcessingError('indexing_task_invalid', 'Indexing task is invalid')
+      const assertEmbeddingJobTarget = () => {
+        if (job.task !== 'embedding') return
+        if (job.targetEmbeddingVersion !== target.version) throw new ArtifactProcessingError('embedding_version_mismatch', 'Embedding version is not supported')
+        if (typeof target.artifactCompatibilityId !== 'string' || !target.artifactCompatibilityId
+          || job.targetEmbeddingArtifactCompatibilityId !== target.artifactCompatibilityId) {
+          throw new ArtifactProcessingError('embedding_compatibility_mismatch', 'Embedding compatibility target is not supported')
+        }
+      }
+      assertEmbeddingJobTarget()
       let input
       try { input = buildPolicyDerivedInput({ article, source, purpose: job.task }) } catch (error) {
         if (error instanceof PolicyInputError) throw new ArtifactProcessingError(error.code, error.message)
         throw error
       }
       if (job.task === 'summary' && article.summaryStatus === 'ready' && article.summaryInputHash === input.inputHash && article.summarySourcePolicyVersion === input.policyVersion) return { status: 'succeeded', inputHash: input.inputHash, cached: true }
-      if (job.task === 'embedding' && article.embeddingStatus === 'ready' && article.embeddingInputHash === input.inputHash && article.embeddingSourcePolicyVersion === input.policyVersion && article.embeddingModel === BGE_M3.model && article.embeddingDimensions === BGE_M3.dimensions && article.embeddingVersion === BGE_M3.version) return { status: 'succeeded', inputHash: input.inputHash, cached: true }
+      const embeddingCompatible = article.embeddingStatus === 'ready'
+        && article.embeddingInputHash === input.inputHash
+        && article.embeddingSourcePolicyVersion === input.policyVersion
+        && article.embeddingDimensions === target.dimensions
+        && article.embeddingVersion === target.version
+        && (!target.artifactCompatibilityId || article.embeddingArtifactCompatibilityId === target.artifactCompatibilityId)
+      if (job.task === 'embedding' && embeddingCompatible) return { status: 'succeeded', inputHash: input.inputHash, cached: true }
+
       const cancellationRequested = async () => Boolean(await indexingJobRepository?.cancellationRequestedWithFence?.({ jobId: job.id, fence }))
       const transition = async (method, error) => {
         if (typeof articleRepository[method] !== 'function') return true
@@ -49,51 +82,61 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
         if (!await transition('resetArtifactPending')) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact cancellation fence is stale')
         return { status: 'cancelled' }
       }
+      const assertInputStillAdmitted = async () => {
+        const currentSource = await sourceRepository.findSourceById(job.sourceId)
+        if (!currentSource || String(sourceId(currentSource)) !== String(job.sourceId) || currentSource.policyVersion !== job.expectedSourcePolicyVersion) throw policyChanged()
+        let currentInput
+        try { currentInput = buildPolicyDerivedInput({ article, source: currentSource, purpose: job.task }) } catch { throw policyChanged() }
+        if (currentInput.inputHash !== input.inputHash || currentInput.policyVersion !== input.policyVersion) throw policyChanged()
+      }
+
       try {
         if (job.task === 'summary') {
-          const summaryRoutes = (Array.isArray(routes.summary) ? routes.summary : [routes.summary]).filter(Boolean).slice(0, 2)
-          if (!llmProvider || summaryRoutes.length === 0) throw new ArtifactProcessingError('provider_unavailable', 'Summary provider is unavailable', { retryable: true })
-          let result
-          let lastError
-          for (const routeId of summaryRoutes) {
-            if (await cancellationRequested()) return resetCancelledArtifact()
-            try {
-              result = await providerAdmission.run({
-                routeId, capability: 'nonconfidential', attemptId: job.id, kind: 'summary',
-                invoke: (route) => llmProvider.summarize({ route, input: input.text, locale: 'vi', tools: [], outputSchema: { titleVi: 'string', summaryVi: 'string' } }),
-              })
-              break
-            } catch (error) {
-              lastError = error
-              if (error?.retryable !== true) throw error
-            }
-          }
-          if (!result) throw lastError ?? new ArtifactProcessingError('provider_unavailable', 'Summary provider is unavailable', { retryable: true })
-          const output = validateVietnameseSummary({ titleVi: result.titleVi, summaryVi: result.summaryVi })
+          if (!llmProvider || typeof llmProvider.summarize !== 'function') throw new ArtifactProcessingError('provider_unavailable', 'Summary provider is unavailable', { retryable: true })
+          if (await cancellationRequested()) return resetCancelledArtifact()
+          const result = await providerRouter.execute({
+            workloadId: 'summary', admittedInput: input, attemptId: String(job.id),
+            invoke: async ({ route, admittedInput }) => {
+              await assertInputStillAdmitted()
+              return llmProvider.summarize({ route, input: admittedInput.text, locale: 'vi', tools: [], outputSchema: { titleVi: 'string', summaryVi: 'string' } })
+            },
+            validateOutput: ({ output }) => validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi }),
+          })
           const committed = await articleRepository.commitSummaryArtifact({
             job, fence, expectedSourcePolicyVersion: job.expectedSourcePolicyVersion, inputHash: input.inputHash,
-            summary: { ...output, summaryStatus: 'ready', summaryBasis: input.basis, summaryModel: result.model ?? 'configured-summary-route', summaryInputHash: input.inputHash, summarySourcePolicyVersion: input.policyVersion, summaryGeneratedAt: generatedAt, summaryError: null },
+            summary: { ...result.output, summaryStatus: 'ready', summaryBasis: input.basis, summaryModel: result.metadata?.model, summaryInputHash: input.inputHash, summarySourcePolicyVersion: input.policyVersion, summaryGeneratedAt: generatedAt, summaryError: null },
           })
           if (!committed) throw new ArtifactProcessingError('artifact_commit_stale', 'Summary commit fence is stale')
-          return { status: 'succeeded', inputHash: input.inputHash }
+          return { status: 'succeeded', inputHash: input.inputHash, metadata: result.metadata }
         }
         if (job.task === 'embedding') {
-          if (!embeddingProvider || !routes.embedding || job.targetEmbeddingVersion !== BGE_M3.version) throw new ArtifactProcessingError('embedding_version_mismatch', 'Embedding version is not supported')
+          if (!embeddingProvider || typeof embeddingProvider.embed !== 'function') throw new ArtifactProcessingError('embedding_unavailable', 'Embedding provider is unavailable', { retryable: true })
           if (await cancellationRequested()) return resetCancelledArtifact()
-          const result = await providerAdmission.run({
-            routeId: routes.embedding, capability: 'nonconfidential', attemptId: job.id, kind: 'embedding',
-            invoke: (route) => embeddingProvider.embed({ route, input: input.text, model: BGE_M3.model, dimensions: BGE_M3.dimensions }),
+          const result = await providerRouter.execute({
+            workloadId: 'embedding', admittedInput: input, attemptId: String(job.id),
+            invoke: async ({ route, admittedInput }) => {
+              await assertInputStillAdmitted()
+              return embeddingProvider.embed({ route, input: admittedInput.text, model: route.model, dimensions: target.dimensions })
+            },
+            validateOutput: ({ route, output }) => {
+              if (typeof route?.model !== 'string' || !route.model || typeof route.artifactCompatibilityId !== 'string' || !route.artifactCompatibilityId || target.artifactCompatibilityId && route.artifactCompatibilityId !== target.artifactCompatibilityId) throw new ProviderAdapterError('config')
+              const vector = validateEmbeddingVector(output?.embedding, { dimensions: target.dimensions })
+              if (output?.model !== undefined && output.model !== route.model) throw new ProviderAdapterError('schema')
+              return { model: route.model, dimensions: target.dimensions, version: target.version, artifactCompatibilityId: route.artifactCompatibilityId, embedding: vector }
+            },
           })
-          const vector = validateBgeM3Embedding(result)
+          const artifact = result.output
+          assertEmbeddingJobTarget()
           const committed = await articleRepository.commitEmbeddingArtifact({
             job, fence, expectedSourcePolicyVersion: job.expectedSourcePolicyVersion, inputHash: input.inputHash,
-            embedding: { embeddingStatus: 'ready', embedding: vector, embeddingModel: BGE_M3.model, embeddingDimensions: BGE_M3.dimensions, embeddingInputHash: input.inputHash, embeddingVersion: BGE_M3.version, embeddingSourcePolicyVersion: input.policyVersion, embeddedAt: generatedAt, embeddingError: null },
+            embedding: { embeddingStatus: 'ready', embedding: artifact.embedding, embeddingModel: artifact.model, embeddingDimensions: artifact.dimensions, embeddingArtifactCompatibilityId: artifact.artifactCompatibilityId, embeddingInputHash: input.inputHash, embeddingVersion: artifact.version, embeddingSourcePolicyVersion: input.policyVersion, embeddedAt: generatedAt, embeddingError: null },
           })
           if (!committed) throw new ArtifactProcessingError('artifact_commit_stale', 'Embedding commit fence is stale')
-          return { status: 'succeeded', inputHash: input.inputHash }
+          return { status: 'succeeded', inputHash: input.inputHash, metadata: result.metadata }
         }
         throw new ArtifactProcessingError('indexing_task_invalid', 'Indexing task is invalid')
       } catch (error) {
+        if (error?.code === 'indexing_cancelled') return resetCancelledArtifact()
         let failed
         try { failed = await transition('markArtifactFailed', error) } catch { throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact failure fence is stale') }
         if (!failed) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact failure fence is stale')

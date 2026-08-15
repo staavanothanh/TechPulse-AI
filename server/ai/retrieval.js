@@ -1,5 +1,3 @@
-import { BGE_M3 } from './embedding.js'
-
 export function cosineSimilarity(left, right) {
   if (!Array.isArray(left) || !Array.isArray(right) || left.length === 0 || left.length !== right.length) throw new Error('Embedding dimensions must match')
   let dot = 0
@@ -22,14 +20,17 @@ function compatible(candidate, input) {
     && candidate.embeddingModel === input.queryModel
     && candidate.embeddingDimensions === input.queryDimensions
     && candidate.embeddingVersion === input.queryVersion
+    && (candidate.embeddingArtifactCompatibilityId === input.queryArtifactCompatibilityId || candidate.embeddingArtifactCompatibilityId === undefined && input.queryArtifactCompatibilityId === undefined)
     && Array.isArray(candidate.embedding)
-    && candidate.embedding.length === input.queryVector.length
+    && Array.isArray(input.queryVector)
+    && input.queryVector.length === input.queryDimensions
+    && candidate.embedding.length === input.queryDimensions
 }
 
-export function rankHybridCandidates({ queryVector, queryModel, queryDimensions, queryVersion, candidates = [], textWeight = 0.45, semanticWeight = 0.55 } = {}) {
+export function rankHybridCandidates({ queryVector, queryModel, queryDimensions, queryVersion, queryArtifactCompatibilityId, candidates = [], textWeight = 0.45, semanticWeight = 0.55 } = {}) {
   if (!Number.isFinite(textWeight) || !Number.isFinite(semanticWeight) || textWeight < 0 || semanticWeight < 0 || Math.abs(textWeight + semanticWeight - 1) > Number.EPSILON * 4) throw new Error('Hybrid ranking weights are invalid')
   return candidates.flatMap((candidate) => {
-    if (!compatible(candidate, { queryVector, queryModel, queryDimensions, queryVersion })) return []
+    if (!compatible(candidate, { queryVector, queryModel, queryDimensions, queryVersion, queryArtifactCompatibilityId })) return []
     const textScore = Math.max(0, Math.min(1, Number(candidate.textScore) || 0))
     const semanticScore = Math.max(0, cosineSimilarity(queryVector, candidate.embedding))
     return [{ ...candidate, textScore, semanticScore, score: Number((textWeight * textScore + semanticWeight * semanticScore).toFixed(12)) }]
@@ -62,18 +63,22 @@ export function rankQnaEvidence({ question, records = [], queryEmbedding, releva
   if (!Number.isFinite(relevanceThreshold) || relevanceThreshold < 0 || relevanceThreshold > 1) throw new Error('Q&A relevance threshold is invalid')
   const terms = queryTerms(question)
   if (terms.length === 0) return []
-  const semanticReady = queryEmbedding?.model === BGE_M3.model
-    && queryEmbedding?.dimensions === BGE_M3.dimensions
-    && queryEmbedding?.version === BGE_M3.version
+  const semanticReady = typeof queryEmbedding?.model === 'string'
+    && queryEmbedding.model.length > 0
+    && Number.isInteger(queryEmbedding?.dimensions)
+    && queryEmbedding.dimensions > 0
+    && Number.isInteger(queryEmbedding?.version)
+    && queryEmbedding.version > 0
     && Array.isArray(queryEmbedding.embedding)
-    && queryEmbedding.embedding.length === BGE_M3.dimensions
+    && queryEmbedding.embedding.length === queryEmbedding.dimensions
+    && queryEmbedding.embedding.every((item) => typeof item === 'number' && Number.isFinite(item))
   const ranked = records.flatMap((record, index) => {
     const textTerms = new Set(queryTerms(evidenceText(record)))
     const lexicalScore = terms.filter((term) => textTerms.has(term)).length / terms.length
     const article = record?.article ?? record
-    const candidate = { ...article, embeddingStatus: article?.embeddingStatus, embeddingModel: article?.embeddingModel, embeddingDimensions: article?.embeddingDimensions, embeddingVersion: article?.embeddingVersion, embedding: article?.embedding, textScore: lexicalScore }
-    const semantic = semanticReady ? rankHybridCandidates({ queryVector: queryEmbedding.embedding, queryModel: BGE_M3.model, queryDimensions: BGE_M3.dimensions, queryVersion: BGE_M3.version, candidates: [candidate], textWeight: 0.45, semanticWeight: 0.55 })[0]?.semanticScore ?? 0 : null
-    const score = semanticReady ? 0.45 * lexicalScore + 0.55 * semantic : lexicalScore
+    const candidate = { ...article, embeddingStatus: article?.embeddingStatus, embeddingModel: article?.embeddingModel, embeddingDimensions: article?.embeddingDimensions, embeddingArtifactCompatibilityId: article?.embeddingArtifactCompatibilityId, embeddingVersion: article?.embeddingVersion, embedding: article?.embedding, textScore: lexicalScore }
+    const hybrid = semanticReady ? rankHybridCandidates({ queryVector: queryEmbedding.embedding, queryModel: queryEmbedding.model, queryDimensions: queryEmbedding.dimensions, queryVersion: queryEmbedding.version, queryArtifactCompatibilityId: queryEmbedding.artifactCompatibilityId, candidates: [candidate], textWeight: 0.45, semanticWeight: 0.55 })[0] : null
+    const score = hybrid ? 0.45 * lexicalScore + 0.55 * hybrid.semanticScore : lexicalScore
     return score >= relevanceThreshold ? [{ record, relevanceScore: Number(score.toFixed(6)), index }] : []
   }).sort((left, right) => right.relevanceScore - left.relevanceScore || left.index - right.index)
   return ranked.slice(0, Math.min(50, Math.max(1, maxCandidates))).map(({ record }) => record)

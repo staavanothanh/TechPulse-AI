@@ -6,7 +6,7 @@ import { createConfiguredContentServices } from '../server/bootstrap/content.js'
 import { createConfiguredIndexingRuntime } from '../server/bootstrap/indexing.js'
 import { createConfiguredQaService } from '../server/bootstrap/qa.js'
 import { createConfiguredAdminGovernanceService } from '../server/bootstrap/admin.js'
-import { createConfiguredProviderAdapters, ZEN_SUMMARY_TIMEOUT_MS } from '../server/ai/provider-adapters.js'
+import { createConfiguredProviderAdapters, DEFAULT_CHAT_TIMEOUT_MS } from '../server/ai/provider-adapters.js'
 import { createSafeFetch } from '../server/infrastructure/http/safe-fetch.js'
 import { createSourceTechnicalCheckAdapter } from '../server/infrastructure/http/source-technical-check.js'
 import { createRateLimitAdmission } from '../server/security/rate-limit-admission.js'
@@ -33,13 +33,13 @@ function loadApp() {
       let indexing = {}
       if (jobs.queueRegistry) {
         try {
-          providerAdapters = createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
-          indexing = await createConfiguredIndexingRuntime({ context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerAdmissionDomains, ...providerAdapters })
+          providerAdapters = createConfiguredProviderAdapters({ registry: runtime.providerRegistry, summaryTimeoutMs: DEFAULT_CHAT_TIMEOUT_MS })
+          indexing = await createConfiguredIndexingRuntime({ context, jobRuntime: jobs, rateLimitAdmission, providerRegistry: runtime.providerRegistry, ...providerAdapters })
         } catch { console.error('Indexing service is unavailable') }
       }
       try {
-        providerAdapters ??= createConfiguredProviderAdapters({ registry: runtime.providerAdmissionDomains, summaryTimeoutMs: ZEN_SUMMARY_TIMEOUT_MS })
-        qaService = await createConfiguredQaService({ context, providerRegistry: runtime.providerAdmissionDomains, providerAdapters, providerAdmission: indexing.providerAdmission, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
+        providerAdapters ??= createConfiguredProviderAdapters({ registry: runtime.providerRegistry, summaryTimeoutMs: DEFAULT_CHAT_TIMEOUT_MS })
+        qaService = await createConfiguredQaService({ context, providerRegistry: runtime.providerRegistry, providerAdapters, providerAdmission: indexing.providerAdmission, queryEmbedding: indexing.queryEmbedding, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
       } catch { console.error('Grounded Q&A service is unavailable') }
       try { content = await createConfiguredContentServices({ context, queryEmbedding: indexing.queryEmbedding }) } catch { console.error('Content service is unavailable') }
       let accountDeletionService

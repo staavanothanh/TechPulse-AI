@@ -1,8 +1,19 @@
-import { BGE_M3, validateBgeM3Embedding } from '../../ai/embedding.js'
 import { ContentError, requireContentUser, searchQuery } from '../articles/query.js'
 
 function unavailable() {
   throw new ContentError(503, 'service_unavailable', 'Search service is not configured')
+}
+
+function validateQueryEmbedding(candidate) {
+  if (!candidate || typeof candidate.model !== 'string' || !candidate.model || !Number.isInteger(candidate.dimensions) || candidate.dimensions < 1 || !Number.isInteger(candidate.version) || candidate.version < 1 || !Array.isArray(candidate.embedding) || candidate.embedding.length !== candidate.dimensions || candidate.embedding.some((item) => typeof item !== 'number' || !Number.isFinite(item))) throw new Error('Query embedding metadata is incompatible')
+  if (candidate.artifactCompatibilityId !== undefined && (typeof candidate.artifactCompatibilityId !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(candidate.artifactCompatibilityId))) throw new Error('Query embedding compatibility is invalid')
+  return Object.freeze({
+    model: candidate.model,
+    dimensions: candidate.dimensions,
+    version: candidate.version,
+    ...(candidate.artifactCompatibilityId !== undefined ? { artifactCompatibilityId: candidate.artifactCompatibilityId } : {}),
+    embedding: Object.freeze([...candidate.embedding]),
+  })
 }
 
 export function createSearchService({ repository, embeddingAvailable = () => false, queryEmbedding } = {}) {
@@ -17,9 +28,7 @@ export function createSearchService({ repository, embeddingAvailable = () => fal
       if (requestedMode === 'hybrid' && typeof queryEmbedding === 'function') {
         try {
           const candidate = await queryEmbedding(input.q)
-          const vector = validateBgeM3Embedding({ model: candidate?.model, embedding: candidate?.embedding })
-          if (candidate?.dimensions !== BGE_M3.dimensions || candidate?.version !== BGE_M3.version) throw new Error('Query embedding metadata is incompatible')
-          embedding = { model: BGE_M3.model, dimensions: BGE_M3.dimensions, version: BGE_M3.version, embedding: vector }
+          embedding = validateQueryEmbedding(candidate)
         } catch (error) { embeddingFailure = error; embedding = null }
       }
       const legacyReady = requestedMode === 'hybrid' && typeof queryEmbedding !== 'function' && Boolean(await embeddingAvailable())

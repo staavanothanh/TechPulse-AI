@@ -5,6 +5,11 @@ import { buildSourcesMigration } from './migrations/sources.js'
 import { buildDurableJobsMigration } from './migrations/durable-jobs.js'
 import { buildArticlesMigration, runArticlesMigration } from './migrations/articles.js'
 import { buildIndexingJobsMigration, runIndexingJobsMigration } from './migrations/indexing-jobs.js'
+import {
+  assertMigrationTargetDoesNotDowngradeProviderRoutingV2,
+  buildProviderRoutingV2Migration,
+  runProviderRoutingV2Migration,
+} from './migrations/provider-routing-v2.js'
 import { buildChatSessionsMigration, runChatSessionsMigration } from './migrations/chat-sessions.js'
 import { buildGovernanceMigration, buildGovernanceDatabaseMigration, runGovernanceMigration, runGovernanceDatabaseMigration } from './migrations/governance.js'
 import { buildGovernanceHardeningMigration, runGovernanceHardeningMigration } from './migrations/governance-hardening.js'
@@ -26,9 +31,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat-sessions', 'governance'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'provider-routing-v2', 'chat-sessions', 'governance'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, chat-sessions, governance',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, provider-routing-v2, chat-sessions, governance',
   )
   process.exitCode = 2
 } else {
@@ -51,6 +56,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
             ? buildArticlesMigration
           : target === 'indexing-jobs'
               ? buildIndexingJobsMigration
+              : target === 'provider-routing-v2'
+                ? buildProviderRoutingV2Migration
               : target === 'chat-sessions'
                 ? buildChatSessionsMigration
               : target === 'governance'
@@ -65,6 +72,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
             ? runArticlesMigration
           : target === 'indexing-jobs'
               ? runIndexingJobsMigration
+              : target === 'provider-routing-v2'
+                ? runProviderRoutingV2Migration
               : target === 'chat-sessions'
                 ? runChatSessionsMigration
               : target === 'governance'
@@ -77,6 +86,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
             ...buildGovernanceHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceRetentionHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildArticleGovernanceHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildProviderRoutingV2Migration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
@@ -84,11 +94,13 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
         : buildMigration({ dryRun: true })
       : await (async () => {
           const context = await getMongoContext(runtime)
+          await assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: context.db, target })
           const plan = await runMigration({ db: context.db })
           if (target === 'governance') {
             plan.push(...await runGovernanceHardeningMigration({ db: context.db }))
             plan.push(...await runGovernanceRetentionHardeningMigration({ db: context.db }))
             plan.push(...await runArticleGovernanceHardeningMigration({ db: context.db }))
+            plan.push(...await runProviderRoutingV2Migration({ db: context.db }))
             plan.push(...await runGovernanceCapabilityProbeMigration({ db: context.db }))
             const governanceDb = context.client.db('techpulse_governance')
             await runGovernanceDatabaseMigration({ db: governanceDb })

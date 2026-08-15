@@ -2,13 +2,31 @@ import { createHash } from 'node:crypto'
 import { ObjectId } from 'mongodb'
 import { createJobAuditEvent, validateJobAuditInput } from '../../audit/job-writer.js'
 import { JobError, canonicalRequestHash, resolveIdempotentJob } from '../../domain/jobs/idempotency.js'
-import { BGE_M3 } from '../../ai/embedding.js'
+import { DEFAULT_EMBEDDING_VERSION } from '../../ai/embedding.js'
 import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
 
 const STATUSES = new Set(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled'])
 const TASKS = new Set(['summary', 'embedding', 'visibility-reconcile'])
 const TERMINAL = new Set(['succeeded', 'partial', 'failed', 'cancelled'])
 const DAY_MS = 24 * 60 * 60 * 1000
+const EMBEDDING_COMPATIBILITY_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/
+
+function embeddingTargetValue(value = {}) {
+  const version = value.version ?? DEFAULT_EMBEDDING_VERSION
+  if (!Number.isInteger(version) || version < 1) throw new Error('Embedding target version is invalid')
+  const dimensions = value.dimensions ?? null
+  if (dimensions !== null && (!Number.isInteger(dimensions) || dimensions < 1)) throw new Error('Embedding target dimensions are invalid')
+  const model = value.model ?? null
+  if (model !== null && (typeof model !== 'string' || !model)) throw new Error('Embedding target model is invalid')
+  const artifactCompatibilityId = value.artifactCompatibilityId ?? null
+  if (artifactCompatibilityId !== null && (typeof artifactCompatibilityId !== 'string' || !EMBEDDING_COMPATIBILITY_ID.test(artifactCompatibilityId))) throw new Error('Embedding target compatibility is invalid')
+  return Object.freeze({ model, dimensions, version, artifactCompatibilityId })
+}
+
+function embeddingTargetIdentity(target) {
+  const value = embeddingTargetValue(target)
+  return `${value.version}:${value.artifactCompatibilityId ?? 'none'}`
+}
 
 function idValue(value) {
   if (value instanceof ObjectId) return value
@@ -41,7 +59,7 @@ export function indexingJobDocument(job) {
     task: job.task, trigger: job.trigger, ...(job.requestedBy ? { requestedBy: idValue(job.requestedBy) } : {}), ...(job.parentJobId ? { parentJobId: idValue(job.parentJobId) } : {}),
     status: job.status, attempt: job.attempt, priority: job.priority, availableAt: dateValue(job.availableAt), agingEligibleAt: dateValue(job.agingEligibleAt),
     idempotencyExpiresAt: dateValue(job.idempotencyExpiresAt), leaseGeneration: job.leaseGeneration,
-    ...(job.targetEmbeddingVersion ? { targetEmbeddingVersion: job.targetEmbeddingVersion } : {}), ...(job.inputHash ? { inputHash: job.inputHash } : {}),
+    ...(job.targetEmbeddingVersion ? { targetEmbeddingVersion: job.targetEmbeddingVersion } : {}), ...(job.targetEmbeddingArtifactCompatibilityId ? { targetEmbeddingArtifactCompatibilityId: job.targetEmbeddingArtifactCompatibilityId } : {}), ...(job.inputHash ? { inputHash: job.inputHash } : {}),
     ...(job.cancellationRequestedAt ? { cancellationRequestedAt: dateValue(job.cancellationRequestedAt) } : {}), ...(job.error ? { error: safeErrorDocument(job.error) } : {}),
     createdAt: dateValue(job.createdAt), ...(job.startedAt ? { startedAt: dateValue(job.startedAt) } : {}), ...(job.heartbeatAt ? { heartbeatAt: dateValue(job.heartbeatAt) } : {}),
     ...(job.finishedAt ? { finishedAt: dateValue(job.finishedAt) } : {}), ...(job.purgeAfter ? { purgeAfter: dateValue(job.purgeAfter) } : {}), updatedAt: dateValue(job.updatedAt),
@@ -55,7 +73,7 @@ export function serializeIndexingJob(document) {
     articleId: document.articleId.toHexString(), sourceId: document.sourceId.toHexString(), expectedSourcePolicyVersion: document.expectedSourcePolicyVersion,
     task: document.task, trigger: document.trigger, requestedBy: document.requestedBy?.toHexString(), parentJobId: document.parentJobId?.toHexString(),
     status: document.status, attempt: document.attempt, priority: document.priority, availableAt: document.availableAt, agingEligibleAt: document.agingEligibleAt,
-    idempotencyExpiresAt: document.idempotencyExpiresAt, leaseGeneration: Number(document.leaseGeneration), targetEmbeddingVersion: document.targetEmbeddingVersion,
+    idempotencyExpiresAt: document.idempotencyExpiresAt, leaseGeneration: Number(document.leaseGeneration), targetEmbeddingVersion: document.targetEmbeddingVersion, targetEmbeddingArtifactCompatibilityId: document.targetEmbeddingArtifactCompatibilityId,
     inputHash: document.inputHash, cancellationRequestedAt: document.cancellationRequestedAt, error: document.error ? { ...document.error } : undefined,
     createdAt: document.createdAt, startedAt: document.startedAt, heartbeatAt: document.heartbeatAt, finishedAt: document.finishedAt,
     purgeAfter: document.purgeAfter, updatedAt: document.updatedAt,
@@ -83,7 +101,7 @@ function deterministicReconciliationId(identity) {
   return createHash('sha256').update(identity).digest('hex').slice(0, 24)
 }
 
-export function buildIngestionArtifactJobs({ source, article, now } = {}) {
+export function buildIngestionArtifactJobs({ source, article, now, embeddingTarget } = {}) {
   const sourceId = String(source?.id ?? source?._id ?? source?.sourceId)
   const articleId = String(article?.id ?? article?._id)
   const createdAt = dateValue(now, 'Ingestion indexing time')
@@ -100,20 +118,21 @@ export function buildIngestionArtifactJobs({ source, article, now } = {}) {
   const tasks = []
   if (evaluateContentPolicy(source, 'summary').allowed) tasks.push('summary')
   if (evaluateContentPolicy(source, 'embedding').allowed) tasks.push('embedding')
+  const target = embeddingTargetValue(embeddingTarget)
   return tasks.map((task) => {
-    const identity = `ingest:${sourceId}:${articleId}:${task}:${source.policyVersion}:${contentHash.slice(0, 16)}`
+    const identity = `ingest:${sourceId}:${articleId}:${task}:${source.policyVersion}:${contentHash.slice(0, 16)}${task === 'embedding' ? `:${embeddingTargetIdentity(target)}` : ''}`
     return {
       id: deterministicReconciliationId(identity), idempotencyKey: identity, actorScope: 'system-ingestion',
-      requestHash: canonicalRequestHash({ operation: 'ingestion-artifact', sourceId, articleId, task, policyVersion: source.policyVersion, contentHash }),
+      requestHash: canonicalRequestHash({ operation: 'ingestion-artifact', sourceId, articleId, task, policyVersion: source.policyVersion, contentHash, targetEmbeddingVersion: task === 'embedding' ? target.version : null, artifactCompatibilityId: task === 'embedding' ? target.artifactCompatibilityId : null }),
       articleId, sourceId, expectedSourcePolicyVersion: source.policyVersion, task, trigger: 'ingestion', status: 'queued',
       attempt: 1, priority: 25, availableAt: createdAt, agingEligibleAt: new Date(createdAt.getTime() + 30 * 60 * 1000),
       idempotencyExpiresAt: new Date(createdAt.getTime() + 14 * DAY_MS), leaseGeneration: 0,
-      ...(task === 'embedding' ? { targetEmbeddingVersion: BGE_M3.version } : {}), createdAt, updatedAt: createdAt,
+      ...(task === 'embedding' ? { targetEmbeddingVersion: target.version, ...(target.artifactCompatibilityId ? { targetEmbeddingArtifactCompatibilityId: target.artifactCompatibilityId } : {}) } : {}), createdAt, updatedAt: createdAt,
     }
   })
 }
 
-export function buildReconciliationJobs({ source, articleId, now } = {}) {
+export function buildReconciliationJobs({ source, articleId, now, embeddingTarget } = {}) {
   const sourceId = String(source?.id ?? source?._id ?? source?.sourceId)
   const normalizedArticleId = String(articleId)
   const createdAt = dateValue(now, 'Reconciliation materialization time')
@@ -121,15 +140,16 @@ export function buildReconciliationJobs({ source, articleId, now } = {}) {
   const tasks = ['visibility-reconcile']
   if (evaluateContentPolicy(source, 'summary').allowed) tasks.push('summary')
   if (evaluateContentPolicy(source, 'embedding').allowed) tasks.push('embedding')
+  const target = embeddingTargetValue(embeddingTarget)
   return tasks.map((task) => {
-    const identity = `policy:${sourceId}:${normalizedArticleId}:${task}:${source.policyVersion}`
+    const identity = `policy:${sourceId}:${normalizedArticleId}:${task}:${source.policyVersion}${task === 'embedding' ? `:${embeddingTargetIdentity(target)}` : ''}`
     return {
       id: deterministicReconciliationId(identity), idempotencyKey: identity, actorScope: 'system-policy-reconciliation',
-      requestHash: canonicalRequestHash({ operation: 'policy-reconciliation', sourceId, articleId: normalizedArticleId, task, policyVersion: source.policyVersion }),
+      requestHash: canonicalRequestHash({ operation: 'policy-reconciliation', sourceId, articleId: normalizedArticleId, task, policyVersion: source.policyVersion, targetEmbeddingVersion: task === 'embedding' ? target.version : null, artifactCompatibilityId: task === 'embedding' ? target.artifactCompatibilityId : null }),
       articleId: normalizedArticleId, sourceId, expectedSourcePolicyVersion: source.policyVersion, task, trigger: 'policy-change', status: 'queued',
       attempt: 1, priority: 75, availableAt: createdAt, agingEligibleAt: new Date(createdAt.getTime() + 30 * 60 * 1000),
       idempotencyExpiresAt: new Date(createdAt.getTime() + 14 * DAY_MS), leaseGeneration: 0,
-      ...(task === 'embedding' ? { targetEmbeddingVersion: BGE_M3.version } : {}), createdAt, updatedAt: createdAt,
+      ...(task === 'embedding' ? { targetEmbeddingVersion: target.version, ...(target.artifactCompatibilityId ? { targetEmbeddingArtifactCompatibilityId: target.artifactCompatibilityId } : {}) } : {}), createdAt, updatedAt: createdAt,
     }
   })
 }
@@ -140,11 +160,12 @@ export function purgeAfterForIndexing(status, finishedAt, idempotencyExpiresAt) 
 }
 
 export class MongoIndexingJobRepository {
-  constructor(context) {
+  constructor(context, { embeddingTarget } = {}) {
     if (!context?.db || !context?.client) throw new Error('Mongo context is required')
     this.db = context.db
     this.client = context.client
     this.clock = typeof context.now === 'function' ? context.now : () => new Date()
+    this.embeddingTarget = embeddingTargetValue(embeddingTarget)
   }
 
   jobs() { return this.db.collection('indexingJobs') }
@@ -273,7 +294,7 @@ export class MongoIndexingJobRepository {
       const selected = documents.slice(0, limit)
       let created = 0
       for (const article of selected) {
-        for (const job of buildReconciliationJobs({ source: { ...source, id: sourceObjectId.toHexString() }, articleId: article._id.toHexString(), now: materializedAt })) {
+        for (const job of buildReconciliationJobs({ source: { ...source, id: sourceObjectId.toHexString() }, articleId: article._id.toHexString(), now: materializedAt, embeddingTarget: this.embeddingTarget })) {
           const inserted = await this.jobs().updateOne({ actorScope: job.actorScope, idempotencyKey: job.idempotencyKey }, { $setOnInsert: indexingJobDocument(job) }, { upsert: true, session })
           created += inserted.upsertedCount === 1 ? 1 : 0
         }

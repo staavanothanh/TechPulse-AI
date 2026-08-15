@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createQaService } from '../../server/application/qa/service.js'
+import { createProviderRouterFixture } from '../unit/qa/provider-router-fixture.js'
 
 const auth = { user: { id: 'user-1', status: 'active', sessionVersion: 1 }, session: { id: 'session-1', userSessionVersion: 1 } }
 
@@ -30,7 +31,7 @@ function repository({ evidence = [] } = {}) {
 describe('answers integration boundary', () => {
   it('refuses a sensitive request without reserving an attempt or persisting the raw question', async () => {
     const repo = repository()
-    const service = createQaService({ chatRepository: repo, articleRepository: repo })
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter: createProviderRouterFixture() })
     const result = await service.createAnswer({ auth, question: 'Dùng ghp_1234567890abcdefghijklmnop để trả lời', scope: { topics: ['AI'] }, idempotencyKey: 'integration-sensitive-key' })
     expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'sensitive-input' })
     expect(repo.writes).toEqual([expect.not.objectContaining({ question: expect.anything() })])

@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { cosineSimilarity, rankHybridCandidates, rankQnaEvidence } from '../../../server/ai/retrieval.js'
 
-const compatible = { embeddingModel: 'baai/bge-m3', embeddingDimensions: 1024, embeddingVersion: 1, embeddingStatus: 'ready' }
+const compatible = { embeddingModel: 'embedding-model-v1', embeddingDimensions: 2, embeddingVersion: 1, embeddingArtifactCompatibilityId: 'embedding-compat-v1', embeddingStatus: 'ready' }
 
 describe('Step 9 application cosine retrieval', () => {
   it('combines normalized text and cosine only for exact compatible vectors', () => {
     const queryVector = [1, 0]
     const ranked = rankHybridCandidates({
       queryVector,
-      queryModel: 'baai/bge-m3',
-      queryDimensions: 1024,
+      queryModel: 'embedding-model-v1',
+      queryDimensions: 2,
       queryVersion: 1,
+      queryArtifactCompatibilityId: 'embedding-compat-v1',
       candidates: [
         { id: 'semantic', textScore: 0.2, ...compatible, embedding: [1, 0] },
         { id: 'text', textScore: 0.9, ...compatible, embedding: [0, 1] },
@@ -24,7 +25,8 @@ describe('Step 9 application cosine retrieval', () => {
   it('handles zero vectors and refuses incompatible dimensions', () => {
     expect(cosineSimilarity([0, 0], [1, 0])).toBe(0)
     expect(() => cosineSimilarity([1], [1, 0])).toThrow(/dimension/i)
-    expect(rankHybridCandidates({ queryVector: [1, 0], queryModel: 'baai/bge-m3', queryDimensions: 1024, queryVersion: 1, candidates: [{ id: 'bad', textScore: 1, ...compatible, embeddingDimensions: 12, embedding: [1, 0] }] })).toEqual([])
+    expect(rankHybridCandidates({ queryVector: [1, 0], queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: 'embedding-compat-v1', candidates: [{ id: 'bad', textScore: 1, ...compatible, embeddingDimensions: 12, embedding: [1, 0] }] })).toEqual([])
+    expect(rankHybridCandidates({ queryVector: [1, 0], queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: 'embedding-compat-other', candidates: [{ id: 'bad', textScore: 1, ...compatible, embedding: [1, 0] }] })).toEqual([])
   })
 })
 
@@ -46,11 +48,27 @@ describe('Step 10 bounded Q&A relevance admission', () => {
   })
 
   it('selects a semantically matching Vietnamese paraphrase', () => {
-    const vector = new Array(1024).fill(0)
+    const vector = new Array(3).fill(0)
     vector[0] = 1
-    const semantic = { article: { id: 'semantic', titleOriginal: 'Toi uu tai nguyen cum may chu', embeddingStatus: 'ready', embeddingModel: 'baai/bge-m3', embeddingDimensions: 1024, embeddingVersion: 1, embedding: vector } }
-    const unrelated = { article: { id: 'unrelated', titleOriginal: 'Tin khac', embeddingStatus: 'ready', embeddingModel: 'baai/bge-m3', embeddingDimensions: 1024, embeddingVersion: 1, embedding: new Array(1024).fill(0) } }
-    const result = rankQnaEvidence({ question: 'Lam sao giam chi phi van hanh may chu?', queryEmbedding: { model: 'baai/bge-m3', dimensions: 1024, version: 1, embedding: vector }, records: [semantic, unrelated], relevanceThreshold: 0.5 })
+    const semantic = { article: { id: 'semantic', titleOriginal: 'Toi uu tai nguyen cum may chu', embeddingStatus: 'ready', embeddingModel: 'embedding-model-v1', embeddingDimensions: 3, embeddingArtifactCompatibilityId: 'embedding-compat-v1', embeddingVersion: 1, embedding: vector } }
+    const unrelated = { article: { id: 'unrelated', titleOriginal: 'Tin khac', embeddingStatus: 'ready', embeddingModel: 'embedding-model-v1', embeddingDimensions: 3, embeddingArtifactCompatibilityId: 'embedding-compat-v1', embeddingVersion: 1, embedding: new Array(3).fill(0) } }
+    const result = rankQnaEvidence({ question: 'Lam sao giam chi phi van hanh may chu?', queryEmbedding: { model: 'embedding-model-v1', dimensions: 3, version: 1, artifactCompatibilityId: 'embedding-compat-v1', embedding: vector }, records: [semantic, unrelated], relevanceThreshold: 0.5 })
     expect(result.map(({ article }) => article.id)).toEqual(['semantic'])
+  })
+
+  it('degrades to the full lexical score when embedding compatibility mismatches', () => {
+    const records = [{ article: {
+      id: 'lexical-only', titleOriginal: 'Chip AI tiet kiem dien', embeddingStatus: 'ready',
+      embeddingModel: 'embedding-model-v1', embeddingDimensions: 3, embeddingArtifactCompatibilityId: 'embedding-compat-v1',
+      embeddingVersion: 1, embedding: [1, 0, 0],
+    } }]
+    const result = rankQnaEvidence({
+      question: 'Chip AI tiet kiem dien?',
+      queryEmbedding: { model: 'embedding-model-v1', dimensions: 3, version: 1, artifactCompatibilityId: 'embedding-compat-v2', embedding: [1, 0, 0] },
+      records,
+      relevanceThreshold: 0.9,
+    })
+
+    expect(result.map(({ article }) => article.id)).toEqual(['lexical-only'])
   })
 })

@@ -5,13 +5,13 @@ const auth = { user: { id: '507f1f77bcf86cd799439001', role: 'user', status: 'ac
 const textResult = { results: [], hasNext: false, nextCursor: null }
 
 describe('Step 9 hybrid retrieval and text fallback service', () => {
-  it('passes exact BGE-M3 query metadata to repository hybrid retrieval', async () => {
+  it('passes exact configured embedding compatibility metadata to repository hybrid retrieval', async () => {
     const repository = { searchVisibleArticles: vi.fn(async () => textResult) }
-    const vector = Array(1024).fill(0.01)
-    const queryEmbedding = vi.fn(async () => ({ model: 'baai/bge-m3', dimensions: 1024, version: 1, embedding: vector }))
+    const vector = Array(3).fill(0.01)
+    const queryEmbedding = vi.fn(async () => ({ model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1', embedding: vector }))
     const service = createSearchService({ repository, queryEmbedding })
     const result = await service.search({ auth, query: { q: 'chip AI tiết kiệm điện', mode: 'hybrid' } })
-    expect(repository.searchVisibleArticles).toHaveBeenCalledWith(expect.objectContaining({ mode: 'hybrid', queryEmbedding: { model: 'baai/bge-m3', dimensions: 1024, version: 1, embedding: vector } }))
+    expect(repository.searchVisibleArticles).toHaveBeenCalledWith(expect.objectContaining({ mode: 'hybrid', queryEmbedding: { model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1', embedding: vector } }))
     expect(result.meta).toEqual(expect.objectContaining({ requestedMode: 'hybrid', effectiveMode: 'hybrid', fallbackUsed: false, fallbackReason: null }))
   })
 
@@ -23,5 +23,13 @@ describe('Step 9 hybrid retrieval and text fallback service', () => {
     expect(repository.searchVisibleArticles).toHaveBeenCalledTimes(1)
     expect(repository.searchVisibleArticles).toHaveBeenCalledWith(expect.objectContaining({ mode: 'text' }))
     expect(result.meta).toEqual(expect.objectContaining({ requestedMode: 'hybrid', effectiveMode: 'text', fallbackUsed: true, fallbackReason: 'embedding-unavailable' }))
+  })
+
+  it('degrades to text when the repository has no exact compatible artifact identity', async () => {
+    const repository = { searchVisibleArticles: vi.fn(async () => ({ ...textResult, fallbackReason: 'no-compatible-vectors' })) }
+    const queryEmbedding = vi.fn(async () => ({ model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v2', embedding: Array(3).fill(0.01) }))
+    const service = createSearchService({ repository, queryEmbedding })
+    const result = await service.search({ auth, query: { q: 'chip AI tiết kiệm điện', mode: 'hybrid' } })
+    expect(result.meta).toEqual(expect.objectContaining({ effectiveMode: 'text', fallbackUsed: true, fallbackReason: 'no-compatible-vectors' }))
   })
 })

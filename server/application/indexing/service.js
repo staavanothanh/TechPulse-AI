@@ -1,12 +1,25 @@
 import { ObjectId } from 'mongodb'
 import { createJobAuditEvent } from '../../audit/job-writer.js'
-import { BGE_M3 } from '../../ai/embedding.js'
+import { DEFAULT_EMBEDDING_VERSION } from '../../ai/embedding.js'
 import { JobError, actorScopeForAdmin, canonicalRequestHash } from '../../domain/jobs/idempotency.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const AGING_MS = 30 * 60 * 1000
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
 const MAX_ATTEMPTS = 3
+const EMBEDDING_COMPATIBILITY_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/
+
+function embeddingTargetValue(value = {}) {
+  const version = value.version ?? DEFAULT_EMBEDDING_VERSION
+  if (!Number.isInteger(version) || version < 1) throw new Error('Embedding target version is invalid')
+  const dimensions = value.dimensions ?? null
+  if (dimensions !== null && (!Number.isInteger(dimensions) || dimensions < 1)) throw new Error('Embedding target dimensions are invalid')
+  const model = value.model ?? null
+  if (model !== null && (typeof model !== 'string' || !model)) throw new Error('Embedding target model is invalid')
+  const artifactCompatibilityId = value.artifactCompatibilityId ?? null
+  if (artifactCompatibilityId !== null && (typeof artifactCompatibilityId !== 'string' || !EMBEDDING_COMPATIBILITY_ID.test(artifactCompatibilityId))) throw new Error('Embedding target compatibility is invalid')
+  return Object.freeze({ model, dimensions, version, artifactCompatibilityId })
+}
 
 function requireAdmin(auth) {
   if (!auth?.user) throw new JobError(401, 'unauthorized', 'Authentication is required')
@@ -37,21 +50,24 @@ function auditRequest(request, key, auth) {
   return { serverRequestId: request?.requestId ?? request?.serverRequestId ?? key, idempotencyKey: key, actorSessionId: auth.session?.id ?? auth.session?._id }
 }
 
-function buildJob({ article, source, auth, idempotencyKey, task, trigger, attempt = 1, parentJobId, createdAt, operation }) {
+function buildJob({ article, source, auth, idempotencyKey, task, trigger, attempt = 1, parentJobId, createdAt, operation, embeddingTarget }) {
   const id = new ObjectId().toHexString()
-  const requestHash = canonicalRequestHash({ operation, articleId: article.id, sourceId: source.id, expectedSourcePolicyVersion: source.policyVersion, task, targetEmbeddingVersion: task === 'embedding' ? BGE_M3.version : null, parentJobId: parentJobId ?? null })
+  const target = embeddingTargetValue(embeddingTarget)
+  const effectiveIdempotencyKey = task === 'embedding' ? `${idempotencyKey}:embedding:${target.version}:${target.artifactCompatibilityId ?? 'none'}` : idempotencyKey
+  const requestHash = canonicalRequestHash({ operation, articleId: article.id, sourceId: source.id, expectedSourcePolicyVersion: source.policyVersion, task, targetEmbeddingVersion: task === 'embedding' ? target.version : null, artifactCompatibilityId: task === 'embedding' ? target.artifactCompatibilityId : null, parentJobId: parentJobId ?? null })
   return {
-    id, idempotencyKey, actorScope: actorScopeForAdmin(auth), requestHash, articleId: article.id, sourceId: source.id,
+    id, idempotencyKey: effectiveIdempotencyKey, actorScope: actorScopeForAdmin(auth), requestHash, articleId: article.id, sourceId: source.id,
     expectedSourcePolicyVersion: source.policyVersion, task, trigger, requestedBy: auth.user.id ?? auth.user._id,
     ...(parentJobId ? { parentJobId } : {}), status: 'queued', attempt, priority: trigger === 'admin' ? 50 : 25,
     availableAt: createdAt, agingEligibleAt: new Date(createdAt.getTime() + AGING_MS), idempotencyExpiresAt: new Date(createdAt.getTime() + 14 * DAY_MS),
-    leaseGeneration: 0, ...(task === 'embedding' ? { targetEmbeddingVersion: BGE_M3.version } : {}), createdAt, updatedAt: createdAt,
+    leaseGeneration: 0, ...(task === 'embedding' ? { targetEmbeddingVersion: target.version, ...(target.artifactCompatibilityId ? { targetEmbeddingArtifactCompatibilityId: target.artifactCompatibilityId } : {}) } : {}), createdAt, updatedAt: createdAt,
   }
 }
 
-export function createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork, now = () => new Date() } = {}) {
+export function createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork, embeddingTarget, now = () => new Date() } = {}) {
   if (!indexingJobRepository || !articleRepository || !sourceRepository) throw new Error('Indexing repositories are required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
+  const configuredEmbeddingTarget = embeddingTargetValue(embeddingTarget)
   const contextFor = async (articleId) => {
     const id = objectIdString(articleId, 'articleId')
     const article = await articleRepository.findArticleForIndexing(id)
@@ -65,7 +81,7 @@ export function createIndexingJobService({ indexingJobRepository, articleReposit
     const key = requireKey(idempotencyKey)
     const { article, source } = await contextFor(articleId)
     const createdAt = now()
-    const job = buildJob({ article, source, auth, idempotencyKey: key, task, trigger, attempt, parentJobId, createdAt, operation })
+    const job = buildJob({ article, source, auth, idempotencyKey: key, task, trigger, attempt, parentJobId, createdAt, operation, embeddingTarget: configuredEmbeddingTarget })
     const action = trigger === 'retry' ? 'indexing_job_retry_created' : 'indexing_job_created'
     const reasonCode = trigger === 'retry' ? 'job_retry_requested' : 'artifact_regeneration_requested'
     const changedFields = trigger === 'retry' ? ['status', 'attempt', 'parentJobId'] : ['status']

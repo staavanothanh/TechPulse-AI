@@ -785,7 +785,7 @@ type ProviderAdmissionStateDocument = {
 };
 ```
 
-Một credential/account pool có đúng một `admissionDomainId` document và bind đúng một `providerId`; mọi route dùng cùng `credentialEnvName` phải map vào cùng domain và có cùng provider ID. `activeReservations` bị giới hạn bởi domain `maxConcurrency<=8`; claim CAS đồng thời prune expiry, check aggregate budget/cap và exact route circuit. Route circuit cô lập một model/route. Một logical generation có tối đa hai external attempts: primary + đúng một model hoặc provider fallback theo failure class. Fallback/support vẫn pass source policy, privacy evidence và admission trên cùng immutable admitted input. Provider route/workload config là static deployment config, không là Mongo collection; DB không lưu endpoint credential, secret hoặc raw payload.
+Một credential/account pool có đúng một `admissionDomainId` document và bind đúng một `providerId`; mọi route dùng cùng `credentialEnvName` phải map vào cùng domain và có cùng provider ID. `activeReservations` bị giới hạn bởi domain `maxConcurrency<=8`; claim CAS đồng thời prune expiry, check aggregate budget/cap và exact route circuit. Route circuit cô lập một model/route. Một logical generation có tối đa hai external attempts: primary + đúng một model hoặc provider fallback theo failure class. Fallback/support vẫn pass source policy, privacy evidence và admission trên cùng immutable admitted input. Provider route/workload config là static deployment config, không là Mongo collection; embedding route config mang `embeddingDimensions`, `embeddingVersion` và `artifactCompatibilityId` chính xác. DB không lưu endpoint credential, secret hoặc raw payload.
 
 Indexes:
 

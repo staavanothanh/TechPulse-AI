@@ -16,6 +16,10 @@ import {
   INDEXING_JOB_INDEXES,
 } from './migrations/indexing-jobs.js'
 import {
+  PROVIDER_ROUTING_V2_COLLECTIONS,
+  PROVIDER_ROUTING_V2_INDEXES,
+} from './migrations/provider-routing-v2.js'
+import {
   CHAT_SESSION_COLLECTIONS,
   CHAT_SESSION_INDEXES,
 } from './migrations/chat-sessions.js'
@@ -152,9 +156,82 @@ async function probeChatSessionsRoleCapabilities({ client, db } = {}) {
     answerAttemptsMaintenanceDelete: maintenance.value === true && !maintenance.operationFailed && maintenance.sessionHealthy,
   }
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat-sessions', 'governance'].includes(target)) {
+
+async function probeProviderRoutingRoleCapabilities({ client, db } = {}) {
+  const failed = {
+    listCollectionsAllowed: false,
+    listIndexesAllowed: false,
+    providerAdmissionRuntime: false,
+    providerFailureDomainRuntime: false,
+    articleRuntime: false,
+    answerAttemptRuntime: false,
+    transaction: false,
+  }
+  if (!client?.startSession || !db?.collection || !db?.listCollections) return failed
+  const names = ['providerAdmissionStates', 'providerFailureDomainStates', 'articles', 'answerAttempts']
+  let listCollectionsAllowed = false
+  let listIndexesAllowed = false
+  try {
+    listCollectionsAllowed = await Promise.all(names.map((name) => db.listCollections({ name }, { nameOnly: true }).hasNext())).then((values) => values.every(Boolean))
+  } catch { /* fail closed */ }
+  try {
+    listIndexesAllowed = await Promise.all(names.map((name) => db.collection(name).listIndexes().hasNext())).then((values) => values.every(Boolean))
+  } catch { /* fail closed */ }
+
+  const now = new Date()
+  const suffix = new ObjectId().toHexString()
+  const admission = {
+    _id: new ObjectId(), admissionDomainId: `role-${suffix}`, providerId: `provider-${suffix}`,
+    activeReservations: [], maxConcurrency: 1, budgetWindowStart: now, spentUnits: 0, budgetLimit: 1,
+    routeCircuits: [], updatedAt: now,
+  }
+  const failureDomain = {
+    _id: new ObjectId(), providerFailureDomainId: `failure-${suffix}`, configVersion: 1,
+    state: 'closed', consecutiveRetryableFailures: 0, updatedAt: now,
+  }
+  const answerAttempt = {
+    _id: new ObjectId(), userId: new ObjectId(), sessionId: new ObjectId(), expectedSessionVersion: 1,
+    idempotencyKeyHash: 'd'.repeat(64), requestHash: 'e'.repeat(64), status: 'reserved',
+    quotaReservationKey: `role-${suffix}`, expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    createdAt: now, updatedAt: now,
+  }
+  const stateProbe = await runChatRoleTransaction(client, async (session) => {
+    const admissionCollection = db.collection('providerAdmissionStates')
+    const failureCollection = db.collection('providerFailureDomainStates')
+    await admissionCollection.insertOne(admission, { session })
+    const admissionFound = await admissionCollection.findOne({ _id: admission._id }, { session, projection: { _id: 1 } })
+    const admissionUpdated = await admissionCollection.updateOne({ _id: admission._id }, { $set: { updatedAt: new Date(now.getTime() + 1) } }, { session })
+    await failureCollection.insertOne(failureDomain, { session })
+    const failureFound = await failureCollection.findOne({ _id: failureDomain._id }, { session, projection: { _id: 1 } })
+    const failureUpdated = await failureCollection.updateOne({ _id: failureDomain._id }, { $set: { updatedAt: new Date(now.getTime() + 1) } }, { session })
+    return {
+      providerAdmissionRuntime: Boolean(admissionFound) && admissionUpdated.matchedCount === 1,
+      providerFailureDomainRuntime: Boolean(failureFound) && failureUpdated.matchedCount === 1,
+    }
+  })
+  const pathProbe = await runChatRoleTransaction(client, async (session) => {
+    const articleCollection = db.collection('articles')
+    const answerCollection = db.collection('answerAttempts')
+    await articleCollection.findOne({ _id: new ObjectId() }, { session, projection: { _id: 1 } })
+    await articleCollection.updateOne({ _id: new ObjectId() }, { $set: { updatedAt: now } }, { session })
+    await answerCollection.insertOne(answerAttempt, { session })
+    const answerFound = await answerCollection.findOne({ _id: answerAttempt._id }, { session, projection: { _id: 1 } })
+    const answerUpdated = await answerCollection.updateOne({ _id: answerAttempt._id }, { $set: { status: 'provider-running', updatedAt: new Date(now.getTime() + 1) } }, { session })
+    return { articleRuntime: true, answerAttemptRuntime: Boolean(answerFound) && answerUpdated.matchedCount === 1 }
+  })
+  return {
+    listCollectionsAllowed,
+    listIndexesAllowed,
+    providerAdmissionRuntime: stateProbe.value?.providerAdmissionRuntime === true && !stateProbe.operationFailed,
+    providerFailureDomainRuntime: stateProbe.value?.providerFailureDomainRuntime === true && !stateProbe.operationFailed,
+    articleRuntime: pathProbe.value?.articleRuntime === true && !pathProbe.operationFailed,
+    answerAttemptRuntime: pathProbe.value?.answerAttemptRuntime === true && !pathProbe.operationFailed,
+    transaction: stateProbe.transactionStarted && pathProbe.transactionStarted && stateProbe.sessionHealthy && pathProbe.sessionHealthy,
+  }
+}
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'provider-routing-v2', 'chat-sessions', 'governance'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, chat-sessions, governance',
+    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, provider-routing-v2, chat-sessions, governance',
   )
   process.exitCode = 2
 } else {
@@ -185,6 +262,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
             ? ARTICLE_COLLECTIONS
             : target === 'indexing-jobs'
               ? INDEXING_JOB_COLLECTIONS
+              : target === 'provider-routing-v2'
+                ? PROVIDER_ROUTING_V2_COLLECTIONS
               : target === 'chat-sessions'
                 ? CHAT_SESSION_COLLECTIONS
               : target === 'governance'
@@ -199,6 +278,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
             ? ARTICLE_INDEXES
             : target === 'indexing-jobs'
               ? INDEXING_JOB_INDEXES
+              : target === 'provider-routing-v2'
+                ? PROVIDER_ROUTING_V2_INDEXES
               : target === 'chat-sessions'
                 ? CHAT_SESSION_INDEXES
               : target === 'governance' ? { ...GOVERNANCE_INDEXES, takedownRequests: [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests] } : AUTH_CORE_INDEXES
@@ -247,7 +328,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
         )
           missing.push(`${name}:index:${index.name}:key`)
         const exact =
-          target === 'articles' ? exactArticleIndex(actual, index) : exactMongoIndex(actual, index)
+          name === 'articles' ? exactArticleIndex(actual, index) : exactMongoIndex(actual, index)
         if (!exact) missing.push(`${name}:index:${index.name}:semantic-options`)
       }
     }
@@ -255,7 +336,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
       verificationStage = 'schema-governance'
       const articleCollection = collectionMap.get('articles')
       if (!articleCollection) missing.push('articles:collection:governance-tombstone')
-      else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || stableJson(articleCollection.options?.validator) !== stableJson(ARTICLE_GOVERNANCE_HARDENING_VALIDATOR)) validatorProblems.push('articles:validator-definition:governance-tombstone')
+      else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || ![ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator].some((validator) => stableJson(articleCollection.options?.validator) === stableJson(validator))) validatorProblems.push('articles:validator-definition:governance-tombstone')
       if (governanceMetadataUnavailable) validatorProblems.push('techpulse_governance:metadata-unavailable')
       for (const [name, definition] of governanceMetadataUnavailable ? [] : Object.entries(GOVERNANCE_DATABASE_COLLECTIONS)) {
         const collection = governanceMap.get(name)
@@ -334,6 +415,24 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
             missing.push(`articles:index:${expected.name}`)
       }
     }
+    if (target === 'provider-routing-v2') {
+      verificationStage = 'provider-admission-upgrade'
+      const legacyAdmissionCount = await context.db.collection('providerAdmissionStates').countDocuments(
+        { $or: [{ provider: { $exists: true } }, { providerId: { $exists: false } }] },
+        { limit: 1 },
+      )
+      if (legacyAdmissionCount > 0) validatorProblems.push('providerAdmissionStates:legacy-provider-identity')
+      const invalidCompatibilityCount = await context.db.collection('articles').countDocuments(
+        {
+          $or: [
+            { embeddingStatus: 'ready', embeddingArtifactCompatibilityId: { $not: { $type: 'string' } } },
+            { embeddingStatus: { $ne: 'ready' }, embeddingArtifactCompatibilityId: { $exists: true } },
+          ],
+        },
+        { limit: 1 },
+      )
+      if (invalidCompatibilityCount > 0) validatorProblems.push('articles:embedding-compatibility-state')
+    }
     const plans =
       target === 'sources'
         ? [
@@ -397,6 +496,48 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
                 'ingestion_schedule_period_unique',
               ],
             ]
+            : target === 'provider-routing-v2'
+              ? [
+                  [
+                    'provider_admission_domain',
+                    'providerAdmissionStates',
+                    { admissionDomainId: 'probe' },
+                    undefined,
+                    'provider_admission_domain_unique',
+                  ],
+                  [
+                    'provider_route_circuit',
+                    'providerAdmissionStates',
+                    { 'routeCircuits.routeId': 'probe' },
+                    { _id: 1 },
+                    'provider_route_circuit',
+                  ],
+                  [
+                    'provider_failure_domain',
+                    'providerFailureDomainStates',
+                    { providerFailureDomainId: 'probe' },
+                    undefined,
+                    'provider_failure_domain_unique',
+                  ],
+                  [
+                    'provider_failure_domain_cooldown',
+                    'providerFailureDomainStates',
+                    { state: 'open', cooldownUntil: { $lte: new Date() } },
+                    { cooldownUntil: 1, _id: 1 },
+                    'provider_failure_domain_cooldown',
+                  ],
+                  [
+                    'articles_embedding_compatibility',
+                    'articles',
+                    {
+                      embeddingStatus: 'ready',
+                      embeddingArtifactCompatibilityId: 'probe',
+                      embeddingVersion: 1,
+                    },
+                    undefined,
+                    'articles_embedding_compatibility',
+                  ],
+                ]
             : target === 'indexing-jobs'
             ? [
                 [
@@ -655,6 +796,13 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
               { database: context.database, collection: 'sources', label: 'sources', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
               { database: context.database, collection: 'adminAuditLogs', label: 'audit', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
             ]
+          : target === 'provider-routing-v2'
+            ? [
+                { database: context.database, collection: 'providerAdmissionStates', label: 'provider admission state', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
+                { database: context.database, collection: 'providerFailureDomainStates', label: 'provider failure-domain state', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
+                { database: context.database, collection: 'articles', label: 'provider article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
+                { database: context.database, collection: 'answerAttempts', label: 'provider answer path', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
+              ]
           : ['durable-jobs', 'indexing-jobs', 'chat-sessions'].includes(target)
             ? []
             : [
@@ -674,9 +822,16 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
           for (const action of forbidden)
             if (actions.has(action)) roleProblems.push(`${label} role has forbidden ${action}`)
         }
+        if (target === 'provider-routing-v2' && roleProblems.length === 0) roleStatus = 'verified'
+      } else if (requireRole && target === 'provider-routing-v2') {
+        roleProblems.push('provider-routing role privileges unavailable')
+        roleStatus = 'unverified'
       }
     } catch {
-      roleStatus = 'unavailable-local'
+      if (requireRole && target === 'provider-routing-v2') {
+        roleProblems.push('provider-routing role privileges unavailable')
+        roleStatus = 'unverified'
+      } else roleStatus = 'unavailable-local'
     }
     const schemaReady =
       missing.length === 0 && validatorProblems.length === 0 && planProblems.length === 0
@@ -703,6 +858,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'chat
       )
         roleProblems.push('runtime HMAC lifecycle role capability probe failed')
       if (roleProblems.length === 0) roleStatus = 'verified'
+    } else if (requireRole && target === 'provider-routing-v2') {
+      const probe = await probeProviderRoutingRoleCapabilities(context)
+      for (const [capability, passed] of Object.entries(probe)) if (!passed) roleProblems.push(`provider-routing runtime capability failed: ${capability}`)
+      roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
     } else if (requireRole && (target === 'articles' || target === 'indexing-jobs')) {
       roleStatus = 'not-requested'
     } else if (requireRole && target === 'chat-sessions') {
