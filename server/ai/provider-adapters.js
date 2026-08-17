@@ -8,6 +8,9 @@ const CHAT_OPERATIONS = new Set(['summary', 'answer', 'support'])
 const MAX_INPUT_CHARS = 30_000
 const MAX_BATCH_INPUTS = 24
 const MAX_RESPONSE_BYTES = 256 * 1024
+// Embedding JSON contains bounded vectors (24 inputs x 4096 dimensions); keep
+// a separate finite cap so valid batches cannot be rejected by the chat cap.
+const MAX_EMBEDDING_RESPONSE_BYTES = 4 * 1024 * 1024
 const DEFAULT_EMBEDDING_TIMEOUT_MS = 20_000
 
 export const DEFAULT_CHAT_TIMEOUT_MS = 30_000
@@ -53,9 +56,9 @@ function boundedFailureHeader(value) {
   return typeof value === 'string' && /^[a-z0-9._-]{1,64}$/i.test(value) ? value.toLowerCase() : undefined
 }
 
-async function readBoundedJson(response) {
+async function readBoundedJson(response, maxBytes = MAX_RESPONSE_BYTES) {
   const declaredLength = Number(response.headers.get('Content-Length'))
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) throw new ProviderAdapterError('schema')
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) throw new ProviderAdapterError('schema')
   let text = ''
   let bytes = 0
   if (response.body?.getReader) {
@@ -65,7 +68,7 @@ async function readBoundedJson(response) {
       const { done, value } = await reader.read()
       if (done) break
       bytes += value.byteLength
-      if (bytes > MAX_RESPONSE_BYTES) {
+      if (bytes > maxBytes) {
         await reader.cancel()
         throw new ProviderAdapterError('schema')
       }
@@ -74,7 +77,7 @@ async function readBoundedJson(response) {
     text += decoder.decode()
   } else {
     text = await response.text()
-    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) throw new ProviderAdapterError('schema')
+    if (new TextEncoder().encode(text).byteLength > maxBytes) throw new ProviderAdapterError('schema')
   }
   try {
     return JSON.parse(text)
@@ -193,7 +196,7 @@ function createBoundary({ registry, fetchImpl, resolveCredential, timeouts, adap
     }
     const type = response.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase()
     if (type !== 'application/json') throw new ProviderAdapterError('schema')
-    const payload = await readBoundedJson(response)
+    const payload = await readBoundedJson(response, operation === 'embedding' ? MAX_EMBEDDING_RESPONSE_BYTES : MAX_RESPONSE_BYTES)
     try {
       return plugin.parsePayload({ operation, payload, ...requestInput })
     } catch (error) {

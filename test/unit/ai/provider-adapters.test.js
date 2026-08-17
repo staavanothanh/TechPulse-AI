@@ -1,3 +1,4 @@
+import { TextEncoder } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 import { createConfiguredProviderAdapters, OPENAI_COMPATIBLE_PROTOCOL_ADAPTER } from '../../../server/ai/provider-adapters.js'
 
@@ -34,6 +35,19 @@ describe('Step 9 controlled provider adapters', () => {
     await expect(adapters.embeddingProvider.embed({ route: registry.routes[1], input: 'safe input', model: 'embed/model-v1', dimensions: 3 })).resolves.toEqual({ model: 'embed/model-v1', embedding: vector })
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ model: 'embed/model-v1', input: ['safe input'], dimensions: 3 })
     await expect(adapters.embeddingProvider.embed({ route: registry.routes[1], input: 'safe input', model: 'embed/model-v1', dimensions: 3 })).rejects.toMatchObject({ code: 'provider_domain_unavailable', failureClass: 'provider-retryable', retryable: true, message: 'AI provider request failed safely' })
+  })
+
+  it('accepts a bounded embedding response larger than the chat response cap', async () => {
+    const embeddingRoute = { ...registry.routes[1], embeddingDimensions: 1024 }
+    const embeddingRegistry = { ...registry, routes: [registry.routes[0], embeddingRoute] }
+    const vector = Array.from({ length: 1024 }, (_value, index) => Number((Math.sin(index) + 0.123456789012345).toFixed(15)))
+    const payload = { data: Array.from({ length: 18 }, (_value, index) => ({ object: 'embedding', index, embedding: vector })) }
+    const body = JSON.stringify(payload)
+    expect(new TextEncoder().encode(body).byteLength).toBeGreaterThan(256 * 1024)
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const adapters = createConfiguredProviderAdapters({ registry: embeddingRegistry, fetchImpl, resolveCredential: () => 'secret-value' })
+
+    await expect(adapters.embeddingProvider.embedBatch({ route: embeddingRoute, inputs: Array.from({ length: 18 }, (_value, index) => `input-${index}`), model: embeddingRoute.model, dimensions: 1024 })).resolves.toMatchObject({ model: embeddingRoute.model, embeddings: expect.arrayContaining([expect.arrayContaining([expect.any(Number)])]) })
   })
 
   it('fails closed before network I/O when credential or route/model binding is invalid', async () => {

@@ -46,6 +46,9 @@ The first TDD run failed because `scripts/verify-restore-plan.js` did not exist.
 | `npm run contract:test` | All contract/runtime fixture groups passed |
 | `npm run lint` | PASS after ignoring gitignored local tool directories |
 | `npm run build` | PASS |
+| `npm run test:e2e:local` | PASS, 4/4 local health/content/admin/CSRF tests; 2 governance mutation tests intentionally skipped because disposable-account opt-in is disabled |
+| `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --summary-only` | PASS, 1 real outbound request through configured `zen` summary route |
+| `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --embedding-only` | PASS after bounded embedding-response cap fix; 1 real OpenRouter request, 18 vectors x 1024 dimensions, top-5 rate 1 |
 | `npm run eval:retrieval` | PASS, 6/6 top-5 hits; below the Step 12 30+ dataset target |
 | `npm run eval:groundedness` | PASS, 31/31 cases; deterministic in-memory provider fixture |
 | `npm run eval:citations` | PASS, 31/31 cases; deterministic in-memory provider fixture |
