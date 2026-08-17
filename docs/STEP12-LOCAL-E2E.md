@@ -58,14 +58,28 @@ $env:E2E_USER_EMAIL='user@example.com'
 $env:E2E_USER_PASSWORD='mat-khau-test'
 $env:E2E_ADMIN_EMAIL='admin@example.com'
 $env:E2E_ADMIN_PASSWORD='mat-khau-admin-test'
+$env:E2E_DEMO_SOURCE_ID='<source-id-24-ky-tu>'
+$env:E2E_DEMO_ARTICLE_ID='<article-id-24-ky-tu>'
 $env:E2E_SEARCH_QUERY='AI'
-$env:E2E_REQUIRE_ARTICLES='true'
 npm run test:e2e:local
 ```
 
-E2E kiểm tra health, login, session bootstrap, feed, text search, admin overview/articles/sources/audit và logout. Mỗi request mutation đều gửi `Origin`, cookie session và CSRF theo contract.
+E2E runner tự ép `E2E_REQUIRE_ARTICLES=true`, yêu cầu source/article ID 24 ký tự từ deterministic demo seed và yêu cầu `E2E_SEARCH_QUERY` không rỗng. Suite kiểm tra health, login, session bootstrap, feed của đúng demo source, detail của đúng demo article, text search phải có kết quả, admin overview/articles/sources/audit và logout. Mỗi request mutation đều gửi `Origin`, cookie session và CSRF theo contract.
 
 `npm run test:e2e:local` sẽ dừng với mã lỗi nếu thiếu credential hoặc `E2E_ENABLED` khác `true`. Lệnh `npm run test:e2e` tổng hợp vẫn bỏ qua local-host suite khi chưa bật gate. Suite E2E controlled hiện có vẫn chạy độc lập với server.
+
+Các boundary governance (user không đọc được admin, deletion/takedown thiếu CSRF bị từ chối) luôn chạy cùng local suite nhưng không ghi dữ liệu. Luồng mutation governance thật là opt-in và chỉ dùng account/article disposable:
+
+```powershell
+$env:E2E_GOVERNANCE_MUTATIONS='true'
+$env:E2E_DELETION_EMAIL='deletion-e2e@example.com'
+$env:E2E_DELETION_PASSWORD='mat-khau-disposable'
+$env:E2E_DELETION_CONFIRM_EMAIL='deletion-e2e@example.com'
+$env:E2E_TAKEDOWN_ARTICLE_ID=$env:E2E_DEMO_ARTICLE_ID
+npm run test:e2e:local
+```
+
+Runner refuse unsafe env nếu deletion email trùng user/admin hoặc confirmation không khớp. Suite cũng xác nhận login account deletion có `role=user`. Luồng opt-in tạo takedown rồi reject để không ẩn bài viết; deletion request chỉ được accept và không chạy worker purge. Không dùng email admin/user thật cho luồng này.
 
 ## 5. Chạy API/Cron E2E trên Vercel Preview
 
@@ -81,7 +95,14 @@ $env:E2E_CRON_SECRET='preview-cron-secret-tu-vercel'
 npm run test:e2e:vercel
 ```
 
-Suite kiểm tra API health, reject thiếu/sai machine bearer và due-work aggregate với bearer đúng. Script dừng với mã lỗi nếu chưa bật gate, URL không phải HTTPS hoặc thiếu `E2E_CRON_SECRET`; không có trạng thái skip giả thành công.
+Deployment Protection không được tắt để chạy test. Nếu Preview được bảo vệ, truyền các header xác thực do provider cấp qua biến môi trường (không ghi giá trị vào repo):
+
+```powershell
+$env:E2E_VERCEL_PROTECTION_HEADERS_JSON='{"x-vercel-protection-bypass":"<provider-issued-value>"}'
+npm run test:e2e:vercel
+```
+
+Nếu health request trả về `401/403` hoặc trang Deployment Protection, test sẽ fail-closed với chẩn đoán yêu cầu header xác thực; suite không coi Preview bị chặn là thành công và không hướng dẫn vô hiệu hóa protection. Script cũng dừng với mã lỗi nếu chưa bật gate, URL không phải HTTPS, thiếu `E2E_CRON_SECRET` hoặc JSON header không hợp lệ.
 
 ## Phạm vi chưa thực hiện
 

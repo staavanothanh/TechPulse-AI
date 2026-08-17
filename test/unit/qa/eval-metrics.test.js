@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runGroundednessEvaluation } from '../../../server/evals/groundedness.js'
 import { runCitationEvaluation } from '../../../server/evals/citations.js'
+import { STEP10_EVAL_CASES } from '../../fixtures/qa/step10-eval-fixture.js'
 
 const evidence = [{
   article: { id: 'article-eval', sourceId: 'source-eval', titleOriginal: 'Chip AI tiet kiem dien', excerptOriginal: 'Ket qua tiet kiem dien.', originalUrl: 'https://example.test/eval', publishedAt: '2026-08-10T00:00:00.000Z', status: 'published', evidenceEligible: true },
@@ -13,6 +14,13 @@ const cases = [
 ]
 
 describe('Step 10 controlled createAnswer evaluation metrics', () => {
+  it('keeps the controlled evaluator wired to the production provider-router contract', async () => {
+    const report = await runGroundednessEvaluation({ cases: [STEP10_EVAL_CASES[0]] })
+
+    expect(report).toMatchObject({ total: 1, passedCases: 1, passed: true })
+    expect(report.details[0]).toMatchObject({ actual: 'answered', passed: true })
+  })
+
   it('executes each controlled case through createAnswer and reports groundedness metrics', async () => {
     const createAnswer = vi.fn(async ({ question, item }) => question.startsWith('Chip')
       ? { answer: { status: 'answered', paragraphs: [{ text: 'Chip AI tiet kiem dien.', citationIds: ['C1'] }], citations: [{ id: 'C1' }] } }

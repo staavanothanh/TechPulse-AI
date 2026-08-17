@@ -42,6 +42,32 @@ function createRepository(records) {
   }
 }
 
+function createControlledProviderRouter() {
+  return Object.freeze({
+    async execute({ workloadId, admittedInput, invoke, validateOutput }) {
+      const route = Object.freeze({
+        routeId: workloadId === 'qa-support' ? 'controlled-support' : 'controlled-primary',
+        providerId: 'controlled',
+        providerFailureDomainId: 'controlled-local',
+        model: 'controlled',
+      })
+      const output = await invoke({ route, admittedInput })
+      return Object.freeze({
+        output: validateOutput({ route, output, admittedInput }),
+        metadata: Object.freeze({
+          workloadId,
+          routeId: route.routeId,
+          providerId: route.providerId,
+          providerFailureDomainId: route.providerFailureDomainId,
+          model: route.model,
+          externalAttempts: 1,
+          fallback: 'none',
+        }),
+      })
+    },
+  })
+}
+
 /**
  * Run a bounded fixture through the production createAnswer orchestration.
  * The repository/providers are deterministic and in-memory; no network or Mongo is used.
@@ -51,7 +77,7 @@ export async function createControlledAnswer({ item, question, scope, idempotenc
   const service = createQaService({
     articleRepository: repository,
     chatRepository: repository,
-    providerAdmission: { run: async ({ invoke, routeId }) => invoke({ routeId, model: 'controlled' }) },
+    providerRouter: createControlledProviderRouter(),
     providerAdapters: {
       llmProvider: {
         async answer({ input }) {
@@ -68,7 +94,6 @@ export async function createControlledAnswer({ item, question, scope, idempotenc
         },
       },
     },
-    routes: { primary: 'controlled-primary', support: 'controlled-support' },
     supportVerifier: async ({ evidenceBlocks, question: admittedQuestion }) => ({
       verdict: item?.adjudication?.supportVerdict ?? 'uncertain',
       addressesQuestion: item?.adjudication?.addressesQuestion === true && typeof admittedQuestion === 'string' && admittedQuestion.length > 0,

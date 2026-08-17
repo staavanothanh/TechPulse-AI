@@ -18,11 +18,30 @@ if (!/^https:\/\//.test(process.env.E2E_BASE_URL)) {
   )
   process.exit(2)
 }
+if (process.env.E2E_VERCEL_PROTECTION_HEADERS_JSON) {
+  try {
+    const headers = JSON.parse(process.env.E2E_VERCEL_PROTECTION_HEADERS_JSON)
+    if (
+      !headers ||
+      Array.isArray(headers) ||
+      typeof headers !== 'object' ||
+      Object.entries(headers).some(([, value]) => typeof value !== 'string')
+    )
+      throw new Error('invalid headers')
+  } catch {
+    console.error('E2E_VERCEL_PROTECTION_HEADERS_JSON must be a JSON object with string values')
+    process.exit(2)
+  }
+}
 
 const child = spawn(
   process.execPath,
   ['./node_modules/vitest/vitest.mjs', 'run', 'test/e2e/vercel-host.test.js'],
-  { stdio: 'inherit', env: process.env, windowsHide: true },
+  {
+    stdio: 'inherit',
+    env: { ...process.env, E2E_RUNNER_ENFORCE: 'true' },
+    windowsHide: true,
+  },
 )
 child.on('error', () => process.exit(1))
 child.on('exit', (code, signal) => process.exit(signal ? 1 : (code ?? 1)))

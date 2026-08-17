@@ -22,7 +22,16 @@ const browserGlobals = {
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**', 'shared/generated/**', 'coverage/**'],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'shared/generated/**',
+      'coverage/**',
+      '.dsh/**',
+      '.agents/**',
+      '.claude/**',
+      '.open-design/**',
+    ],
   },
   eslint.configs.recommended,
   {

@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { ObjectId } from 'mongodb'
-import { applyDemoDataset, buildDemoDataset, parseSeedMode, seedDemo } from '../../scripts/seed-demo.js'
+import {
+  applyDemoDataset,
+  buildDemoDataset,
+  parseSeedMode,
+  resolveDemoReviewerId,
+  seedDemo,
+} from '../../scripts/seed-demo.js'
 
 const RETRIEVED_AT = new Date('2026-08-17T00:00:00.000Z')
 const FORBIDDEN_FIELDS = [
@@ -164,7 +170,8 @@ function memoryContext() {
           documents.find((document) =>
             Object.entries(filter).every(([key, value]) => {
               const actual = document[key]
-              if (actual instanceof ObjectId && value instanceof ObjectId) return actual.equals(value)
+              if (actual instanceof ObjectId && value instanceof ObjectId)
+                return actual.equals(value)
               return actual === value
             }),
           ) ?? null
@@ -197,6 +204,29 @@ function memoryContext() {
 }
 
 describe('real connector demo seed', () => {
+  it('requires an explicit active admin attestation before attributing policy review', async () => {
+    const reviewerId = new ObjectId('507f1f77bcf86cd799439011')
+    const findOne = vi.fn(async () => ({ _id: reviewerId }))
+    const context = { db: { collection: () => ({ findOne }) } }
+
+    await expect(resolveDemoReviewerId({ context, environment: {} })).rejects.toThrow(
+      /attestation/i,
+    )
+    await expect(
+      resolveDemoReviewerId({
+        context,
+        environment: {
+          DEMO_SOURCE_POLICY_ATTESTED: 'true',
+          DEMO_SOURCE_REVIEWER_ID: reviewerId.toHexString(),
+        },
+      }),
+    ).resolves.toEqual(reviewerId)
+    expect(findOne).toHaveBeenCalledWith(
+      { _id: reviewerId, role: 'admin', status: 'active' },
+      { projection: { _id: 1 } },
+    )
+  })
+
   it('invokes every configured connector, caps the combined result at 50, and never persists raw content', async () => {
     const sources = realSources()
     const { registry, runs } = connectorRegistry(sources, 20)
@@ -222,7 +252,33 @@ describe('real connector demo seed', () => {
     expect(dataset.source).toBeUndefined()
     expect(dataset.sources).toHaveLength(3)
     expect(dataset.sources.every(({ domain }) => !domain.includes('demo'))).toBe(true)
-    expect(dataset.articles.every(({ originalUrl }) => !originalUrl.includes('.example'))).toBe(true)
+    expect(dataset.articles.every(({ originalUrl }) => !originalUrl.includes('.example'))).toBe(
+      true,
+    )
+    expect(dataset.sources.every(({ policyVersion }) => policyVersion === 2)).toBe(true)
+    expect(dataset.audits).toHaveLength(dataset.sources.length * 5)
+    expect(dataset.manifests).toHaveLength(dataset.sources.length)
+    expect(dataset.manifests.every(({ manifestId }) => /^[a-f0-9]{64}$/.test(manifestId))).toBe(
+      true,
+    )
+
+    for (const sourceDocument of dataset.sources) {
+      const audits = dataset.audits.filter(({ targetId }) => targetId.equals(sourceDocument._id))
+      expect(actionsForLifecycle(audits)).toEqual([
+        'source_created',
+        'source_policy_reviewed',
+        'source_technical_check_recorded',
+        'source_status_updated:draft:testing',
+        'source_status_updated:testing:active',
+      ])
+      expect(audits.every(({ targetId }) => targetId instanceof ObjectId)).toBe(true)
+      expect(audits.map(({ createdAt }) => createdAt.getTime())).toEqual(
+        [...audits].map(({ createdAt }) => createdAt.getTime()).sort((left, right) => left - right),
+      )
+      expect(new Set(audits.map(({ createdAt }) => createdAt.toISOString())).size).toBe(5)
+      const manifest = dataset.manifests.find(({ sourceId }) => sourceId.equals(sourceDocument._id))
+      expect(audits.every(({ requestId }) => requestId.endsWith(manifest.manifestId))).toBe(true)
+    }
 
     for (const article of dataset.articles) {
       for (const field of FORBIDDEN_FIELDS) expect(article).not.toHaveProperty(field)
@@ -237,7 +293,11 @@ describe('real connector demo seed', () => {
     const sources = realSources()
     const { registry } = connectorRegistry(sources)
     const context = memoryContext()
-    const dataset = await buildDemoDataset({ sources, connectorRegistry: registry, maxArticles: 50 })
+    const dataset = await buildDemoDataset({
+      sources,
+      connectorRegistry: registry,
+      maxArticles: 50,
+    })
 
     expect(parseSeedMode([])).toEqual({ apply: false })
     const dryRun = await seedDemo({ context, dataset, apply: false })
@@ -247,6 +307,51 @@ describe('real connector demo seed', () => {
     await expect(seedDemo({ context, dataset, apply: true })).resolves.toMatchObject({
       articles: { seeded: 50, existing: 0 },
     })
+  })
+
+  it('allows partial connector diagnostics only in dry-run and blocks apply below a source minimum', async () => {
+    const sources = realSources()
+    const { registry } = connectorRegistry(sources)
+    const originalResolve = registry.resolve
+    registry.resolve = vi.fn((sourceDocument) => {
+      if (sourceDocument.connectorType === 'hacker-news') throw new Error('connector unavailable')
+      return originalResolve(sourceDocument)
+    })
+    const partial = await buildDemoDataset({
+      sources,
+      connectorRegistry: registry,
+      retrievedAt: RETRIEVED_AT,
+      maxArticles: 50,
+      allowSourceFailures: true,
+    })
+
+    await expect(seedDemo({ dataset: partial, apply: false })).resolves.toMatchObject({
+      dryRun: true,
+      sources: 2,
+    })
+    await expect(
+      seedDemo({ context: memoryContext(), dataset: partial, apply: true }),
+    ).rejects.toThrow(/every live source/i)
+    await expect(
+      buildDemoDataset({
+        sources,
+        connectorRegistry: registry,
+        retrievedAt: RETRIEVED_AT,
+        maxArticles: 50,
+        allowSourceFailures: false,
+      }),
+    ).rejects.toThrow(/connector unavailable/i)
+
+    const sparseRegistry = connectorRegistry(sources, 4)
+    const sparse = await buildDemoDataset({
+      sources,
+      connectorRegistry: sparseRegistry.registry,
+      retrievedAt: RETRIEVED_AT,
+      maxArticles: 50,
+    })
+    await expect(
+      seedDemo({ context: memoryContext(), dataset: sparse, apply: true }),
+    ).rejects.toThrow(/minimum article count/i)
   })
 
   it('uses stable connector identities and insert-only persistence on repeated apply', async () => {
@@ -274,8 +379,103 @@ describe('real connector demo seed', () => {
       retrievedAt: RETRIEVED_AT,
       maxArticles: 50,
     })
-    expect(rebuilt.articles.map(({ _id }) => _id.toHexString())).toEqual(
-      dataset.articles.map(({ _id }) => _id.toHexString()),
+    expect(rebuilt.articles).toEqual(dataset.articles)
+    const sourceKeys = new Map(
+      dataset.sources.map(({ _id, sourceKey }) => [_id.toHexString(), sourceKey]),
+    )
+    expect(dataset.articles.map(({ _id }) => _id.toHexString())).toEqual(
+      dataset.articles.map(({ sourceId, externalId }) =>
+        createHash('sha256')
+          .update(
+            `techpulse-real-demo-article\u0000${sourceKeys.get(sourceId.toHexString())}\u0000${externalId}`,
+          )
+          .digest()
+          .subarray(0, 12)
+          .toString('hex'),
+      ),
     )
   })
+
+  it('fails closed when an insert-only identity already has a different payload', async () => {
+    const sources = realSources()
+    const { registry } = connectorRegistry(sources)
+    const dataset = await buildDemoDataset({
+      sources,
+      connectorRegistry: registry,
+      retrievedAt: RETRIEVED_AT,
+      maxArticles: 50,
+    })
+    const context = memoryContext()
+    await applyDemoDataset({ context, dataset })
+    const conflicting = {
+      ...dataset,
+      articles: dataset.articles.map((article, index) =>
+        index === 0 ? { ...article, titleOriginal: `${article.titleOriginal} changed` } : article,
+      ),
+    }
+
+    await expect(applyDemoDataset({ context, dataset: conflicting })).rejects.toThrow(
+      /payload conflicts/i,
+    )
+  })
+
+  it('treats later observation timestamps as an existing reset-safe fixture', async () => {
+    const sources = realSources()
+    const { registry } = connectorRegistry(sources)
+    const dataset = await buildDemoDataset({
+      sources,
+      connectorRegistry: registry,
+      retrievedAt: RETRIEVED_AT,
+      maxArticles: 50,
+    })
+    const context = memoryContext()
+    await applyDemoDataset({ context, dataset })
+    const later = (date) => new Date(date.getTime() + 60_000)
+    const observedLater = {
+      ...dataset,
+      sources: dataset.sources.map((item) => ({
+        ...item,
+        createdAt: later(item.createdAt),
+        updatedAt: later(item.updatedAt),
+        reviewedAt: later(item.reviewedAt),
+        reconciliation: {
+          ...item.reconciliation,
+          requestedAt: later(item.reconciliation.requestedAt),
+        },
+        technicalCheck: {
+          ...item.technicalCheck,
+          checkedAt: later(item.technicalCheck.checkedAt),
+          sampleCount: item.technicalCheck.sampleCount + 1,
+        },
+        health: { ...item.health, lastIngestSucceededAt: later(item.health.lastIngestSucceededAt) },
+      })),
+      articles: dataset.articles.map((item) => ({
+        ...item,
+        retrievedAt: later(item.retrievedAt),
+        createdAt: later(item.createdAt),
+        updatedAt: later(item.updatedAt),
+        rightsSnapshot: {
+          ...item.rightsSnapshot,
+          capturedAt: later(item.rightsSnapshot.capturedAt),
+        },
+        provenance: item.provenance.map((entry) => ({
+          ...entry,
+          observedAt: later(entry.observedAt),
+        })),
+      })),
+      audits: dataset.audits.map((item) => ({ ...item, createdAt: later(item.createdAt) })),
+    }
+
+    await expect(applyDemoDataset({ context, dataset: observedLater })).resolves.toMatchObject({
+      sources: { seeded: 0, existing: 3 },
+      articles: { seeded: 0, existing: 50 },
+      audits: { seeded: 0, existing: 15 },
+    })
+  })
 })
+
+function actionsForLifecycle(audits) {
+  return audits.map(({ action, stateTransition }) =>
+    stateTransition ? `${action}:${stateTransition.from}:${stateTransition.to}` : action,
+  )
+}

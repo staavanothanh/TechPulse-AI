@@ -3,3 +3,7 @@
 .vercel
 node_modules
 coverage
+.dsh
+.agents
+.claude
+.open-design
