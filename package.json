@@ -20,6 +20,7 @@
     "test:ui": "vitest run test/ui",
     "test:e2e": "vitest run test/e2e",
     "test:e2e:local": "node --env-file-if-exists=.env scripts/run-local-e2e.js",
+    "test:e2e:vercel": "node --env-file-if-exists=.env scripts/run-vercel-e2e.js",
     "eval:retrieval": "node scripts/eval-retrieval.js",
     "eval:groundedness": "node scripts/eval-groundedness.js",
     "eval:citations": "node scripts/eval-citations.js",

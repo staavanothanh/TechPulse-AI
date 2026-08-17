@@ -1,6 +1,6 @@
-# Step 12: local E2E và dữ liệu demo
+# Step 12: local va Vercel Preview E2E va du lieu demo
 
-Step 12 hiện chỉ chạy trên local host. Chưa có bước deploy lên Vercel.
+Local host là môi trường mặc định. Vercel Preview chỉ chạy khi đã có deployment HTTPS và các biến Preview tương ứng; Production deploy/Cron activation vẫn là gate riêng.
 
 ## 1. Kiểm tra migration
 
@@ -67,8 +67,24 @@ E2E kiểm tra health, login, session bootstrap, feed, text search, admin overvi
 
 `npm run test:e2e:local` sẽ dừng với mã lỗi nếu thiếu credential hoặc `E2E_ENABLED` khác `true`. Lệnh `npm run test:e2e` tổng hợp vẫn bỏ qua local-host suite khi chưa bật gate. Suite E2E controlled hiện có vẫn chạy độc lập với server.
 
+## 5. Chạy API/Cron E2E trên Vercel Preview
+
+Vercel Cron chỉ được kích hoạt ở Production, nên Preview kiểm tra trực tiếp cùng HTTP route và bearer boundary; không chờ scheduler tự gọi.
+
+Đặt Preview URL và secret của Preview trong terminal, không ghi secret vào repository:
+
+```powershell
+$env:E2E_VERCEL_ENABLED='true'
+$env:E2E_BASE_URL='https://<preview>.vercel.app'
+$env:E2E_ORIGIN='https://<preview>.vercel.app'
+$env:E2E_CRON_SECRET='preview-cron-secret-tu-vercel'
+npm run test:e2e:vercel
+```
+
+Suite kiểm tra API health, reject thiếu/sai machine bearer và due-work aggregate với bearer đúng. Script dừng với mã lỗi nếu chưa bật gate, URL không phải HTTPS hoặc thiếu `E2E_CRON_SECRET`; không có trạng thái skip giả thành công.
+
 ## Phạm vi chưa thực hiện
 
-- Không deploy lên Vercel.
+- Chưa promote Production hoặc kích hoạt Cron Production.
 - Không tự động ghi MongoDB trong quá trình E2E.
 - Chỉ chạy seed `--apply` sau khi đã xác nhận quyền ghi operator.
