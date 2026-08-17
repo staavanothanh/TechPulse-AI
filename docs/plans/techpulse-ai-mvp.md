@@ -900,6 +900,8 @@ Disable admin mutation routes/UI ngoài source pause emergency, giữ read-only 
 
 **Intent:** Chứng minh toàn bộ acceptance gates bằng contract/integration/E2E/eval/security evidence, deploy Vercel và tạo runbook/demo fallback có thể lặp lại.
 
+**Current execution cutline:** Project owner requests local-host verification before any Vercel deployment. This cutline adds no production de-scope: deployment, Atlas restore rehearsal and release evidence remain pending Step 12 exit gates.
+
 **Dependencies:** Steps 1–11.  
 **Estimate:** Final gate 1.5 ngày; evidence harness/deploy smoke đã chạy dần từ Weeks 1–3.  
 **Review tier:** Strongest adversarial system review.  

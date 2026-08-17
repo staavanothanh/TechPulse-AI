@@ -1,6 +1,7 @@
 # Agent
 .agents/
 .claude/
+.dsh/
 .open-design/
 
 # Node
