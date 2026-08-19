@@ -1,8 +1,8 @@
-# Backup/restore runbook
+# Post-MVP backup/restore runbook
 
-Status: local preflight only. No Atlas dump, governance sidecar, restore rehearsal, reconciliation, key rotation or credential revocation has been performed from this repository.
+Status: post-MVP planning and local preflight only. Backup/restore is not part of the MVP release gate. No Atlas dump, governance sidecar, restore rehearsal, reconciliation, key rotation or credential revocation has been performed from this repository.
 
-This runbook implements the planning boundary in Step 12 tasks 9–11. It does not authorize a production restore and does not make a restore target safe to serve.
+This runbook defines the later recovery track. It does not authorize a production restore and does not make a restore target safe to serve. The MVP keeps the live `techpulse_governance` database and runtime signed governance mutations; it does not promise backup recoverability or restore serving evidence.
 
 ## Safety boundary
 
@@ -125,7 +125,7 @@ An approved restore runner must complete all items below against the isolated ta
 9. Verify target-specific zero matches for deleted-user PII, sessions, answer attempts, user quota data and available suppressed citations.
 10. Verify that the signed checkpoint covers the latest terminal governance event and that every retention gap has a valid signed manifest.
 
-The repository does not yet contain `scripts/verify-audit-integrity.*` or `scripts/reconcile-restored-governance.*`. Until both tools and their restore tests exist, tasks 9–10 and the Step 12 restore exit criterion remain pending.
+The repository does not yet contain `scripts/verify-audit-integrity.*` or `scripts/reconcile-restored-governance.*`. Until both tools and their restore tests exist, the post-MVP recovery tasks remain pending. They do not block the MVP release gate.
 
 ## 5. Rotate authority before traffic
 

@@ -63,8 +63,8 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 - RSS/API/article body là untrusted content và có thể chứa prompt injection.
 - Vercel Cron request chỉ được tin cậy sau khi xác thực `CRON_SECRET`.
 - LLM/embedding provider là third party; input phải qua policy gate và redaction.
-- MongoDB Atlas là system of record duy nhất: `techpulse_app` giữ runtime state; `techpulse_governance` giữ signed suppression/checkpoint/retention state ngoài app restore boundary.
-- `techpulse_governance` logical Mongo database, backup sidecar và restore target là trust boundaries riêng; app restore không overwrite governance state và không được serve chỉ vì restore kỹ thuật thành công.
+- MongoDB Atlas là system of record duy nhất: `techpulse_app` giữ runtime state; `techpulse_governance` giữ signed suppression/checkpoint/retention state.
+- `techpulse_governance` là trust boundary runtime riêng. Backup sidecar và restore target thuộc recovery track hậu MVP; MVP không cam kết backup/restore hoặc serving sau restore.
 
 ## 3. Implementation contract
 
@@ -233,7 +233,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | ADMIN-009 | Admin xem safe article provenance/artifact diagnostics | Không expose excerpt/full text/vector/provider payload/private data |
 | ADMIN-010 | Takedown redacts historical chat citations trước completion | Citation unavailable cấm URL/title; completion có machine-readable chat cleanup evidence |
 | ADMIN-011 | Retention cleanup dùng fixed authorized indexed task | Machine-only enum, batch<=100, caller không chọn collection/filter/cutoff; deadline query có stable `_id` |
-| ADMIN-012 | Governance/audit survives app restore without resurrecting deleted data | Separate `techpulse_governance` Mongo DB + signed sidecar; terminal suppression insert atomic với workflow, isolated app restore replay trước serving |
+| ADMIN-012 (post-MVP) | Governance/audit survives app restore without resurrecting deleted data | Separate `techpulse_governance` Mongo DB + signed sidecar; terminal suppression insert atomic với workflow, isolated app restore replay trước serving |
 
 ## 5. States và transitions
 
@@ -366,7 +366,11 @@ approved → completed
 27. Q&A privacy/idempotency/provider admission/support gate áp dụng giống nhau cho primary và fallback; không route nào được bypass gate.
 28. `community-signal` chỉ discovery, không là Q&A evidence trong MVP.
 29. HMAC rotation không reset quota; append-only Mongo lifecycle không được quên predecessor khi env bỏ key, deletion derive mọi non-retired key version và old key chỉ retire sau successor >=30 ngày cùng zero dependent records.
-30. Restored app database không overwrite `techpulse_governance` và không serve trước current signed suppression replay, ephemeral auth/quota cleanup, secret rotation và audit checkpoint verification.
+30. Live governance database/signature không khả dụng thì terminal governance mutation fail closed; backup/restore serving gate là yêu cầu hậu MVP.
+
+### 6.1. Recovery invariants hậu MVP
+
+Các invariant sau không thuộc MVP release gate: restored app database không overwrite `techpulse_governance` và không serve trước current signed suppression replay, ephemeral auth/quota cleanup, secret rotation và audit checkpoint verification.
 
 ## 7. Data ownership và implications
 
@@ -386,7 +390,7 @@ approved → completed
 | Shared IP anti-abuse state | TechPulse AI / MongoDB | TTL 24h; không bị xóa theo user |
 | Audit log | TechPulse AI / `techpulse_app` MongoDB | Minimized event 180 ngày; IP HMAC unset sau 30 ngày; digest anchored vào signed governance checkpoint |
 | Suppression/checkpoint/manifest | TechPulse AI / `techpulse_governance` MongoDB | Signed actionable opaque targets + continuity; app dump/restore không overwrite; không case text/PII trực tiếp |
-| Backup copy | Project owner private encrypted storage | App dump + signed read-only governance sidecar tối đa 7 ngày; copy phục hồi, không là live SoR |
+| Backup copy (post-MVP) | Project owner private encrypted storage | App dump + signed read-only governance sidecar tối đa 7 ngày; copy phục hồi, không là live SoR |
 
 ## 8. Security, privacy và policy requirements
 
@@ -404,10 +408,10 @@ approved → completed
 - Không gửi credential/high-risk identifier, email, token, private chat hoặc unapproved full text tới provider. Raw Q&A chỉ dùng current `zdr-verified` route; không có route phù hợp thì fail closed.
 - Mọi route có privacy evidence được review và có expiry; model/provider fallback không được hạ capability hoặc đổi admitted input.
 - RSS/Atom XML parser không network/DOCTYPE/entity/XInclude và có wire/decoded/depth/node/field/deadline bounds.
-- Quota/IP HMAC keyring có một current + tối đa hai retiring versions; rate-limit bucket lưu fingerprint để phát hiện đổi secret khi giữ nguyên version. Stable version config không làm lifecycle authority: append-only Mongo snapshot revision/hash-chain giữ history và runtime role chỉ được find/insert. Governance runtime signer dùng keyring tách biệt; offline checkpoint keys chỉ owner giữ ngoài repo/runtime/DB và retire theo checkpoint/manifest/sidecar retention. Không lưu raw subject/secret/key material.
+- Quota/IP HMAC keyring có một current + tối đa hai retiring versions; rate-limit bucket lưu fingerprint để phát hiện đổi secret khi giữ nguyên version. Stable version config không làm lifecycle authority: append-only Mongo snapshot revision/hash-chain giữ history và runtime role chỉ được find/insert. Governance runtime signer dùng keyring tách biệt; offline checkpoint keys và sidecar retention thuộc recovery track hậu MVP, chỉ owner giữ ngoài repo/runtime/DB. Không lưu raw subject/secret/key material.
 - Direct domain mutation/audit dùng một transaction-capable runtime Mongo identity/session với per-collection role: domain mutation cần thiết nhưng audit/suppression chỉ insert/find. Separate maintenance/offline credentials không tham gia direct transaction.
 - Retention maintenance là machine-only fixed task; full audit-event purge chỉ là owner-offline fixed task có signed retention manifest trong governance DB. Checkpoint phát hiện rollback/tamper ngoài manifest hợp lệ.
-- Backup dùng credential tách runtime, private encrypted app dump + signed governance sidecar và isolated app restore; phục vụ traffic chỉ sau governance reconciliation + session invalidation + secret rotation.
+- Backup credential, private encrypted app dump, signed governance sidecar và isolated app restore là hậu MVP; không dùng chúng làm điều kiện phục vụ traffic trong MVP.
 - Takedown và account deletion có audit nhưng audit không lưu deleted secret/content.
 
 ## 9. Non-functional requirements
@@ -430,7 +434,7 @@ approved → completed
 | NFR-014 | Privacy retention | Retention duration được khóa trước migration của collection owner; TTL chỉ cleanup best-effort, không thay correctness check |
 | NFR-015 | Secure ingress | Cookie/CORS/Origin/cache, target/body/query parser và 413/415 được test như common boundary trước business route |
 | NFR-016 | Provider safety | Privacy capability, credential admission domain, route/provider failure-domain circuit, idempotency và evidence-block support fail closed trên mọi candidate route |
-| NFR-017 | Recoverable governance | Indexed cleanup, HMAC rotation, tamper-evident audit và restore reconciliation không resurrect deleted/taken-down data |
+| NFR-017 | Live governance integrity | Indexed cleanup, HMAC rotation và tamper-evident audit không resurrect deleted/taken-down data |
 
 Canonical media attribution do server resolve theo thứ tự media credit → source `attributionText` → source name và luôn trả non-empty `leadMedia.attribution`; frontend không tự dựng attribution từ field nullable.
 
@@ -492,14 +496,14 @@ Evaluation protocol được version-control cùng fixture:
 - Mọi admin mutation có audit record với action-specific `reasonCode`, không có free-form admin reason.
 - Same-key Q&A concurrency chỉ reserve/call/append một lần; hai route dùng cùng provider credential tranh một aggregate domain cap/budget; circuit storm chặn thêm primary/fallback và trả retry hint an toàn.
 - Account deletion test chứng minh session/answer-attempt direct-delete/zero-match, user quota zero-match theo mọi HMAC version còn hiệu lực và closed tombstone trước `completed`; shared IP bucket không bị xóa; fake delayed Q&A không tạo lại dữ liệu.
-- Fixed maintenance task không nhận caller predicate; full audit-event purge không có HTTP route. Real Mongo-role test chứng minh audit insert fail rollback domain mutation và runtime role không update/delete audit; verifier phát hiện mutation/missing/reorder/old restore ngoài signed manifest hợp lệ.
+- Fixed maintenance task không nhận caller predicate; full audit-event purge không có HTTP route. Real Mongo-role test chứng minh audit insert fail rollback domain mutation và runtime role không update/delete audit. Ordered restore/replay verification là hậu MVP.
 
 ### Deployment gate
 
 - Production build deploy thành công trên Vercel Hobby.
 - MongoDB Atlas connection/config được lấy từ environment.
 - Có local fallback và seed/demo script hoặc documented demo steps.
-- Backup rehearsal restore app DB vào isolated target mà không overwrite governance DB; nếu Atlas mất thì governance sidecar phải restore/verify trước. Snapshot trước deletion/takedown không serve tới khi current suppression replay, restored session/quota/attempt/provider-admission state bị xóa, deleted-user saved/chat/tombstone và takedown citation cleanup zero-verify, secrets/credential rotate và checkpoint verified.
+- Production build, Vercel deployment, Atlas runtime-role/capability evidence và local fallback hoạt động. Backup/restore rehearsal không thuộc MVP deployment gate; recovery track hậu MVP được ghi riêng trong `BACKUP-RESTORE-RUNBOOK.md`.
 
 ## 11. Non-goals
 
@@ -514,6 +518,7 @@ Evaluation protocol được version-control cùng fixture:
 - Dedicated vector database/search cluster.
 - Fine-tuning proprietary model.
 - Production SLA hoặc unrestricted public launch.
+- Backup/restore rehearsal, governance sidecar export, offline checkpoint-key custody và serving sau restore.
 
 ## 12. Execution questions không chặn Step 1
 

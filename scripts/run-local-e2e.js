@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { validateLocalE2eEndpoints } from './local-e2e-config.js'
 
 const required = [
   'E2E_USER_EMAIL',
@@ -16,6 +17,13 @@ if (process.env.E2E_ENABLED !== 'true') {
 }
 if (missing.length > 0) {
   console.error(`Local E2E required inputs are missing: ${missing.join(', ')}`)
+  process.exit(2)
+}
+let localEndpoints
+try {
+  localEndpoints = validateLocalE2eEndpoints({ baseUrl: process.env.E2E_BASE_URL, origin: process.env.E2E_ORIGIN })
+} catch (error) {
+  console.error(error instanceof Error ? error.message : 'Local E2E endpoint configuration is invalid')
   process.exit(2)
 }
 const objectIdPattern = /^[0-9a-f]{24}$/i
@@ -75,7 +83,7 @@ const child = spawn(
   ['./node_modules/vitest/vitest.mjs', 'run', 'test/e2e/local-host.test.js'],
   {
     stdio: 'inherit',
-    env: { ...process.env, E2E_REQUIRE_ARTICLES: 'true', E2E_RUNNER_ENFORCE: 'true' },
+    env: { ...process.env, E2E_BASE_URL: localEndpoints.baseUrl, E2E_ORIGIN: localEndpoints.origin, E2E_REQUIRE_ARTICLES: 'true', E2E_RUNNER_ENFORCE: 'true' },
     windowsHide: true,
   },
 )

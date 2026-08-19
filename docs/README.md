@@ -66,7 +66,7 @@ docs/
 - Citation cấp bài ở detail/summary và cấp đoạn ở Q&A.
 - Không lưu full text; chỉ xử lý tạm khi source policy cho phép.
 - Ảnh nguồn chỉ được remote-preview khi Source Registry cho phép; video quan trọng là link-only và phải ghi rõ AI chưa phân tích video. Không tải về/rehost binary ảnh hoặc video trong MongoDB.
-- Vercel Hobby host React/Express/cron; MongoDB Atlas là SoR duy nhất với `techpulse_app` runtime DB và `techpulse_governance` signed restore/audit boundary DB.
+- Vercel Hobby host React/Express/cron; MongoDB Atlas là SoR duy nhất với `techpulse_app` runtime DB và `techpulse_governance` signed governance boundary DB. Backup/restore sidecar là recovery track hậu MVP.
 - Text search là degradation baseline; semantic retrieval dùng pinned embedding compatibility identity và không runtime-fallback qua vector space khác.
 - Admin/user dùng server-side session; system worker không phải login account.
 - `/me` bootstrap CSRF token gắn ổn định với session sau reload; token chỉ ở memory, không ở localStorage và bootstrap ở tab khác không revoke token đang hợp lệ.
@@ -82,7 +82,7 @@ docs/
 - Browser API same-origin với exact Origin, `__Host-` cookie, no-store auth response và strict target/JSON/query ingress; RSS XML parser fail closed dưới entity/decompression input.
 - Q&A dùng 24h idempotent attempt, privacy-verified route, credential admission domain, route/provider failure-domain circuits và exact evidence-block support; `community-signal` chỉ feed/search.
 - ADR-0013 tách protocol adapter, provider failure domain, credential admission domain, route và workload policy. Model fallback và provider fallback dùng failure class riêng, cùng admitted input và tối đa hai external attempts trong MVP.
-- Cleanup có fixed machine-only task table + deadline/source-citation indexes; HMAC keyring, closed tombstone và signed `techpulse_governance` checkpoint/suppression state ngăn app restore làm dữ liệu đã xóa xuất hiện lại.
+- Cleanup có fixed machine-only task table + deadline/source-citation indexes; HMAC keyring, closed tombstone và signed `techpulse_governance` checkpoint/suppression state bảo vệ runtime governance. Restore replay và backup sidecar là hậu MVP.
 - Mirrored `runtimeCapabilityProbes` ở hai logical DB chứng minh runtime cross-database transaction/role; probe chỉ có opaque ID/timestamps, TTL 5 phút và immediate cleanup/abort zero residue.
 - Audit IP-HMAC field cleanup dùng Mongo maintenance client/credential riêng; thiếu credential không được fallback sang runtime identity.
 - Audit chỉ lưu safe changed fields/state transition/action-specific `reasonCode`; không snapshot arbitrary document hoặc free-form case text.
@@ -101,7 +101,7 @@ docs/
 
 ## 6. Trạng thái implementation và bước tiếp theo
 
-Steps 1–11 đã có implementation commits và focused verification. Canonical OpenAPI hiện có 55 operations. Step 12 chưa được handoff và không được coi là release pass trước khi rerun full contract/integration/E2E/security, Atlas role/capability, restore và deployment evidence.
+Steps 1–11 đã có implementation commits và focused verification. Canonical OpenAPI hiện có 55 operations. Step 12 MVP release evidence gồm contract/integration/E2E/security, Atlas role/capability và deployment evidence; backup/restore không thuộc MVP gate và được theo dõi ở recovery track hậu MVP.
 
 ADR-0013 đã được implement trước Step 12 bằng provider graph, protocol adapter, workload router, route/provider-domain circuit và migration `provider-routing-v2`. Provider/model selection không còn nằm trong application/bootstrap routing; deployment phải áp migration v2, cập nhật graph environment và verify runtime role trước khi bật provider workloads. Thay đổi này không đổi HTTP contract và không tạo client/admin model picker.
 

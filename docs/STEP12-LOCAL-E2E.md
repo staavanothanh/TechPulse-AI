@@ -76,8 +76,16 @@ $env:E2E_DELETION_EMAIL='deletion-e2e@example.com'
 $env:E2E_DELETION_PASSWORD='mat-khau-disposable'
 $env:E2E_DELETION_CONFIRM_EMAIL='deletion-e2e@example.com'
 $env:E2E_TAKEDOWN_ARTICLE_ID=$env:E2E_DEMO_ARTICLE_ID
+
+# Tạo account user disposable cho mutation E2E; mặc định chỉ dry-run.
+npm run seed:e2e-user
+npm run seed:e2e-user -- --apply
 npm run test:e2e:local
 ```
+
+`seed:e2e-user -- --apply` chỉ tạo user mới nếu email chưa tồn tại, ghi audit `user_registered` trong cùng transaction và không reset/reactivate account cũ. Ưu tiên dùng domain dành cho test như `example.com`, `.invalid` hoặc `.test`. Nếu dùng một account test riêng trên domain thật, đặt `E2E_SEED_CONFIRM=true` trong terminal local trước khi chạy `--apply`; không dùng account admin/user chính.
+
+`test:e2e:local` chỉ chấp nhận `E2E_BASE_URL` và `E2E_ORIGIN` cùng là `http://localhost`. Hai biến Preview phải được đặt lại theo từng terminal khi chạy `test:e2e:vercel`; không dùng URL Preview cho local suite.
 
 Runner refuse unsafe env nếu deletion email trùng user/admin hoặc confirmation không khớp. Suite cũng xác nhận login account deletion có `role=user`. Luồng opt-in tạo takedown rồi reject để không ẩn bài viết; deletion request chỉ được accept và không chạy worker purge. Không dùng email admin/user thật cho luồng này.
 

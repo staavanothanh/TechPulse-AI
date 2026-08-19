@@ -393,7 +393,7 @@ createdAt
 
 - Các thao tác tắt nguồn, hủy job, ẩn/xóa bài, xóa index và khóa user phải yêu cầu xác nhận cùng action-specific `reasonCode`; UI hiển thị label dễ hiểu nhưng không nhận free-form audit reason.
 - Audit log chỉ được đọc bởi admin và không được chỉnh sửa qua dashboard.
-- Audit không lưu raw before/after document, free-form requester/account case text, requester PII, email, password/session, private chat, provider payload hoặc source content. Direct mutation và audit dùng cùng transaction-capable Mongo client/session; role chỉ cho insert/find trên audit/suppression collections. Terminal deletion/takedown atomically ghi signed minimized target vào logical `techpulse_governance` DB; app restore không overwrite DB này.
+- Audit không lưu raw before/after document, free-form requester/account case text, requester PII, email, password/session, private chat, provider payload hoặc source content. Direct mutation và audit dùng cùng transaction-capable Mongo client/session; role chỉ cho insert/find trên audit/suppression collections. Terminal deletion/takedown atomically ghi signed minimized target vào logical `techpulse_governance` DB. Backup sidecar và app restore không thuộc MVP; nếu thực hiện hậu MVP thì app restore không overwrite DB này.
 - Dashboard không hiển thị password hash, session ID, API key, LLM key hoặc stack trace chứa secret.
 
 #### 5.8.8. Bề mặt dashboard MVP
@@ -610,6 +610,7 @@ Các feature thương mại chỉ được triển khai sau khi đánh giá lạ
 - Thanh toán, quảng cáo hoặc affiliate link.
 - Cam kết rằng AI luôn đúng hoặc mọi nguồn đều hoàn toàn khách quan.
 - Fine-tune một mô hình AI riêng trên dữ liệu báo chí không có giấy phép.
+- Backup/restore rehearsal, governance sidecar export, offline checkpoint-key custody và serving sau restore.
 
 ## 10. Lưu ý và ràng buộc pháp lý
 

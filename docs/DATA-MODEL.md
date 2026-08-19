@@ -8,7 +8,7 @@
 
 ## 1. Nguyên tắc
 
-- MongoDB Atlas là system of record duy nhất cho mọi state bền vững. `techpulse_app` giữ runtime application state; `techpulse_governance` giữ signed suppression/checkpoint/retention-manifest state và không bị overwrite khi restore app database. File dump/sidecar ngoài Atlas chỉ là encrypted backup copy, không là live authority.
+- MongoDB Atlas là system of record duy nhất cho mọi state bền vững. `techpulse_app` giữ runtime application state; `techpulse_governance` giữ signed suppression/checkpoint/retention-manifest state. File dump/sidecar ngoài Atlas chỉ là encrypted backup copy hậu MVP, không là live authority và không thuộc MVP serving gate.
 - ID đi qua API luôn là opaque string; client không suy luận ObjectId.
 - Date lưu theo UTC BSON Date và serialize ISO 8601.
 - Mọi document có `createdAt`, `updatedAt` khi có mutation.
@@ -970,7 +970,7 @@ Rules:
 - Failed mutation cũng có record nếu actor đã được xác thực và action đủ xa để audit.
 - Direct admin mutation commit state + audit event trong một Mongo transaction ngắn. Workflow dài ghi `pending` intent trước side effect và append terminal event idempotently.
 - `eventId` là deterministic identity theo request/workflow phase và bị unique index chặn duplicate. Một runtime Mongo client/credential/session có domain privileges nhưng chỉ `insert/find` trên `adminAuditLogs`; cùng session commit domain mutation + audit insert. Cùng role chỉ `insert/find` append-only HMAC lifecycle snapshots; audit/lifecycle update-delete đều bị deny. IP-HMAC field-unset dùng maintenance credential riêng và đúng fixed HTTP task, còn full event purge chỉ dùng owner-only offline signed-manifest path ở §19.1.
-- Step 12 tính ordered digest `(eventId, createdAt, _id)` bằng offline key rồi operator ghi signed checkpoint vào `techpulse_governance.governanceCheckpoints`. Verifier phải phát hiện modified/missing/reordered hoặc restored-old app state trước khi target serve.
+- Runtime MVP giữ signed suppression/checkpoint state trong `techpulse_governance` và fail closed khi live governance không khả dụng. Ordered digest bằng offline key, sidecar continuity và restored-old app verification thuộc recovery track hậu MVP.
 
 Indexes:
 
@@ -984,6 +984,8 @@ partial { purgeAfter: 1, _id: 1 } where purgeAfter exists
 ```
 
 ### 16.1. `techpulse_governance` collections
+
+Runtime MVP dùng các collection này cho signed suppression, audit/checkpoint continuity và fail-closed terminal mutation. Export sidecar, offline checkpoint-key custody và replay vào restore target là operational contract hậu MVP; không yêu cầu thêm secret vào runtime environment.
 
 ```text
 type GovernanceSuppressionDocument = {
@@ -1040,8 +1042,8 @@ Rules:
 
 - Terminal account deletion/takedown tạo minimized suppression payload, ký HMAC bằng dedicated governance signing key từ Vercel environment rồi insert cùng domain/audit mutation trong **cùng client/session transaction** qua hai pre-created database. Insert fail làm terminal mutation rollback; không có eventual best-effort gap.
 - Runtime custom role chỉ `insert/find` suppression, audit và HMAC lifecycle snapshots; không update/delete các collection này. Maintenance credential chỉ làm fixed IP-HMAC field-unset; owner operator credential ghi checkpoint/retention manifest và chạy offline purge.
-- Governance runtime signing keyring tách quota/IP HMAC: đúng một current + tối đa một retiring version; DB chỉ giữ version/signature. Key chỉ retire khi mọi suppression dùng version đó đã nằm dưới verified offline checkpoint và sidecar backup có continuity. Offline checkpoint HMAC keyring do owner giữ riêng: một current + tối đa hai verify-only retiring keys; secret không vào repo/Vercel/Mongo, inventory chỉ ghi keyId/activatedAt/retireAfter. Old offline key chỉ hủy sau khi mọi checkpoint/manifest/sidecar còn retention đã hết hạn hoặc được re-anchor bằng current key.
-- Governance database unavailable/signature invalid làm terminal deletion/takedown hoặc restore serving gate fail closed. Backup inventory luôn có signed read-only governance sidecar; sidecar chỉ là recovery copy và không ghi đè live governance database trong app-only restore.
+- Governance runtime signing keyring tách quota/IP HMAC: đúng một current + tối đa một retiring version; DB chỉ giữ version/signature. Runtime key chỉ retire theo live governance lifecycle evidence. Offline checkpoint HMAC keyring, sidecar continuity và old-key custody thuộc recovery track hậu MVP; secret không vào repo/Vercel/Mongo, inventory chỉ ghi keyId/activatedAt/retireAfter.
+- Governance database hoặc runtime signature unavailable làm terminal deletion/takedown fail closed. Backup inventory và signed read-only governance sidecar là recovery copy hậu MVP; sidecar không ghi đè live governance database trong app-only restore.
 - Step 11 phải probe transaction thật trên Atlas deployment đã cấu hình: cùng runtime client/session/credential ghi rồi rollback/commit qua pre-created collection ở `techpulse_app` và `techpulse_governance`. Capability/role probe fail thì block handoff; không fallback sang eventual write, best-effort export hoặc persistence technology khác.
 - Mỗi logical database có một strict `runtimeCapabilityProbes` collection với unique `probeId` và TTL `expiresAt` tối đa 5 phút. Probe chỉ ghi fixed opaque ID/kind/timestamps, không business field hoặc PII. Commit probe phải cleanup ngay; abort probe phải để zero residue. Runtime role có narrow `find|insert|remove` chỉ trên hai probe collections; quyền `remove` này không áp dụng audit, suppression hoặc business collections. `db:verify`/Step 12 require collection/index/role; current application startup không dùng probe như readiness dependency.
 
@@ -1076,8 +1078,8 @@ runtimeCapabilityProbes: unique { probeId: 1 }; TTL { expiresAt: 1 } expireAfter
 18. Raw user question không được rời trust boundary nếu privacy gate phát hiện credential/high-risk identifier hoặc route không có current `zdr-verified` capability; primary/fallback dùng cùng admitted input.
 19. Mỗi Q&A idempotency identity chỉ reserve một quota unit, tối đa một primary + một fallback generation + một support call, rồi append tối đa một assistant message.
 20. Online cleanup chỉ chạy qua closed maintenance task table; caller không thể chọn collection/filter/cutoff/cursor/batch size và browser/admin session không có machine authorization. Full audit-event purge là explicit owner-only offline signed-manifest exception ở §19.1.
-21. `techpulse_governance` suppression state chỉ giữ signed actionable opaque deletion/takedown IDs, target scope và effective time; không giữ email/contact/reason/chat/source text. Serving fail closed nếu checkpoint không cover terminal event mới nhất, signature/chain sai, governance database unavailable hoặc entry thiếu actionable target.
-22. Restored app database không được serve trước khi current governance suppression state đã replay; restored sessions/quota/answer-attempt/provider-admission state bị xóa, deleted-user/takedown targets zero-match và audit checkpoint verified. App-only restore không overwrite governance database.
+21. `techpulse_governance` suppression state chỉ giữ signed actionable opaque deletion/takedown IDs, target scope và effective time; không giữ email/contact/reason/chat/source text. MVP terminal mutation fail closed nếu governance database unavailable, runtime signature sai hoặc entry thiếu actionable target. Checkpoint-chain verification cho restored serving là hậu MVP.
+22. [Hậu MVP] Restored app database không được serve trước khi current governance suppression state đã replay; restored sessions/quota/answer-attempt/provider-admission state bị xóa, deleted-user/takedown targets zero-match và audit checkpoint verified. App-only restore không overwrite governance database.
 23. Cross-database transaction là deployment capability phải được chứng minh trên Atlas cluster thật bằng runtime role trước handoff; document-level support hoặc mock không thay thế probe, và failure luôn fail closed.
 
 ## 18. Transaction và consistency strategy
@@ -1120,7 +1122,7 @@ Mỗi owner phải tạo index/script retention cùng migration của collection
 | Takedown requester PII | 90 ngày sau terminal state | bounded field-unset script | Step 11 |
 | Non-PII takedown lifecycle evidence | 180 ngày sau terminal state | state-aware cleanup/manual review | Step 11 |
 | Audit IP HMAC | 30 ngày | bounded field-unset script | Steps 2, 3, 11 |
-| Minimized audit event | 180 ngày | owner-only offline fixed purge + signed retention manifest | Steps 2, 3, 11, 12 |
+| Minimized audit event | 180 ngày | runtime retention evidence; owner-only offline fixed purge + signed retention manifest là hậu MVP | Steps 2, 3, 11; post-MVP recovery |
 | `jobLeases` high-water | project lifetime | no TTL; controlled GC migration after proof | Step 4 |
 
 Full text tạm giải phóng ngay sau job/request và không xuất hiện trong log/cache. Media metadata/URL chỉ giữ khi policy còn hợp lệ; summary/vector bị xóa theo takedown scope. Bounded cleanup phải indexed, idempotent, có dry-run, chạy được qua cron/manual và không dựa vào timing chính xác của Vercel Cron hoặc MongoDB TTL.
@@ -1178,7 +1180,7 @@ Script phải:
 - [ ] `leadMedia` chỉ tồn tại với HTTPS allowlisted host/current policy; video luôn link-only và `not-analyzed`.
 - [ ] Content takedown và automatic account deletion có completion evidence riêng, đúng retention policy.
 - [ ] Audit không có raw snapshot/arbitrary object/PII và không có update/delete route.
-- [ ] Same runtime identity/session rollback domain mutation khi audit/suppression insert fail; update/delete bị deny; deterministic event ID + governance checkpoint verifier phát hiện mutation/missing/reorder/old restore, chỉ chấp nhận gap có signed retention manifest hợp lệ.
+- [ ] Same runtime identity/session rollback domain mutation khi audit/suppression insert fail; update/delete bị deny; live governance signature/checkpoint state fail closed.
 - [ ] Deadline/source-citation/due-work `explain` dùng intended indexes, stable `_id` tie-break và không scan/sort blocking.
 - [ ] Deleted raw user document chỉ còn closed tombstone allowlist; validator reject preferences, role và suspension context.
 - [ ] Fixed maintenance task không chấp nhận caller filter/cutoff/batch/collection và browser/admin session không invoke được.
@@ -1192,3 +1194,8 @@ Script phải:
 - [ ] Delayed Q&A sau account deletion/takedown không persist chat/quota hoặc tái tạo available URL/title.
 - [ ] Concurrent same-key Q&A chỉ có một receipt/quota/provider/chat result; non-confidential route, community evidence và irrelevant block đều fail closed.
 - [ ] Embedding length/hash/model/version được kiểm tra trước khi `ready`.
+
+### Recovery track hậu MVP
+
+- [ ] Offline checkpoint key custody, governance sidecar export/signature và ordered audit/checkpoint/suppression verification.
+- [ ] Isolated app/governance restore, reconciliation, session/secret rotation và target-specific zero-match evidence trước serving.

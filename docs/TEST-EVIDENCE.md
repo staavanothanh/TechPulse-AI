@@ -2,9 +2,9 @@
 
 This file records commands and results that were observed on the current checkout. A pending entry is not release evidence.
 
-## Step 12 restore/release lane — 2026-08-17
+## Post-MVP recovery preflight — 2026-08-17
 
-Scope: local, non-network restore-plan preflight. No Atlas or Vercel mutation was authorized or performed in this lane.
+Scope: local, non-network restore-plan preflight only. This lane is not an MVP release gate. No Atlas or Vercel mutation was authorized or performed in this lane.
 
 | Requirement | Evidence | Result |
 | --- | --- | --- |
@@ -34,11 +34,11 @@ Exit code: 0 (line-ending warnings only for concurrent Step 12 files)
 
 The first TDD run failed because `scripts/verify-restore-plan.js` did not exist. The first implementation made eight restore-plan tests pass. The P1 hardening run then added 17 failing cases for secret aliases, credential-bearing values and storage references; the hardened implementation made all 25 tests pass.
 
-## Step 12 application gates — 2026-08-17
+## Step 12 MVP application gates — 2026-08-17
 
 | Command | Observed result |
 | --- | --- |
-| `npm test -- --run` | 167 files passed, 1003 tests passed; 16 files/66 tests skipped by explicit external gates |
+| `npm test -- --run` | 167 files passed, 1004 tests passed; 16 files/66 tests skipped by explicit external gates |
 | `npm run test:integration` | 24 files/82 tests passed; 14 files/57 tests skipped by explicit external gates |
 | `npm run test:security` | 12 files/76 tests passed |
 | `npm run test:ui` | 12 files/100 tests passed |
@@ -46,9 +46,11 @@ The first TDD run failed because `scripts/verify-restore-plan.js` did not exist.
 | `npm run contract:test` | All contract/runtime fixture groups passed |
 | `npm run lint` | PASS after ignoring gitignored local tool directories |
 | `npm run build` | PASS |
-| `npm run test:e2e:local` | PASS, 4/4 local health/content/admin/CSRF tests; 2 governance mutation tests intentionally skipped because disposable-account opt-in is disabled |
+| `npm run test:e2e` | PASS, 5 tests; 9 external/local-host tests skipped by explicit gates |
+| `npm run test:e2e:local` | FAIL in latest runs: server health passes on `localhost:3000`, but login receives expected `429 rate_limit_exceeded` after repeated retries filled the 15-minute login bucket; governance run had 4 passed/2 failed, non-mutation rerun had 1 passed/3 failed/2 skipped; no deletion/takedown mutation committed |
+| `npm run test:e2e:vercel` | PASS, 3/3 Preview health/cron authentication tests |
 | `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --summary-only` | PASS, 1 real outbound request through configured `zen` summary route |
-| `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --embedding-only` | PASS after bounded embedding-response cap fix; 1 real OpenRouter request, 18 vectors x 1024 dimensions, top-5 rate 1 |
+| `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --embedding-only` | PASS, 1 real OpenRouter request, 18 vectors x 1024 dimensions, top-5 rate 1 |
 | `npm run eval:retrieval` | PASS, 6/6 top-5 hits; below the Step 12 30+ dataset target |
 | `npm run eval:groundedness` | PASS, 31/31 cases; deterministic in-memory provider fixture |
 | `npm run eval:citations` | PASS, 31/31 cases; deterministic in-memory provider fixture |
@@ -57,11 +59,11 @@ The first TDD run failed because `scripts/verify-restore-plan.js` did not exist.
 | `npm run seed:demo -- --apply` | PASS after the owner-authorized exact demo reset; 3 live sources, 44 accepted articles, 15 lifecycle audits and 3 manifests committed atomically |
 | `npm run verify:demo` | PASS; 3/3 sources, 44 manifest-bound published articles (at least 5 per source), 15/15 lifecycle audits and 3/3 manifests verified |
 
-Preview API/Cron smoke was also observed through `npx vercel curl`: health `200`, missing/invalid machine bearer `401`, valid bearer `202`. Direct browser-style Preview E2E remains blocked by Deployment Protection unless an approved bypass header or public test origin is configured.
+Preview API/Cron smoke was also observed through `npm run test:e2e:vercel`: health `200`, missing/invalid machine bearer `401`, valid bearer `202`. Direct browser-style Preview E2E remains outside this API/Cron gate and requires the configured protected Preview browser path.
 
-## Pending external evidence
+## Post-MVP recovery evidence
 
-| Step 12 gate | Status | Missing authority or implementation |
+| Recovery gate | Status | Missing authority or implementation |
 | --- | --- | --- |
 | Read-only `techpulse_app` dump inventory | PENDING | Atlas owner, dedicated read-only backup identity and MongoDB Database Tools |
 | Encrypted private storage and destruction record | PENDING | Storage owner and time-bounded artifact lifecycle |
@@ -75,8 +77,8 @@ Preview API/Cron smoke was also observed through `npx vercel curl`: health `200`
 | Session/CSRF/HMAC/runtime Mongo rotation and stale credential revocation | PENDING | Atlas/Vercel project owner |
 | HMAC retirement/custody rehearsal | PENDING | 30-day successor evidence, zero-dependent counts and offline key inventory |
 | Full primary-provider outage with cross-provider fallback | PENDING | Configured independent providers and authorized external calls |
-| Serving approval | CLOSED | All preceding gates plus explicit project-owner decision |
+| MVP serving approval | PENDING | Explicit project-owner decision after MVP application/deployment gates |
 
 ## Release interpretation
 
-The local scaffold validates only plan shape and destructive-target guards. It does not prove backup recoverability, governance signature authenticity, replay correctness or safe production promotion. Step 12 tasks 9–11 and the backup/restore exit criterion remain open.
+The local scaffold validates only plan shape and destructive-target guards. It does not prove backup recoverability, governance signature authenticity, replay correctness or safe restore promotion. Those items are intentionally deferred to the post-MVP recovery track and do not block the MVP application gate. The latest local E2E retry is rate-limited by the configured 15-minute login bucket; rerun after the window expires, without changing rate-limit data or bypassing the admission boundary. The MVP serving decision remains pending until local E2E completes with valid disposable credentials. The MVP still requires live governance mutation/audit atomicity, runtime role evidence, provider safety and deployment verification.

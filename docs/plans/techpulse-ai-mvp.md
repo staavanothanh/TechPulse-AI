@@ -1,8 +1,8 @@
 # TechPulse AI — 4-Week MVP Construction Blueprint
 
-> Trạng thái: Plan-of-Record v1.8 — Steps 1–11 đã implement; ADR-0013 remediation và Step 12 release evidence đang chờ
-> Phiên bản: 1.8
-> Cập nhật: 15/08/2026
+> Trạng thái: Plan-of-Record v1.9 — Steps 1–11 đã implement; Step 12 MVP release evidence đang được chốt; backup/restore chuyển sang hậu MVP
+> Phiên bản: 1.9
+> Cập nhật: 17/08/2026
 > Objective: xây MVP TechPulse AI end-to-end theo solo-owner + coding-agent execution; bốn tuần là planning horizon, không phải lý do hạ safety/contract gate
 > Execution mode: direct mode — git có sẵn trên `main`, `origin` đã cấu hình nhưng remote mutation không được phép nếu user chưa yêu cầu; GitHub CLI chưa cài
 > Implementation baseline: JavaScript/JSX (`.js`, `.jsx`) cho React/Node.js; không dùng TypeScript/TSX trong MVP  
@@ -83,7 +83,7 @@ Mọi step phải giữ các invariant sau:
 27. `community-signal` chỉ feed/search discovery, không đi vào Q&A evidence/citation.
 28. RSS/Atom parser cấm DOCTYPE/entity/XInclude/network resolver và có wire/decoded/depth/node/field/time bounds.
 29. Retention/cleanup dùng exact deadline+`_id` indexes và machine-only fixed task table; caller không truyền collection/filter/cutoff/batch.
-30. Restore target không serve trước current governance ledger replay, session invalidation, audit checkpoint verification và relevant secret rotation.
+30. Live governance signature/checkpoint không khả dụng thì terminal mutation fail closed. Backup/restore serving gate là hậu MVP.
 
 ## 5. Definition of Done cho mỗi step
 
@@ -900,7 +900,7 @@ Disable admin mutation routes/UI ngoài source pause emergency, giữ read-only 
 
 **Intent:** Chứng minh toàn bộ acceptance gates bằng contract/integration/E2E/eval/security evidence, deploy Vercel và tạo runbook/demo fallback có thể lặp lại.
 
-**Current execution cutline:** Project owner requests local-host verification before any Vercel deployment. This cutline adds no production de-scope: deployment, Atlas restore rehearsal and release evidence remain pending Step 12 exit gates.
+**Current execution cutline:** Project owner requests local-host verification before any Vercel deployment. Step 12 MVP covers application release evidence, deployment smoke and demo readiness. Atlas backup/restore rehearsal, sidecar signing and restore serving evidence are explicitly hậu MVP.
 
 **Dependencies:** Steps 1–11.  
 **Estimate:** Final gate 1.5 ngày; evidence harness/deploy smoke đã chạy dần từ Weeks 1–3.  
@@ -915,28 +915,33 @@ Demo target gồm 8–10 RSS/Atom feed có rights evidence, arXiv `cs.AI/cs.MA/c
 ### Ownership/output
 
 ```text
-tests/e2e/**, tests/eval/**, tests/security/**, tests/restore/**
+tests/e2e/**, tests/eval/**, tests/security/**
 scripts/seed-demo.*, scripts/verify-demo.*
-scripts/verify-audit-integrity.*, scripts/reconcile-restored-governance.*
-docs/DEMO-RUNBOOK.md, docs/TEST-EVIDENCE.md, docs/BACKUP-RESTORE-RUNBOOK.md
+docs/DEMO-RUNBOOK.md, docs/TEST-EVIDENCE.md
 deployment config và release evidence
+
+Post-MVP recovery ownership: `tests/restore/**`, `scripts/verify-restore-plan.js`, `scripts/verify-audit-integrity.*`, `scripts/reconcile-restored-governance.*`, `docs/BACKUP-RESTORE-RUNBOOK.md`.
 ```
 
 ### Tasks
 
 1. Validate contract; run full unit/integration/UI/E2E suite và runtime response validation.
-2. Run negative matrix cũ cùng hostile/missing Origin/CORS/cookie/cache, oversized/chunked/compressed/non-JSON/query pollution, trusted-IP register/login, XXE/entity/XInclude/nesting/decompression, same-key Q&A, same-credential admission contention, route/provider-domain circuits, model/provider fallback classification, max-attempt cap, privacy fallback, embedding compatibility degradation, HN/irrelevant evidence, HMAC rotation, maintenance auth, deadline/citation/due explain, closed tombstone, real audit/suppression role atomicity và forged/missing manifest.
+2. Run negative matrix cũ cùng hostile/missing Origin/CORS/cookie/cache, oversized/chunked/compressed/non-JSON/query pollution, trusted-IP register/login, XXE/entity/XInclude/nesting/decompression, same-key Q&A, same-credential admission contention, route/provider-domain circuits, model/provider fallback classification, max-attempt cap, privacy fallback, embedding compatibility degradation, HN/irrelevant evidence, HMAC rotation, maintenance auth, deadline/citation/due explain, closed tombstone và real audit/suppression role atomicity.
 3. Run route-specific retrieval/citation/refusal/support eval trên versioned 30+ dataset; record claim segmentation, precision/coverage/unsupported/refusal, sensitive/HN/irrelevant-block cases, model/route/capability evidence expiry. Disable failing route.
 4. Complete evidence record cho exact demo sources; default unclear feed to metadata-only.
 5. Seed deterministic admin/user/source/demo data without committed secret.
 6. Deploy Vercel + Mongo Atlas config, verify `GET /api/internal/cron/due-work` aggregate/admin POST shared runner, expired-running recovery, due backlog/manual recovery, cold-start/degradation behavior và public URL.
 7. Run browser E2E: user core path gồm approved image/fallback/video link-only, admin source/job/media-policy path, content takedown, account deletion, provider outage/text fallback.
 8. Chạy 3–5 task-based product-validation sessions và lưu learning evidence; đây là demo-readiness evidence, không thay thế technical gate.
-9. Tạo manual `techpulse_app` dump inventory bằng read-only credential và signed read-only `techpulse_governance` sidecar; private encrypted storage ngoài repo, destroyAt<=7 ngày. Restore app snapshot trước deletion+takedown vào isolated non-serving DB; không overwrite live governance DB. Simulate whole-Atlas loss bằng restore sidecar trước app gate.
-10. Verify current governance DB/sidecar signed audit checkpoint + suppression chain. Clear restored sessions/rate-limit+quota/answer-attempt/provider-admission reservations, reconcile provider failure-domain state với current config version và remove unsafe audit IP-HMAC continuity; replay deleted-user saved/chat/closed tombstone và takedown artifacts/citations; rotate session/CSRF/HMAC/runtime Mongo material, revoke stale credential, zero-match PII/available citations rồi mới serve. Missing/unavailable/invalid governance state giữ gate closed.
-11. Rehearse quota/IP/governance HMAC key rotation/retirement inventory, offline checkpoint-key custody và provider capability/admission/provider-domain evidence expiry/circuit recovery. Simulate full primary provider outage and prove cross-provider fallback without privacy downgrade or extra calls.
-12. Create demo script, local fallback, troubleshooting, reset-safe seed và post-grading shutdown date.
-13. Critical/high finding làm release gate thất bại; quay lại owner/mutation step, không sửa tràn lan ở Step 12.
+9. Rehearse quota/IP/governance runtime HMAC rotation/retirement inventory và provider capability/admission/provider-domain evidence expiry/circuit recovery. Simulate full primary provider outage and prove cross-provider fallback without privacy downgrade or extra calls.
+10. Create demo script, local fallback, troubleshooting, reset-safe seed và post-grading shutdown date.
+11. Critical/high finding làm MVP release gate thất bại; quay lại owner/mutation step, không sửa tràn lan ở Step 12.
+
+### Post-MVP recovery track (không thuộc MVP gate)
+
+1. Tạo app dump và signed governance sidecar trong private encrypted storage, có destroyAt tối đa bảy ngày.
+2. Verify ordered audit/checkpoint/suppression chain, restore vào database cô lập, replay governance và zero-match dữ liệu nhạy cảm trước serving.
+3. Rotate session/CSRF/HMAC/runtime Mongo material, revoke credential cũ và ghi evidence reconciliation trước khi owner mở serving gate.
 
 ### Verification
 
@@ -962,7 +967,7 @@ npm run build
 - Citation precision/claim coverage ≥90%, unsupported-claim rate ≤5%, refusal accuracy ≥90% và relevant evidence top 5.
 - Deployed user/admin/cron flows hoạt động; provider outage degrade đúng.
 - Database/log/bundle scan không chứa secret/full text/binary hoặc base64 media nguồn.
-- Encrypted app dump + signed governance sidecar đã restore/rehearse vào isolated target; app restore không overwrite governance DB và pre-deletion PII/session/citation không serve trước current chain replay/checkpoint/secret rotation; destruction evidence và stale cron recovery được ghi.
+- MVP không yêu cầu encrypted app dump, signed governance sidecar hoặc isolated restore rehearsal. Các evidence này thuộc post-MVP recovery track.
 - Exact browser ingress, XML parser, provider privacy/idempotency/admission-domain/support, HMAC rotation, indexed cleanup/tombstone, cross-database transaction role và audit integrity matrices đều có evidence.
 - Product-validation notes từ 3–5 session được lưu như learning evidence, không dùng để che test fail.
 - Demo và local fallback chạy được từ clean instructions; shutdown date ghi rõ.
@@ -1063,6 +1068,7 @@ Không cắt source policy, admin backend authorization, idempotency/lease, text
 | 1.6 | 2026-08-08 | Apply GO WITH CONDITIONS contract/privacy gates from independent Claude Code review | Project owner requested documentation repair; ADR-0012 |
 | 1.7 | 2026-08-09 | Close pre-Step-1 security boundary gaps across browser/API/XML/provider/Mongo cleanup/restore | Project owner requested CC security-audit repair; no new architecture choice/ADR |
 | 1.8 | 2026-08-15 | Replace fixed provider/model routing with config-driven model/provider fallback; record inline deletion lease and synchronize Step 9–11 document drift | Project owner approved architecture change; ADR-0013 and ADR-0014 |
+| 1.9 | 2026-08-17 | Giới hạn MVP không bao gồm backup/restore rehearsal, governance sidecar và offline checkpoint custody; chuyển toàn bộ recovery evidence sang post-MVP | Project owner approved scope reduction; runtime governance signing, audit atomicity và live fail-closed rules remain MVP |
 
 ### v1.8 Pre-Step-12 architecture amendment
 
@@ -1170,7 +1176,7 @@ Tất cả finding trong `.claude/discuss.md` được accept sau khi đối chi
 | H-10 HMAC lifecycle | Current+retiring keyring, all-version migrate/delete, 30-day+zero retirement; Steps 1/2/10/11/12 |
 | H-11 Deleted tombstone | Closed raw allowlist, null admin DTO role/email, seven deletion flags; Steps 2/11 |
 | H-12 Source takedown citation path | Direct chat sourceId+`_id` index and source zero-match; Steps 10/11 |
-| H-13 Backup restore | App/governance logical Mongo DB boundary, encrypted app dump + signed governance sidecar, isolated replay, session/secret rotation serving gate; Steps 11/12 |
+| H-13 Backup restore (post-MVP) | App/governance logical Mongo DB boundary, encrypted app dump + signed governance sidecar, isolated replay, session/secret rotation serving gate; post-MVP recovery track |
 | M-01 Audit tamper evidence | Same transaction identity with audit insert/find-only privilege, deterministic eventId, governance DB checkpoint/offline verifier; Steps 2/11/12 |
 | M-02 Due-work index/order | Explicit aged/normal lanes + stable `_id` and explain; Steps 4/9/11 |
 | M-03 Cleanup authorization | Machine-only fixed enum task table, no caller predicate, batch<=100; Steps 4/9/10/11 |
@@ -1182,7 +1188,7 @@ Tại thời điểm v1.7, Step 2 bị chặn tới khi generated/runtime eviden
 
 | Finding | Resolution/owner |
 |---|---|
-| External ledger mâu thuẫn ADR-0002 | Giữ MongoDB Atlas là SoR duy nhất: `techpulse_app` runtime DB + `techpulse_governance` signed boundary DB trong cùng deployment; file sidecar chỉ là backup copy. App-only restore không overwrite governance; Steps 2/11/12 |
+| External ledger mâu thuẫn ADR-0002 | Giữ MongoDB Atlas là SoR duy nhất: `techpulse_app` runtime DB + `techpulse_governance` signed boundary DB trong cùng deployment; file sidecar chỉ là hậu MVP backup copy. App-only restore không overwrite governance; runtime boundary Steps 2/11 |
 | Separate audit client không thể chung transaction | Một transaction-capable runtime client/credential/session với per-collection privileges: domain mutation cần thiết, audit/suppression insert/find only; maintenance/offline identity tách riêng. Credential integration gate; Steps 2/3/11/12 |
 | Admission mới chỉ per-route | Historical v1.7 resolution: `admissionDomainId` aggregate concurrency/budget và circuit per-route. ADR-0013/v1.8 bổ sung provider failure-domain circuit; Step 9/10/12 |
 | Pre-flight remote stale | Ghi nhận `origin` tồn tại nhưng không suy ra quyền push/PR/deploy; direct mode vẫn local-only nếu user chưa yêu cầu |

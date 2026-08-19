@@ -96,5 +96,5 @@ vercelHost('Vercel Preview API and Cron smoke', () => {
       expect.objectContaining({ runId: expect.any(String), queues: expect.any(Object) }),
     )
     expect(result.response.headers.get('cache-control')).toMatch(/no-store/)
-  })
+  }, 15_000)
 })
