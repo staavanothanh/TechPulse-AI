@@ -14,9 +14,9 @@ describe('admin shell navigation', () => {
     expect(html).toContain('aria-label="Điều hướng quản trị"')
     expect(html).toContain('<button')
     expect(html).toContain('>Jobs<')
-    expect((html.match(/<button/g) ?? [])).toHaveLength(7)
+    expect((html.match(/<button/g) ?? [])).toHaveLength(8)
     expect(html).toContain('>Tài khoản<')
-    expect(html).not.toContain('Source Registry')
+    expect(html).toContain('>Source Registry<')
     expect(html).not.toContain('Step 04')
     expect(html).not.toContain('Source policy, durable jobs')
   })
@@ -53,23 +53,41 @@ describe('admin shell navigation', () => {
     expect(onNavigate).toHaveBeenCalledWith('account')
   })
 
-  it('keeps the account control available from every mobile admin workspace', () => {
+  it('exposes Source Registry as a current, keyboard-reachable destination', () => {
+    const onNavigate = vi.fn()
+    const navigation = AdminNavigation({ route: 'sources', onNavigate })
+    const buttons = React.Children.toArray(navigation.props.children).filter((child) => child.type === 'button')
+    const source = buttons.find((button) => button.props.children === 'Source Registry')
+
+    expect(source.props['aria-current']).toBe('page')
+    expect(source.props.type).toBe('button')
+    source.props.onClick()
+
+    expect(onNavigate).toHaveBeenCalledWith('sources')
+  })
+
+  it('keeps Source Registry and account controls available from every mobile admin workspace', () => {
     const onNavigate = vi.fn()
     for (const route of ['overview', 'jobs', 'sources']) {
       const navigation = AdminMobileAccountNavigation({ route, onNavigate })
-      const button = navigation.props.children
+      const buttons = React.Children.toArray(navigation.props.children)
+      const sourceButton = buttons.find((button) => button.props.children === 'Source Registry')
+      const accountButton = buttons.find((button) => ['Tài khoản', 'Quay lại admin'].includes(button.props.children))
 
       expect(navigation.props['aria-label']).toBe('Điều hướng quản trị mobile')
-      expect(button.props.type).toBe('button')
-      expect(button.props['aria-current']).toBeUndefined()
-      button.props.onClick()
+      expect(sourceButton.props.type).toBe('button')
+      expect(accountButton.props.type).toBe('button')
+      sourceButton.props.onClick()
+      accountButton.props.onClick()
     }
 
-    expect(onNavigate).toHaveBeenCalledTimes(3)
+    expect(onNavigate).toHaveBeenCalledTimes(6)
+    expect(onNavigate.mock.calls.filter(([route]) => route === 'sources')).toHaveLength(3)
     expect(onNavigate).toHaveBeenLastCalledWith('account')
 
     const accountNavigation = AdminMobileAccountNavigation({ route: 'account', onNavigate })
-    const escapeButton = accountNavigation.props.children
+    const accountButtons = React.Children.toArray(accountNavigation.props.children)
+    const escapeButton = accountButtons.find((button) => button.props.children === 'Quay lại admin')
     expect(escapeButton.props.children).toBe('Quay lại admin')
     expect(escapeButton.props['aria-current']).toBeUndefined()
     escapeButton.props.onClick()
