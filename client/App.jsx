@@ -14,6 +14,7 @@ const ADMIN_DESTINATIONS = Object.freeze([
   { id: 'jobs', label: 'Jobs' },
   { id: 'articles', label: 'Articles & AI index' },
   { id: 'governance', label: 'Governance' },
+  { id: 'sources', label: 'Source Registry' },
   { id: 'users', label: 'Người dùng' },
   { id: 'audit', label: 'Audit bất biến' },
   { id: 'account', label: 'Tài khoản' },
@@ -44,8 +45,17 @@ export function AdminNavigation({ route, onNavigate }) {
 
 export function AdminMobileAccountNavigation({ route, onNavigate }) {
   const accountRoute = route === 'account'
+  const sourceRoute = route === 'sources'
   return (
     <nav className="admin-mobile-account-nav" aria-label="Điều hướng quản trị mobile">
+      <button
+        className={`admin-button${sourceRoute ? ' active' : ''}`}
+        type="button"
+        aria-current={sourceRoute ? 'page' : undefined}
+        onClick={() => onNavigate?.('sources')}
+      >
+        Source Registry
+      </button>
       <button
         className="admin-button"
         type="button"
