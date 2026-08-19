@@ -49,7 +49,7 @@ export function AdminMobileAccountNavigation({ route, onNavigate }) {
   return (
     <nav className="admin-mobile-account-nav" aria-label="Điều hướng quản trị mobile">
       <button
-        className={`admin-button${sourceRoute ? ' active' : ''}`}
+        className="admin-button"
         type="button"
         aria-current={sourceRoute ? 'page' : undefined}
         onClick={() => onNavigate?.('sources')}

@@ -944,7 +944,8 @@ h2 {
 .admin-subnav button:hover,
 .admin-button:hover { background: var(--bg); border-color: var(--muted); }
 .admin-subnav button[aria-current='page'],
-.admin-mobile-nav button[aria-current='page'] { color: var(--surface); background: var(--fg); border-color: var(--fg); }
+.admin-mobile-nav button[aria-current='page'],
+.admin-mobile-account-nav button[aria-current='page'] { color: var(--surface); background: var(--fg); border-color: var(--fg); }
 .admin-button-primary { color: var(--surface); background: var(--fg); border-color: var(--fg); }
 .admin-button-danger { color: var(--danger); border-color: var(--danger); }
 .admin-button:disabled { cursor: wait; opacity: .55; }
