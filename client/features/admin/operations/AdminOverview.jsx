@@ -9,7 +9,7 @@ export default function AdminOverview({ data, state, failure, onRetry }) {
     <>
       <div className="admin-page-head">
         <div>
-          <span className="admin-eyebrow">ADMIN-001 · EXCEPTION FIRST</span>
+          <span className="admin-eyebrow">Bảng điều hành</span>
           <h1>Việc cần xử lý</h1>
           <p>Ưu tiên workflow lỗi hoặc bị dừng; bộ đếm khỏe vẫn giữ trong cùng information architecture.</p>
         </div>

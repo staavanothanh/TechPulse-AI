@@ -71,9 +71,29 @@ describe('Step 8 content UI', () => {
     expect(error).toContain('role="alert"')
     expect(error).toContain('req_feed')
     const success = render(FeedView, { state: 'ready', articles: [baseArticle], filters: {}, meta: { hasNext: true, nextCursor: 'opaque-secret-cursor' }, handlers })
-    expect(success).toContain('Tải thêm bài')
+    expect(success).toContain('Sau ›')
+    expect(success).toContain('Trang 1')
+    expect(success).toContain('‹ Trước')
     expect(success).not.toContain('opaque-secret-cursor')
     expect(success).not.toContain('429')
+  })
+
+  it('shows a bounded feed pagination bar with disabled bounds at page 1', () => {
+    const firstPage = render(FeedView, { state: 'ready', articles: [baseArticle], filters: {}, page: 1, meta: { hasNext: true, nextCursor: 'cursor-a' }, handlers })
+    expect(firstPage).toMatch(/<button[^>]*disabled=""[^>]*>‹ Trước<\/button>/)
+    expect(firstPage).toContain('Trang 1')
+    expect(firstPage).not.toMatch(/<button[^>]*disabled=""[^>]*>Sau ›<\/button>/)
+    const lastPage = render(FeedView, { state: 'ready', articles: [baseArticle], filters: {}, page: 2, meta: { hasNext: false, nextCursor: null }, handlers })
+    expect(lastPage).toMatch(/<button[^>]*disabled=""[^>]*>Sau ›<\/button>/)
+    expect(lastPage).toContain('Trang 2')
+  })
+
+  it('pages the feed at 10 articles per request', async () => {
+    const FeedScreen = (await import('../../../client/features/feed/FeedScreen.jsx')).default
+    expect(typeof FeedScreen).toBe('function')
+    const feedSource = (await import('node:fs')).readFileSync(new URL('../../../client/features/feed/FeedScreen.jsx', import.meta.url), 'utf8')
+    expect(feedSource).toMatch(/const PAGE_SIZE = 10/)
+    expect(feedSource).toMatch(/limit: PAGE_SIZE/)
   })
 
   it('keeps the feed apply control visibly pending while filters are applying', () => {

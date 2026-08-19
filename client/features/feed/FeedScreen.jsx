@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import ArticleCard, { ContentErrorState, ContentSkeleton } from './ArticleCard.jsx'
 import { validateFeedFilters } from './feed-validation.js'
+import { useScrollToTop } from '../../theme/use-scroll.js'
 
 const EMPTY_FILTERS = Object.freeze({ topic: '', sourceId: '', publishedAfter: '', publishedBefore: '' })
+const PAGE_SIZE = 10
 
 function transportFilters(filters) {
   return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== ''))
@@ -19,8 +21,21 @@ function FilterField({ id, label, value, onChange, error, type = 'text', maxLeng
   )
 }
 
-export function FeedView({ state = 'initial', articles = [], filters = EMPTY_FILTERS, errors = {}, error, meta = { hasNext: false, nextCursor: null }, pendingArticleId, loadingMore = false, applying = false, savedOverrides = {}, handlers = {} }) {
+function PaginationBar({ page, canPrev, canNext, onPrev, onNext }) {
+  if (!canPrev && !canNext) return null
+  return (
+    <nav className="pagination" aria-label="Phân trang feed">
+      <button className="pg-btn" type="button" onClick={onPrev} disabled={!canPrev}>‹ Trước</button>
+      <span className="pg-info">Trang {page}</span>
+      <button className="pg-btn" type="button" onClick={onNext} disabled={!canNext}>Sau ›</button>
+    </nav>
+  )
+}
+
+export function FeedView({ state = 'initial', articles = [], filters = EMPTY_FILTERS, errors = {}, error, meta = { hasNext: false, nextCursor: null }, page = 1, pendingArticleId, loadingMore = false, applying = false, savedOverrides = {}, handlers = {} }) {
   const hasFilters = Object.values(filters).some(Boolean)
+  const canPrev = page > 1
+  const canNext = state === 'ready' && Boolean(meta.hasNext)
   return (
     <section className="content-screen" aria-labelledby="feed-title">
       <header className="content-screen-header">
@@ -40,8 +55,7 @@ export function FeedView({ state = 'initial', articles = [], filters = EMPTY_FIL
             </section>
           ) : null}
           {articles.map((article) => <ArticleCard key={article.id} article={article} savedOverride={savedOverrides[article.id]} busy={pendingArticleId === article.id} onSaveToggle={handlers.onSaveToggle} onOpenArticle={handlers.onOpenArticle} />)}
-          {state === 'ready' && meta.hasNext ? <button className="content-button content-load-more" type="button" onClick={handlers.onLoadMore} disabled={loadingMore} aria-busy={loadingMore || undefined}>{loadingMore ? 'Đang tải thêm…' : 'Tải thêm bài'}</button> : null}
-        </div>
+          {state === 'ready' ? <PaginationBar page={page} canPrev={canPrev} canNext={canNext} onPrev={handlers.onPrevPage} onNext={handlers.onNextPage} /> : null}        </div>
         <aside className="content-filter-rail" aria-labelledby="feed-filter-title">
           <form onSubmit={handlers.onSubmit} noValidate aria-busy={applying || undefined}>
             <div className="content-filter-heading"><h2 id="feed-filter-title">Bộ lọc</h2>{hasFilters ? <button className="content-text-action" type="button" onClick={handlers.onClearFilters} disabled={applying}>Đặt lại</button> : null}</div>
@@ -65,38 +79,49 @@ export default function FeedScreen({ api, csrfToken, savedOverrides = {}, onSave
   const [errors, setErrors] = useState({})
   const [error, setError] = useState(null)
   const [meta, setMeta] = useState({ hasNext: false, nextCursor: null })
-  const [loadingMore, setLoadingMore] = useState(false)
+  const [page, setPage] = useState(1)
+  const [cursorStack, setCursorStack] = useState([null])
+  const [loadingPage, setLoadingPage] = useState(false)
   const [applyingFilters, setApplyingFilters] = useState(false)
   const [pendingArticleId, setPendingArticleId] = useState(null)
   const fieldRefs = useRef({})
+  const scrollToTop = useScrollToTop()
 
-  async function load({ nextFilters = appliedFilters, cursor = null, append = false, applying = false } = {}) {
-    if (append) setLoadingMore(true)
+  async function load({ nextFilters = appliedFilters, page: targetPage = 1, cursor = null, applying = false } = {}) {
+    if (targetPage > 1) setLoadingPage(true)
     else setState('loading')
     if (applying) setApplyingFilters(true)
     setError(null)
     try {
-      const response = await api.listArticles({ ...transportFilters(nextFilters), ...(cursor ? { cursor } : {}) })
-      setArticles((current) => append ? [...current, ...response.data] : response.data)
+      const response = await api.listArticles({ limit: PAGE_SIZE, ...transportFilters(nextFilters), ...(cursor ? { cursor } : {}) })
+      setArticles(response.data)
       setMeta(response.meta)
+      setPage(targetPage)
+      setCursorStack((current) => {
+        const next = current.slice(0, targetPage)
+        next[targetPage - 1] = response.meta.nextCursor ?? null
+        return next
+      })
       setState('ready')
-      announce?.(append ? 'Đã tải thêm bài.' : `Feed có ${response.data.length} bài.`)
+      announce?.(`Feed có ${response.data.length} bài ở trang ${targetPage}.`)
     } catch (requestError) {
       if (requestError.status === 401) onSessionExpired?.('feed')
       setError(requestError)
       setState('error')
     } finally {
-      setLoadingMore(false)
+      setLoadingPage(false)
       if (applying) setApplyingFilters(false)
     }
   }
 
   useEffect(() => {
     let active = true
-    api.listArticles({}).then((response) => {
+    api.listArticles({ limit: PAGE_SIZE }).then((response) => {
       if (!active) return
       setArticles(response.data)
       setMeta(response.meta)
+      setPage(1)
+      setCursorStack([response.meta.nextCursor ?? null])
       setState('ready')
       announce?.(`Feed có ${response.data.length} bài.`)
     }).catch((requestError) => {
@@ -117,7 +142,21 @@ export default function FeedScreen({ api, csrfToken, savedOverrides = {}, onSave
       return
     }
     setAppliedFilters(filters)
-    load({ nextFilters: filters, applying: true })
+    load({ nextFilters: filters, page: 1, applying: true })
+  }
+
+  function nextPage() {
+    if (!meta.hasNext || loadingPage) return
+    const cursor = cursorStack[page - 1]
+    load({ nextFilters: appliedFilters, page: page + 1, cursor })
+    scrollToTop()
+  }
+
+  function previousPage() {
+    if (page <= 1 || loadingPage) return
+    const cursor = page > 2 ? cursorStack[page - 2] : null
+    load({ nextFilters: appliedFilters, page: page - 1, cursor })
+    scrollToTop()
   }
 
   async function toggleSave(article, nextSaved) {
@@ -139,12 +178,13 @@ export default function FeedScreen({ api, csrfToken, savedOverrides = {}, onSave
   const handlers = {
     onFilterChange: (field, value) => setFilters((current) => ({ ...current, [field]: value })),
     onSubmit: submit,
-    onClearFilters: () => { setFilters(EMPTY_FILTERS); setAppliedFilters(EMPTY_FILTERS); setErrors({}); load({ nextFilters: EMPTY_FILTERS }) },
-    onRetry: () => load(),
-    onLoadMore: () => load({ cursor: meta.nextCursor, append: true }),
+    onClearFilters: () => { setFilters(EMPTY_FILTERS); setAppliedFilters(EMPTY_FILTERS); setErrors({}); load({ nextFilters: EMPTY_FILTERS, page: 1 }) },
+    onRetry: () => load({ nextFilters: appliedFilters, page, cursor: page > 1 ? cursorStack[page - 2] : null }),
+    onPrevPage: previousPage,
+    onNextPage: nextPage,
     onSaveToggle: toggleSave,
     onOpenArticle,
     onOpenSearch,
   }
-  return <FeedView state={state} articles={articles} filters={filters} errors={errors} error={error} meta={meta} pendingArticleId={pendingArticleId} loadingMore={loadingMore} applying={applyingFilters} savedOverrides={savedOverrides} handlers={handlers} fieldRefs={fieldRefs} />
+  return <FeedView state={state} articles={articles} filters={filters} errors={errors} error={error} meta={meta} page={page} pendingArticleId={pendingArticleId} loadingMore={loadingPage} applying={applyingFilters} savedOverrides={savedOverrides} handlers={handlers} fieldRefs={fieldRefs} />
 }
