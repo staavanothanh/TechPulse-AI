@@ -8,8 +8,8 @@ const rootCss = readProjectFile('client/styles.css')
 
 describe('content visual tokens', () => {
   it('uses the approved destructive semantic tokens instead of duplicating danger colors', () => {
-    expect(rootCss).toContain('--danger: oklch(48% 0.18 28);')
-    expect(rootCss).toContain('--danger-soft: oklch(95% 0.035 28);')
+    expect(rootCss).toMatch(/--danger:\s*oklch\(0\.54\s*0\.16\s*30\);/)
+    expect(rootCss).toMatch(/--danger-soft:\s*color-mix\(in\s*oklch,\s*var\(--danger\)\s*12%,\s*transparent\);/)
     expect(contentCss).toMatch(/\.content-button-danger\s*\{[^}]*color:\s*var\(--danger\);[^}]*background:\s*var\(--danger-soft\);/s)
     expect(contentCss).toMatch(/\.content-mutation-error\s*\{[^}]*color:\s*var\(--danger\);[^}]*background:\s*var\(--danger-soft\);/s)
     expect(contentCss).toMatch(/\.content-field-error\s*\{[^}]*color:\s*var\(--danger\);/s)

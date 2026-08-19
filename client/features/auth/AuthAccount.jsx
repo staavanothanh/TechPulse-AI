@@ -11,12 +11,18 @@ function LoginForm({ onSubmit, onSwitch, busy, error }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   return (
-    <form className="auth-form" onSubmit={(event) => { event.preventDefault(); onSubmit({ email, password }) }}>
-      <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" /></label>
-      <label>Mật khẩu<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" /></label>
-      {error ? <p className="form-error" role="alert">{errorMessage(error)}</p> : null}
-      <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Đang xử lý…' : 'Đăng nhập'}</button>
-      <button className="text-button" type="button" onClick={onSwitch}>Tạo tài khoản mới</button>
+    <form className="field-group" onSubmit={(event) => { event.preventDefault(); onSubmit({ email, password }) }} noValidate>
+      <div className="field">
+        <label htmlFor="auth-email">Email</label>
+        <input className="input" id="auth-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" maxLength="254" />
+      </div>
+      <div className="field">
+        <label htmlFor="auth-password">Mật khẩu</label>
+        <input className="input" id="auth-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength="8" autoComplete="current-password" maxLength="128" />
+      </div>
+      {error ? <p className="field-error" role="alert">{errorMessage(error)}</p> : null}
+      <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>{busy ? 'Đang xử lý…' : 'Đăng nhập'}</button>
+      <p className="auth-switch">Chưa có tài khoản? <button type="button" onClick={onSwitch}>Tạo tài khoản</button></p>
     </form>
   )
 }
@@ -25,15 +31,23 @@ function RegisterForm({ onSubmit, onSwitch, busy, error }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   return (
-    <form className="auth-form" onSubmit={(event) => { event.preventDefault(); onSubmit({ email, password }) }}>
-      <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" /></label>
-      <label>Mật khẩu<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength="10" autoComplete="new-password" /></label>
-      {error ? <p className="form-error" role="alert">{errorMessage(error)}</p> : null}
-      <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Đang tạo…' : 'Tạo tài khoản'}</button>
-      <button className="text-button" type="button" onClick={onSwitch}>Tôi đã có tài khoản</button>
+    <form className="field-group" onSubmit={(event) => { event.preventDefault(); onSubmit({ email, password }) }} noValidate>
+      <div className="field">
+        <label htmlFor="auth-email">Email</label>
+        <input className="input" id="auth-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" maxLength="254" />
+      </div>
+      <div className="field">
+        <label htmlFor="auth-password">Mật khẩu</label>
+        <input className="input" id="auth-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength="8" autoComplete="new-password" maxLength="128" />
+      </div>
+      {error ? <p className="field-error" role="alert">{errorMessage(error)}</p> : null}
+      <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>{busy ? 'Đang tạo…' : 'Tạo tài khoản'}</button>
+      <p className="auth-switch">Đã có tài khoản? <button type="button" onClick={onSwitch}>Đăng nhập</button></p>
     </form>
   )
 }
+
+const TOPIC_PRESETS = Object.freeze(['AI', 'JavaScript', 'Blockchain', 'DevOps', 'Bảo mật', 'Dữ liệu'])
 
 export default function AuthAccount({ api, initialUser, initialCsrfToken, initialNotice = null, onSession }) {
   const [user, setUser] = useState(initialUser)
@@ -43,6 +57,7 @@ export default function AuthAccount({ api, initialUser, initialCsrfToken, initia
   const [error, setError] = useState(() => initialNotice ? { status: 401, message: initialNotice } : null)
   const [notice, setNotice] = useState(null)
   const [topics, setTopics] = useState(() => preferenceDraftForUser(initialUser))
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   function applySession(nextUser, nextCsrfToken, sessionNotice = null) {
     setUser(nextUser ?? null)
@@ -102,26 +117,62 @@ export default function AuthAccount({ api, initialUser, initialCsrfToken, initia
     applySession(null, null)
   }
 
+  async function requestDeletion() {
+    if (!csrfToken) return
+    setDeleteBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      await api.requestAccountDeletion({ headers: { 'X-CSRF-Token': csrfToken, 'Idempotency-Key': `account-deletion-${Date.now()}` }, credentials: 'same-origin' })
+      applySession(null, null, 'Yêu cầu xóa tài khoản đã được chấp nhận. Phiên của bạn đã bị thu hồi.')
+    } catch (requestError) {
+      handleRequestError(requestError)
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
+  function toggleTopic(topic) {
+    setTopics((current) => current.includes(topic) ? current.filter((item) => item !== topic) : [...current, topic])
+  }
+
   if (!user) return (
-    <section className="auth-card" aria-labelledby="auth-title">
-      <div className="eyebrow">STEP 02 · ACCOUNT</div>
-      <h1 id="auth-title">Đọc tin có ngữ cảnh, giữ quyền kiểm soát.</h1>
-      <p className="hero-copy">Đăng nhập để lưu chủ đề yêu thích và nhận phiên làm việc an toàn bằng cookie.</p>
+    <div className="auth-panel" aria-labelledby="auth-title">
+      <p className="eyebrow">TechPulse AI · Đăng nhập</p>
+      <h2 id="auth-title">{mode === 'login' ? 'Tiếp tục đọc tin công nghệ' : 'Tạo tài khoản mới'}</h2>
+      <p>{mode === 'login' ? 'Đăng nhập để xem feed, lưu bài và hỏi đáp có nguồn.' : 'Đăng ký nhanh, không cần xác minh. Vai trò mặc định là user.'}</p>
       {mode === 'login' ? <LoginForm onSubmit={submit} onSwitch={() => { setMode('register'); setError(null) }} busy={busy} error={error} /> : <RegisterForm onSubmit={submit} onSwitch={() => { setMode('login'); setError(null) }} busy={busy} error={error} />}
-    </section>
+    </div>
   )
 
   return (
-    <section className="auth-card" aria-labelledby="account-title">
-      <div className="eyebrow">ACCOUNT · {user.role}</div>
-      <h1 id="account-title">Xin chào, {user.email}</h1>
-      <p className="hero-copy">Phiên của bạn được giữ trong cookie HttpOnly; CSRF token chỉ tồn tại trong bộ nhớ của giao diện.</p>
-      <form className="auth-form" onSubmit={(event) => { event.preventDefault(); savePreferences() }}>
-        <label htmlFor="topic-preferences">Chủ đề quan tâm<input id="topic-preferences" value={topics.join(', ')} onChange={(event) => setTopics(event.target.value.split(',').map((topic) => topic.trim()).filter(Boolean))} placeholder="AI, Robot, Web" /></label>
-        <div className="account-actions"><button className="primary-button" type="submit" disabled={busy}>Lưu chủ đề</button><button className="text-button" type="button" onClick={logout}>Đăng xuất</button></div>
-      </form>
-      {notice ? <p className="form-success" role="status">{notice}</p> : null}
-      {error ? <p className="form-error" role="alert">{errorMessage(error)}</p> : null}
-    </section>
+    <div className="account-grid" aria-labelledby="account-title">
+      <div className="account-card wide">
+        <div className="account-head">
+          <div>
+            <div className="eyebrow">ACCOUNT · {user.role}</div>
+            <h2 id="account-title">Chủ đề quan tâm</h2>
+            {user.email ? <p className="account-email">{user.email}</p> : null}
+          </div>
+          <button className="btn btn-ghost" type="button" onClick={logout}>Đăng xuất</button>
+        </div>
+        <p>Feed sẽ ưu tiên những chủ đề này. Phiên của bạn được giữ trong cookie HttpOnly; CSRF token chỉ tồn tại trong bộ nhớ của giao diện.</p>
+        <div className="pref-grid" aria-label="Chủ đề quan tâm">
+          {TOPIC_PRESETS.map((topic) => (
+            <span key={topic} className={`scope-tag${topics.includes(topic) ? ' active' : ''}`}>
+              <button type="button" aria-pressed={topics.includes(topic)} onClick={() => toggleTopic(topic)}>{topic}</button>
+            </span>
+          ))}
+        </div>
+        {notice ? <p className="form-success" role="status">{notice}</p> : null}
+        {error ? <p className="form-error" role="alert">{errorMessage(error)}</p> : null}
+        <button className="btn btn-secondary btn-sm" type="button" disabled={busy} onClick={savePreferences}>{busy ? 'Đang lưu…' : 'Lưu chủ đề'}</button>
+      </div>
+      <div className="account-card danger-zone">
+        <h2>Xóa tài khoản</h2>
+        <p>Tạo yêu cầu xóa tự động. Phiên bị thu hồi ngay, dữ liệu được làm sạch theo quy trình.</p>
+        <button className="btn btn-danger" type="button" disabled={deleteBusy} onClick={requestDeletion}>{deleteBusy ? 'Đang gửi…' : 'Yêu cầu xóa tài khoản'}</button>
+      </div>
+    </div>
   )
 }

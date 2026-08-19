@@ -17,6 +17,10 @@ const browserGlobals = {
   ...nodeGlobals,
   document: 'readonly',
   fetch: 'readonly',
+  localStorage: 'readonly',
+  matchMedia: 'readonly',
+  performance: 'readonly',
+  requestAnimationFrame: 'readonly',
   window: 'readonly',
 }
 

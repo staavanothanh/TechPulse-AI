@@ -111,7 +111,7 @@ export function SourceDetails({ source, handlers, busy, error, headingRef }) {
 export function SourceRegistryView({ state, sources, selected, busy = false, error, notice, handlers, detailHeadingRef }) {
   return (
     <section className="source-registry" aria-labelledby="source-registry-title">
-      <div className="operator-header"><div><span className="eyebrow">ADMIN · SOURCE REGISTRY</span><h1 id="source-registry-title">Nguồn, quyền và trạng thái vận hành.</h1></div><button className="text-button" type="button" onClick={handlers.onReload} disabled={busy}>Tải lại</button></div>
+      <div className="operator-header"><div><span className="eyebrow">Source Registry</span><h1 id="source-registry-title">Nguồn, quyền và trạng thái vận hành.</h1></div><button className="text-button" type="button" onClick={handlers.onReload} disabled={busy}>Tải lại</button></div>
       <p className="operator-copy">Mọi nguồn bắt đầu ở draft và fail closed. Chỉ quyết định review của admin mới thay đổi quyền xử lý.</p>
       <div className="source-live" role="status" aria-live="polite" aria-atomic="true">{notice ?? (busy ? 'Đang xử lý thay đổi…' : '')}</div>
       {state === 'loading' ? <div className="source-state" aria-busy="true">Đang tải Source Registry…</div> : null}
