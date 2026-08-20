@@ -1,0 +1,186 @@
+/* Shell */
+.redesign-admin .admin-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: 20px 14px;
+  gap: 4px;
+  overflow-y: auto;
+  border-right: 1px solid var(--admin-border);
+  background:
+    radial-gradient(
+      circle at 1px 1px,
+      color-mix(in oklch, var(--admin-accent) 5%, transparent) 1px,
+      transparent 0
+    ),
+    var(--admin-surface);
+  background-size:
+    18px 18px,
+    auto;
+}
+
+.redesign-admin .admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 6px 10px 20px;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.redesign-admin .admin-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+.redesign-admin .admin-brand-mark svg {
+  width: 28px;
+  height: 28px;
+}
+.redesign-admin .admin-navigation {
+  display: grid;
+  gap: 15px;
+}
+.redesign-admin .admin-nav-group {
+  display: grid;
+  gap: 4px;
+}
+.redesign-admin .admin-nav-group > p {
+  margin: 8px 10px 4px;
+  color: var(--admin-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.redesign-admin .admin-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 43px;
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--admin-pill);
+  background: transparent;
+  color: var(--admin-muted);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.redesign-admin .admin-nav-item:hover {
+  background: var(--admin-fg-soft);
+  color: var(--admin-fg);
+}
+.redesign-admin .admin-nav-item.active {
+  background: var(--admin-accent);
+  color: var(--admin-surface);
+}
+.redesign-admin .admin-nav-item .admin-icon {
+  flex: none;
+}
+.redesign-admin .admin-nav-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.redesign-admin .admin-nav-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 23px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--admin-pill);
+  font-size: 11px;
+  font-weight: 700;
+}
+.redesign-admin .admin-nav-badge-danger {
+  background: var(--admin-danger-soft);
+  color: var(--admin-danger);
+}
+.redesign-admin .admin-nav-badge-warning {
+  background: var(--admin-warning-soft);
+  color: var(--admin-warning);
+}
+.redesign-admin .admin-nav-item.active .admin-nav-badge {
+  background: color-mix(in oklch, var(--admin-surface) 22%, transparent);
+  color: var(--admin-surface);
+}
+.redesign-admin .admin-sidebar-footer {
+  display: grid;
+  gap: 9px;
+  margin-top: auto;
+  padding: 15px 10px 3px;
+  border-top: 1px solid var(--admin-border);
+}
+.redesign-admin .admin-sidebar-footer > p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.redesign-admin .admin-api-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: var(--admin-pill);
+  font-size: 11px;
+  font-weight: 700;
+}
+.redesign-admin .admin-api-status i,
+.redesign-admin .admin-status i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+.redesign-admin .admin-theme-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-pill);
+  background: transparent;
+  color: var(--admin-muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.redesign-admin .admin-theme-button:hover {
+  border-color: var(--admin-accent);
+  background: var(--admin-fg-soft);
+  color: var(--admin-fg);
+}
+.redesign-admin .admin-content {
+  min-width: 0;
+}
+.redesign-admin .admin-main {
+  min-width: 0;
+  max-width: 1500px;
+  padding: clamp(22px, 3vw, 42px) clamp(18px, 3.4vw, 52px) 84px;
+}
+.redesign-admin .admin-mobile-navigation {
+  display: none;
+}

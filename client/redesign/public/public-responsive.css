@@ -1,0 +1,139 @@
+@media (max-width: 1080px) {
+  .public-feed-layout {
+    grid-template-columns: 1fr;
+  }
+  .public-filter-rail {
+    position: static;
+  }
+  .public-search-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .public-qa-layout {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
+  .public-qa-scope {
+    display: none;
+  }
+}
+@media (max-width: 920px) {
+  .public-hero-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .public-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .public-main-nav {
+    display: none;
+  }
+}
+@media (max-width: 820px) {
+  .public-reader-content {
+    padding-bottom: 100px;
+  }
+  .public-reader-nav-inner {
+    min-height: 64px;
+  }
+  .public-reader-nav .public-account-action {
+    display: none;
+  }
+  .public-account-grid,
+  .public-qa-layout {
+    grid-template-columns: 1fr;
+  }
+  .public-qa-rail {
+    display: none;
+  }
+  .public-qa-thread {
+    max-height: none;
+  }
+  .public-mobile-nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--public-border);
+    background: color-mix(in oklch, var(--public-surface) 92%, transparent);
+    backdrop-filter: blur(14px);
+  }
+  .public-mobile-nav button {
+    min-height: 52px;
+    padding: 5px 2px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--public-muted);
+    font-size: 11px;
+    font-weight: 650;
+  }
+  .public-mobile-nav button.active {
+    background: var(--public-accent);
+    color: var(--public-surface);
+  }
+  .public-fact-list {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 560px) {
+  .public-container {
+    padding-inline: 20px;
+  }
+  .public-topnav-inner,
+  .public-reader-nav-inner {
+    padding-inline: 20px;
+  }
+  .public-topnav-inner {
+    min-height: 64px;
+  }
+  .public-brand {
+    font-size: 16px;
+  }
+  .public-status-pill {
+    display: none;
+  }
+  .public-hero-copy h1 {
+    font-size: clamp(38px, 12vw, 54px);
+  }
+  .public-feature-grid,
+  .public-search-filters {
+    grid-template-columns: 1fr;
+  }
+  .public-page-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .public-search-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .public-card-actions,
+  .public-composer-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .public-card-actions .public-btn {
+    width: 100%;
+  }
+  .public-dialog-actions {
+    flex-direction: column-reverse;
+  }
+  .public-dialog-actions .public-btn {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .public-source-track {
+    animation: none;
+  }
+  .public-page *,
+  .public-page *::before,
+  .public-page *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

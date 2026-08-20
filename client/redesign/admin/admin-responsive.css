@@ -1,0 +1,129 @@
+@media (max-width: 1120px) {
+  .redesign-admin {
+    display: block;
+  }
+  .redesign-admin .admin-sidebar {
+    display: none;
+  }
+  .redesign-admin .admin-mobile-navigation {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    display: flex;
+    gap: 7px;
+    overflow-x: auto;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--admin-border);
+    background: color-mix(in oklch, var(--admin-surface) 94%, transparent);
+    backdrop-filter: blur(14px);
+  }
+  .redesign-admin .admin-mobile-navigation button {
+    flex: none;
+    min-height: 38px;
+    padding: 6px 13px;
+    border: 1px solid var(--admin-border);
+    border-radius: var(--admin-pill);
+    background: var(--admin-surface);
+    color: var(--admin-fg);
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .redesign-admin .admin-mobile-navigation button.active {
+    border-color: var(--admin-accent);
+    background: var(--admin-accent);
+    color: var(--admin-surface);
+  }
+  .redesign-admin .admin-main {
+    padding-top: 28px;
+  }
+  .redesign-admin .admin-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .redesign-admin .admin-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .redesign-admin .admin-page-actions {
+    width: 100%;
+  }
+  .redesign-admin .admin-page-actions .admin-btn {
+    width: 100%;
+  }
+  .redesign-admin .admin-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .redesign-admin .admin-two-column,
+  .redesign-admin .admin-source-workspace {
+    grid-template-columns: 1fr;
+  }
+  .redesign-admin .admin-source-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .redesign-admin .admin-source-list > button {
+    min-width: 0;
+  }
+  .redesign-admin .admin-policy-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 540px) {
+  .redesign-admin .admin-main {
+    padding: 19px 13px 62px;
+  }
+  .redesign-admin .admin-metrics {
+    gap: 8px;
+  }
+  .redesign-admin .admin-metric {
+    min-height: 108px;
+    padding: 14px;
+  }
+  .redesign-admin .admin-metric strong {
+    font-size: 28px;
+  }
+  .redesign-admin .admin-panel {
+    padding: 16px;
+  }
+  .redesign-admin .admin-toolbar label {
+    width: 100%;
+  }
+  .redesign-admin .admin-toolbar .admin-btn {
+    width: 100%;
+  }
+  .redesign-admin .admin-source-list {
+    grid-template-columns: 1fr;
+  }
+  .redesign-admin .admin-form-grid,
+  .redesign-admin .admin-account-facts {
+    grid-template-columns: 1fr;
+  }
+  .redesign-admin .admin-form-full {
+    grid-column: auto;
+  }
+  .redesign-admin .admin-state-error {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .redesign-admin .admin-state-error .admin-btn {
+    width: 100%;
+  }
+  .redesign-admin .admin-pipeline > div {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+  .redesign-admin .admin-pipeline .admin-status {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .redesign-admin *,
+  .redesign-admin *::before,
+  .redesign-admin *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
