@@ -16,6 +16,16 @@ import './admin.css'
 export { ADMIN_NAVIGATION }
 
 const ROUTES = new Set(ADMIN_NAVIGATION.map((item) => item.id))
+const NAV_ICON_BY_ROUTE = Object.freeze({
+  overview: 'grid',
+  jobs: 'jobs',
+  articles: 'articles',
+  governance: 'shield',
+  sources: 'globe',
+  users: 'user',
+  audit: 'audit',
+  account: 'account',
+})
 
 function BrandMark() {
   return (
@@ -42,22 +52,6 @@ function ThemeButton({ theme, onToggle }) {
   )
 }
 
-function ApiStatus({ apiStatus = 'ready' }) {
-  const tone = apiStatus === 'warning' ? 'warning' : apiStatus === 'error' ? 'danger' : 'success'
-  const label =
-    apiStatus === 'warning'
-      ? 'API chưa phản hồi'
-      : apiStatus === 'error'
-        ? 'API lỗi'
-        : 'API sẵn sàng'
-  return (
-    <span className={`admin-api-status admin-status-${tone}`}>
-      <i aria-hidden="true" />
-      {label}
-    </span>
-  )
-}
-
 function Navigation({ route, onNavigate, overview }) {
   const counts = readResponseData(overview) ?? {}
   const sections = []
@@ -80,26 +74,7 @@ function Navigation({ route, onNavigate, overview }) {
                 aria-current={current ? 'page' : undefined}
                 onClick={() => onNavigate(item.id)}
               >
-                <Icon
-                  name={
-                    item.id === 'overview'
-                      ? 'grid'
-                      : item.id === 'jobs'
-                        ? 'activity'
-                        : item.id === 'articles'
-                          ? 'book'
-                          : item.id === 'governance'
-                            ? 'shield'
-                            : item.id === 'sources'
-                              ? 'globe'
-                              : item.id === 'users'
-                                ? 'user'
-                                : item.id === 'audit'
-                                  ? 'activity'
-                                  : 'lock'
-                  }
-                  size={17}
-                />
+                <Icon name={NAV_ICON_BY_ROUTE[item.id]} size={17} />
                 <span>{item.label}</span>
                 {Number(badge) > 0 ? (
                   <b
@@ -161,7 +136,6 @@ export default function AdminRedesign({
   onLogout,
   theme: suppliedTheme,
   onToggleTheme,
-  apiStatus = 'ready',
 }) {
   const controlled = route !== undefined
   const [localRoute, setLocalRoute] = useState('overview')
@@ -197,11 +171,7 @@ export default function AdminRedesign({
         </div>
         <Navigation route={activeRoute} onNavigate={navigate} overview={overview} />
         <div className="admin-sidebar-footer">
-          <ApiStatus apiStatus={apiStatus} />
           <ThemeButton theme={theme} onToggle={toggleTheme} />
-          <p>
-            <Icon name="lock" size={13} /> CSRF trong memory · phiên no-store
-          </p>
         </div>
       </aside>
       <div className="admin-content">

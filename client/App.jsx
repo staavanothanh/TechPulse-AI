@@ -206,7 +206,6 @@ export default function App() {
         onLogout={() => applySession(null, null, null)}
         theme={theme}
         onToggleTheme={toggleTheme}
-        apiStatus={health.status}
       />
     )
   }

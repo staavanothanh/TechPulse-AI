@@ -119,7 +119,7 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired 
   return (
     <div className="admin-view admin-articles-view">
       <PageHeader
-        eyebrow="Articles và AI index"
+        eyebrow="Articles & AI index"
         title="Quản lý bài viết"
         description="Theo dõi trạng thái xuất bản, summary và embedding. Dữ liệu nguồn chỉ được xử lý theo Source Registry policy."
         action={

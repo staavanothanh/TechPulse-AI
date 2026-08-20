@@ -38,6 +38,19 @@ function Icon({ name, size = 18 }) {
         <path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z" />
       </>
     ),
+    jobs: (
+      <>
+        <path d="M9 5h6M9 12h6M9 19h6" />
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+      </>
+    ),
+    articles: <path d="M4 5h16M4 12h16M4 19h10" />,
+    audit: (
+      <>
+        <path d="M12 3v18M5 6l14 12M19 6L5 18" />
+        <circle cx="12" cy="12" r="9" />
+      </>
+    ),
     grid: (
       <>
         <path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 11h6V4h-6z" />
@@ -79,6 +92,12 @@ function Icon({ name, size = 18 }) {
       <>
         <circle cx="9" cy="8" r="4" />
         <path d="M3 21c0-4 2.7-6 6-6s6 2 6 6M16 4a4 4 0 0 1 0 8M19 15c2 1 3 2.8 3 6" />
+      </>
+    ),
+    account: (
+      <>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" />
       </>
     ),
     x: (

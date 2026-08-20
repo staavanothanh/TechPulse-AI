@@ -107,7 +107,7 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
     <div className="admin-view admin-governance-view">
       <PageHeader
         eyebrow="Governance"
-        title="Takedown và xóa tài khoản"
+        title="Takedown & xóa tài khoản"
         description="Xử lý workflow gỡ nội dung và theo dõi tiến độ xóa tài khoản. Danh sách không hiển thị thông tin người yêu cầu."
         action={
           <AdminButton

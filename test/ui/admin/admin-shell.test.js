@@ -21,7 +21,7 @@ const overview = {
   lastSuccessfulIngestionAt: '2026-08-19T08:30:00.000Z',
 }
 
-describe('admin redesign shell', () => {
+describe('admin shell', () => {
   it('renders the artifact navigation and exception-first overview from props', () => {
     const html = renderToStaticMarkup(
       React.createElement(AdminRedesign, {
@@ -48,6 +48,12 @@ describe('admin redesign shell', () => {
     expect(html).toContain('failedJobs')
     expect(html).toContain('openTakedowns')
     expect(html).toContain('aria-current="page"')
+    expect(html).not.toContain('API sẵn sàng')
+    expect(html).not.toContain('CSRF trong memory · phiên no-store')
+    expect(html).toContain('M9 5h6M9 12h6M9 19h6')
+    expect(html).toContain('M4 5h16M4 12h16M4 19h10')
+    expect(html).toContain('M12 3v18M5 6l14 12M19 6L5 18')
+    expect(html).toContain('M4 21c0-4 3.6-6 8-6s8 2 8 6')
     expect(html).not.toMatch(
       /requesterContact|requesterName|evidenceNote|private chat|provider payload/i,
     )
@@ -82,7 +88,7 @@ describe('admin redesign shell', () => {
       }),
     )
 
-    expect(html).toContain('Takedown và xóa tài khoản')
+    expect(html).toContain('Takedown &amp; xóa tài khoản')
     expect(html).toContain('Hide trước')
     expect(html).toContain('article · 1 target')
     expect(html).not.toMatch(

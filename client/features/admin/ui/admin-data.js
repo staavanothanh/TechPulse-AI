@@ -5,17 +5,17 @@ const EMPTY_QUERY = Object.freeze({})
 export const ADMIN_NAVIGATION = Object.freeze([
   { id: 'overview', label: 'Tổng quan', section: 'Vận hành' },
   { id: 'jobs', label: 'Jobs', section: 'Vận hành', badge: 'queuedJobs' },
-  { id: 'articles', label: 'Articles và AI index', section: 'Vận hành' },
+  { id: 'articles', label: 'Articles & AI index', section: 'Vận hành' },
   {
     id: 'governance',
-    label: 'Takedown và xóa tài khoản',
+    label: 'Takedown & xóa tài khoản',
     section: 'Governance',
     badge: 'openTakedowns',
   },
-  { id: 'sources', label: 'Source Registry', section: 'Nguồn và người dùng' },
-  { id: 'users', label: 'Người dùng', section: 'Nguồn và người dùng' },
-  { id: 'audit', label: 'Audit bất biến', section: 'Nguồn và người dùng' },
-  { id: 'account', label: 'Tài khoản', section: 'Nguồn và người dùng' },
+  { id: 'sources', label: 'Source Registry', section: 'Nguồn & người dùng' },
+  { id: 'users', label: 'Người dùng', section: 'Nguồn & người dùng' },
+  { id: 'audit', label: 'Audit bất biến', section: 'Nguồn & người dùng' },
+  { id: 'account', label: 'Tài khoản', section: 'Nguồn & người dùng' },
 ])
 
 const QUERY_FIELDS = Object.freeze({
