@@ -87,6 +87,15 @@ describe('public feature contract boundaries', () => {
     )
   })
 
+  it('keeps the article back control visibly bordered like the artifact', () => {
+    const css = readFileSync(
+      join(process.cwd(), 'client', 'features', 'public', 'public-components.css'),
+      'utf8',
+    )
+    expect(css).toMatch(/\.public-back\s*\{[^}]*border:\s*1px solid var\(--public-border\)/s)
+    expect(css).toMatch(/\.public-back:hover\s*\{[^}]*border-color:\s*var\(--public-accent\)/s)
+  })
+
   it('keeps the public UI callback/API boundary free of credential storage and direct transport calls', () => {
     const root = join(process.cwd(), 'client', 'features', 'public')
     const files = []

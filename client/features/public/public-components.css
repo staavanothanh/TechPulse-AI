@@ -524,15 +524,24 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-height: 38px;
   margin-bottom: 28px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  padding: 7px 16px;
+  border: 1px solid var(--public-border);
+  border-radius: 999px;
+  background: var(--public-surface);
   color: var(--public-muted);
   font-weight: 650;
+  font-size: 14px;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
 }
 .public-back:hover {
   color: var(--public-fg);
+  border-color: var(--public-accent);
+  background: var(--public-accent-soft);
 }
 .public-detail-title {
   max-width: 18ch;
