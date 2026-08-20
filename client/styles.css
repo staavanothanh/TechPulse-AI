@@ -33,6 +33,13 @@
   --radius-sm: 10px;
   --btn-radius: 999px; /* one shared pill radius for every button */
   --shadow: 0 24px 60px oklch(0.2 0 0 / 0.07);
+
+  /* Glass card material (approved deviation from the flat-canvas brand-spec):
+     translucent surface + blur, tinted against tokens so dark/light both adapt. */
+  --glass-bg: color-mix(in oklch, var(--surface) 66%, transparent);
+  --glass-border: color-mix(in oklch, var(--border) 60%, transparent);
+  --glass-blur: blur(18px) saturate(125%);
+  --glass-highlight: color-mix(in oklch, var(--surface) 55%, var(--fg) 7%);
 }
 
 html[data-theme='dark'] {
@@ -2218,7 +2225,7 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
 }
 
 .qa-question {
-  min-height: 104px;
+  min-height: 56px;
   resize: none;
   line-height: 1.55;
 }
@@ -4366,5 +4373,87 @@ td .sub {
   .skeleton i,
   .content-skeleton i {
     animation: none;
+  }
+}
+
+/* ═══════════════════════════ glass card material ═══════════════════════════
+   Approved deviation from the locked brand-spec flat canvas: primary surfaces
+   become translucent + blurred (frosted glass). Still monochrome — every tint
+   is color-mix against tokens, so light and dark themes adapt automatically.
+   Applied to the large card containers, not to chips/tags/pills. */
+.article-card,
+.filter-card,
+.detail-body,
+.account-card,
+.feature-card,
+.auth-panel,
+.auth-card,
+.hero-card,
+.qa-workspace,
+.qa-answer,
+.qa-refusal,
+.qa-progress,
+.qa-conversation-state,
+.qa-rail-modal,
+.metric,
+.panel,
+.table-wrap,
+.source-item,
+.editor,
+.empty,
+.alert,
+.state-card,
+.skeleton,
+.dialog,
+.content-dialog,
+.qa-dialog,
+.admin-dialog {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-color: var(--glass-border);
+  box-shadow: var(--shadow);
+}
+
+/* subtle top hairline highlight for the premium glass edge */
+.article-card,
+.filter-card,
+.detail-body,
+.account-card,
+.feature-card,
+.auth-panel,
+.auth-card,
+.hero-card,
+.qa-workspace,
+.metric,
+.panel,
+.table-wrap,
+.editor,
+.dialog,
+.content-dialog,
+.qa-dialog,
+.admin-dialog {
+  border-top-color: var(--glass-highlight);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .article-card,
+  .filter-card,
+  .detail-body,
+  .account-card,
+  .feature-card,
+  .auth-panel,
+  .auth-card,
+  .hero-card,
+  .qa-workspace,
+  .metric,
+  .panel,
+  .table-wrap,
+  .editor,
+  .dialog,
+  .content-dialog,
+  .qa-dialog,
+  .admin-dialog {
+    transition: none;
   }
 }

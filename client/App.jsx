@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createApiClient } from '../shared/generated/api-client.js'
 import AuthAccount from './features/auth/AuthAccount.jsx'
 import SourceRegistry from './features/admin/sources/SourceRegistry.jsx'
@@ -133,6 +133,16 @@ export default function App() {
   const [contentRoute, setContentRoute] = useState('feed')
   const [adminRoute, setAdminRoute] = useState('overview')
   const [adminNotice, setAdminNotice] = useState('')
+
+  // Spec: every tab switch scrolls smoothly back to top via the shared rAF scrollToTop.
+  const firstRouteChange = useRef(true)
+  useEffect(() => {
+    if (firstRouteChange.current) {
+      firstRouteChange.current = false
+      return
+    }
+    scrollTop()
+  }, [contentRoute, scrollTop])
 
   useEffect(() => {
     let active = true

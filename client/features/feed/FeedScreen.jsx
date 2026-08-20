@@ -26,7 +26,7 @@ function PaginationBar({ page, canPrev, canNext, onPrev, onNext }) {
   return (
     <nav className="pagination" aria-label="Phân trang feed">
       <button className="pg-btn" type="button" onClick={onPrev} disabled={!canPrev}>‹ Trước</button>
-      <span className="pg-info">Trang {page}</span>
+      <span className="pg-info">· Trang {page} ·</span>
       <button className="pg-btn" type="button" onClick={onNext} disabled={!canNext}>Sau ›</button>
     </nav>
   )
