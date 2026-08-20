@@ -26,6 +26,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
   const [listError, setListError] = useState(null)
   const [transcriptState, setTranscriptState] = useState('empty')
   const [phase, setPhase] = useState(null)
+  const [askedQuestion, setAskedQuestion] = useState(null)
   const [answer, setAnswer] = useState(null)
   const [error, setError] = useState(null)
   const [citation, setCitation] = useState(null)
@@ -40,6 +41,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
   const emptyHeadingRef = useRef(null)
   const conversationHeadingRef = useRef(null)
   const resultHeadingRef = useRef(null)
+  const conversationRef = useRef(null)
   const selectionRequestRef = useRef(0)
   const listRequestRef = useRef(null)
   const invalidateSelectionRequest = useCallback(() => {
@@ -112,7 +114,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
     if (phase || cooldowns.detail > 0) return
     const requestId = selectionRequestRef.current + 1
     selectionRequestRef.current = requestId
-    setSelectedId(id); setDetail(null); setAnswer(null); setError(null); setTranscriptState('loading'); closeHistory()
+    setSelectedId(id); setDetail(null); setAnswer(null); setAskedQuestion(null); setError(null); setTranscriptState('loading'); closeHistory()
     try {
       const response = await api.getSession?.(id)
       if (requestId !== selectionRequestRef.current) return
@@ -143,7 +145,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
       return
     }
     const key = globalThis.crypto?.randomUUID?.() ?? `qa-${Date.now()}`
-    setFieldErrors({}); setError(null); setPhase('retrieving'); setAnswer(null); announce?.('Đang truy xuất nguồn')
+    setFieldErrors({}); setError(null); setAskedQuestion(question); setPhase('retrieving'); setAnswer(null); announce?.('Đang truy xuất nguồn')
     const timer = globalThis.setTimeout(() => { setPhase('provider'); announce?.('Đang chờ dịch vụ trả lời') }, phaseTimers.retrieving)
     const timer2 = globalThis.setTimeout(() => { setPhase('support'); announce?.('Đang kiểm tra mức hỗ trợ') }, phaseTimers.provider)
     try {
@@ -176,6 +178,14 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
     setFieldErrors((current) => current[field] ? { ...current, [field]: undefined } : current)
   }
 
+  // Keep the newest content in view as the answer generates / arrives (smooth, reduced-motion aware).
+  useEffect(() => {
+    const node = conversationRef.current
+    if (!node) return
+    const reduce = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    node.scrollTo({ top: node.scrollHeight, behavior: reduce ? 'auto' : 'smooth' })
+  }, [phase, answer])
+
   function confirmDelete(kind, id = null) {
     if (cooldowns[kind === 'clear' ? 'clear' : 'delete'] > 0) return
     setDeleteError(''); setConfirm({ kind, id })
@@ -183,7 +193,7 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
   async function executeDelete() {
     const current = confirm
     if (!current || deletePending) return
-    setDeletePending(true); setDeleteError(''); announce?.('Đang xóa phiên hỏi đáp')
+    setDeletePending(true); setDeleteError(''); setAskedQuestion(null); announce?.('Đang xóa phiên hỏi đáp')
     try {
       if (current.kind === 'clear') await api.clearSessions?.(csrfToken)
       else await api.deleteSession?.(current.id, csrfToken)
@@ -224,7 +234,8 @@ export default function GroundedQaScreen({ generatedApi, csrfToken, api: injecte
         </div>
         <section className="qa-main">
           <div className="qa-conversation-head"><div><h2 tabIndex="-1" ref={conversationHeadingRef}>{detail?.title || 'Phiên hỏi đáp'}</h2><p>Chỉ hiển thị transcript bounded từ server.</p></div></div>
-          <div className="qa-conversation">
+          <div className="qa-conversation" ref={conversationRef}>
+            {askedQuestion ? <article className="qa-message-user" aria-label="Câu hỏi của bạn"><p>{askedQuestion}</p></article> : null}
             {phase ? <GenerationProgress phase={phase} /> : error && !answer ? <section className="qa-conversation-state" role="alert"><h3>Không thể hoàn tất yêu cầu</h3><p>{[429, 503].includes(error.status) ? `Thử lại sau ${cooldowns.answer} giây.` : 'Giữ câu hỏi và phạm vi để thử lại rõ ràng.'}</p></section> : answer ? <AnswerResult answer={answer} onCitation={setCitation} headingRef={resultHeadingRef} /> : <ChatSessionTranscript status={transcriptState} detail={detail} error={error} retryCooldown={cooldowns.detail} onRetry={() => selectedId && selectSession(selectedId)} onCitation={setCitation} />}
           </div>
           <QuestionComposer scope={scope} onSubmit={submitQuestion} onInvalid={handleInvalid} onFieldChange={clearFieldError} busy={Boolean(phase)} cooldown={cooldowns.answer} errors={fieldErrors} />

@@ -173,8 +173,8 @@ h4 {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 46px;
-  padding: 8px 22px;
+  min-height: 52px;
+  padding: 8px 8px 8px 26px;
   border-radius: var(--btn-radius);
   border: 1px solid transparent;
   font: inherit;
@@ -668,6 +668,11 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
   gap: 56px;
   align-items: center;
   position: relative;
+}
+
+.hero .eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
 }
 
 .hero h1 {
@@ -1836,11 +1841,7 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
 /* ═══════════════════════════ Q&A ═══════════════════════════ */
 .qa-workspace {
   min-width: 0;
-  padding: clamp(16px, 3vw, 30px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow);
+  padding-top: clamp(16px, 3vw, 30px);
 }
 
 .qa-product-header,
@@ -1884,10 +1885,9 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
   min-width: 0;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 280px;
+  gap: 16px;
+  align-items: start;
   min-height: 650px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
 }
 
 .qa-session-rail,
@@ -1896,12 +1896,9 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
   background: var(--bg);
 }
 
-.qa-session-rail {
-  border-right: 1px solid var(--border);
-}
-
 .qa-scope-rail {
-  border-left: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .qa-rail-header {
@@ -1992,6 +1989,10 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-height: 620px;
 }
 
 .qa-conversation-head {
@@ -2010,6 +2011,11 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
 .qa-conversation {
   min-width: 0;
   flex: 1;
+  max-height: 62vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scroll-padding: 14px;
   padding: clamp(14px, 3vw, 26px);
   display: grid;
   align-content: start;
@@ -2024,6 +2030,13 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  animation: qa-rise 0.3s ease both;
+}
+
+/* Smooth entrance for Q&A content (respects prefers-reduced-motion via global rule). */
+@keyframes qa-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
 }
 
 .qa-conversation-state p,
@@ -2041,6 +2054,7 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
   color: var(--surface);
   border-radius: 18px;
   border-bottom-right-radius: 6px;
+  animation: qa-rise 0.3s ease both;
 }
 
 .qa-message-user p {
@@ -2060,26 +2074,32 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
 .qa-status {
   display: inline-flex;
   align-items: center;
-  min-height: 27px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font: 600 10px/1.25 var(--font-mono);
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.qa-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .qa-success {
   color: var(--success);
-  background: var(--success-soft);
 }
 
 .qa-warning {
   color: var(--warning);
-  background: var(--warning-soft);
 }
 
 .qa-danger {
   color: var(--danger);
-  background: var(--danger-soft);
 }
 
 .qa-paragraph {
@@ -2274,6 +2294,7 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
   background: var(--bg);
   border: 1px solid var(--border);
   font-size: 11px;
+  transition: background 0.22s ease, color 0.22s ease, border-color 0.22s ease;
 }
 
 .qa-progress-steps .current {
@@ -2459,7 +2480,7 @@ html[data-theme='dark'] .theme-toggle .icon-moon {
 .admin-panel {
   min-width: 0;
   margin-top: 16px;
-  padding: 18px;
+  padding: 22px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
@@ -4141,6 +4162,10 @@ td .sub {
     grid-template-columns: 1fr;
   }
 
+  .qa-conversation {
+    max-height: none;
+  }
+
   .qa-session-rail {
     display: none;
   }
@@ -4388,9 +4413,10 @@ td .sub {
 .feature-card,
 .auth-panel,
 .auth-card,
-.hero-card,
-.qa-workspace,
-.qa-answer,
+  .hero-card,
+  .qa-main,
+  .qa-scope-rail,
+  .qa-answer,
 .qa-refusal,
 .qa-progress,
 .qa-conversation-state,
@@ -4445,7 +4471,8 @@ td .sub {
   .auth-panel,
   .auth-card,
   .hero-card,
-  .qa-workspace,
+  .qa-main,
+  .qa-scope-rail,
   .metric,
   .panel,
   .table-wrap,
