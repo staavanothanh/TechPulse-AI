@@ -124,6 +124,9 @@
   background: var(--public-accent);
   color: var(--public-surface);
 }
+.public-page a.public-btn-primary {
+  color: var(--public-surface);
+}
 .public-btn-primary:hover {
   background: color-mix(in oklch, var(--public-accent) 78%, var(--public-fg));
 }

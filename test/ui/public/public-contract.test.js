@@ -77,6 +77,16 @@ describe('public feature contract boundaries', () => {
     expect(html).toContain('rel="noopener noreferrer external"')
   })
 
+  it('keeps the article source link text contrasting in both themes', () => {
+    const css = readFileSync(
+      join(process.cwd(), 'client', 'features', 'public', 'public-base.css'),
+      'utf8',
+    )
+    expect(css).toMatch(
+      /\.public-page a\.public-btn-primary\s*\{[^}]*color:\s*var\(--public-surface\)/s,
+    )
+  })
+
   it('keeps the public UI callback/API boundary free of credential storage and direct transport calls', () => {
     const root = join(process.cwd(), 'client', 'features', 'public')
     const files = []
