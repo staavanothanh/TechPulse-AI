@@ -100,7 +100,7 @@
   border-color: var(--public-accent);
   box-shadow: var(--public-shadow);
 }
-.public-feature-index {
+.public-feature-icon {
   display: inline-grid;
   width: 36px;
   height: 36px;
@@ -111,6 +111,10 @@
   color: var(--public-fg);
   font-size: 11px;
   font-weight: 700;
+}
+.public-feature-icon svg {
+  width: 17px;
+  height: 17px;
 }
 .public-feature-card h3 {
   margin-bottom: 6px;

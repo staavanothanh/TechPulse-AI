@@ -6,25 +6,21 @@ const FEATURES = Object.freeze([
     id: 'feed',
     title: 'Feed có nguồn rõ ràng',
     copy: 'Mỗi bài dẫn về nguồn nguyên bản. Nội dung hiển thị theo chính sách nguồn hiện hành.',
-    symbol: '01',
   },
   {
     id: 'summary',
     title: 'Tóm tắt tiếng Việt',
     copy: 'Tóm tắt ngắn có nhãn rõ ràng và luôn giữ đường dẫn tới bài gốc.',
-    symbol: '02',
   },
   {
     id: 'qa',
     title: 'Hỏi đáp có citation',
     copy: 'Mỗi đoạn trả lời gắn với bằng chứng đã truy xuất. Thiếu bằng chứng thì không đoán.',
-    symbol: '03',
   },
   {
     id: 'search',
     title: 'Tìm kiếm hybrid',
     copy: 'Kết hợp tín hiệu từ khóa và ngữ nghĩa. Tìm kiếm văn bản vẫn có thể hoạt động độc lập.',
-    symbol: '04',
   },
 ])
 
@@ -54,8 +50,8 @@ function FeatureGrid() {
         <div className="public-feature-grid">
           {FEATURES.map((feature) => (
             <article className="public-feature-card" key={feature.id}>
-              <span className="public-feature-index" aria-hidden="true">
-                {feature.symbol}
+              <span className="public-feature-icon" aria-hidden="true">
+                <FeatureIcon name={feature.id} />
               </span>
               <h3>{feature.title}</h3>
               <p>{feature.copy}</p>
@@ -64,6 +60,34 @@ function FeatureGrid() {
         </div>
       </div>
     </section>
+  )
+}
+
+function FeatureIcon({ name }) {
+  let paths
+  if (name === 'feed') {
+    paths = (
+      <>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      </>
+    )
+  } else if (name === 'summary') {
+    paths = <path d="M4 6h16M4 12h10M4 18h7" />
+  } else if (name === 'qa') {
+    paths = <path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z" />
+  } else {
+    paths = (
+      <>
+        <circle cx="11" cy="11" r="7" />
+        <path d="M21 21l-4.3-4.3" />
+      </>
+    )
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      {paths}
+    </svg>
   )
 }
 
@@ -93,16 +117,18 @@ export default function LandingPage({
           </div>
           <AuthPanel {...auth} onGuestBrowse={onGuestBrowse} />
         </div>
-        <div className="public-source-marquee" aria-label="Các nguồn tin được hỗ trợ">
-          <span className="public-sr-only">
-            DZone, DEV Community, VnExpress, ARXIV, Hacker News, TECHPULSE và GitHub Blog
-          </span>
-          <div className="public-source-track" aria-hidden="true">
-            {[...SOURCE_NAMES, ...SOURCE_NAMES].map((source, index) => (
-              <span className="public-source-name" key={`${source}-${index}`}>
-                {source}
-              </span>
-            ))}
+        <div className="public-container public-source-marquee-wrap">
+          <div className="public-source-marquee" aria-label="Các nguồn tin được hỗ trợ">
+            <span className="public-sr-only">
+              DZone, DEV Community, VnExpress, ARXIV, Hacker News, TECHPULSE và GitHub Blog
+            </span>
+            <div className="public-source-track" aria-hidden="true">
+              {[...SOURCE_NAMES, ...SOURCE_NAMES].map((source, index) => (
+                <span className="public-source-name" key={`${source}-${index}`}>
+                  {source}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </div>

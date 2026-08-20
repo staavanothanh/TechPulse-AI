@@ -234,30 +234,31 @@
   font-size: 18px;
   line-height: 1.6;
 }
+.public-source-marquee-wrap {
+  margin-top: clamp(48px, 7vw, 80px);
+}
 .public-source-marquee {
   position: relative;
   overflow: hidden;
   width: 100%;
-  margin-top: clamp(48px, 7vw, 80px);
   padding-block: 12px;
   border-block: 1px solid var(--public-border);
   color: var(--public-muted);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
 }
 .public-source-track {
   display: flex;
   width: max-content;
   align-items: center;
-  gap: clamp(30px, 6vw, 88px);
-  padding-inline: clamp(30px, 6vw, 88px);
-  animation: public-source-scroll 34s linear infinite;
+  animation: public-source-scroll 26s linear infinite;
   will-change: transform;
 }
 .public-source-name {
   flex: none;
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  margin-inline: 28px;
+  font-size: 14px;
+  font-weight: 600;
   white-space: nowrap;
 }
 @keyframes public-source-scroll {

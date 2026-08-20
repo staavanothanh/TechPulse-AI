@@ -58,6 +58,12 @@ describe('public redesign presentation contract', () => {
     expect(html).toContain('TECHPULSE')
     expect(html).toContain('GitHub Blog')
     expect(html).toContain('© 2026 TechPulse AI')
+    expect(html).toContain('public-container public-source-marquee-wrap')
+    expect(html).toContain('public-feature-icon')
+    expect(html).toContain('M4 19.5A2.5 2.5')
+    expect(html).toContain('M4 6h16M4 12h10M4 18h7')
+    expect(html).toContain('M21 12a8 8 0 0 1-11.6 7.1')
+    expect(html).toContain('M21 21l-4.3-4.3')
     expect(html).not.toMatch(/user@techpulse|admin@|password123|sessionStorage/i)
   })
 
