@@ -1,7 +1,7 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import AdminRedesign, { ADMIN_NAVIGATION } from '../../../client/redesign/admin/AdminShell.jsx'
+import AdminRedesign, { ADMIN_NAVIGATION } from '../../../client/features/admin/ui/AdminShell.jsx'
 
 const session = {
   user: { id: 'admin-opaque', role: 'admin', email: 'operator@example.test' },

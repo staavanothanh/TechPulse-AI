@@ -8,15 +8,15 @@ import {
   publicSessionKey,
   publicSessionForRole,
   sessionSurface,
-} from '../../../client/redesign/integration/routing.js'
-import { recoverBootstrapSession } from '../../../client/redesign/integration/session-actions.js'
+} from '../../client/app/integration/routing.js'
+import { recoverBootstrapSession } from '../../client/app/integration/session-actions.js'
 import {
   preferenceDraftForUser,
   sessionExpiredNotice,
   validateTopicPreferences,
-} from '../../../client/features/auth/session-state.js'
+} from '../../client/features/auth/session-state.js'
 
-describe('redesign integration role and route policy', () => {
+describe('application role and route policy', () => {
   it('keeps the complete public and admin route sets at the integration boundary', () => {
     expect([...PUBLIC_ROUTES]).toEqual(['feed', 'search', 'saved', 'article', 'qa', 'account'])
     expect([...ADMIN_ROUTES]).toEqual([

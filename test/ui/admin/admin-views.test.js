@@ -8,7 +8,7 @@ import {
   AdminJobsView,
   AdminSourcesView,
   AdminUsersView,
-} from '../../../client/redesign/admin/AdminViews.jsx'
+} from '../../../client/features/admin/ui/AdminViews.jsx'
 import {
   artifactJobRequest,
   createIdempotencyKey,
@@ -16,11 +16,11 @@ import {
   isAdminJobRetryable,
   listMeta,
   mutateAdmin,
-} from '../../../client/redesign/admin/admin-data.js'
+} from '../../../client/features/admin/ui/admin-data.js'
 
 const session = { user: { id: 'admin-opaque', role: 'admin' }, csrfToken: 'csrf-in-memory' }
 
-describe('admin redesign views', () => {
+describe('admin feature views', () => {
   it('keeps opaque cursor metadata alongside list response data', () => {
     const response = {
       data: [{ id: 'row-1' }],

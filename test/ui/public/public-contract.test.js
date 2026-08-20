@@ -3,12 +3,12 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { FeedView, QaView } from '../../../client/redesign/public/index.js'
+import { FeedView, QaView } from '../../../client/features/public/index.js'
 
 const render = (Component, props = {}) =>
   renderToStaticMarkup(React.createElement(Component, props))
 
-describe('public redesign contract boundaries', () => {
+describe('public feature contract boundaries', () => {
   it('renders answered and refused Q&A branches from the public response shape', () => {
     const answered = render(QaView, {
       state: 'ready',
@@ -78,7 +78,7 @@ describe('public redesign contract boundaries', () => {
   })
 
   it('keeps the public UI callback/API boundary free of credential storage and direct transport calls', () => {
-    const root = join(process.cwd(), 'client', 'redesign', 'public')
+    const root = join(process.cwd(), 'client', 'features', 'public')
     const files = []
     function collect(directory) {
       for (const name of readdirSync(directory, { withFileTypes: true })) {

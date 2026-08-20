@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createApiClient } from '../shared/generated/api-client.js'
-import PublicApp from './redesign/public/index.js'
-import AdminRedesign from './redesign/admin/AdminShell.jsx'
+import PublicApp from './features/public/index.js'
+import AdminRedesign from './features/admin/ui/AdminShell.jsx'
 import { useTheme } from './theme/use-theme.js'
 import {
   createSessionActions,
   recoverBootstrapSession,
   withSessionRecovery,
-} from './redesign/integration/session-actions.js'
+} from './app/integration/session-actions.js'
 import {
   normalizeAdminRoute,
   normalizePublicRoute,
   publicSessionForRole,
   publicSessionKey,
   sessionSurface,
-} from './redesign/integration/routing.js'
-import { usePublicIntegration } from './redesign/integration/use-public-integration.js'
+} from './app/integration/routing.js'
+import { usePublicIntegration } from './app/integration/use-public-integration.js'
 
 const api = createApiClient()
 const EMPTY_SESSION = Object.freeze({

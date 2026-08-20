@@ -12,7 +12,7 @@ import PublicApp, {
   SavedView,
   SearchView,
   validateCredentials,
-} from '../../../client/redesign/public/index.js'
+} from '../../../client/features/public/index.js'
 
 const render = (Component, props = {}) =>
   renderToStaticMarkup(React.createElement(Component, props))
@@ -41,7 +41,7 @@ const handlers = Object.freeze({
   onClear: vi.fn(),
 })
 
-describe('public redesign presentation contract', () => {
+describe('public feature presentation contract', () => {
   it('renders the landing/auth presentation with the guarded guest affordance', () => {
     const html = render(LandingPage, { auth: { mode: 'login', onSubmit: handlers.onSubmit } })
     expect(html).toContain('Nắm nhanh công nghệ.')

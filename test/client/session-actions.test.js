@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createSessionActions,
   withSessionRecovery,
-} from '../../../client/redesign/integration/session-actions.js'
+} from '../../client/app/integration/session-actions.js'
 
 function response(user = { id: 'user-opaque', role: 'user' }, csrfToken = 'csrf-next') {
   return { data: { user, csrfToken } }
 }
 
-describe('redesign integration session actions', () => {
+describe('application session actions', () => {
   it('uses generated login/register operations and applies the returned in-memory session', async () => {
     const api = {
       login: vi.fn().mockResolvedValue(response()),
