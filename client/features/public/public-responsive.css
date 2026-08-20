@@ -78,6 +78,10 @@
   .public-fact-list {
     grid-template-columns: 1fr;
   }
+  .public-scroll-top {
+    right: 16px;
+    bottom: 88px;
+  }
 }
 @media (max-width: 560px) {
   .public-container {
@@ -92,9 +96,6 @@
   }
   .public-brand {
     font-size: 16px;
-  }
-  .public-status-pill {
-    display: none;
   }
   .public-hero-copy h1 {
     font-size: clamp(38px, 12vw, 54px);
@@ -117,6 +118,9 @@
     flex-direction: column;
   }
   .public-card-actions .public-btn {
+    width: 100%;
+  }
+  .public-card-actions .public-icon-btn {
     width: 100%;
   }
   .public-dialog-actions {

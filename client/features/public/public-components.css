@@ -352,21 +352,56 @@
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  margin-bottom: 16px;
 }
 .public-topic-row span,
 .public-topic-row button {
-  padding: 5px 10px;
+  padding: 4px 11px;
   border: 1px solid var(--public-border);
   border-radius: 999px;
-  background: transparent;
+  background: var(--public-bg);
   color: var(--public-muted);
-  font-size: 12px;
+  font-size: 12.5px;
+}
+.public-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 7px 15px;
+  border: 1px solid var(--public-border);
+  border-radius: 999px;
+  background: var(--public-surface);
+  color: var(--public-fg);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.public-icon-btn:hover {
+  border-color: var(--public-accent);
+  background: var(--public-accent-soft);
+}
+.public-icon-btn[aria-pressed='true'] {
+  border-color: var(--public-accent);
+  background: var(--public-accent);
+  color: var(--public-surface);
+}
+.public-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
 }
 .public-card-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 5px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--public-border);
 }
 .public-pagination {
   display: flex;

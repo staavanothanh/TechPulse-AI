@@ -84,6 +84,7 @@ describe('public feature presentation contract', () => {
     const html = render(ReaderShell, {
       route: 'feed',
       onNavigate: handlers.onNavigate,
+      status: 'API sẵn sàng · 2026-08-20T00:00:00.000Z',
       children: React.createElement('div', null, 'Reader body'),
     })
     expect(html).toContain('aria-label="Điều hướng chính"')
@@ -94,6 +95,10 @@ describe('public feature presentation contract', () => {
     expect(html).toContain('Hỏi đáp')
     expect(html).toContain('Tài khoản')
     expect(html).toContain('Reader body')
+    expect(html).not.toContain('API sẵn sàng')
+    expect(html).toContain('public-scroll-top')
+    expect(html).toContain('aria-label="Về đầu trang"')
+    expect(html).toContain('M12 19V5M5 12l7-7 7 7')
     expect(html).not.toMatch(/<main(?:\s|>)/)
   })
 
@@ -114,6 +119,10 @@ describe('public feature presentation contract', () => {
     })
     expect(loading).toContain('aria-busy="true"')
     expect(ready).toContain(article.titleVi)
+    expect(ready).toContain('AI')
+    expect(ready).toContain('DevOps')
+    expect(ready).toContain('public-icon-btn')
+    expect(ready).toContain('M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z')
     expect(ready).toContain('Trang 1')
     expect(ready).not.toContain('opaque-cursor')
     expect(search).toContain('Tìm kiếm hybrid')

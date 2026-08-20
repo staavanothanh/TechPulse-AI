@@ -72,7 +72,6 @@ export default function PublicApp({
   auth = {},
   api,
   csrfToken,
-  health,
   feed = {},
   search = {},
   saved = {},
@@ -119,7 +118,6 @@ export default function PublicApp({
       onThemeToggle={onThemeToggle}
       onBrandClick={onBrandClick}
       onLogout={onLogout}
-      status={health?.message || health || null}
     >
       {activeView(safeRoute, viewProps[safeRoute])}
     </ReaderShell>

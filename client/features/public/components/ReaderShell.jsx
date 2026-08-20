@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import BrandMark from './BrandMark.jsx'
 import ThemeToggle from './ThemeToggle.jsx'
+import { documentScrollRoot, scrollToDocumentTop } from './scroll-top.js'
 import { READER_NAV } from '../navigation.js'
 
 function Navigation({ route, onNavigate, mobile = false }) {
@@ -26,6 +28,50 @@ function Navigation({ route, onNavigate, mobile = false }) {
   )
 }
 
+function ScrollToTopButton() {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const updateVisibility = () => {
+      const scrollRoot = documentScrollRoot()
+      const scrollTop = scrollRoot?.scrollTop ?? globalThis.scrollY ?? 0
+      setVisible(scrollTop >= 320)
+    }
+    const scrollRoot = documentScrollRoot()
+    globalThis.addEventListener?.('scroll', updateVisibility, { passive: true })
+    scrollRoot?.addEventListener?.('scroll', updateVisibility, { passive: true })
+    updateVisibility()
+    return () => {
+      globalThis.removeEventListener?.('scroll', updateVisibility)
+      scrollRoot?.removeEventListener?.('scroll', updateVisibility)
+    }
+  }, [])
+
+  function scrollToTop(event) {
+    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    scrollToDocumentTop({
+      target: event?.currentTarget,
+      smooth: !reducedMotion,
+    })
+    setVisible(false)
+  }
+
+  return (
+    <button
+      className={`public-scroll-top${visible ? ' show' : ''}`}
+      type="button"
+      aria-label="Về đầu trang"
+      title="Về đầu trang"
+      hidden={!visible}
+      onClick={scrollToTop}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <path d="M12 19V5M5 12l7-7 7 7" />
+      </svg>
+    </button>
+  )
+}
+
 export default function ReaderShell({
   route = 'feed',
   onNavigate,
@@ -33,7 +79,6 @@ export default function ReaderShell({
   onThemeToggle,
   onBrandClick,
   onLogout,
-  status = null,
   children,
 }) {
   return (
@@ -51,11 +96,6 @@ export default function ReaderShell({
           </button>
           <Navigation route={route} onNavigate={onNavigate} />
           <div className="public-nav-right">
-            {status ? (
-              <span className="public-status-pill" role="status" aria-live="polite">
-                {status}
-              </span>
-            ) : null}
             <ThemeToggle theme={theme} onToggle={onThemeToggle} />
             {onLogout ? (
               <button
@@ -71,6 +111,7 @@ export default function ReaderShell({
       </header>
       <div className="public-reader-content">{children}</div>
       <Navigation route={route} onNavigate={onNavigate} mobile />
+      <ScrollToTopButton />
     </div>
   )
 }

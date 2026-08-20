@@ -39,7 +39,6 @@ function PublicSurface({
   onAuthModeChange,
   onGuestBrowse,
   auth,
-  health,
   accountActions,
   sessionNotice,
 }) {
@@ -75,7 +74,6 @@ function PublicSurface({
       auth={auth}
       api={api}
       csrfToken={publicSession?.csrfToken}
-      health={health}
       feed={integration.feed}
       search={integration.search}
       saved={integration.saved}
@@ -88,27 +86,10 @@ function PublicSurface({
 
 export default function App() {
   const [theme, toggleTheme] = useTheme()
-  const [health, setHealth] = useState({ status: 'loading', message: 'Đang kiểm tra API…' })
   const [session, setSession] = useState(EMPTY_SESSION)
   const [publicRoute, setPublicRoute] = useState('feed')
   const [adminRoute, setAdminRoute] = useState('overview')
   const [auth, setAuth] = useState({ mode: 'login', busy: false, error: null, notice: null })
-
-  useEffect(() => {
-    let active = true
-    void api
-      .getHealth()
-      .then((response) => {
-        if (active)
-          setHealth({ status: 'ok', message: `API sẵn sàng · ${response.data.timestamp}` })
-      })
-      .catch(() => {
-        if (active) setHealth({ status: 'warning', message: 'API chưa phản hồi' })
-      })
-    return () => {
-      active = false
-    }
-  }, [])
 
   const loadSession = useCallback((isActive = () => true) => {
     void api
@@ -225,7 +206,6 @@ export default function App() {
       onAuthModeChange={(mode) => setAuth((current) => ({ ...current, mode, error: null }))}
       onGuestBrowse={guestBrowseNotice}
       auth={auth}
-      health={health}
       accountActions={accountActions}
       sessionNotice={session.notice}
     />

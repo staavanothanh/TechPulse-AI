@@ -114,6 +114,9 @@ export function Summary({ article }) {
 
 export function ArticleCard({ article, busy = false, savedOverride, onOpenArticle, onSaveToggle }) {
   const saved = typeof savedOverride === 'boolean' ? savedOverride : Boolean(article?.isSaved)
+  const topics = Array.isArray(article?.topics)
+    ? article.topics.filter((topic) => typeof topic === 'string' && topic.trim()).slice(0, 6)
+    : []
   const media = article?.leadMedia || article?.media
   const mediaKind = media?.kind || media?.type
   const mediaUrl =
@@ -168,22 +171,31 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
         <p className="public-original-title">{article.titleOriginal}</p>
       ) : null}
       <Summary article={article} />
-      {Array.isArray(article?.topics) && article.topics.length > 0 ? (
+      {topics.length > 0 ? (
         <div className="public-topic-row" aria-label="Chủ đề">
-          {article.topics.slice(0, 6).map((topic) => (
+          {topics.map((topic) => (
             <span key={topic}>{topic}</span>
           ))}
         </div>
       ) : null}
       <div className="public-card-actions">
         <button
-          className="public-btn public-btn-ghost"
+          className="public-icon-btn"
           type="button"
           aria-pressed={saved}
           disabled={busy}
           onClick={() => onSaveToggle?.(article, !saved)}
         >
-          {busy ? 'Đang cập nhật...' : saved ? 'Bỏ lưu bài' : 'Lưu bài'}
+          <svg
+            viewBox="0 0 24 24"
+            fill={saved ? 'currentColor' : 'none'}
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" />
+          </svg>
+          <span>{busy ? 'Đang cập nhật...' : saved ? 'Bỏ lưu bài' : 'Lưu bài'}</span>
         </button>
         <button
           className="public-text-action"
