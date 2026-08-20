@@ -1,0 +1,95 @@
+.redesign-admin {
+  --admin-bg: oklch(0.968 0 0);
+  --admin-surface: oklch(1 0 0);
+  --admin-fg: oklch(0.21 0 0);
+  --admin-muted: oklch(0.48 0 0);
+  --admin-border: oklch(0.915 0 0);
+  --admin-accent: oklch(0.16 0 0);
+  --admin-accent-soft: color-mix(in oklch, var(--admin-accent) 10%, transparent);
+  --admin-fg-soft: color-mix(in oklch, var(--admin-fg) 6%, transparent);
+  --admin-success: oklch(0.52 0.12 155);
+  --admin-success-soft: color-mix(in oklch, var(--admin-success) 12%, transparent);
+  --admin-warning: oklch(0.6 0.13 75);
+  --admin-warning-soft: color-mix(in oklch, var(--admin-warning) 14%, transparent);
+  --admin-danger: oklch(0.54 0.16 30);
+  --admin-danger-soft: color-mix(in oklch, var(--admin-danger) 12%, transparent);
+  --admin-radius: 16px;
+  --admin-radius-sm: 10px;
+  --admin-pill: 999px;
+  --admin-shadow: 0 24px 60px oklch(0.2 0 0 / 0.07);
+  color-scheme: light;
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  min-height: 100dvh;
+  background: var(--admin-bg);
+  color: var(--admin-fg);
+  font-family:
+    'Segoe UI Variable Text',
+    'Segoe UI Variable',
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.redesign-admin.admin-theme-dark {
+  --admin-bg: oklch(0.17 0 0);
+  --admin-surface: oklch(0.21 0 0);
+  --admin-fg: oklch(0.93 0 0);
+  --admin-muted: oklch(0.66 0 0);
+  --admin-border: oklch(0.3 0 0);
+  --admin-accent: oklch(0.93 0 0);
+  --admin-accent-soft: color-mix(in oklch, var(--admin-accent) 12%, transparent);
+  --admin-shadow: 0 24px 60px oklch(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+
+.redesign-admin *,
+.redesign-admin *::before,
+.redesign-admin *::after {
+  box-sizing: border-box;
+}
+
+.redesign-admin button,
+.redesign-admin input,
+.redesign-admin select {
+  font: inherit;
+}
+
+.redesign-admin button {
+  cursor: pointer;
+}
+.redesign-admin button:disabled {
+  cursor: wait;
+  opacity: 0.52;
+}
+.redesign-admin button:focus-visible,
+.redesign-admin input:focus-visible,
+.redesign-admin select:focus-visible {
+  outline: 2px solid var(--admin-accent);
+  outline-offset: 3px;
+}
+.redesign-admin [hidden] {
+  display: none !important;
+}
+.redesign-admin .admin-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.redesign-admin .admin-mono {
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: 0.01em;
+}
+.redesign-admin .admin-muted {
+  color: var(--admin-muted);
+}

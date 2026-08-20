@@ -1,0 +1,89 @@
+.public-page {
+  --public-bg: oklch(0.968 0 0);
+  --public-surface: oklch(1 0 0);
+  --public-fg: oklch(0.21 0 0);
+  --public-muted: oklch(0.48 0 0);
+  --public-border: oklch(0.915 0 0);
+  --public-accent: oklch(0.16 0 0);
+  --public-accent-soft: color-mix(in oklch, var(--public-accent) 10%, transparent);
+  --public-success: oklch(0.52 0.12 155);
+  --public-danger: oklch(0.54 0.16 30);
+  --public-danger-soft: color-mix(in oklch, var(--public-danger) 12%, transparent);
+  --public-radius: 18px;
+  --public-radius-sm: 10px;
+  --public-shadow: 0 24px 60px oklch(0.2 0 0 / 0.07);
+  --public-gutter: clamp(16px, 4vw, 48px);
+  min-height: 100dvh;
+  background: var(--public-bg);
+  color: var(--public-fg);
+  font-family:
+    'Segoe UI Variable Text',
+    'Segoe UI Variable',
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.public-page,
+.public-page *,
+.public-page *::before,
+.public-page *::after {
+  box-sizing: border-box;
+}
+.public-page button,
+.public-page input,
+.public-page select,
+.public-page textarea {
+  font: inherit;
+}
+.public-page button {
+  cursor: pointer;
+}
+.public-page button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.public-page a {
+  color: inherit;
+}
+.public-page h1,
+.public-page h2,
+.public-page h3,
+.public-page p {
+  text-wrap: pretty;
+}
+.public-page h1,
+.public-page h2,
+.public-page h3 {
+  text-wrap: balance;
+}
+.public-page h1,
+.public-page h2,
+.public-page h3,
+.public-page p {
+  margin-top: 0;
+}
+.public-page :focus-visible {
+  outline: 2px solid var(--public-accent);
+  outline-offset: 3px;
+}
+
+html[data-theme='dark'] .public-page,
+.public-page[data-theme='dark'] {
+  color-scheme: dark;
+  --public-bg: oklch(0.17 0 0);
+  --public-surface: oklch(0.21 0 0);
+  --public-fg: oklch(0.93 0 0);
+  --public-muted: oklch(0.66 0 0);
+  --public-border: oklch(0.3 0 0);
+  --public-accent: oklch(0.93 0 0);
+  --public-accent-soft: color-mix(in oklch, var(--public-accent) 12%, transparent);
+  --public-shadow: 0 24px 60px oklch(0 0 0 / 0.5);
+}

@@ -8,9 +8,15 @@ describe('Step 10 dialog keyboard boundary', () => {
     const middle = { focus: vi.fn() }
     const focusables = [first, middle, last]
 
-    expect(dialogFocusAction({ key: 'Tab', shiftKey: false, activeElement: last, focusables })).toEqual({ type: 'focus', target: first })
-    expect(dialogFocusAction({ key: 'Tab', shiftKey: true, activeElement: first, focusables })).toEqual({ type: 'focus', target: last })
-    expect(dialogFocusAction({ key: 'Tab', shiftKey: false, activeElement: middle, focusables })).toBeNull()
+    expect(
+      dialogFocusAction({ key: 'Tab', shiftKey: false, activeElement: last, focusables }),
+    ).toEqual({ type: 'focus', target: first })
+    expect(
+      dialogFocusAction({ key: 'Tab', shiftKey: true, activeElement: first, focusables }),
+    ).toEqual({ type: 'focus', target: last })
+    expect(
+      dialogFocusAction({ key: 'Tab', shiftKey: false, activeElement: middle, focusables }),
+    ).toBeNull()
   })
 
   it('uses Escape as the only keyboard close action', () => {
@@ -20,6 +26,9 @@ describe('Step 10 dialog keyboard boundary', () => {
 
   it('keeps Tab inside a pending dialog with no enabled controls', () => {
     const dialog = { focus: vi.fn() }
-    expect(dialogFocusAction({ key: 'Tab', focusables: [], fallbackTarget: dialog })).toEqual({ type: 'focus', target: dialog })
+    expect(dialogFocusAction({ key: 'Tab', focusables: [], fallbackTarget: dialog })).toEqual({
+      type: 'focus',
+      target: dialog,
+    })
   })
 })
