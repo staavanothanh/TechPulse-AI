@@ -24,7 +24,7 @@ function requireIdempotencyKey(value) {
 }
 
 function actorFence(auth) {
-  return { userId: auth.user.id, sessionId: auth.session?._id ?? auth.session?.id, sessionVersion: auth.session?.userSessionVersion }
+  return { userId: auth.user.id ?? auth.user._id, sessionId: auth.session?._id ?? auth.session?.id, sessionVersion: auth.session?.userSessionVersion }
 }
 
 function assertEligibleSource(source) {
@@ -46,7 +46,7 @@ function buildJob({ source, auth, idempotencyKey, batchSize, trigger, attempt, p
   const requestHash = canonicalRequestHash({ operation, sourceId: source.id, batchSize: normalizedBatch, expectedSourcePolicyVersion: source.policyVersion, parentJobId: parentJobId ?? null })
   return {
     id, idempotencyKey, actorScope, requestHash, sourceId: source.id, connectorType: source.connectorType,
-    expectedSourcePolicyVersion: source.policyVersion, trigger, requestedBy: auth.user.id,
+    expectedSourcePolicyVersion: source.policyVersion, trigger, requestedBy: auth.user.id ?? auth.user._id,
     ...(parentJobId ? { parentJobId } : {}), status: 'queued', attempt, priority: trigger === 'admin' ? 50 : 25,
     availableAt: createdAt, agingEligibleAt: new Date(createdAt.getTime() + AGING_MS), idempotencyExpiresAt: new Date(createdAt.getTime() + 14 * DAY_MS),
     leaseGeneration: 0, batchSize: normalizedBatch, counters: zeroCounters(), createdAt, updatedAt: createdAt,
@@ -86,7 +86,7 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
       const audit = createJobAuditEvent({ actor, action: 'ingestion_job_created', targetId: job.id, changedFields: ['status'], reasonCode: 'ingestion_trigger_requested', request: auditRequest(request, key, auth), result: 'pending', createdAt })
       const created = await jobRepository.createOrReuseIngestionJobWithAdmission({
         job, audit, actorFence: actorFence(auth), rateLimitAdmission,
-        admission: { scope: 'admin-trigger', subject: actor.id },
+        admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) },
       })
       await runDueWork?.()
       return created
@@ -106,7 +106,7 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
       const audit = createJobAuditEvent({ actor, action: 'ingestion_job_retry_created', targetId: job.id, changedFields: ['status', 'attempt', 'parentJobId'], reasonCode, request: auditRequest(request, key, auth), createdAt })
       const created = await jobRepository.createOrReuseIngestionJobWithAdmission({
         job, audit, actorFence: actorFence(auth), rateLimitAdmission,
-        admission: { scope: 'admin-trigger', subject: actor.id }, parentJobId: parent.id, nextAttempt: parent.attempt + 1,
+        admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) }, parentJobId: parent.id, nextAttempt: parent.attempt + 1,
       })
       await runDueWork?.()
       return created

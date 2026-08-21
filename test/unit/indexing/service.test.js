@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ObjectId } from 'mongodb'
 import { createIndexingJobService } from '../../../server/application/indexing/service.js'
 
 const ARTICLE_ID = '507f1f77bcf86cd799439011'
@@ -37,6 +38,25 @@ describe('Step 9 indexing job application service', () => {
     expect(embedding).toEqual(expect.objectContaining({ task: 'embedding', targetEmbeddingVersion: embeddingTarget.version, targetEmbeddingArtifactCompatibilityId: embeddingTarget.artifactCompatibilityId }))
     expect(summary.id).not.toBe(embedding.id)
     expect(indexingJobRepository.createOrReuseIndexingJobWithAdmission).toHaveBeenCalledTimes(2)
+  })
+
+  it('normalizes a Mongo admin identifier before rate-limit admission', async () => {
+    const { service, indexingJobRepository } = setup()
+    const mongoAuth = {
+      user: { _id: new ObjectId(USER_ID), role: 'admin', status: 'active' },
+      session: { _id: new ObjectId(SESSION_ID), userSessionVersion: 7 },
+    }
+
+    await service.createSummaryJob({
+      auth: mongoAuth,
+      articleId: ARTICLE_ID,
+      reasonCode: 'artifact_regeneration_requested',
+      idempotencyKey: 'summary-mongo-auth-key',
+    })
+
+    expect(indexingJobRepository.createOrReuseIndexingJobWithAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ admission: { scope: 'admin-trigger', subject: USER_ID } }),
+    )
   })
 
   it('rejects disallowed task/body state and an article without a current eligible source', async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ObjectId } from 'mongodb'
 import { createJobService } from '../../../server/application/jobs/service.js'
 
 const NOW = new Date('2026-08-10T00:00:00.000Z')
@@ -35,6 +36,24 @@ describe('ingestion job service', () => {
     expect(job.idempotencyExpiresAt.getTime() - job.createdAt.getTime()).toBeGreaterThanOrEqual(14 * 24 * 60 * 60 * 1000)
     expect(job.agingEligibleAt.getTime() - job.createdAt.getTime()).toBe(30 * 60 * 1000)
     expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledWith(expect.objectContaining({ actorFence: expect.objectContaining({ sessionVersion: 2 }), audit: expect.objectContaining({ reasonCode: 'ingestion_trigger_requested' }), admission: { scope: 'admin-trigger', subject: auth.user.id } }))
+  })
+
+  it('normalizes a Mongo admin identifier before rate-limit admission', async () => {
+    const { service, jobRepository } = fixture()
+    const mongoAuth = {
+      user: { _id: new ObjectId('507f1f77bcf86cd799439011'), role: 'admin', status: 'active' },
+      session: { _id: new ObjectId('507f1f77bcf86cd799439012'), userSessionVersion: 2 },
+    }
+
+    await service.createIngestionJob({
+      auth: mongoAuth,
+      input: { sourceId: source.id },
+      idempotencyKey: 'mongo-admin-admission-1',
+    })
+
+    expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ admission: { scope: 'admin-trigger', subject: '507f1f77bcf86cd799439011' } }),
+    )
   })
 
   it.each([

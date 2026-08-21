@@ -87,7 +87,7 @@ export function createIndexingJobService({ indexingJobRepository, articleReposit
     const changedFields = trigger === 'retry' ? ['status', 'attempt', 'parentJobId'] : ['status']
     const audit = createJobAuditEvent({ actor, action, targetId: job.id, changedFields, reasonCode, request: auditRequest(request, key, auth), result: 'pending', createdAt })
     const result = await indexingJobRepository.createOrReuseIndexingJobWithAdmission({
-      job, audit, actorFence: actorFence(auth), rateLimitAdmission, admission: { scope: 'admin-trigger', subject: actor.id ?? actor._id },
+      job, audit, actorFence: actorFence(auth), rateLimitAdmission, admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) },
       ...(parentJobId ? { parentJobId, nextAttempt: attempt } : {}),
     })
     await runDueWork?.()

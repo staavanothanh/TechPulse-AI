@@ -10,6 +10,10 @@ describe('durable job idempotency', () => {
     expect(actorScopeForAdmin({ user: { id: 'user_1' }, session: { _id: 'session_1', userSessionVersion: 3 } })).toBe('admin:user_1:session:session_1:v3')
   })
 
+  it('accepts Mongo-shaped authentication records that expose _id fields', () => {
+    expect(actorScopeForAdmin({ user: { _id: 'user_1' }, session: { _id: 'session_1', userSessionVersion: 3 } })).toBe('admin:user_1:session:session_1:v3')
+  })
+
   it('reuses same logical result and rejects a different intent', () => {
     const existing = { requestHash: canonicalRequestHash({ sourceId: 'source_1' }) }
     expect(resolveIdempotentJob(existing, existing.requestHash)).toBe(existing)

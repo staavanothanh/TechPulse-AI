@@ -23,7 +23,7 @@ export function canonicalRequestHash(value) {
 }
 
 export function actorScopeForAdmin(auth) {
-  const userId = String(auth?.user?.id ?? '')
+  const userId = String(auth?.user?.id ?? auth?.user?._id ?? '')
   const sessionId = String(auth?.session?._id ?? auth?.session?.id ?? '')
   const version = auth?.session?.userSessionVersion
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId) || !/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId) || !Number.isInteger(version) || version < 0) {
