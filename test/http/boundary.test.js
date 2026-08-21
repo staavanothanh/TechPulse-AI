@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { INGRESS_LIMITS, isExactOriginAllowed, validateRequestTarget } from '../../server/http/ingress.js'
+import { INGRESS_LIMITS, isExactOriginAllowed, requestPathname, validateRequestTarget } from '../../server/http/ingress.js'
 import { serializeClearSessionCookie, serializeSessionCookie } from '../../server/http/cookies.js'
 import { createRequestId } from '../../server/http/request-id.js'
 
@@ -29,5 +29,11 @@ describe('browser and ingress boundary', () => {
     expect(createRequestId()).toMatch(/^[0-9a-f-]{36}$/)
     expect(validateRequestTarget(undefined)).toBe(false)
     expect(isExactOriginAllowed(undefined, ['http://localhost:3000'])).toBe(false)
+  })
+
+  it('extracts the pathname from local and absolute request targets', () => {
+    expect(requestPathname('/api/v1/health?check=1')).toBe('/api/v1/health')
+    expect(requestPathname('https://preview.example.vercel.app/api/v1/health?check=1')).toBe('/api/v1/health')
+    expect(requestPathname(undefined)).toBe('')
   })
 })

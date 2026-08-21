@@ -155,12 +155,19 @@ export function validateRequestTarget(target) {
   return typeof target === 'string' && Buffer.byteLength(target, 'utf8') <= MAX_TARGET_BYTES
 }
 
+export function requestPathname(target) {
+  if (typeof target !== 'string') return ''
+  try { return new URL(target, 'http://localhost').pathname } catch { return '' }
+}
+
 export function createIngressMiddleware(options = {}) {
   return (req, res, next) => {
-    if (!validateRequestTarget(req.originalUrl || req.url)) return reject(res, 413, 'payload_too_large', 'Request target is too large')
-    const operation = findOperationForRequest(OPENAPI, req.method, req.originalUrl || req.url)
-    const isApi = req.path.startsWith('/api/')
-    const isInternal = req.path.startsWith('/api/internal/')
+    const requestTarget = req.originalUrl || req.url
+    if (!validateRequestTarget(requestTarget)) return reject(res, 413, 'payload_too_large', 'Request target is too large')
+    const operation = findOperationForRequest(OPENAPI, req.method, requestTarget)
+    const requestPath = requestPathname(requestTarget)
+    const isApi = requestPath.startsWith('/api/')
+    const isInternal = requestPath.startsWith('/api/internal/')
     const isMutation = MUTATING_METHODS.has(req.method)
     const hasBody = req.headers['content-length'] !== undefined || req.headers['transfer-encoding'] !== undefined
     const declaredLength = Number(req.get('Content-Length'))
