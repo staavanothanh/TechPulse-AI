@@ -1,3 +1,4 @@
+import { configureDns } from '../scripts/configure-dns.js'
 import { createApp } from '../server/app.js'
 import { createConfiguredAuthService } from '../server/bootstrap/auth.js'
 import { createConfiguredSourceService } from '../server/bootstrap/sources.js'
@@ -11,6 +12,8 @@ import { createSafeFetch } from '../server/infrastructure/http/safe-fetch.js'
 import { createSourceTechnicalCheckAdapter } from '../server/infrastructure/http/source-technical-check.js'
 import { createRateLimitAdmission } from '../server/security/rate-limit-admission.js'
 import { createProductionJobRuntime } from '../server/maintenance/job-runtime.js'
+
+configureDns()
 
 let appPromise
 function loadApp() {

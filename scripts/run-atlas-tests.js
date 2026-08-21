@@ -3,6 +3,7 @@ import { atlasTestArguments, createAtlasTestEnvironment, redactAtlasOutput } fro
 import { configureDns } from './configure-dns.js'
 
 const mode = process.argv[2] ?? 'integration'
+const dnsPreload = new URL('./configure-dns.js', import.meta.url).href
 
 try {
   configureDns()
@@ -10,7 +11,7 @@ try {
   const { childEnvironment, testDatabaseBase } = createAtlasTestEnvironment()
   const uri = childEnvironment.MONGODB_TEST_URI
   console.log(JSON.stringify({ atlasTestMode: mode, testDatabaseBase }))
-  const result = spawnSync(process.execPath, atlasTestArguments(mode), {
+  const result = spawnSync(process.execPath, ['--import', dnsPreload, ...atlasTestArguments(mode)], {
     cwd: process.cwd(),
     encoding: 'utf8',
     env: childEnvironment,

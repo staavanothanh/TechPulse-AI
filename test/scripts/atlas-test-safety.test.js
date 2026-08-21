@@ -83,9 +83,15 @@ describe('Step 2 explicit Atlas test safety', () => {
     expect(atlasTestArguments('integration')).toEqual(['node_modules/vitest/vitest.mjs', 'run', 'test/integration'])
     expect(atlasTestArguments('full')).toEqual(['node_modules/vitest/vitest.mjs', 'run'])
     expect(atlasTestArguments('coverage')).toEqual(['node_modules/vitest/vitest.mjs', 'run', '--coverage'])
-    for (const path of ['../../server/dev.js', '../../scripts/db-migrate.js', '../../scripts/db-verify.js', '../../scripts/seed-admin.js', '../../scripts/run-atlas-tests.js']) {
+    for (const path of ['../../api/index.js', '../../server/dev.js', '../../scripts/db-migrate.js', '../../scripts/db-verify.js', '../../scripts/seed-admin.js', '../../scripts/run-atlas-tests.js', '../../scripts/run-integration-tests.js']) {
       expect(readFileSync(new URL(path, import.meta.url), 'utf8')).toContain('configure-dns.js')
     }
+    const apiSource = readFileSync(new URL('../../api/index.js', import.meta.url), 'utf8')
+    expect(apiSource).toContain('configureDns()')
+    const atlasRunner = readFileSync(new URL('../../scripts/run-atlas-tests.js', import.meta.url), 'utf8')
+    expect(atlasRunner).toContain("'--import'")
+    const integrationRunner = readFileSync(new URL('../../scripts/run-integration-tests.js', import.meta.url), 'utf8')
+    expect(integrationRunner).toContain("'--import'")
   })
 
   it('configures Cloudflare DNS after Node startup inside the launched process', () => {

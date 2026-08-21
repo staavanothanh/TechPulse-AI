@@ -103,7 +103,7 @@ npm test -- --run test/scripts/atlas-test-safety.test.js
 
 RED fail vì safety module chưa tồn tại. GREEN cùng command: `1 file / 7 tests` pass, chứng minh indirect URI lookup, child-env allowlist, output redaction, reserved/protected database rejection, giới hạn tên Atlas 38 byte, exact cleanup target, DNS `1.1.1.1` được cấu hình trong process và default `npm test` không tự nạp Atlas credential.
 
-Runtime scripts `dev`, `db:migrate`, `db:migrate:dry-run`, `db:verify`, `seed:admin` dùng native Node 24 `--env-file-if-exists=.env`; explicit `test:atlas` nhận đúng một mode `integration|full`. Từng process thực sự gọi Mongo cấu hình DNS `1.1.1.1`; không dựa vào preload state giữa parent/child. Integration database bắt buộc theo `techpulse_step2_test_<run-id>_<suite>`, không vượt 38 byte, và cleanup từ chối mọi target khác hoặc database chính.
+Runtime scripts `dev`, `db:migrate`, `db:migrate:dry-run`, `db:verify`, `seed:admin` dùng native Node 24 `--env-file-if-exists=.env`; `test:atlas` và `test:integration` preload `scripts/configure-dns.js` cho process Vitest con. Từng process thực sự gọi Mongo cấu hình DNS `1.1.1.1`. Integration database bắt buộc theo `techpulse_step2_test_<run-id>_<suite>`, không vượt 38 byte, và cleanup từ chối mọi target khác hoặc database chính.
 
 Verification ngày 2026-08-10:
 
