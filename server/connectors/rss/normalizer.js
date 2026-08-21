@@ -1,8 +1,7 @@
 import { RSS_LIMITS, sourceConfigRejected, sourcePayloadRejected } from './errors.js'
+import { decodeSafeEntities } from './entities.js'
 
 const URL_MAX_CHARS = 2_048
-const STANDARD_ENTITY_VALUES = Object.freeze({ amp: '&', apos: "'", gt: '>', lt: '<', quot: '"' })
-
 function asDate(value) {
   if (value instanceof Date) return new Date(value)
   const date = new Date(value)
@@ -14,13 +13,7 @@ function validDate(value) {
 }
 
 function decodeEntities(value) {
-  return String(value).replace(/&(#x[0-9a-f]+|#[0-9]+|amp|apos|gt|lt|quot);/gi, (match, entity) => {
-    const key = entity.toLowerCase()
-    if (Object.prototype.hasOwnProperty.call(STANDARD_ENTITY_VALUES, key)) return STANDARD_ENTITY_VALUES[key]
-    const codePoint = key.startsWith('#x') ? Number.parseInt(key.slice(2), 16) : Number.parseInt(key.slice(1), 10)
-    if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return ''
-    try { return String.fromCodePoint(codePoint) } catch { return '' }
-  })
+  return decodeSafeEntities(value)
 }
 
 function plainText(value) {

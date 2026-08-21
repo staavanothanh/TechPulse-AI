@@ -2,8 +2,8 @@ import { TextDecoder } from 'node:util'
 import { Worker } from 'node:worker_threads'
 import { RSS_CONTENT_TYPES, RSS_LIMITS, RssConnectorError, sourcePayloadRejected } from './errors.js'
 import { MAX_PARSE_WORK_DELAY_MS } from './parse-limits.js'
+import { SAFE_ENTITY_NAMES } from './entities.js'
 
-const SAFE_ENTITY_NAMES = new Set(['amp', 'apos', 'gt', 'lt', 'quot'])
 const UNKNOWN_ENTITY_RE = /&([A-Za-z_][A-Za-z0-9_.:-]*|#(?:x[0-9a-f]+|[0-9]+));/gi
 const DOCTYPE_RE = /<\s*!DOCTYPE\b/i
 const ENTITY_DECLARATION_RE = /<\s*!ENTITY\b/i

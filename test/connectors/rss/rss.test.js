@@ -72,6 +72,18 @@ describe('RSS/Atom connector', () => {
     expect(JSON.stringify(result.candidates[0])).not.toMatch(/<[^>]+>|rawHtml|fullText|body|binary|base64|gridfs/i)
   })
 
+  it('accepts a bounded set of safe HTML entities used by real RSS feeds', async () => {
+    const body = '<rss version="2.0"><channel><item><title>Cloud cost &euro;100 &mdash; now</title><link>https://news.example.test/entities</link><guid>entities</guid><description>Use &ldquo;metadata-only&rdquo; &hellip;</description></item></channel></rss>'
+    const [candidate] = (await createRssConnector({ now: () => RETRIEVED_AT }).run({
+      source: source(),
+      payload: { body, contentType: 'application/rss+xml', url: 'https://feeds.example.test/rss.xml' },
+    })).candidates
+    expect(candidate).toMatchObject({
+      titleOriginal: 'Cloud cost €100 — now',
+      excerptOriginal: 'Use “metadata-only” …',
+    })
+  })
+
   it('normalizes Atom and namespace-prefixed fields through the same interface', async () => {
     const connector = createRssConnector({ now: () => RETRIEVED_AT })
     const result = await connector.run({

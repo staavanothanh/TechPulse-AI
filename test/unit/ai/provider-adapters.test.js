@@ -23,6 +23,8 @@ describe('Step 9 controlled provider adapters', () => {
     const body = JSON.parse(init.body)
     expect(body.model).toBe('summary/model')
     expect(body).not.toHaveProperty('tools')
+    expect(body.messages[0].content).toMatch(/JSON duy nhat/)
+    expect(body.messages[0].content).toMatch(/dich|dịch/i)
     expect(JSON.stringify(body)).not.toMatch(/leadMedia|providerPayload|secret-value/)
   })
 
