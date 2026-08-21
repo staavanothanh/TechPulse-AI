@@ -1,5 +1,5 @@
 import { safeExternalUrl, safeMediaUrl } from '../safe-url.js'
-import { articleTitle, formatDate, sourceDomain, sourceName } from './reader-format.js'
+import { articleTitle, formatDate, sourceDomain, sourceName, topicLabel } from './reader-format.js'
 
 export function PageHeading({ id, eyebrow, title, copy, action = null }) {
   return (
@@ -114,6 +114,7 @@ export function Summary({ article }) {
 
 export function ArticleCard({ article, busy = false, savedOverride, onOpenArticle, onSaveToggle }) {
   const saved = typeof savedOverride === 'boolean' ? savedOverride : Boolean(article?.isSaved)
+  const sourceLabel = sourceName(article)
   const topics = Array.isArray(article?.topics)
     ? article.topics.filter((topic) => typeof topic === 'string' && topic.trim()).slice(0, 6)
     : []
@@ -131,7 +132,7 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
       data-od-id={article?.id ? `card-${article.id}` : undefined}
     >
       <div className="public-card-meta">
-        <span>{sourceName(article)}</span>
+        <span>{sourceLabel}</span>
         {sourceDomain(article) ? <span>{sourceDomain(article)}</span> : null}
         {article?.publishedAt ? (
           <time dateTime={article.publishedAt}>{formatDate(article.publishedAt)}</time>
@@ -161,7 +162,15 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
           </a>
           <span>Video nguồn chưa được AI phân tích.</span>
         </div>
-      ) : null}
+      ) : (
+        <div
+          className="public-card-media public-card-media-placeholder"
+          role="img"
+          aria-label={`Ảnh nguồn: ${sourceLabel}`}
+        >
+          <span>{sourceLabel}</span>
+        </div>
+      )}
       <h2 className="public-article-title">
         <button type="button" onClick={() => onOpenArticle?.(article?.id, article)}>
           {articleTitle(article)}
@@ -174,7 +183,7 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
       {topics.length > 0 ? (
         <div className="public-topic-row" aria-label="Chủ đề">
           {topics.map((topic) => (
-            <span key={topic}>{topic}</span>
+            <span key={topic}>{topicLabel(topic)}</span>
           ))}
         </div>
       ) : null}

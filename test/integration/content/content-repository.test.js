@@ -85,6 +85,21 @@ describe('Step 8 Mongo content repository', () => {
     expect(JSON.stringify(page)).not.toMatch(/must not leak|sourcePolicyVersion|leadMediaStatus|removed/)
   })
 
+  it('derives public topics for legacy articles that were stored without categories', async () => {
+    const currentSource = source()
+    const legacy = {
+      ...document({ topics: [], titleOriginal: 'Cloud data infrastructure with Kubernetes' }),
+      _currentSource: currentSource,
+      _isSaved: [],
+    }
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate: vi.fn(() => ({ toArray: vi.fn(async () => [legacy]) })) })
+
+    const page = await repository.listVisibleArticles({ userId: USER_ID, limit: 20 })
+
+    expect(page.articles[0].topics).toEqual(['devops', 'dữ liệu'])
+  })
+
   it('returns text-only search scores and binds cursors to the normalized query', async () => {
     const currentSource = source()
     const match = { ...document(), _currentSource: currentSource, _isSaved: [], _textScore: 3.5 }

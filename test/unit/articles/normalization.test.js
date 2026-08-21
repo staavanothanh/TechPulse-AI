@@ -49,6 +49,19 @@ describe('article normalization and policy gates', () => {
     expect(article.embeddingStatus).toBe('pending')
   })
 
+  it('classifies topics when a connector does not provide explicit categories', () => {
+    const article = normalizeCandidateToArticle(
+      makeCandidate({
+        titleOriginal: 'Cloud data infrastructure with Kubernetes',
+        topics: [],
+        excerptOriginal: 'A database pipeline improves analytics for teams.',
+      }),
+      { source: makeSource(), now: RETRIEVED_AT },
+    )
+
+    expect(article.topics).toEqual(['devops', 'dữ liệu'])
+  })
+
   it('marks Hacker News community signal as unavailable for Q&A evidence', () => {
     const source = makeSource({ id: OTHER_SOURCE_ID, sourceKey: 'hn:topstories', connectorType: 'hacker-news', accessMethod: 'api', authorityTier: 'community-signal', connectorConfig: { kind: 'hacker-news', hackerNewsStream: 'topstories', batchSize: 20 } })
     const article = normalizeCandidateToArticle(makeCandidate({ sourceId: OTHER_SOURCE_ID, connectorType: 'hacker-news', authorityTier: 'community-signal', externalId: '42', originalUrl: 'https://news.ycombinator.com/item?id=42', provenance: { connectorType: 'hacker-news', sourceId: OTHER_SOURCE_ID, sourceKey: 'hn:topstories', externalId: '42', originalUrl: 'https://news.ycombinator.com/item?id=42', observedAt: RETRIEVED_AT } }), { source, now: RETRIEVED_AT })

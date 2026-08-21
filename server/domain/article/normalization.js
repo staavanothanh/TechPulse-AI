@@ -2,6 +2,7 @@ import { evaluateContentPolicy } from '../policy/content-policy.js'
 import { evaluateMediaPolicy } from '../policy/media-policy.js'
 import { ArticleError, invalidCandidate, sourcePolicyBlocked } from './errors.js'
 import { calculateDedupeKey, canonicalUrlHash } from './identity.js'
+import { classifyTopics } from './topic-classifier.js'
 
 const URL_MAX_CHARS = 2048
 const TITLE_MAX_CHARS = 2000
@@ -120,9 +121,9 @@ export function normalizeCandidateToArticle(candidate, { source, now = new Date(
   const publishedAt = dateValue(candidate.publishedAt)
   const retrievedAt = dateValue(candidate.retrievedAt, now)
   const sourceLanguage = normalizeLanguage(candidate.sourceLanguage ?? source.sourceLanguage)
-  const topics = normalizeTopics(candidate.topics)
   const excerptGate = evaluateContentPolicy(source, 'excerpt')
   const excerptOriginal = excerptGate.allowed && source.storageScope?.excerpt && candidate.excerptOriginal !== undefined ? text(candidate.excerptOriginal) : undefined
+  const topics = classifyTopics({ values: normalizeTopics(candidate.topics), titleOriginal, excerptOriginal })
   const author = candidate.author === undefined ? undefined : text(candidate.author, 500)
   const canonicalHash = canonicalUrlHash(originalUrl)
   const externalId = candidate.externalId === undefined || candidate.externalId === null ? undefined : text(candidate.externalId, 500)

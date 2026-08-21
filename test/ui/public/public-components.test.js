@@ -121,6 +121,9 @@ describe('public feature presentation contract', () => {
     expect(ready).toContain(article.titleVi)
     expect(ready).toContain('AI')
     expect(ready).toContain('DevOps')
+    expect(ready).toContain('public-card-media-placeholder')
+    expect(ready).toContain('Ảnh nguồn: Tech Review')
+    expect(ready).toContain('aria-label="Chủ đề"')
     expect(ready).toContain('public-icon-btn')
     expect(ready).toContain('M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z')
     expect(ready).toContain('Trang 1')
@@ -183,5 +186,39 @@ describe('public feature presentation contract', () => {
     expect(reader).toContain('Feed công nghệ')
     expect(reader).toContain(article.titleVi)
     expect(reader).not.toMatch(/tiếp tục như khách|user@techpulse|password123/i)
+  })
+
+  it('renders an allowed lead image in the artifact-compatible media frame', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [
+        {
+          ...article,
+          id: 'article-with-image',
+          leadMedia: {
+            type: 'image',
+            displayMode: 'remote-preview',
+            url: 'https://cdn.example.com/article-image.jpg',
+          },
+        },
+      ],
+      handlers,
+    })
+    expect(html).toContain('class="public-card-media-figure"')
+    expect(html).toContain('class="public-card-media"')
+    expect(html).toContain('src="https://cdn.example.com/article-image.jpg"')
+    expect(html).toContain('AI')
+    expect(html).toContain('DevOps')
+  })
+
+  it('uses artifact topic labels for normalized API values', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [{ ...article, topics: ['devops', 'dữ liệu'] }],
+      handlers,
+    })
+
+    expect(html).toContain('>DevOps</span>')
+    expect(html).toContain('>Dữ liệu</span>')
   })
 })

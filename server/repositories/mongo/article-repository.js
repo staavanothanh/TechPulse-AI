@@ -5,6 +5,7 @@ import { assessDedupe, mergeArticleRecords } from '../../domain/article/dedupe.j
 import { ArticleError, articleConflict, leaseFenceStale, policyVersionMismatch, sourcePolicyBlocked } from '../../domain/article/errors.js'
 import { hideArticle as hideArticleRecord, removeArticle as removeArticleRecord, restoreArticle as restoreArticleRecord } from '../../domain/article/lifecycle.js'
 import { normalizeCandidateToArticle } from '../../domain/article/normalization.js'
+import { classifyTopics } from '../../domain/article/topic-classifier.js'
 import { evaluateMediaPolicy } from '../../domain/policy/media-policy.js'
 import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
 import { canUseQnaEvidence, currentArticleVisibilityFilter, isSourceProductionEligible, qnaEvidenceFilter } from '../../domain/article/visibility.js'
@@ -289,7 +290,11 @@ function publicArticleCard(document, source = document?._currentSource) {
     },
     publishedAt: publicDate(article.publishedAt),
     sourceLanguage: String(article.sourceLanguage),
-    topics: [...new Set((article.topics ?? []).filter((topic) => typeof topic === 'string'))],
+    topics: classifyTopics({
+      values: article.topics,
+      titleOriginal: article.titleOriginal,
+      excerptOriginal: article.excerptOriginal,
+    }),
     ...summaryFields(article),
     leadMedia: publicLeadMedia(article.leadMedia),
     isSaved: savedMarker(document),

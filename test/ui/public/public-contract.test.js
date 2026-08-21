@@ -96,6 +96,19 @@ describe('public feature contract boundaries', () => {
     expect(css).toMatch(/\.public-back:hover\s*\{[^}]*border-color:\s*var\(--public-accent\)/s)
   })
 
+  it('keeps feed media frames and source placeholders aligned with the artifact', () => {
+    const css = readFileSync(
+      join(process.cwd(), 'client', 'features', 'public', 'public-components.css'),
+      'utf8',
+    )
+    expect(css).toMatch(
+      /\.public-card-media-figure\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9[^}]*overflow:\s*hidden/s,
+    )
+    expect(css).toMatch(
+      /\.public-card-media-placeholder\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9[^}]*radial-gradient\([^}]*var\(--public-accent-soft\)/s,
+    )
+  })
+
   it('keeps the public UI callback/API boundary free of credential storage and direct transport calls', () => {
     const root = join(process.cwd(), 'client', 'features', 'public')
     const files = []
