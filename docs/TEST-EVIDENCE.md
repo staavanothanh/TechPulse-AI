@@ -49,7 +49,7 @@ The first TDD run failed because `scripts/verify-restore-plan.js` did not exist.
 | `npm run test:e2e` | PASS, 5 tests; 9 external/local-host tests skipped by explicit gates |
 | `npm run test:e2e:local` | FAIL in latest runs: server health passes on `localhost:3000`, but login receives expected `429 rate_limit_exceeded` after repeated retries filled the 15-minute login bucket; governance run had 4 passed/2 failed, non-mutation rerun had 1 passed/3 failed/2 skipped; no deletion/takedown mutation committed |
 | `npm run test:e2e:vercel` | PASS, 3/3 Preview health/cron authentication tests |
-| `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --summary-only` | PASS, 1 real outbound request through configured `zen` summary route |
+| `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --summary-only` | PASS, 1 real outbound request through the pre-Gemini configured `zen` summary route (historical evidence) |
 | `node --env-file-if-exists=.env scripts/step9-real-provider-smoke.js --embedding-only` | PASS, 1 real OpenRouter request, 18 vectors x 1024 dimensions, top-5 rate 1 |
 | `npm run eval:retrieval` | PASS, 6/6 top-5 hits; below the Step 12 30+ dataset target |
 | `npm run eval:groundedness` | PASS, 31/31 cases; deterministic in-memory provider fixture |
@@ -60,6 +60,17 @@ The first TDD run failed because `scripts/verify-restore-plan.js` did not exist.
 | `npm run verify:demo` | PASS; 3/3 sources, 44 manifest-bound published articles (at least 5 per source), 15/15 lifecycle audits and 3/3 manifests verified |
 
 Preview API/Cron smoke was also observed through `npm run test:e2e:vercel`: health `200`, missing/invalid machine bearer `401`, valid bearer `202`. Direct browser-style Preview E2E remains outside this API/Cron gate and requires the configured protected Preview browser path.
+
+## Gemini LLM migration — 2026-08-21
+
+| Gate | Evidence | Result |
+| --- | --- | --- |
+| Gemini endpoint profile and Bearer/structured-output boundary | `test/unit/ai/gemini-provider-adapter.test.js` | PASS, 8 tests |
+| Provider graph routes summary and both Q&A workloads to Gemini while retaining OpenRouter/BGE-M3 embedding | `test/unit/ai/gemini-provider-graph.test.js` | PASS, 2 tests |
+| Synthetic summary, answer and support smoke with model fallback and closed-schema failures | `test/unit/ai/gemini-llm-smoke.test.js` | PASS, 6 tests |
+| Live Gemini requests using owner-provided environment credentials | `npm run smoke:gemini -- full` | PASS, 3 outbound requests; summary, answer and support all used `gemini-2.5-flash`, with no fallback; no embedding call was made. |
+
+The synthetic gates do not prove the Google project has current `zdr-verified` evidence. A Google Pro account does not by itself guarantee an API model's current rate-limit window; the live gate must observe the configured project response. Quota is a capacity/billing property, not privacy-retention evidence; Q&A remains fail-closed until the configured evidence is reviewed and unexpired.
 
 ## Post-MVP recovery evidence
 

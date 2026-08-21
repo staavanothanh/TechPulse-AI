@@ -430,15 +430,16 @@ MVP không cần `superadmin`, phân quyền chi tiết cho từng admin, SSO ho
 - **Hosting:** một Vercel Hobby project cho frontend, API và cron endpoint; đây là deployment phi thương mại, tạm thời phục vụ demo/chấm đồ án.
 - **Database:** MongoDB Atlas Free; không lưu session, job hoặc dữ liệu lâu dài trên filesystem của function.
 - **Keyword search:** MongoDB text index với `default_language: "none"`, trường `searchTextNormalized` và index cho status/source/topic/time.
-- **Embedding:** workload route cấu hình server-side với pinned `artifactCompatibilityId`; OpenRouter/BGE-M3 là deployment baseline lịch sử, không là architecture invariant. Input gồm title, `summaryVi` và topics.
+- **Embedding:** workload route cấu hình server-side với pinned `artifactCompatibilityId`; MVP tiếp tục dùng OpenRouter/BGE-M3 (1024 chiều). Input gồm title, `summaryVi` và topics; đổi model/version phải tăng compatibility identity và re-index.
 - **Semantic retrieval:** lưu vector trong MongoDB và tính cosine similarity trong Node.js cho tập dữ liệu khoảng 250–400 bài; MongoDB Atlas Vector Search chưa phải dependency của MVP.
-- **LLM:** workload router theo ADR-0013 chọn route từ adapter/provider/admission-domain config. OpenCode Zen/DeepSeek là deployment example lịch sử. Raw Q&A chỉ đi route có current `zdr-verified` evidence; model/provider fallback không được hạ privacy capability hoặc bypass admission/support gate.
+- **LLM:** workload router theo ADR-0013 chọn route từ adapter/provider/admission-domain config. Deployment hiện tại dùng `gemini-2.5-flash` qua Gemini AI Studio cho `summary`, `qa-generation` và `qa-support`; summary fallback dùng `gemini-2.5-flash-lite`. Profile OpenCode Zen/DeepSeek được giữ để tương thích cấu hình lịch sử nhưng không được graph hiện tại tham chiếu. Raw Q&A chỉ đi route có current `zdr-verified` evidence; model/provider fallback không được hạ privacy capability hoặc bypass admission/support gate.
 - **Scheduler:** Vercel Cron một lần mỗi ngày và endpoint chạy thủ công có bảo vệ cho admin.
 - **MVP connectors:** RSS/Atom, arXiv API và Hacker News API.
 
 Tham khảo kỹ thuật chính:
 
 - [Vercel Express](https://vercel.com/docs/frameworks/backend/express), [Vercel Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing) và [quản lý Cron Job](https://vercel.com/docs/cron-jobs/manage-cron-jobs);
+- [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai) và [Gemini Zero Data Retention](https://ai.google.dev/gemini-api/docs/zdr);
 - [OpenRouter Embeddings API](https://openrouter.ai/docs/api/reference/embeddings) và [BAAI/bge-m3](https://openrouter.ai/baai/bge-m3);
 - [MongoDB text index](https://www.mongodb.com/docs/manual/core/indexes/index-types/index-text/create-text-index/) và [`default_language: "none"`](https://www.mongodb.com/docs/manual/reference/operator/query/text/index.html).
 
@@ -778,7 +779,7 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Ingestion chạy một lần mỗi ngày bằng protected Vercel Cron GET adapter và có admin POST trigger; job có actor/key/request-hash idempotency, due-time coordinator, lease-generation fencing và batch giới hạn.
 - Keyword search dùng MongoDB text index và trường bỏ dấu; không phụ thuộc MongoDB Atlas Search/Vector Search trong MVP.
 - Semantic retrieval dùng configured embedding workload route với pinned compatibility identity và cosine similarity trong Node.js. BGE-M3/1024 là baseline deployment hiện có; vector space khác phải tăng version/re-index, còn text search là degradation fallback.
-- LLM route cụ thể là deployment config. Current implementation từng ưu tiên DeepSeek qua OpenCode Zen; ADR-0013 supersede lựa chọn cố định này bằng model fallback và provider fallback có failure domain độc lập.
+- LLM route cụ thể là deployment config. Current deployment chọn `gemini-2.5-flash` cho summary và toàn bộ Q&A thông qua profile OpenAI-compatible; summary fallback dùng `gemini-2.5-flash-lite` trong cùng Gemini failure domain. OpenCode Zen/DeepSeek chỉ được giữ như lịch sử cấu hình và regression fixture, không phải route production hiện tại.
 - UI, summary và AI Q&A dùng tiếng Việt; giữ nguyên title, ngôn ngữ và URL nguồn; chỉ dịch/tạo summary, không dịch toàn văn.
 - Citation cấp bài được dùng ở trang chi tiết/summary; citation cấp đoạn được dùng trong AI Q&A; citation cấp từng claim là hậu MVP.
 - Source Registry phân biệt publisher, license, access method và operational status; không tìm thấy quyền rõ ràng thì mặc định `metadata-only`.

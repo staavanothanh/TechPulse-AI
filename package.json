@@ -24,6 +24,7 @@
     "eval:retrieval": "node scripts/eval-retrieval.js",
     "eval:groundedness": "node scripts/eval-groundedness.js",
     "eval:citations": "node scripts/eval-citations.js",
+    "smoke:gemini": "node --env-file-if-exists=.env scripts/gemini-llm-smoke.js",
     "db:migrate": "node --env-file-if-exists=.env scripts/db-migrate.js",
     "db:migrate:dry-run": "node --env-file-if-exists=.env scripts/db-migrate.js --dry-run",
     "db:verify": "node --env-file-if-exists=.env scripts/db-verify.js",

@@ -38,4 +38,15 @@ export const TRUSTED_PROVIDER_ENDPOINT_PROFILES = Object.freeze([
     allowRedirects: false,
     classifyHttpFailure: reviewedHttpClassifier,
   }),
+  profile({
+    trustedEndpointProfileId: 'gemini-ai-studio-openai-v1',
+    adapterId: 'openai-compatible',
+    operationEndpoints: {
+      summary: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      answer: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      support: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    },
+    allowRedirects: false,
+    classifyHttpFailure: reviewedHttpClassifier,
+  }),
 ])

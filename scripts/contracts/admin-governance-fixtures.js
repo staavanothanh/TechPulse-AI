@@ -27,7 +27,7 @@ const ARTICLE_DETAIL = Object.freeze({
   ...ARTICLE, originalUrl: 'https://example.com/articles/system-news',
   provenance: [{ sourceId: SOURCE_ID, originalUrl: 'https://example.com/articles/system-news', observedAt: NOW }],
   rightsSnapshot: { sourcePolicyVersion: 2, licenseStatus: 'permitted', llmInputScope: 'metadata', capturedAt: NOW },
-  summaryModel: 'deepseek-v4-flash-free', summarySourcePolicyVersion: 2, summaryGeneratedAt: NOW, summaryError: null,
+  summaryModel: 'gemini-2.5-flash', summarySourcePolicyVersion: 2, summaryGeneratedAt: NOW, summaryError: null,
   embeddingSourcePolicyVersion: 2, embeddedAt: NOW, embeddingError: null,
 })
 const TAKEDOWN_SUMMARY = Object.freeze({ id: TAKEDOWN_ID, status: 'reviewing', targetType: 'article', targetIds: [ARTICLE_ID], requestedScope: ['summary', 'embedding'], createdAt: NOW, updatedAt: NOW })

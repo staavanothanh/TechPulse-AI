@@ -1069,12 +1069,19 @@ Không cắt source policy, admin backend authorization, idempotency/lease, text
 | 1.7 | 2026-08-09 | Close pre-Step-1 security boundary gaps across browser/API/XML/provider/Mongo cleanup/restore | Project owner requested CC security-audit repair; no new architecture choice/ADR |
 | 1.8 | 2026-08-15 | Replace fixed provider/model routing with config-driven model/provider fallback; record inline deletion lease and synchronize Step 9–11 document drift | Project owner approved architecture change; ADR-0013 and ADR-0014 |
 | 1.9 | 2026-08-17 | Giới hạn MVP không bao gồm backup/restore rehearsal, governance sidecar và offline checkpoint custody; chuyển toàn bộ recovery evidence sang post-MVP | Project owner approved scope reduction; runtime governance signing, audit atomicity và live fail-closed rules remain MVP |
+| 1.10 | 2026-08-21 | Chuyen summary, qa-generation va qa-support sang Gemini AI Studio; giu OpenRouter/BGE-M3 embedding va bo sung smoke gate | Project owner approved provider migration; ADR-0015 |
 
 ### v1.8 Pre-Step-12 architecture amendment
 
 Steps 1–11 đã có implementation commits. Tuy nhiên, current Step 9/10 provider bootstrap vẫn chọn vendor/model cụ thể và chỉ có model fallback trong một provider failure domain. Step 12 bị chặn cho tới khi owner Step 9/10 đưa routing về ADR-0013 config graph và có focused evidence cho model failure, full provider outage, no-fallback terminal classes, privacy equivalence, max-attempt cap và embedding compatibility.
 
 Đây là amendment của architecture baseline, không phải detailed implementation plan mới. HTTP operations/DTO không đổi; provider/model vẫn là server-only concern. Account-deletion inline lease theo ADR-0014 cần migration/readiness/query-plan evidence cho recovery predicate trước release.
+
+### v1.10 Gemini provider migration
+
+Provider graph hiện tại đưa `summary`, `qa-generation` và `qa-support` về Gemini AI Studio qua trusted OpenAI-compatible endpoint profile. Cả ba workload dùng `gemini-2.5-flash`; summary có fallback `gemini-2.5-flash-lite` trong cùng Gemini failure domain. Q&A không tự động có provider fallback nếu chưa có project/credential độc lập với privacy evidence tương đương. Embedding vẫn dùng OpenRouter `baai/bge-m3`, 1024 chiều, version 1 và `bge-m3-v1-1024`, vì vậy migration này không yêu cầu re-index vector space.
+
+Adapter/profile, graph validation và synthetic smoke phải pass trước live smoke. Live smoke chỉ dùng input synthetic đã phân cách, không ghi dữ liệu MongoDB. Google Pro quota chỉ mô tả capacity/billing; route Q&A vẫn fail-closed nếu evidence `zdr-verified` hết hạn hoặc chưa được owner review.
 
 ## 13. Adversarial review record
 
