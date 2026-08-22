@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "node --env-file-if-exists=.env server/dev.js",
+    "setup:hooks": "node scripts/setup-git-hooks.js",
     "build": "vite build",
     "lint": "eslint .",
     "format:check": "prettier --check .",

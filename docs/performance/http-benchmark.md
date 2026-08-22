@@ -72,3 +72,17 @@ npm run db:verify -- governance --issue-runtime-attestation
 Generate an Ed25519 key pair outside the repository and store it in the deployment secret manager. The release verifier receives the base64 PKCS8 private key through `SCHEMA_ATTESTATION_PRIVATE_KEY_ENV`. It also receives the immutable deployment SHA through `SCHEMA_ATTESTATION_COMMIT`. The Vercel runtime receives only the matching base64 SPKI public key in `SCHEMA_ATTESTATION_PUBLIC_KEY`; `VERCEL_GIT_COMMIT_SHA` supplies the runtime deployment SHA.
 
 Each successful command returns `runtimeSchemaAttestation` with a signed `payload` and `signature`. Add each envelope under its payload scope in `RUNTIME_SCHEMA_ATTESTATIONS_JSON`. The payload binds the verified generation to the deployment SHA, MongoDB database, and a SHA-256 hash of the MongoDB host authority. Do not reuse it for another commit, Atlas cluster, or database. Do not put the private key, database URI, credentials, HMAC keys, or provider keys in `RUNTIME_SCHEMA_ATTESTATIONS_JSON` or the runtime environment. A missing, mismatched, or invalid signature prevents its runtime capability from starting.
+
+### Pre-push automation
+
+The repository contains a tracked `.githooks/pre-push` hook. Enable it once after cloning:
+
+```text
+npm run setup:hooks
+```
+
+The hook reads the final branch SHA from Git's pre-push input, runs the eight verification scopes in sequence, builds one attestation registry, and updates `RUNTIME_SCHEMA_ATTESTATIONS_JSON` in the linked Vercel project before Git continues the push. `main` targets Vercel `production`; every other branch targets `preview`. A tag-only push or branch deletion is skipped. Multiple branch updates in one push are rejected so one Vercel target cannot receive an ambiguous attestation.
+
+Keep the gate disabled until the local or CI release environment has a Vercel API token and linked project configuration. To enable it, set `PREPUSH_ATTESTATION_ENABLED=true` and `PREPUSH_VERCEL_UPDATE=true`; configure `PREPUSH_VERCEL_API_TOKEN_ENV`, and either `PREPUSH_VERCEL_PROJECT_ID`/`PREPUSH_VERCEL_TEAM_ID` or a local `.vercel/project.json`. The token and `SCHEMA_ATTESTATION_PRIVATE_KEY` stay outside Git and outside the Vercel runtime. The hook never prints verifier output, URI, token, key or attestation payload contents.
+
+The hook updates the environment variable before the Git push. Vercel environment changes apply to a new deployment, so the subsequent Git deployment must use the same final SHA. If the Vercel API update fails, the hook exits non-zero and blocks the push.
