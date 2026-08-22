@@ -16,9 +16,13 @@ import {
   Table,
 } from './AdminShared.jsx'
 
-export function AdminUsersView({ api, session, initialData, onSessionExpired }) {
-  const resource = useAdminResource(api, 'listAdminUsers', { initialData, onSessionExpired })
-  const mutation = useAdminMutation({ onSessionExpired })
+export function AdminUsersView({ api, session, initialData, onSessionExpired, cacheScope }) {
+  const resource = useAdminResource(api, 'listAdminUsers', {
+    initialData,
+    onSessionExpired,
+    cacheScope,
+  })
+  const mutation = useAdminMutation({ onSessionExpired, cacheScope })
   const [confirmation, setConfirmation] = useState(null)
   const rows = listItems(resource.data)
   function updateStatus(user) {

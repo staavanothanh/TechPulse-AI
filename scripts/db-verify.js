@@ -29,6 +29,7 @@ import { GOVERNANCE_HARDENING_INDEXES } from './migrations/governance-hardening.
 import { RUNTIME_CAPABILITY_PROBE_COLLECTION, RUNTIME_CAPABILITY_PROBE_DEFINITION, RUNTIME_CAPABILITY_PROBE_INDEXES } from './migrations/governance-capability-probes.js'
 import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from './migrations/governance-retention-hardening.js'
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from './migrations/article-governance-hardening.js'
+import { ADMIN_PERFORMANCE_INDEXES } from './migrations/admin-performance-indexes.js'
 import {
   actionsForCollection,
   probeAuditRoleCapabilities,
@@ -40,6 +41,8 @@ import {
 import { configureDns } from './configure-dns.js'
 import { exactMongoIndex } from '../server/repositories/mongo/index-contract.js'
 import { issueReleaseVerifiedSchemaAttestation } from '../server/bootstrap/schema-readiness.js'
+import { INGESTION_OVERVIEW_PIPELINE, SOURCE_OVERVIEW_PIPELINE } from '../server/repositories/mongo/admin-repository.js'
+import { winningPlanStages } from './query-plan.js'
 
 configureDns()
 
@@ -381,6 +384,13 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
           if (!exactMongoIndex(chatIndexes.get(expected.name), expected)) missing.push(`chatSessions:index:${expected.name}:governance-citation-probe`)
         }
       }
+      for (const [name, expectedIndexes] of Object.entries(ADMIN_PERFORMANCE_INDEXES)) {
+        if (!collectionMap.has(name)) { missing.push(`${name}:collection:admin-performance`); continue }
+        const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
+        for (const expected of expectedIndexes) {
+          if (!exactMongoIndex(actualByName.get(expected.name), expected)) missing.push(`${name}:index:${expected.name}:admin-performance`)
+        }
+      }
     }
     if (
       target === 'sources' ||
@@ -706,6 +716,18 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
                 ]
               : target === 'governance'
                 ? [
+                    ['sources_admin_overview', 'sources', { operationalStatus: { $in: ['active', 'paused'] } }, undefined, 'sources_operational_overview'],
+                    ['articles_admin_cursor', 'articles', {}, { updatedAt: -1, _id: -1 }, 'articles_admin_updated'],
+                    ['articles_admin_status_cursor', 'articles', { status: 'review-needed' }, { updatedAt: -1, _id: -1 }, 'articles_admin_status_updated'],
+                    ['ingestion_admin_cursor', 'ingestionJobs', {}, { createdAt: -1, _id: -1 }, 'ingestion_admin_created'],
+                    ['ingestion_admin_status_cursor', 'ingestionJobs', { status: 'failed' }, { createdAt: -1, _id: -1 }, 'ingestion_admin_status_created'],
+                    ['ingestion_overview_finished', 'ingestionJobs', { status: 'succeeded', finishedAt: { $type: 'date' } }, { finishedAt: -1, _id: -1 }, 'ingestion_overview_finished'],
+                    ['indexing_admin_cursor', 'indexingJobs', {}, { createdAt: -1, _id: -1 }, 'indexing_admin_created'],
+                    ['indexing_admin_status_cursor', 'indexingJobs', { status: 'failed' }, { createdAt: -1, _id: -1 }, 'indexing_admin_status_created'],
+                    ['takedown_admin_cursor', 'takedownRequests', {}, { createdAt: -1, _id: -1 }, 'takedown_admin_created'],
+                    ['account_deletion_admin_cursor', 'accountDeletionRequests', {}, { requestedAt: -1, _id: -1 }, 'account_deletion_admin_requested'],
+                    ['account_deletion_next_available', 'accountDeletionRequests', { status: 'queued' }, { availableAt: 1, _id: 1 }, 'account_deletion_next_available'],
+                    ['account_deletion_expired_lease', 'accountDeletionRequests', { status: 'running', leaseExpiresAt: { $type: 'date', $lte: new Date() } }, { leaseExpiresAt: 1, _id: 1 }, undefined],
                     ['takedown_cleanup_due', 'takedownRequests', { status: 'approved', 'completion.historicalChatCitationsRedacted': false }, { updatedAt: 1, _id: 1 }, 'takedown_cleanup_due'],
                     ['takedown_pii_deadline', 'takedownRequests', { status: { $in: ['rejected', 'completed'] }, piiPurgeAfter: { $lte: new Date() } }, { piiPurgeAfter: 1, _id: 1 }, 'takedown_pii_deadline'],
                     ['takedown_workflow_deadline', 'takedownRequests', { status: { $in: ['rejected', 'completed'] }, workflowPurgeAfter: { $lte: new Date() } }, { workflowPurgeAfter: 1, _id: 1 }, 'takedown_workflow_deadline'],
@@ -766,6 +788,19 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
                 ]
     verificationStage = 'query-plans'
     const planProblems = []
+    if (target === 'governance') {
+      for (const [label, collectionName, pipeline] of [
+        ['sources_admin_overview_aggregate', 'sources', SOURCE_OVERVIEW_PIPELINE],
+        ['ingestion_admin_overview_aggregate', 'ingestionJobs', INGESTION_OVERVIEW_PIPELINE],
+      ]) {
+        verificationStage = `query-plan-${label}`
+        try {
+          const explain = await context.db.collection(collectionName).aggregate(pipeline).explain('queryPlanner')
+          const stages = winningPlanStages(explain)
+          if (stages.includes('COLLSCAN') || stages.includes('SORT')) planProblems.push(`${label}:${stages.join(',')}`)
+        } catch { planProblems.push(`${label}:explain-unavailable`) }
+      }
+    }
     for (const [label, collectionName, filter, sort, hint] of plans) {
       if (!collectionMap.has(collectionName)) continue
       verificationStage = `query-plan-${label}`
@@ -773,14 +808,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
         const cursor = context.db.collection(collectionName).find(filter).sort(sort)
         if (hint) cursor.hint(hint)
         const explain = await cursor.explain('queryPlanner')
-        const stages = []
-        const visit = (node) => {
-          if (!node || typeof node !== 'object') return
-          if (node.stage) stages.push(node.stage)
-          for (const value of Object.values(node))
-            if (value && typeof value === 'object') visit(value)
-        }
-        visit(explain.queryPlanner?.winningPlan)
+        const stages = winningPlanStages(explain)
         if (stages.includes('COLLSCAN') || stages.includes('SORT')) planProblems.push(`${label}:${stages.join(',')}`)
       } catch {
         planProblems.push(`${label}:explain-unavailable`)
@@ -820,6 +848,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
                 { database: context.database, collection: 'hmacKeyLifecycleSnapshots', label: 'HMAC lifecycle', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
                 ...(target === 'governance'
                   ? [
+                      ...Object.keys(ADMIN_PERFORMANCE_INDEXES).map((collection) => ({ database: context.database, collection, label: `${collection} admin read`, required: ['find', 'listIndexes', 'listCollections'], forbidden: [] })),
                       { database: context.database, collection: RUNTIME_CAPABILITY_PROBE_COLLECTION, label: 'app runtime probe', required: ['find', 'insert', 'remove'], forbidden: ['update', 'delete'] },
                       { database: 'techpulse_governance', collection: RUNTIME_CAPABILITY_PROBE_COLLECTION, label: 'governance runtime probe', required: ['find', 'insert', 'remove'], forbidden: ['update', 'delete'] },
                     ]

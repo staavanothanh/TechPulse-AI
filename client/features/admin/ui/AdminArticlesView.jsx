@@ -51,20 +51,20 @@ function ArticleActions({ article, onAction, busy }) {
   )
 }
 
-export function AdminArticlesView({ api, session, initialData, onSessionExpired }) {
-  const [query, setQuery] = useState({})
-  const draftStatus = query.status ?? ''
-  const [statusDraft, setStatusDraft] = useState(draftStatus)
+export function AdminArticlesView({ api, session, initialData, onSessionExpired, cacheScope }) {
+  const [draftQuery, setDraftQuery] = useState({ status: '', sourceId: '' })
+  const [appliedQuery, setAppliedQuery] = useState({})
   const resource = useAdminResource(api, 'listAdminArticles', {
     initialData,
-    query,
+    query: appliedQuery,
     onSessionExpired,
+    cacheScope,
   })
-  const mutation = useAdminMutation({ onSessionExpired })
+  const mutation = useAdminMutation({ onSessionExpired, cacheScope })
   const [confirmation, setConfirmation] = useState(null)
   function applyFilters(event) {
     event.preventDefault()
-    setQuery({ status: statusDraft })
+    setAppliedQuery({ ...draftQuery })
   }
   function onAction(article, action) {
     if (action === 'status') {
@@ -131,7 +131,12 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired 
       <form className="admin-toolbar" onSubmit={applyFilters}>
         <label>
           <span>Trạng thái</span>
-          <select value={statusDraft} onChange={(event) => setStatusDraft(event.target.value)}>
+          <select
+            value={draftQuery.status}
+            onChange={(event) =>
+              setDraftQuery((current) => ({ ...current, status: event.target.value }))
+            }
+          >
             <option value="">Tất cả</option>
             <option value="published">Đang hiển thị</option>
             <option value="hidden">Đã ẩn</option>
@@ -142,10 +147,10 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired 
         <label>
           <span>Source ID</span>
           <input
-            value={query.sourceId ?? ''}
+            value={draftQuery.sourceId}
             maxLength="128"
             onChange={(event) =>
-              setQuery((current) => ({ ...current, sourceId: event.target.value }))
+              setDraftQuery((current) => ({ ...current, sourceId: event.target.value }))
             }
           />
         </label>

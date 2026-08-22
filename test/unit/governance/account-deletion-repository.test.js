@@ -139,11 +139,22 @@ describe('Mongo account deletion cleanup fencing', () => {
   it('clears transient error on exact-fenced expired lease recovery', async () => {
     const fixture = makeContext()
     const repository = new MongoAccountDeletionRepository(fixture.context)
+    const find = vi.fn(() => cursor)
+    const cursor = {
+      sort: vi.fn(() => cursor),
+      limit: vi.fn(() => cursor),
+      toArray: vi.fn(async () => [{ ...fixture.request, error: { code: 'cleanup_incomplete' } }]),
+    }
     fixture.collections.set('accountDeletionRequests', {
-      find: () => ({ sort: () => ({ limit: () => ({ toArray: async () => [{ ...fixture.request, error: { code: 'cleanup_incomplete' } }] }) }) }),
+      find,
       updateOne: vi.fn(async (filter, update) => { fixture.calls.push({ name: 'accountDeletionRequests', method: 'updateOne', filter, update }); return { matchedCount: 1 } }),
     })
-    await repository.recoverExpired({ now: new Date('2026-08-13T02:00:00.000Z'), limit: 1 })
+    const now = new Date('2026-08-13T02:00:00.000Z')
+    await repository.recoverExpired({ now, limit: 1 })
+    expect(find).toHaveBeenCalledWith({
+      status: 'running',
+      leaseExpiresAt: { $type: 'date', $lte: now },
+    })
     const recovery = fixture.calls.at(-1)
     expect(recovery.filter.leaseGeneration).toBe(2)
     expect(recovery.update.$set.error).toBeNull()

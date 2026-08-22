@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   artifactJobRequest,
   isAdminJobRetryable,
@@ -7,6 +7,10 @@ import {
   useAdminMutation,
   useAdminResource,
 } from './admin-data.js'
+import {
+  nextIndexingPollDelay,
+  shouldPollIndexingJob,
+} from '../jobs/indexing/polling.js'
 import {
   AdminButton,
   AdminConfirmDialog,
@@ -270,28 +274,37 @@ function IndexingCreateForm({ onSubmit, busy }) {
   )
 }
 
-export function AdminJobsView({ api, session, initialData, onSessionExpired }) {
+export function AdminJobsView({ api, session, initialData, onSessionExpired, cacheScope }) {
   const [tab, setTab] = useState('ingestion')
-  const [query, setQuery] = useState({})
+  const [draftQuery, setDraftQuery] = useState({})
+  const [appliedQuery, setAppliedQuery] = useState({})
   const seeded = initialData ?? {}
   const ingestion = useAdminResource(api, 'listIngestionJobs', {
     enabled: tab === 'ingestion',
     initialData: seeded.ingestion,
-    query: query.ingestion ?? {},
+    query: appliedQuery.ingestion ?? {},
     onSessionExpired,
+    cacheScope,
   })
   const indexing = useAdminResource(api, 'listIndexingJobs', {
     enabled: tab === 'indexing',
     initialData: seeded.indexing,
-    query: query.indexing ?? {},
+    query: appliedQuery.indexing ?? {},
     onSessionExpired,
+    cacheScope,
   })
   const sources = useAdminResource(api, 'listSources', {
     enabled: tab === 'ingestion',
     initialData: seeded.sources,
     onSessionExpired,
+    cacheScope,
   })
-  const mutation = useAdminMutation({ onSessionExpired })
+  const mutation = useAdminMutation({ onSessionExpired, cacheScope })
+  const indexingData = indexing.data
+  const indexingState = indexing.state
+  const reloadIndexing = indexing.reload
+  const pollErrorCountRef = useRef(0)
+  const pollStartedAtRef = useRef(null)
   const [confirmation, setConfirmation] = useState(null)
   function actionFor(job, kind, action) {
     setConfirmation({
@@ -331,6 +344,53 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired }) {
   function refreshCurrent() {
     ;(tab === 'ingestion' ? ingestion : indexing).reload()
   }
+
+  useEffect(() => {
+    if (tab !== 'indexing') pollStartedAtRef.current = null
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'indexing' || indexingState === 'loading') return undefined
+    let active = true
+    let timer = null
+    if (pollStartedAtRef.current === null) pollStartedAtRef.current = Date.now()
+    if (indexingState === 'error') pollErrorCountRef.current += 1
+    else pollErrorCountRef.current = 0
+    const visible = () => globalThis.document?.visibilityState !== 'hidden'
+    const online = () => globalThis.navigator?.onLine !== false
+    const hasActiveJobs = () =>
+      listItems(indexingData).some((job) =>
+        shouldPollIndexingJob(job, { visible: visible(), online: online() }),
+      )
+    const schedule = () => {
+      if (!active || !visible() || !online() || !hasActiveJobs()) return
+      const delay = nextIndexingPollDelay({
+        elapsedMs: Date.now() - pollStartedAtRef.current,
+        errorCount: pollErrorCountRef.current,
+      })
+      timer = globalThis.setTimeout(() => {
+        timer = null
+        if (!active || !visible() || !online() || indexingState === 'loading') return
+        reloadIndexing()
+      }, delay)
+    }
+    const onVisibilityChange = () => {
+      if (timer) globalThis.clearTimeout(timer)
+      timer = null
+      schedule()
+    }
+    globalThis.document?.addEventListener?.('visibilitychange', onVisibilityChange)
+    globalThis.addEventListener?.('online', onVisibilityChange)
+    globalThis.addEventListener?.('offline', onVisibilityChange)
+    schedule()
+    return () => {
+      active = false
+      if (timer) globalThis.clearTimeout(timer)
+      globalThis.document?.removeEventListener?.('visibilitychange', onVisibilityChange)
+      globalThis.removeEventListener?.('online', onVisibilityChange)
+      globalThis.removeEventListener?.('offline', onVisibilityChange)
+    }
+  }, [indexingData, indexingState, reloadIndexing, tab])
   function createIngestion(input) {
     return mutation
       .run(
@@ -343,7 +403,10 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired }) {
           }),
         'Đã xếp ingestion job vào durable queue.',
       )
-      .then(() => ingestion.reload())
+      .then((response) => {
+        if (response) ingestion.reload()
+        return response
+      })
   }
   function createIndexing(articleId, task) {
     const request = artifactJobRequest(task)
@@ -359,7 +422,10 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired }) {
           }),
         `Đã xếp job ${task} vào hàng đợi.`,
       )
-      .then(() => indexing.reload())
+      .then((response) => {
+        if (response) indexing.reload()
+        return response
+      })
   }
   const active = tab === 'ingestion' ? ingestion : indexing
   return (
@@ -398,9 +464,9 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired }) {
         <label>
           <span>Trạng thái</span>
           <select
-            value={query[tab]?.status ?? ''}
+            value={draftQuery[tab]?.status ?? ''}
             onChange={(event) =>
-              setQuery((current) => ({
+              setDraftQuery((current) => ({
                 ...current,
                 [tab]: { ...current[tab], status: event.target.value },
               }))
@@ -417,9 +483,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired }) {
         <AdminButton
           variant="secondary"
           icon="refresh"
-          onClick={() => {
-            active.reload()
-          }}
+          onClick={() => setAppliedQuery((current) => ({ ...current, [tab]: { ...draftQuery[tab] } }))}
         >
           Áp dụng lọc
         </AdminButton>

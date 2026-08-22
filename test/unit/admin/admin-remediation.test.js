@@ -130,6 +130,7 @@ describe('Step 11 backend remediation regressions', () => {
     const repository = new MongoAdminRepository({ db: { collection: (name) => collections.get(name) }, client: { startSession: () => ({ withTransaction: async (work) => work({}), endSession: async () => {} }) }, now: () => new Date('2026-01-02') })
 
     await expect(repository.mergeDuplicateArticles({ canonicalArticleId: canonicalId.toHexString(), duplicateArticleIds: [duplicateId.toHexString()], actor: { id: '507f1f77bcf86cd799439001' }, actorFence: { userId: '507f1f77bcf86cd799439001', sessionId: '507f1f77bcf86cd799439002', sessionVersion: 4 }, reasonCode: 'duplicate_merge_confirmed', idempotencyKey: 'merge-source-fence-1', request: { serverRequestId: 'admin-merge-source-fence' }, rateLimitAdmission: allowAdmission })).rejects.toMatchObject({ status: 409, code: 'conflict' })
+    expect(collections.get('articles').find).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ projection: ARTICLE_PROJECTION, session: expect.anything() }))
     expect(sourceUpdate).toHaveBeenCalled()
     expect(articleUpdate).not.toHaveBeenCalled()
     expect(articleUpdateMany).not.toHaveBeenCalled()

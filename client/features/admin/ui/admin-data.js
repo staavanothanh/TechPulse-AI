@@ -1,6 +1,174 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const EMPTY_QUERY = Object.freeze({})
+export const ADMIN_FILTER_DEBOUNCE_MS = 250
+
+const RESOURCE_CACHE_SCOPES = new WeakMap()
+
+function isCacheScope(value) {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function'
+}
+
+function getResourceCache(scope) {
+  if (!isCacheScope(scope)) return null
+  let cache = RESOURCE_CACHE_SCOPES.get(scope)
+  if (!cache) {
+    cache = { entries: new Map() }
+    RESOURCE_CACHE_SCOPES.set(scope, cache)
+  }
+  return cache
+}
+
+function resourceCacheKey(operation, query = {}) {
+  return `${operation}:${stableQueryKey(allowlistedQuery(operation, query))}`
+}
+
+function createAbortError() {
+  const error = new Error('Admin request aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+export function isAbortError(error) {
+  return error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
+}
+
+function releaseInFlight(_cache, _key, entry, flight) {
+  if (entry.inFlight !== flight) return
+  flight.subscribers -= 1
+  if (flight.subscribers <= 0) {
+    entry.inFlight = null
+    flight.controller.abort()
+  }
+}
+
+export function acquireAdminResourceRequest({
+  scope,
+  api,
+  operation,
+  query = {},
+  fetchImpl = globalThis.fetch,
+  force = false,
+} = {}) {
+  const cacheScope = scope ?? api
+  const cache = getResourceCache(cacheScope)
+  if (!cache) throw new Error('Admin resource cache scope is required')
+  const key = resourceCacheKey(operation, query)
+  const entry = cache.entries.get(key) ?? { dataSet: false, data: null, inFlight: null }
+  cache.entries.set(key, entry)
+
+  if (entry.inFlight) {
+    entry.inFlight.subscribers += 1
+    const flight = entry.inFlight
+    let released = false
+    return {
+      cached: false,
+      key,
+      signal: flight.controller.signal,
+      promise: flight.promise,
+      release() {
+        if (released) return
+        released = true
+        releaseInFlight(cache, key, entry, flight)
+      },
+    }
+  }
+
+  if (!force && entry.dataSet) {
+    return {
+      cached: true,
+      key,
+      signal: null,
+      promise: Promise.resolve(entry.data),
+      release() {},
+    }
+  }
+
+  if (force) entry.dataSet = false
+  const controller = new globalThis.AbortController()
+  const flight = { controller, subscribers: 1, promise: null }
+  const request = controller.signal.aborted
+    ? Promise.reject(createAbortError())
+    : readAdmin(api, operation, { query, signal: controller.signal }, fetchImpl)
+  flight.promise = request.then(
+    (value) => {
+      if (entry.inFlight === flight) {
+        entry.data = value
+        entry.dataSet = true
+        entry.inFlight = null
+      }
+      return value
+    },
+    (error) => {
+      if (entry.inFlight === flight) entry.inFlight = null
+      throw error
+    },
+  )
+  entry.inFlight = flight
+  let released = false
+  return {
+    cached: false,
+    key,
+    signal: controller.signal,
+    promise: flight.promise,
+    release() {
+      if (released) return
+      released = true
+      releaseInFlight(cache, key, entry, flight)
+    },
+  }
+}
+
+function readAdminResourceCache(scope, operation, query) {
+  const cache = getResourceCache(scope)
+  if (!cache) return { hit: false, data: null }
+  const entry = cache.entries.get(resourceCacheKey(operation, query))
+  return entry?.dataSet ? { hit: true, data: entry.data } : { hit: false, data: null }
+}
+
+function seedAdminResourceCache(scope, operation, query, data) {
+  const cache = getResourceCache(scope)
+  if (!cache) return
+  const key = resourceCacheKey(operation, query)
+  const entry = cache.entries.get(key) ?? { dataSet: false, data: null, inFlight: null }
+  if (entry.dataSet) return
+  entry.data = data
+  entry.dataSet = true
+  cache.entries.set(key, entry)
+}
+
+export function invalidateAdminResourceCache(scope, { operation, query } = {}) {
+  const cache = getResourceCache(scope)
+  if (!cache) return
+  if (!operation) {
+    for (const entry of cache.entries.values()) {
+      entry.dataSet = false
+      if (entry.inFlight) {
+        entry.inFlight.controller.abort()
+        entry.inFlight = null
+      }
+    }
+    return
+  }
+  const prefix = `${operation}:`
+  const exactKey = query === undefined ? null : resourceCacheKey(operation, query)
+  for (const [key, entry] of cache.entries) {
+    if ((exactKey && key === exactKey) || (!exactKey && key.startsWith(prefix))) {
+      entry.dataSet = false
+      if (entry.inFlight) {
+        entry.inFlight.controller.abort()
+        entry.inFlight = null
+      }
+    }
+  }
+}
+
+export function clearAdminResourceCache(scope) {
+  const cache = getResourceCache(scope)
+  if (!cache) return
+  for (const entry of cache.entries.values()) entry.inFlight?.controller.abort()
+  cache.entries.clear()
+}
 
 export const ADMIN_NAVIGATION = Object.freeze([
   { id: 'overview', label: 'Tổng quan', section: 'Vận hành' },
@@ -255,72 +423,144 @@ export function mutateAdmin(
 export function useAdminResource(
   api,
   operation,
-  { enabled = true, initialData, onSessionExpired, query = EMPTY_QUERY } = {},
+  {
+    enabled = true,
+    initialData,
+    onSessionExpired,
+    query = EMPTY_QUERY,
+    cacheScope = api,
+  } = {},
 ) {
-  const queryKey = useMemo(() => stableQueryKey(query), [query])
+  const queryKey = useMemo(
+    () => stableQueryKey(allowlistedQuery(operation, query)),
+    [operation, query],
+  )
   const stableQuery = useMemo(() => Object.fromEntries(JSON.parse(queryKey)), [queryKey])
   const seeded = initialData !== undefined
-  const [state, setState] = useState(seeded ? 'ready' : enabled ? 'loading' : 'idle')
-  const [data, setData] = useState(initialData ?? null)
+  const cached = readAdminResourceCache(cacheScope, operation, stableQuery)
+  const cachedHit = cached.hit
+  const hasSeed = seeded && !cachedHit
+  const [state, setState] = useState(
+    hasSeed || cachedHit ? 'ready' : enabled ? 'loading' : 'idle',
+  )
+  const [data, setData] = useState(cachedHit ? cached.data : (initialData ?? null))
   const [error, setError] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
   const [loadingMore, setLoadingMore] = useState(false)
+  const loadingMoreRef = useRef(false)
+  const seededQueryKeyRef = useRef(hasSeed ? queryKey : null)
+  const didSeedRef = useRef(false)
+  const consumedReloadKeyRef = useRef(0)
 
   useEffect(() => {
     let active = true
-    if (!enabled || initialData !== undefined)
+    let request
+    if (!enabled) {
       return () => {
         active = false
       }
+    }
+
+    const shouldUseSeed =
+      initialData !== undefined &&
+      !cachedHit &&
+      !didSeedRef.current &&
+      seededQueryKeyRef.current === queryKey &&
+      reloadKey === 0
+    if (shouldUseSeed) {
+      didSeedRef.current = true
+      seedAdminResourceCache(cacheScope, operation, stableQuery, initialData)
+      setData(initialData)
+      setState('ready')
+      return () => {
+        active = false
+      }
+    }
+
+    const force = reloadKey !== consumedReloadKeyRef.current
+    consumedReloadKeyRef.current = reloadKey
     const timer = globalThis.setTimeout(() => {
       if (!active) return
+      request = acquireAdminResourceRequest({
+        scope: cacheScope,
+        api,
+        operation,
+        query: stableQuery,
+        force,
+      })
+      if (request.cached) {
+        request.promise.then((response) => {
+          if (!active) return
+          setData(response)
+          setError(null)
+          setState('ready')
+        })
+        return
+      }
       setState('loading')
       setError(null)
-      void readAdmin(api, operation, { query: stableQuery })
+      void request.promise
         .then((response) => {
           if (!active) return
           setData(response)
           setState('ready')
         })
         .catch((requestError) => {
-          if (!active) return
+          if (!active || isAbortError(requestError)) return
           if (isSessionExpired(requestError))
             onSessionExpired?.('Phiên đăng nhập đã hết hạn khi mở admin workspace.')
           setError(safeAdminError(requestError))
           setState('error')
         })
-    }, 0)
+        .finally(() => request.release())
+    }, force ? 0 : ADMIN_FILTER_DEBOUNCE_MS)
     return () => {
       active = false
       globalThis.clearTimeout(timer)
+      request?.release?.()
     }
-  }, [api, enabled, initialData, onSessionExpired, operation, queryKey, reloadKey, stableQuery])
+  }, [api, cacheScope, cachedHit, enabled, initialData, onSessionExpired, operation, queryKey, reloadKey, stableQuery])
 
   const loadMore = useCallback(async () => {
     const meta = listMeta(data)
-    if (loadingMore || !meta.hasNext || !meta.nextCursor) return false
+    if (loadingMoreRef.current || !meta.hasNext || !meta.nextCursor) return false
+    loadingMoreRef.current = true
     setLoadingMore(true)
+    const request = acquireAdminResourceRequest({
+      scope: cacheScope,
+      api,
+      operation,
+      query: { ...stableQuery, cursor: meta.nextCursor },
+    })
     try {
-      const response = await readAdmin(api, operation, {
-        query: { ...stableQuery, cursor: meta.nextCursor },
-      })
+      const response = await request.promise
       const currentItems = listItems(data)
       const nextItems = listItems(response)
-      setData({
+      const combined = {
         ...(response && typeof response === 'object' && !Array.isArray(response) ? response : {}),
         data: [...currentItems, ...nextItems],
         meta: listMeta(response),
-      })
+      }
+      setData(combined)
+      seedAdminResourceCache(cacheScope, operation, stableQuery, combined)
       return true
     } catch (requestError) {
+      if (isAbortError(requestError)) return false
       if (isSessionExpired(requestError))
         onSessionExpired?.('Phiên đăng nhập đã hết hạn khi tải thêm dữ liệu admin.')
       setError(safeAdminError(requestError))
       return false
     } finally {
+      request.release()
+      loadingMoreRef.current = false
       setLoadingMore(false)
     }
-  }, [api, data, loadingMore, onSessionExpired, operation, stableQuery])
+  }, [api, cacheScope, data, onSessionExpired, operation, stableQuery])
+
+  const reload = useCallback(() => {
+    invalidateAdminResourceCache(cacheScope, { operation })
+    setReloadKey((value) => value + 1)
+  }, [cacheScope, operation])
 
   return {
     state,
@@ -328,11 +568,11 @@ export function useAdminResource(
     error,
     loadingMore,
     loadMore,
-    reload: () => setReloadKey((value) => value + 1),
+    reload,
   }
 }
 
-export function useAdminMutation({ onSessionExpired } = {}) {
+export function useAdminMutation({ onSessionExpired, cacheScope } = {}) {
   const [idempotencyStore] = useState(() => createIdempotencyKeyStore())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -343,6 +583,7 @@ export function useAdminMutation({ onSessionExpired } = {}) {
     setNotice('')
     try {
       const response = await action()
+      if (response) invalidateAdminResourceCache(cacheScope)
       setNotice(successMessage)
       return response
     } catch (requestError) {

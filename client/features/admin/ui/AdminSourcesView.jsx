@@ -11,9 +11,13 @@ import {
 } from './AdminShared.jsx'
 import { SourceCreateForm, SourcePolicy, SourcePolicyReviewForm } from './AdminSourceForms.jsx'
 
-export function AdminSourcesView({ api, session, initialData, onSessionExpired }) {
-  const resource = useAdminResource(api, 'listSources', { initialData, onSessionExpired })
-  const mutation = useAdminMutation({ onSessionExpired })
+export function AdminSourcesView({ api, session, initialData, onSessionExpired, cacheScope }) {
+  const resource = useAdminResource(api, 'listSources', {
+    initialData,
+    onSessionExpired,
+    cacheScope,
+  })
+  const mutation = useAdminMutation({ onSessionExpired, cacheScope })
   const sources = listItems(resource.data)
   const [selectedId, setSelectedId] = useState(null)
   const [confirmation, setConfirmation] = useState(null)
@@ -77,7 +81,10 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired }
           }),
         'Đã yêu cầu kiểm tra kỹ thuật.',
       )
-      .then(() => reload())
+      .then((response) => {
+        if (response) reload()
+        return response
+      })
   }
 
   function submitPolicyReview(review) {
@@ -91,7 +98,10 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired }
           }),
         'Đã gửi policy review.',
       )
-      .then(() => reload())
+      .then((response) => {
+        if (response) reload()
+        return response
+      })
   }
 
   function createSource(input) {
@@ -100,7 +110,10 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired }
         () => mutateAdmin(api, 'createSource', { csrfToken: session?.csrfToken, body: input }),
         'Đã tạo source draft.',
       )
-      .then(() => reload())
+      .then((response) => {
+        if (response) reload()
+        return response
+      })
   }
 
   return (

@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { formatAdminDate, listItems, safeAdminError, useAdminResource } from './admin-data.js'
+import {
+  formatAdminDate,
+  listItems,
+  safeAdminError,
+  useAdminResource,
+} from './admin-data.js'
 import {
   AdminButton,
   PageHeader,
@@ -9,9 +14,15 @@ import {
   Table,
 } from './AdminShared.jsx'
 
-export function AdminAuditView({ api, initialData, onSessionExpired }) {
-  const [query, setQuery] = useState({})
-  const resource = useAdminResource(api, 'listAuditLogs', { initialData, query, onSessionExpired })
+export function AdminAuditView({ api, session, initialData, onSessionExpired, cacheScope }) {
+  const [draftQuery, setDraftQuery] = useState({ actorType: '', targetId: '' })
+  const [appliedQuery, setAppliedQuery] = useState({})
+  const resource = useAdminResource(api, 'listAuditLogs', {
+    initialData,
+    query: appliedQuery,
+    onSessionExpired,
+    cacheScope: cacheScope ?? session,
+  })
   const rows = listItems(resource.data)
   return (
     <div className="admin-view admin-audit-view">
@@ -29,15 +40,15 @@ export function AdminAuditView({ api, initialData, onSessionExpired }) {
         className="admin-toolbar"
         onSubmit={(event) => {
           event.preventDefault()
-          resource.reload()
+          setAppliedQuery({ ...draftQuery })
         }}
       >
         <label>
           <span>Actor type</span>
           <select
-            value={query.actorType ?? ''}
+            value={draftQuery.actorType}
             onChange={(event) =>
-              setQuery((current) => ({ ...current, actorType: event.target.value }))
+              setDraftQuery((current) => ({ ...current, actorType: event.target.value }))
             }
           >
             <option value="">Tất cả</option>
@@ -49,10 +60,10 @@ export function AdminAuditView({ api, initialData, onSessionExpired }) {
         <label>
           <span>Target ID</span>
           <input
-            value={query.targetId ?? ''}
+            value={draftQuery.targetId}
             maxLength="128"
             onChange={(event) =>
-              setQuery((current) => ({ ...current, targetId: event.target.value }))
+              setDraftQuery((current) => ({ ...current, targetId: event.target.value }))
             }
           />
         </label>

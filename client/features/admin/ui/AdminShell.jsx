@@ -143,7 +143,14 @@ export default function AdminRedesign({
   const activeRoute = controlled ? (route === 'deletions' ? 'governance' : route) : localRoute
   const theme = suppliedTheme ?? localTheme
   const overview = initialData?.overview
-  const viewProps = { api, session, initialData, onSessionExpired, onNavigate }
+  const viewProps = {
+    api,
+    session,
+    initialData,
+    onSessionExpired,
+    onNavigate,
+    cacheScope: session,
+  }
 
   function navigate(nextRoute) {
     if (!ROUTES.has(nextRoute)) return

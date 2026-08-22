@@ -13,6 +13,38 @@ const CURSOR_LIMIT = 100
 const DAY_MS = 24 * 60 * 60 * 1000
 const AGING_MS = 30 * 60 * 1000
 
+export const SOURCE_OVERVIEW_PIPELINE = Object.freeze([
+  { $match: { operationalStatus: 'active' } },
+  { $count: 'value' },
+  { $set: { key: 'activeSources' } },
+  { $unionWith: { coll: 'sources', pipeline: [{ $match: { operationalStatus: 'paused' } }, { $count: 'value' }, { $set: { key: 'pausedSources' } }] } },
+  { $unionWith: { coll: 'sources', pipeline: [{ $match: { licenseStatus: 'review-needed' } }, { $count: 'value' }, { $set: { key: 'sourcesNeedingReview' } }] } },
+  { $project: { _id: 0, key: 1, value: 1 } },
+])
+
+export const INGESTION_OVERVIEW_PIPELINE = Object.freeze([
+  { $match: { status: { $in: ['queued', 'running', 'partial'] } } },
+  { $count: 'value' },
+  { $set: { key: 'queuedJobs' } },
+  { $unionWith: { coll: 'ingestionJobs', pipeline: [{ $match: { status: 'failed' } }, { $count: 'value' }, { $set: { key: 'failedJobs' } }] } },
+  { $unionWith: { coll: 'ingestionJobs', pipeline: [
+    { $match: { status: 'succeeded', finishedAt: { $type: 'date' } } },
+    { $sort: { finishedAt: -1, _id: -1 } },
+    { $limit: 1 },
+    { $project: { _id: 0, key: { $literal: 'lastSuccessfulIngestionAt' }, value: '$finishedAt' } },
+  ] } },
+  { $project: { _id: 0, key: 1, value: 1 } },
+])
+
+async function aggregateCount(collection, filter) {
+  const result = await collection.aggregate([{ $match: filter }, { $count: 'count' }]).next()
+  return result?.count ?? 0
+}
+
+function keyedOverview(rows) {
+  return Object.fromEntries((rows ?? []).filter(({ key }) => typeof key === 'string').map(({ key, value }) => [key, value]))
+}
+
 function objectId(value, label = 'Identifier') {
   if (value instanceof ObjectId) return value
   if (value && typeof value.toHexString === 'function') return objectId(value.toHexString(), label)
@@ -114,13 +146,28 @@ export class MongoAdminRepository {
   }
 
   async getOverview() {
-    const [activeSources, pausedSources, sourcesNeedingReview, queuedJobs, failedJobs, articlesNeedingReview, failedIndexes, openTakedowns, failedAccountDeletions, latest] = await Promise.all([
-      this.sources().countDocuments({ operationalStatus: 'active' }), this.sources().countDocuments({ operationalStatus: 'paused' }), this.sources().countDocuments({ licenseStatus: 'review-needed' }),
-      this.ingestionJobs().countDocuments({ status: { $in: ['queued', 'running', 'partial'] } }), this.ingestionJobs().countDocuments({ status: 'failed' }), this.articles().countDocuments({ status: 'review-needed' }),
-      this.indexingJobs().countDocuments({ status: 'failed' }), this.collection('takedownRequests').countDocuments({ status: { $in: ['received', 'reviewing', 'approved'] } }), this.collection('accountDeletionRequests').countDocuments({ status: 'failed' }),
-      this.ingestionJobs().find({ status: 'succeeded', finishedAt: { $type: 'date' } }).sort({ finishedAt: -1, _id: -1 }).project({ finishedAt: 1 }).limit(1).next(),
+    const [sources, jobs, articlesNeedingReview, failedIndexes, openTakedowns, failedAccountDeletions] = await Promise.all([
+      this.sources().aggregate(SOURCE_OVERVIEW_PIPELINE).toArray(),
+      this.ingestionJobs().aggregate(INGESTION_OVERVIEW_PIPELINE).toArray(),
+      aggregateCount(this.articles(), { status: 'review-needed' }),
+      aggregateCount(this.indexingJobs(), { status: 'failed' }),
+      aggregateCount(this.collection('takedownRequests'), { status: { $in: ['received', 'reviewing', 'approved'] } }),
+      aggregateCount(this.collection('accountDeletionRequests'), { status: 'failed' }),
     ])
-    return { activeSources, pausedSources, sourcesNeedingReview, queuedJobs, failedJobs, articlesNeedingReview, failedIndexes, openTakedowns, failedAccountDeletions, lastSuccessfulIngestionAt: latest?.finishedAt ?? null }
+    const sourceMetrics = keyedOverview(sources)
+    const jobMetrics = keyedOverview(jobs)
+    return {
+      activeSources: sourceMetrics.activeSources ?? 0,
+      pausedSources: sourceMetrics.pausedSources ?? 0,
+      sourcesNeedingReview: sourceMetrics.sourcesNeedingReview ?? 0,
+      queuedJobs: jobMetrics.queuedJobs ?? 0,
+      failedJobs: jobMetrics.failedJobs ?? 0,
+      articlesNeedingReview,
+      failedIndexes,
+      openTakedowns,
+      failedAccountDeletions,
+      lastSuccessfulIngestionAt: jobMetrics.lastSuccessfulIngestionAt ?? null,
+    }
   }
 
   async listAdminArticles(query = {}) {
@@ -214,7 +261,7 @@ export class MongoAdminRepository {
       }
       const canonical = await this.articles().findOne({ _id: canonicalId }, { projection: ARTICLE_PROJECTION, session })
       if (!canonical) return null
-      const duplicates = await this.articles().find({ $and: [{ _id: { $in: duplicateIds } }, { _id: { $ne: canonicalId } }, { status: { $ne: 'removed' } }] }, { session }).toArray()
+      const duplicates = await this.articles().find({ $and: [{ _id: { $in: duplicateIds } }, { _id: { $ne: canonicalId } }, { status: { $ne: 'removed' } }] }, { projection: ARTICLE_PROJECTION, session }).toArray()
       if (duplicates.length !== duplicateIds.length) { const error = new Error('Duplicate article state changed'); error.status = 409; error.code = 'conflict'; throw error }
       const sourceSnapshots = new Map()
       for (const article of [canonical, ...duplicates]) {

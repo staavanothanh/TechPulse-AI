@@ -16,6 +16,7 @@ import { buildGovernanceHardeningMigration, runGovernanceHardeningMigration } fr
 import { buildGovernanceCapabilityProbeMigration, runGovernanceCapabilityProbeMigration } from './migrations/governance-capability-probes.js'
 import { buildGovernanceRetentionHardeningMigration, runGovernanceRetentionHardeningMigration } from './migrations/governance-retention-hardening.js'
 import { buildArticleGovernanceHardeningMigration, runArticleGovernanceHardeningMigration } from './migrations/article-governance-hardening.js'
+import { buildAdminPerformanceIndexesMigration, runAdminPerformanceIndexesMigration } from './migrations/admin-performance-indexes.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
@@ -86,6 +87,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
             ...buildGovernanceHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceRetentionHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildArticleGovernanceHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildAdminPerformanceIndexesMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildProviderRoutingV2Migration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
@@ -100,6 +102,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
             plan.push(...await runGovernanceHardeningMigration({ db: context.db }))
             plan.push(...await runGovernanceRetentionHardeningMigration({ db: context.db }))
             plan.push(...await runArticleGovernanceHardeningMigration({ db: context.db }))
+            plan.push(...await runAdminPerformanceIndexesMigration({ db: context.db }))
             plan.push(...await runProviderRoutingV2Migration({ db: context.db }))
             plan.push(...await runGovernanceCapabilityProbeMigration({ db: context.db }))
             const governanceDb = context.client.db('techpulse_governance')

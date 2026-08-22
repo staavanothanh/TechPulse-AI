@@ -8,6 +8,25 @@ import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
 const STATUSES = new Set(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled'])
 const TASKS = new Set(['summary', 'embedding', 'visibility-reconcile'])
 const TERMINAL = new Set(['succeeded', 'partial', 'failed', 'cancelled'])
+
+export const INDEXING_JOB_LIST_PROJECTION = Object.freeze({
+  _id: 1,
+  idempotencyKey: 1,
+  articleId: 1,
+  sourceId: 1,
+  expectedSourcePolicyVersion: 1,
+  task: 1,
+  trigger: 1,
+  status: 1,
+  attempt: 1,
+  availableAt: 1,
+  leaseGeneration: 1,
+  parentJobId: 1,
+  error: 1,
+  createdAt: 1,
+  startedAt: 1,
+  finishedAt: 1,
+})
 const DAY_MS = 24 * 60 * 60 * 1000
 const EMBEDDING_COMPATIBILITY_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/
 
@@ -364,7 +383,7 @@ export class MongoIndexingJobRepository {
         filter.$or = [{ createdAt: { $lt: date } }, { createdAt: date, _id: { $lt: idValue(decoded.id) } }]
     } catch { invalid('Job cursor is invalid') }
     }
-    const documents = await this.jobs().find(filter).sort({ createdAt: -1, _id: -1 }).limit(limit + 1).toArray()
+    const documents = await this.jobs().find(filter).sort({ createdAt: -1, _id: -1 }).project(INDEXING_JOB_LIST_PROJECTION).limit(limit + 1).toArray()
     const hasNext = documents.length > limit
     const page = documents.slice(0, limit)
     return { jobs: page.map(serializeIndexingJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }

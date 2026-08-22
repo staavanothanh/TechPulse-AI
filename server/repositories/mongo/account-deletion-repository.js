@@ -320,7 +320,6 @@ export class MongoAccountDeletionRepository {
         await this.collection('accountDeletionRequests')
           .find({ status: 'queued' })
           .sort({ availableAt: 1, _id: 1 })
-          .hint('account_deletion_normal')
           .project({ availableAt: 1 })
           .limit(1)
           .next()
@@ -608,7 +607,7 @@ export class MongoAccountDeletionRepository {
   }
   async recoverExpired({ now = this.clock(), limit = 10 } = {}) {
     const rows = await this.collection('accountDeletionRequests')
-      .find({ status: 'running', leaseExpiresAt: { $lte: now } })
+      .find({ status: 'running', leaseExpiresAt: { $type: 'date', $lte: now } })
       .sort({ leaseExpiresAt: 1, _id: 1 })
       .limit(Math.min(100, Math.max(1, limit)))
       .toArray()

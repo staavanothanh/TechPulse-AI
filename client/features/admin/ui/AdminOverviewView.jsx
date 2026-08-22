@@ -18,8 +18,12 @@ function formatCount(value) {
   return Number.isFinite(Number(value)) ? new Intl.NumberFormat('vi-VN').format(Number(value)) : '0'
 }
 
-export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpired }) {
-  const resource = useAdminResource(api, 'getAdminOverview', { initialData, onSessionExpired })
+export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpired, cacheScope }) {
+  const resource = useAdminResource(api, 'getAdminOverview', {
+    initialData,
+    onSessionExpired,
+    cacheScope,
+  })
   const data = readResponseData(resource.data) ?? {}
   const exceptions = OVERVIEW_METRICS.filter(([key]) => Number(data[key]) > 0)
   return (

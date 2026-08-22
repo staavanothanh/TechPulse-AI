@@ -53,17 +53,19 @@ function CompletionFlags({ completion = {} }) {
   )
 }
 
-export function AdminGovernanceView({ api, session, initialData, onSessionExpired }) {
+export function AdminGovernanceView({ api, session, initialData, onSessionExpired, cacheScope }) {
   const seed = initialData ?? {}
   const takedowns = useAdminResource(api, 'listTakedownRequests', {
     initialData: seed.takedowns,
     onSessionExpired,
+    cacheScope,
   })
   const deletions = useAdminResource(api, 'listAccountDeletionRequests', {
     initialData: seed.deletions,
     onSessionExpired,
+    cacheScope,
   })
-  const mutation = useAdminMutation({ onSessionExpired })
+  const mutation = useAdminMutation({ onSessionExpired, cacheScope })
   const [confirmation, setConfirmation] = useState(null)
   function transition(item, next) {
     setConfirmation({ type: 'takedown', item, next, reasonCode: next[2] })

@@ -5,6 +5,26 @@ import { JobError, canonicalRequestHash, resolveIdempotentJob } from '../../doma
 
 const STATUSES = new Set(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled'])
 const TERMINAL = new Set(['succeeded', 'partial', 'failed', 'cancelled'])
+
+export const INGESTION_JOB_LIST_PROJECTION = Object.freeze({
+  _id: 1,
+  idempotencyKey: 1,
+  sourceId: 1,
+  connectorType: 1,
+  expectedSourcePolicyVersion: 1,
+  trigger: 1,
+  status: 1,
+  attempt: 1,
+  availableAt: 1,
+  leaseGeneration: 1,
+  batchSize: 1,
+  parentJobId: 1,
+  counters: 1,
+  error: 1,
+  createdAt: 1,
+  startedAt: 1,
+  finishedAt: 1,
+})
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function idValue(value) {
@@ -302,7 +322,7 @@ export class MongoJobRepository {
         filter.$or = [{ createdAt: { $lt: date } }, { createdAt: date, _id: { $lt: idValue(decoded.id) } }]
       } catch { throw new JobError(400, 'bad_request', 'Job cursor is invalid') }
     }
-    const documents = await this.jobs().find(filter).sort({ createdAt: -1, _id: -1 }).limit(limit + 1).toArray()
+    const documents = await this.jobs().find(filter).sort({ createdAt: -1, _id: -1 }).project(INGESTION_JOB_LIST_PROJECTION).limit(limit + 1).toArray()
     const hasNext = documents.length > limit
     const page = documents.slice(0, limit)
     return { jobs: page.map(serializeIngestionJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }
