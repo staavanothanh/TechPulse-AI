@@ -8,6 +8,7 @@ const MAX_TARGET_BYTES = 8 * 1024
 const MAX_JSON_BYTES = 64 * 1024
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const COOKIE_AUTH_EXEMPT = new Set(['registerUser', 'login'])
+const ABSOLUTE_FORM_TARGET = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
 
 function normalizedOrigin(value) {
   if (typeof value !== 'string' || value.length > 2048) return undefined
@@ -158,6 +159,16 @@ export function validateRequestTarget(target) {
 export function requestPathname(target) {
   if (typeof target !== 'string') return ''
   try { return new URL(target, 'http://localhost').pathname } catch { return '' }
+}
+
+export function normalizeRequestTarget(target) {
+  if (typeof target !== 'string' || !ABSOLUTE_FORM_TARGET.test(target)) return target
+  try {
+    const parsed = new URL(target, 'http://localhost')
+    return `${parsed.pathname || '/'}${parsed.search}`
+  } catch {
+    return '/'
+  }
 }
 
 export function createIngressMiddleware(options = {}) {
