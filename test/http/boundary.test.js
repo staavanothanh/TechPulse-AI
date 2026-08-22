@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { INGRESS_LIMITS, isExactOriginAllowed, requestPathname, validateRequestTarget } from '../../server/http/ingress.js'
+import { INGRESS_LIMITS, isExactOriginAllowed, normalizeRequestTarget, requestPathname, validateRequestTarget } from '../../server/http/ingress.js'
 import { serializeClearSessionCookie, serializeSessionCookie } from '../../server/http/cookies.js'
 import { createRequestId } from '../../server/http/request-id.js'
 
@@ -35,5 +35,12 @@ describe('browser and ingress boundary', () => {
     expect(requestPathname('/api/v1/health?check=1')).toBe('/api/v1/health')
     expect(requestPathname('https://preview.example.vercel.app/api/v1/health?check=1')).toBe('/api/v1/health')
     expect(requestPathname(undefined)).toBe('')
+  })
+
+  it('normalizes Vercel absolute-form targets before Express dispatch', () => {
+    expect(normalizeRequestTarget('https://preview.example.vercel.app/api/v1/health?check=1')).toBe('/api/v1/health?check=1')
+    expect(normalizeRequestTarget('//preview.example.vercel.app/api/v1/health?check=1')).toBe('/api/v1/health?check=1')
+    expect(normalizeRequestTarget('/api/v1/health?check=1')).toBe('/api/v1/health?check=1')
+    expect(normalizeRequestTarget('*')).toBe('*')
   })
 })
