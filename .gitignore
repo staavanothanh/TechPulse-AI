@@ -3,6 +3,7 @@
 .claude/
 .dsh/
 .open-design/
+.codebase-memory/
 
 # Node
 node_modules/
@@ -15,3 +16,6 @@ coverage/
 !.env.example
 .vercel
 .env*
+
+# temp
+.tmp/
