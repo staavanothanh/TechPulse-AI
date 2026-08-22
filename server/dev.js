@@ -13,6 +13,7 @@ const { createApp } = await import('./app.js')
 const { createConfiguredAuthService } = await import('./bootstrap/auth.js')
 const { createConfiguredSourceService } = await import('./bootstrap/sources.js')
 const { createConfiguredJobRuntime } = await import('./bootstrap/jobs.js')
+const { createConfiguredIngestionExecutor } = await import('./bootstrap/ingestion.js')
 const { createConfiguredContentServices } = await import('./bootstrap/content.js')
 const { createConfiguredIndexingRuntime } = await import('./bootstrap/indexing.js')
 const { createConfiguredQaService } = await import('./bootstrap/qa.js')
@@ -55,7 +56,7 @@ try {
   const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
   try { sourceService = (await createConfiguredSourceService({ context: configured.context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
   try {
-    const jobs = await createConfiguredJobRuntime({ context: configured.context, rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring, maintenanceContext })
+    const jobs = await createConfiguredJobRuntime({ context: configured.context, executor: createConfiguredIngestionExecutor({ context: configured.context, providerRegistry: runtime.providerRegistry }), rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring, maintenanceContext })
     jobService = jobs.jobService
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner

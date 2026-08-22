@@ -5,9 +5,26 @@ function safeOutcomeError(error, now) {
   if (!error) return undefined
   return {
     code: typeof error.code === 'string' && /^[a-z0-9_:-]{1,128}$/.test(error.code) ? error.code : 'worker_failed',
-    message: 'Indexing job did not complete safely', retryable: Boolean(error.retryable), occurredAt: now,
+    message: 'Indexing job did not complete safely', retryable: Boolean(error.retryable) || error.code === 'lease_fence_stale', occurredAt: now,
     ...(Number.isInteger(error.upstreamStatus) && error.upstreamStatus >= 100 && error.upstreamStatus <= 599 ? { upstreamStatus: error.upstreamStatus } : {}),
   }
+}
+
+function startLeaseHeartbeat({ leaseRepository, fence, ownerToken, leaseMs }) {
+  if (typeof leaseRepository?.heartbeat !== 'function') return () => {}
+  const intervalMs = Math.max(100, Math.floor(Number(leaseMs) / 3) || 100)
+  let stopped = false
+  let inFlight = false
+  const timer = globalThis.setInterval(() => {
+    if (stopped || inFlight) return
+    inFlight = true
+    Promise.resolve()
+      .then(() => leaseRepository.heartbeat({ key: fence.key, jobId: fence.jobId, leaseGeneration: fence.leaseGeneration, ownerToken, leaseMs }))
+      .catch(() => {})
+      .finally(() => { inFlight = false })
+  }, intervalMs)
+  timer.unref?.()
+  return () => { stopped = true; globalThis.clearInterval(timer) }
 }
 
 export function createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, leaseMs = 30_000, ownerToken = () => randomBytes(32).toString('hex') } = {}) {
@@ -38,14 +55,26 @@ export function createIndexingQueueAdapter({ jobRepository, leaseRepository, exe
         await jobRepository.completeWithFence({ jobId: candidate.id, fence, status: 'cancelled' })
         return { status: 'partial', claimed: true }
       }
-      let outcome
-      try { outcome = await executor({ job: candidate, fence, ownerToken: token, now }) } catch (error) {
-        outcome = { status: 'failed', error: { code: error?.code ?? 'worker_failed', retryable: Boolean(error?.retryable), upstreamStatus: error?.upstreamStatus } }
+      const stopHeartbeat = startLeaseHeartbeat({ leaseRepository, fence, ownerToken: token, leaseMs })
+      try {
+        let outcome
+        try {
+          outcome = await executor({
+            job: { ...candidate, leaseGeneration: fence.leaseGeneration },
+            fence,
+            ownerToken: token,
+            now,
+          })
+        } catch (error) {
+          outcome = { status: 'failed', error: { code: error?.code ?? 'worker_failed', retryable: Boolean(error?.retryable), upstreamStatus: error?.upstreamStatus } }
+        }
+        const status = ['succeeded', 'partial', 'failed', 'cancelled'].includes(outcome?.status) ? outcome.status : 'failed'
+        const finishedAt = new Date()
+        await jobRepository.completeWithFence({ jobId: candidate.id, fence, status, error: safeOutcomeError(outcome?.error, finishedAt), inputHash: outcome?.inputHash })
+        return { status: status === 'cancelled' ? 'partial' : status, claimed: true }
+      } finally {
+        stopHeartbeat()
       }
-      const status = ['succeeded', 'partial', 'failed', 'cancelled'].includes(outcome?.status) ? outcome.status : 'failed'
-      const finishedAt = new Date()
-      await jobRepository.completeWithFence({ jobId: candidate.id, fence, status, error: safeOutcomeError(outcome?.error, finishedAt), inputHash: outcome?.inputHash })
-      return { status: status === 'cancelled' ? 'partial' : status, claimed: true }
     },
   })
 }

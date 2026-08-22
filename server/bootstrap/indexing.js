@@ -48,7 +48,7 @@ function workloadPolicy(registry, workloadId) {
   return policy
 }
 
-function configuredEmbeddingTarget(registry) {
+export function configuredEmbeddingTarget(registry) {
   const policy = workloadPolicy(registry, 'embedding')
   const route = (registry?.routes ?? []).find((item) => item.routeId === policy.primaryRouteId)
   if (!route || typeof route.model !== 'string' || !route.artifactCompatibilityId || !Number.isInteger(route.embeddingDimensions) || route.embeddingDimensions < 1 || !Number.isInteger(route.embeddingVersion) || route.embeddingVersion < 1) throw new Error('Embedding workload route is not configured')

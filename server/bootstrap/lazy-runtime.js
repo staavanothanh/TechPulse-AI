@@ -127,9 +127,10 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
     })
   }
   factories.jobs = async ({ common }) => {
-    const [{ createProductionJobRuntime }, { createConfiguredJobRuntime }, { createReleaseVerifiedSchemaVerifier }] = await Promise.all([
+    const [{ createProductionJobRuntime }, { createConfiguredJobRuntime }, { createConfiguredIngestionExecutor }, { createReleaseVerifiedSchemaVerifier }] = await Promise.all([
       import('../maintenance/job-runtime.js'),
       import('./jobs.js'),
+      import('./ingestion.js'),
       import('./schema-readiness.js'),
     ])
     const verifyJobsSchema = createReleaseVerifiedSchemaVerifier('durable-jobs', environment)
@@ -138,6 +139,7 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       runtimeConfig: common.runtime,
       jobOptions: {
         context: common.context,
+        executor: createConfiguredIngestionExecutor({ context: common.context, providerRegistry: common.runtime.providerRegistry }),
         rateLimitAdmission: common.rateLimitAdmission,
         quotaKeyring: common.quotaKeyring,
         governanceKeyring: common.governanceKeyring,
@@ -245,6 +247,16 @@ export function createLazyRuntimeOptions({
   capabilities.sources = capability('sources', ['common'])
   capabilities.qa = capability('qa', ['common', 'jobs', 'indexing'])
   capabilities.governance = capability('governance', ['common'])
+  const dueWork = createLazyFunction({ load: capabilities.jobs, select: (value) => value.dueWorkRunner, unavailableMessage: 'Due-work runner is unavailable' })
+  const dueWorkRunner = async (...args) => {
+    try {
+      await capabilities.indexing()
+    } catch {
+      // Indexing is an optional queue on a cold worker. Ingestion and other
+      // registered queues must still run when its provider/schema is unavailable.
+    }
+    return dueWork(...args)
+  }
 
   return Object.freeze({
     authService: createLazyService({ load: capabilities.common, select: (value) => value.authService, unavailableMessage: 'Authentication service is unavailable' }),
@@ -257,7 +269,7 @@ export function createLazyRuntimeOptions({
     qaService: createLazyService({ load: capabilities.qa, select: (value) => value, unavailableMessage: 'Grounded Q&A service is unavailable' }),
     adminGovernanceService: createLazyService({ load: capabilities.governance, select: (value) => value.adminGovernanceService, unavailableMessage: 'Admin governance service is unavailable' }),
     accountDeletionService: createLazyService({ load: capabilities.governance, select: (value) => value.accountDeletionService, unavailableMessage: 'Account deletion service is unavailable' }),
-    dueWorkRunner: createLazyFunction({ load: capabilities.jobs, select: (value) => value.dueWorkRunner, unavailableMessage: 'Due-work runner is unavailable' }),
+    dueWorkRunner,
     maintenanceRunner: createLazyService({ load: capabilities.jobs, select: (value) => value.maintenanceRunner, unavailableMessage: 'Maintenance runner is unavailable' }),
     imageCspHosts: () => capabilities.content.peek()?.imageCspHosts ?? [],
   })

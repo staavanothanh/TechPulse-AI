@@ -143,6 +143,22 @@ describe('lazy bootstrap capabilities', () => {
     expect(createAnswer).toHaveBeenCalledExactlyOnceWith({ question: 'why' })
   })
 
+  it('loads indexing before a cold due-work run so every queue can register', async () => {
+    const common = configuredAuth()
+    const dueWork = vi.fn(async () => ({ queues: { ingestion: { claimed: 1 } } }))
+    const factories = {
+      common: vi.fn(async () => common),
+      jobs: vi.fn(async () => ({ dueWorkRunner: dueWork })),
+      indexing: vi.fn(async () => ({ indexingJobService: {} })),
+      content: vi.fn(), sources: vi.fn(), qa: vi.fn(), governance: vi.fn(),
+    }
+    const options = createLazyRuntimeOptions({ factories, maxAttempts: 1 })
+
+    await expect(options.dueWorkRunner({})).resolves.toEqual({ queues: { ingestion: { claimed: 1 } } })
+    expect(factories.indexing).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ common, jobs: expect.any(Object) }))
+    expect(dueWork).toHaveBeenCalledExactlyOnceWith({})
+  })
+
   it('loads reviewed CSP hosts for articles but not for health', async () => {
     const common = configuredAuth()
     common.authService.authenticate.mockResolvedValue({ user: { id: 'user-1', status: 'active' } })
