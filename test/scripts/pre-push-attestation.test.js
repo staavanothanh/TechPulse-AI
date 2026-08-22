@@ -169,7 +169,7 @@ describe('pre-push release attestation', () => {
               id: 'env_1',
               key: 'RUNTIME_SCHEMA_ATTESTATIONS_JSON',
               target: ['production'],
-              type: 'encrypted',
+              type: 'sensitive',
             },
           ],
         }),
@@ -190,8 +190,8 @@ describe('pre-push release attestation', () => {
     expect(fetchImpl.mock.calls[0][0]).toContain('decrypt=false')
     expect(fetchImpl.mock.calls[0][0]).toContain('teamId=team_test')
     expect(fetchImpl.mock.calls[1][1].headers.Authorization).toBe('Bearer synthetic-token')
-    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toMatchObject({
-      key: 'RUNTIME_SCHEMA_ATTESTATIONS_JSON',
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
+      value: '{"auth-core":{}}',
       target: ['production'],
     })
   })

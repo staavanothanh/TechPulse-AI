@@ -246,7 +246,7 @@ export async function updateVercelEnvironmentVariable({
     const updateResponse = await fetchImpl(updateUrl, {
       method: 'PATCH',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, type: existing.type || payload.type, target: targets }),
+      body: JSON.stringify({ value, target: targets }),
     })
     await assertResponse(updateResponse, 'environment update')
     return Object.freeze({ updated: true, target, projectId })
