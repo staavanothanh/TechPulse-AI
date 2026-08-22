@@ -38,9 +38,9 @@ export async function assertDurableJobsReady(context) {
   if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('durable-jobs audit validator is not ready')
 }
 
-export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork } = {}) {
+export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork, verifySchema = assertDurableJobsReady } = {}) {
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
-  await assertDurableJobsReady(context)
+  await verifySchema(context)
   const jobRepository = new MongoJobRepository(context)
   const leaseRepository = new MongoLeaseRepository(context)
   const sourceRepository = new MongoSourceRepository(context)
@@ -97,18 +97,18 @@ export function createCronDueWorkRunner({
   }
 }
 
-export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb, maintenanceContext } = {}) {
+export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb, maintenanceContext, verifyJobsSchema = assertDurableJobsReady, verifyGovernanceSchema = assertGovernanceReady } = {}) {
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   if (!quotaKeyring?.versions?.length || typeof quotaKeyring.digest !== 'function' || !governanceKeyring?.versions?.length || typeof governanceKeyring.digest !== 'function') throw new Error('Quota and governance keyrings are required')
   const jobRepository = new MongoJobRepository(context)
   const leaseRepository = new MongoLeaseRepository(context)
-  await assertDurableJobsReady(context)
+  await verifyJobsSchema(context)
   const deletionGovernanceDb = governanceDb ?? context.client?.db?.('techpulse_governance')
   if (!deletionGovernanceDb) throw new Error('Account deletion quota and governance capabilities are required')
   // Validate every governance collection/index before registering any queue or
   // maintenance handler. A partial migration must not expose a half-started
   // runtime to callers.
-  await assertGovernanceReady(context, { governanceDb: deletionGovernanceDb })
+  await verifyGovernanceSchema(context, { governanceDb: deletionGovernanceDb })
   const queueRegistry = createQueueRegistry()
   queueRegistry.register(createIngestionQueueAdapter({ jobRepository, leaseRepository, executor }))
   const maintenanceRegistry = createMaintenanceRegistry()
@@ -129,7 +129,7 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
   const maintenanceRunner = createMaintenanceRunner({ registry: maintenanceRegistry, now })
   const coordinatorRunner = createCoordinatorRunner({ queueRegistry, now })
   const dueWorkRunner = createCronDueWorkRunner({ jobRepository, coordinatorRunner, now, materializers: cronMaterializers })
-  const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner })
+  const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner, verifySchema: verifyJobsSchema })
   return {
     ...configured,
     queueRegistry,

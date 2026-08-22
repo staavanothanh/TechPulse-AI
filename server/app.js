@@ -24,7 +24,19 @@ export function createApp(options = {}) {
   app.use(createRequestIdMiddleware())
   app.use(createContentSecurityPolicyMiddleware({ imageHosts: options.imageCspHosts }))
   app.use(createIngressMiddleware(options))
+
   app.use(express.json({ limit: '64kb', strict: true, type: 'application/json' }))
+
+  app.get('/api/v1/health', (_req, res) => {
+    res.set('Cache-Control', 'no-store, private')
+    res.json({
+      data: {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  })
+
   app.use(createSessionMiddleware({ authService: options.authService }))
   app.use(createAuthRouter({ authService: options.authService }))
   app.use(createArticlesRouter({ articleService: options.articleService }))
@@ -39,16 +51,6 @@ export function createApp(options = {}) {
   app.use(createAdminGovernanceRouter({ adminGovernanceService: options.adminGovernanceService, authService: options.authService }))
   app.use(createInternalCronRouter({ dueWorkRunner: options.dueWorkRunner }))
   app.use(createInternalMaintenanceRouter({ maintenanceRunner: options.maintenanceRunner }))
-
-  app.get('/api/v1/health', (_req, res) => {
-    res.set('Cache-Control', 'no-store, private')
-    res.json({
-      data: {
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-      },
-    })
-  })
 
   if (options.afterApiMiddleware) app.use(options.afterApiMiddleware)
 

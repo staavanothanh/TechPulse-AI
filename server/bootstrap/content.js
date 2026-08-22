@@ -37,9 +37,9 @@ async function deployedImageCspHosts(context) {
   return [...new Set(sources.flatMap((source) => source.mediaPolicy?.allowedHosts ?? []).map(normalizeReviewedHostname))].sort()
 }
 
-export async function createConfiguredContentServices({ context, queryEmbedding } = {}) {
+export async function createConfiguredContentServices({ context, queryEmbedding, verifySchema = assertArticlesReady } = {}) {
   if (!context) throw new Error('Mongo context is required')
-  await assertArticlesReady(context)
+  await verifySchema(context)
   const repository = new MongoArticleRepository(context)
   return Object.freeze({
     articleService: createArticleService({ repository }),

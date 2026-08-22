@@ -28,10 +28,10 @@ export async function assertSourcesReady(context) {
   }
 }
 
-export async function createConfiguredSourceService({ context, technicalCheckAdapter, rateLimitAdmission } = {}) {
+export async function createConfiguredSourceService({ context, technicalCheckAdapter, rateLimitAdmission, verifySchema = assertSourcesReady } = {}) {
   if (!context) throw new Error('Mongo context is required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
-  await assertSourcesReady(context)
+  await verifySchema(context)
   const repository = new MongoSourceRepository(context)
   return { sourceService: createSourceService({ repository, technicalCheckAdapter, rateLimitAdmission }), currentSourcePolicy: createCurrentSourcePolicy({ repository }) }
 }

@@ -167,4 +167,13 @@ describe('GET /api/v1/health', () => {
     })
     expect(response.status).toBe(413)
   })
+
+  it('applies the JSON body limit before handling health-shaped requests', async () => {
+    const response = await fetch(`${origin}/api/v1/health`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload: 'x'.repeat(70000) }),
+    })
+    expect(response.status).toBe(413)
+  })
 })

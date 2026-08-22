@@ -373,12 +373,42 @@ function qnaScopeFilter(scope = {}) {
   return match
 }
 
-function visibilityPipeline({ match, userId, limit } = {}) {
+const PUBLIC_ARTICLE_CARD_PROJECTION = Object.freeze({
+  _id: 1,
+  sourceId: 1,
+  status: 1,
+  titleOriginal: 1,
+  titleVi: 1,
+  publishedAt: 1,
+  sourceLanguage: 1,
+  topics: 1,
+  excerptOriginal: 1,
+  summaryVi: 1,
+  summaryStatus: 1,
+  summaryBasis: 1,
+  leadMedia: 1,
+  leadMediaStatus: 1,
+  _isSaved: 1,
+  '_currentSource._id': 1,
+  '_currentSource.name': 1,
+  '_currentSource.authorityTier': 1,
+  '_currentSource.operationalStatus': 1,
+  '_currentSource.licenseStatus': 1,
+  '_currentSource.llmInputScope': 1,
+  '_currentSource.storageScope': 1,
+  '_currentSource.mediaPolicy': 1,
+  '_currentSource.attributionRequired': 1,
+  '_currentSource.attributionText': 1,
+  '_currentSource.policyVersion': 1,
+})
+
+function visibilityPipeline({ match, userId, limit, projection } = {}) {
   return [
     { $match: match },
     { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
     { $unwind: '$_currentSource' },
     { $match: currentArticleVisibilityFilter({ sourcePath: '_currentSource' }) },
+    ...(projection ? [{ $project: projection }] : []),
     ...(userId ? [{ $lookup: { from: 'savedArticles', let: { articleId: '$_id' }, pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$articleId', '$$articleId'] }, { $eq: ['$userId', contentObjectId(userId)] }] } } }, { $limit: 1 }], as: '_isSaved' } }] : []),
     { $sort: { publishedAt: -1, _id: -1 } },
     ...(limit ? [{ $limit: limit }] : []),
@@ -574,7 +604,7 @@ export class MongoArticleRepository {
     const fingerprint = cursorFingerprint('articles', { userId, topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit })
     const cursorPosition = decodeContentCursor(cursor, 'articles', fingerprint)
     const match = contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore, cursorPosition })
-    const documents = await this.articles().aggregate(visibilityPipeline({ match, userId, limit: limit + 1 })).toArray()
+    const documents = await this.articles().aggregate(visibilityPipeline({ match, userId, limit: limit + 1, projection: PUBLIC_ARTICLE_CARD_PROJECTION })).toArray()
     const cards = documents.map((document) => publicArticleCard(document)).filter(Boolean)
     const page = cards.slice(0, limit)
     const lastDocument = documents[Math.min(page.length, limit) - 1]

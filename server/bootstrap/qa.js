@@ -41,9 +41,9 @@ export async function assertChatSessionsReady(context) {
   }
 }
 
-export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, providerRouter, queryEmbedding, rateLimitAdmission, maintenanceRegistry, now = () => new Date() } = {}) {
-  await assertChatSessionsReady(context)
-  await assertProviderRoutingReady(context)
+export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, providerRouter, queryEmbedding, rateLimitAdmission, maintenanceRegistry, now = () => new Date(), verifySchema = assertChatSessionsReady, verifyProviderSchema = assertProviderRoutingReady } = {}) {
+  await verifySchema(context)
+  await verifyProviderSchema(context)
   if (typeof maintenanceRegistry?.register !== 'function') throw new Error('Q&A maintenance registry is not ready')
   if (!providerAdapters?.llmProvider?.answer || !providerAdapters?.llmProvider?.verifySupport) throw new Error('Q&A provider adapters are not ready')
   const articleRepository = new MongoArticleRepository(context)

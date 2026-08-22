@@ -6,9 +6,17 @@ export function contentSecurityPolicy(imageHosts = []) {
 }
 
 export function createContentSecurityPolicyMiddleware({ imageHosts = [] } = {}) {
-  const policy = contentSecurityPolicy(imageHosts)
   return (_req, res, next) => {
-    res.set('Content-Security-Policy', policy)
+    const writeHead = res.writeHead
+    res.writeHead = function writeHeadWithContentSecurityPolicy(...args) {
+      let policy = contentSecurityPolicy()
+      try {
+        const resolvedHosts = typeof imageHosts === 'function' ? imageHosts() : imageHosts
+        policy = contentSecurityPolicy(resolvedHosts)
+      } catch { /* Invalid dynamic policy data must fail closed. */ }
+      res.setHeader('Content-Security-Policy', policy)
+      return writeHead.apply(this, args)
+    }
     next()
   }
 }

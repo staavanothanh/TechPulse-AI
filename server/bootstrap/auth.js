@@ -35,11 +35,11 @@ export async function assertAuthCoreReady(context) {
   }
 }
 
-export async function createConfiguredAuthService({ environment = process.env, rateLimitAdmission } = {}) {
+export async function createConfiguredAuthService({ environment = process.env, rateLimitAdmission, verifySchema = assertAuthCoreReady } = {}) {
   const runtime = validateRuntimeConfiguration(environment)
   const context = await getMongoContext(runtime, environment)
   const repository = new MongoAuthRepository(context)
-  await assertAuthCoreReady(context)
+  await verifySchema(context)
   const quotaKeyring = createHmacKeyring({
     currentEnv: runtime.quotaKeyring.currentEnv,
     retiringEnvs: runtime.quotaKeyring.retiringEnvs,

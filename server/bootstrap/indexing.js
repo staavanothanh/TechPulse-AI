@@ -63,12 +63,12 @@ function configuredEmbeddingRoute(registry) {
 }
 
 export async function createConfiguredIndexingRuntime({
-  context, jobRuntime, rateLimitAdmission, providerRegistry = { admissionDomains: [], providerFailureDomains: [], routes: [], workloadPolicies: [] }, llmProvider, embeddingProvider, now = () => new Date(),
+  context, jobRuntime, rateLimitAdmission, providerRegistry = { admissionDomains: [], providerFailureDomains: [], routes: [], workloadPolicies: [] }, llmProvider, embeddingProvider, now = () => new Date(), verifySchema = assertIndexingJobsReady, verifyProviderSchema = assertProviderRoutingReady,
 } = {}) {
   if (!jobRuntime?.queueRegistry || !jobRuntime?.maintenanceRegistry || !jobRuntime?.leaseRepository || typeof jobRuntime.coordinatorRunner !== 'function') throw new Error('Shared durable job runtime is required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
-  await assertIndexingJobsReady(context)
-  await assertProviderRoutingReady(context)
+  await verifySchema(context)
+  await verifyProviderSchema(context)
   const embeddingTarget = configuredEmbeddingTarget(providerRegistry)
   const indexingJobRepository = new MongoIndexingJobRepository(context, { embeddingTarget })
   const articleRepository = new MongoArticleRepository(context, { embeddingTarget })

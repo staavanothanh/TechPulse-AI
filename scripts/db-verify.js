@@ -39,11 +39,13 @@ import {
 } from './mongo-role-probe.js'
 import { configureDns } from './configure-dns.js'
 import { exactMongoIndex } from '../server/repositories/mongo/index-contract.js'
+import { issueReleaseVerifiedSchemaAttestation } from '../server/bootstrap/schema-readiness.js'
 
 configureDns()
 
 const target = process.argv.slice(2).find((value) => !value.startsWith('-')) ?? 'auth-core'
 const requireRole = process.argv.includes('--require-role')
+const issueRuntimeAttestation = process.argv.includes('--issue-runtime-attestation')
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -306,7 +308,15 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
                 INDEXING_JOB_AUDIT_VALIDATOR,
                 GOVERNANCE_AUDIT_VALIDATOR,
               ]
-            : [expectedCollections[name].validator]
+            : target === 'articles' && name === 'articles'
+              ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator]
+              : target === 'indexing-jobs' && name === 'providerAdmissionStates'
+                ? [INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator, PROVIDER_ROUTING_V2_COLLECTIONS.providerAdmissionStates.validator]
+                : target === 'indexing-jobs' && name === 'indexingJobs'
+                  ? [INDEXING_JOB_COLLECTIONS.indexingJobs.validator, PROVIDER_ROUTING_V2_COLLECTIONS.indexingJobs.validator]
+                  : target === 'chat-sessions' && name === 'answerAttempts'
+                    ? [CHAT_SESSION_COLLECTIONS.answerAttempts.validator, PROVIDER_ROUTING_V2_COLLECTIONS.answerAttempts.validator]
+              : [expectedCollections[name].validator]
         if (
           !accepted.some(
             (validator) => stableJson(collection.options.validator) === stableJson(validator),
@@ -900,11 +910,17 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
       )
       process.exitCode = 1
     } else {
+      let runtimeSchemaAttestation
+      if (issueRuntimeAttestation) {
+        verificationStage = 'runtime-schema-attestation'
+        runtimeSchemaAttestation = issueReleaseVerifiedSchemaAttestation(target, process.env)
+      }
       console.log(
         JSON.stringify({
           verified: true,
           collections: Object.keys(expectedCollections).length,
           roleStatus,
+          ...(runtimeSchemaAttestation ? { runtimeSchemaAttestation } : {}),
         }),
       )
     }

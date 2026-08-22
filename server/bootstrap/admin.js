@@ -6,9 +6,9 @@ import { createAccountDeletionService } from '../application/account-deletion/se
 import { createTakedownService } from '../application/takedowns/service.js'
 import { assertGovernanceReady } from './governance-readiness.js'
 
-export async function createConfiguredAdminGovernanceService({ context, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb } = {}) {
+export async function createConfiguredAdminGovernanceService({ context, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb, verifySchema = assertGovernanceReady } = {}) {
   if (!context) throw new Error('Mongo context is required')
-  await assertGovernanceReady(context, { governanceDb })
+  await verifySchema(context, { governanceDb })
   const repository = new MongoAdminRepository(context)
   const resolvedGovernanceDb = governanceDb ?? context.client?.db?.('techpulse_governance')
   const takedownRepository = new MongoTakedownRepository({ ...context, governanceDb: resolvedGovernanceDb, governanceKeyring })
