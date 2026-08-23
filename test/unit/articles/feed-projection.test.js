@@ -49,22 +49,23 @@ function visibleDocument() {
 
 describe('Mongo article feed projection', () => {
   it('reads only public-card fields before the saved lookup, sort and limit', async () => {
-    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [visibleDocument()]) }))
+    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [{ page: [visibleDocument()], total: [{ totalItems: 1 }] }]) }))
     const repository = new MongoArticleRepository({ db: {}, client: {} })
     repository.articles = () => ({ aggregate })
 
     await repository.listVisibleArticles({ userId: USER_ID, limit: 20 })
 
     const pipeline = aggregate.mock.calls[0][0]
-    const projectionIndex = pipeline.findIndex((stage) => stage.$project)
-    const limitIndex = pipeline.findIndex((stage) => stage.$limit === 21)
-    const savedLookupIndex = pipeline.findIndex((stage) => stage.$lookup?.from === 'savedArticles')
-    const sortIndex = pipeline.findIndex((stage) => stage.$sort)
+    const pagePipeline = pipeline.find((stage) => stage.$facet)?.$facet.page
+    const projectionIndex = pagePipeline.findIndex((stage) => stage.$project)
+    const limitIndex = pagePipeline.findIndex((stage) => stage.$limit === 21)
+    const savedLookupIndex = pagePipeline.findIndex((stage) => stage.$lookup?.from === 'savedArticles')
+    const sortIndex = pagePipeline.findIndex((stage) => stage.$sort)
     expect(projectionIndex).toBeGreaterThan(-1)
     expect(projectionIndex).toBeLessThan(savedLookupIndex)
     expect(projectionIndex).toBeLessThan(sortIndex)
     expect(projectionIndex).toBeLessThan(limitIndex)
-    expect(pipeline[projectionIndex].$project).toEqual({
+    expect(pagePipeline[projectionIndex].$project).toEqual({
       _id: 1,
       sourceId: 1,
       status: 1,
@@ -110,7 +111,7 @@ describe('Mongo article feed projection', () => {
     first._isSaved = [{ _id: new ObjectId() }]
     const second = visibleDocument()
     second._id = new ObjectId('507f1f77bcf86cd799439012')
-    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [first, second]) }))
+    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [{ page: [first, second], total: [{ totalItems: 2 }] }]) }))
     const repository = new MongoArticleRepository({ db: {}, client: {} })
     repository.articles = () => ({ aggregate })
 

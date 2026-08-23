@@ -19,6 +19,7 @@ import { buildRemovedArticleTombstone, serializeRemovedArticleTombstone, validat
 
 const COUNTER_KEYS = Object.freeze(['fetched', 'created', 'updated', 'duplicate', 'skipped', 'failed'])
 const FORBIDDEN_FIELDS = Object.freeze(['raw', 'rawHtml', 'html', 'body', 'content', 'fullText', 'translatedFullText', 'mediaBinary', 'binary', 'imageBinary', 'videoBinary', 'audioBinary', 'base64', 'gridFsId', 'providerPayload'])
+const MAX_ARTICLE_PAGE_OFFSET = 100_000
 
 function idValue(value) {
   if (value instanceof ObjectId) return value
@@ -402,16 +403,28 @@ const PUBLIC_ARTICLE_CARD_PROJECTION = Object.freeze({
   '_currentSource.policyVersion': 1,
 })
 
-function visibilityPipeline({ match, userId, limit, projection } = {}) {
+function visibilityBasePipeline({ match } = {}) {
   return [
     { $match: match },
     { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
     { $unwind: '$_currentSource' },
     { $match: currentArticleVisibilityFilter({ sourcePath: '_currentSource' }) },
+  ]
+}
+
+function savedArticleLookupStage(userId) {
+  return userId ? { $lookup: { from: 'savedArticles', let: { articleId: '$_id' }, pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$articleId', '$$articleId'] }, { $eq: ['$userId', contentObjectId(userId)] }] } } }, { $limit: 1 }], as: '_isSaved' } } : null
+}
+
+function visibilityPipeline({ match, userId, limit, skip = 0, projection, sort = true } = {}) {
+  const savedLookup = savedArticleLookupStage(userId)
+  return [
+    ...visibilityBasePipeline({ match }),
     ...(projection ? [{ $project: projection }] : []),
-    ...(userId ? [{ $lookup: { from: 'savedArticles', let: { articleId: '$_id' }, pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$articleId', '$$articleId'] }, { $eq: ['$userId', contentObjectId(userId)] }] } } }, { $limit: 1 }], as: '_isSaved' } }] : []),
-    { $sort: { publishedAt: -1, _id: -1 } },
+    ...(sort ? [{ $sort: { publishedAt: -1, _id: -1 } }] : []),
+    ...(skip > 0 ? [{ $skip: skip }] : []),
     ...(limit ? [{ $limit: limit }] : []),
+    ...(savedLookup ? [savedLookup] : []),
   ]
 }
 
@@ -599,19 +612,57 @@ export class MongoArticleRepository {
     return documents.flatMap(({ _currentSource: source, ...document }) => isSourceProductionEligible(source) ? [serializeVisibleArticle(document, source)] : [])
   }
 
-  async listVisibleArticles({ userId, topic, sourceId, publishedAfter, publishedBefore, cursor, limit = 20 } = {}) {
+  async listVisibleArticles({ userId, topic, sourceId, publishedAfter, publishedBefore, cursor, page = 1, limit = 20, lastPage = false } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw contentQueryInvalid('Article limit is invalid')
+    if (!Number.isInteger(page) || page < 1 || page > 10000) throw contentQueryInvalid('Article page is invalid')
+    const pageOffset = (page - 1) * limit
+    if (!lastPage && pageOffset > MAX_ARTICLE_PAGE_OFFSET) throw contentQueryInvalid('Article page is too deep')
     const fingerprint = cursorFingerprint('articles', { userId, topic, sourceId, publishedAfter: publishedAfter?.toISOString?.(), publishedBefore: publishedBefore?.toISOString?.(), limit })
     const cursorPosition = decodeContentCursor(cursor, 'articles', fingerprint)
+    if (lastPage && cursorPosition) throw contentQueryInvalid('lastPage and cursor cannot be used together')
     const match = contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore, cursorPosition })
-    const documents = await this.articles().aggregate(visibilityPipeline({ match, userId, limit: limit + 1, projection: PUBLIC_ARTICLE_CARD_PROJECTION })).toArray()
+    const totalMatch = contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore })
+    const collection = this.articles()
+    const savedLookup = savedArticleLookupStage(userId)
+    const pagePipeline = (skip = 0) => [
+      ...(cursorPosition ? [{ $match: match }] : []),
+      { $project: PUBLIC_ARTICLE_CARD_PROJECTION },
+      { $sort: { publishedAt: -1, _id: -1 } },
+      ...(skip > 0 ? [{ $skip: skip }] : []),
+      { $limit: limit + 1 },
+      ...(savedLookup ? [savedLookup] : []),
+    ]
+    const lastPagePipeline = [
+      { $project: PUBLIC_ARTICLE_CARD_PROJECTION },
+      { $sort: { publishedAt: 1, _id: 1 } },
+      { $limit: limit },
+      ...(savedLookup ? [savedLookup] : []),
+    ]
+    const aggregateRows = await collection.aggregate([
+      ...visibilityBasePipeline({ match: totalMatch }),
+      {
+        $facet: {
+          page: lastPage ? lastPagePipeline : pagePipeline(cursorPosition ? 0 : pageOffset),
+          total: [{ $count: 'totalItems' }],
+        },
+      },
+    ]).toArray()
+    const facet = aggregateRows[0]
+    let documents = Array.isArray(facet?.page) ? facet.page : aggregateRows
+    const totalRows = Array.isArray(facet?.total) ? facet.total[0]?.totalItems ?? 0 : 0
+    if (lastPage) {
+      const lastPageSize = totalRows === 0 ? 0 : totalRows % limit || limit
+      documents = documents.slice(0, lastPageSize).toReversed()
+    }
     const cards = documents.map((document) => publicArticleCard(document)).filter(Boolean)
-    const page = cards.slice(0, limit)
-    const lastDocument = documents[Math.min(page.length, limit) - 1]
+    const hasNext = !lastPage && cards.length > limit
+    const pageItems = cards.slice(0, limit)
+    const lastDocument = documents[Math.min(pageItems.length, limit) - 1]
     return {
-      articles: page,
-      hasNext: cards.length > limit,
-      nextCursor: cards.length > limit && lastDocument ? encodeContentCursor('articles', fingerprint, { publishedAt: publicDate(lastDocument.publishedAt), id: lastDocument._id.toHexString() }) : null,
+      articles: pageItems,
+      hasNext,
+      nextCursor: hasNext && lastDocument ? encodeContentCursor('articles', fingerprint, { publishedAt: publicDate(lastDocument.publishedAt), id: lastDocument._id.toHexString() }) : null,
+      totalItems: totalRows,
     }
   }
 

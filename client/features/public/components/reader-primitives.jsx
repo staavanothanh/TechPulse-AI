@@ -62,17 +62,108 @@ export function Skeleton({ label = 'Đang tải nội dung' }) {
 export function Pagination({
   page = 1,
   hasNext = false,
+  totalPages,
   onPrevious,
   onNext,
+  onFirst,
+  onLast,
+  onPageChange,
+  disabled = false,
+  maxPage,
+  canGoPrevious = true,
   label = 'Phân trang',
 }) {
+  const hasTotalPages = Number.isInteger(totalPages) && totalPages > 0
+  const directPageLimit = Number.isInteger(maxPage) && maxPage > 0 ? maxPage : totalPages
+  const hasDirectPageLimit = hasTotalPages && directPageLimit < totalPages
+
   if (page <= 1 && !hasNext) return null
+  if (hasTotalPages) {
+    const commitPage = (value, input) => {
+      const parsedValue = Number.parseInt(value, 10)
+      if (!Number.isInteger(parsedValue)) {
+        if (input) input.value = String(page)
+        return
+      }
+      const nextPage = Math.min(Math.max(parsedValue, 1), totalPages)
+      if (nextPage > directPageLimit && nextPage !== totalPages) {
+        if (input) input.value = String(page)
+        return
+      }
+      if (nextPage !== page) onPageChange?.(nextPage)
+      else if (input) input.value = String(page)
+    }
+    return (
+      <nav className="public-pagination" aria-label={label}>
+        <button
+          className="public-btn public-btn-secondary"
+          type="button"
+          disabled={disabled || page <= 1}
+          onClick={onFirst}
+        >
+          Đầu
+        </button>
+        <button
+          className="public-btn public-btn-secondary"
+          type="button"
+          disabled={disabled || page <= 1 || !canGoPrevious}
+          onClick={onPrevious}
+        >
+          Trước
+        </button>
+        <span aria-live="polite">Trang {page}/{totalPages}</span>
+        <label className="public-pagination-jump">
+          <span className="public-sr-only">Số trang</span>
+          <input
+            key={page}
+            className="public-input public-pagination-input"
+            type="number"
+            min="1"
+            max={totalPages}
+            inputMode="numeric"
+            defaultValue={page}
+            disabled={disabled}
+            aria-label="Số trang"
+            aria-describedby={hasDirectPageLimit ? `${label.replaceAll(/\s+/g, '-').toLowerCase()}-page-limit` : undefined}
+            onBlur={(event) => commitPage(event.currentTarget.value, event.currentTarget)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                commitPage(event.currentTarget.value, event.currentTarget)
+              }
+            }}
+          />
+        </label>
+        <button
+          className="public-btn public-btn-secondary"
+          type="button"
+          disabled={disabled || !hasNext || page >= totalPages}
+          onClick={onNext}
+        >
+          Sau
+        </button>
+        <button
+          className="public-btn public-btn-secondary"
+          type="button"
+          disabled={disabled || !hasNext || page >= totalPages}
+          onClick={onLast}
+        >
+          Cuối
+        </button>
+        {hasDirectPageLimit ? (
+          <span className="public-pagination-hint" id={`${label.replaceAll(/\s+/g, '-').toLowerCase()}-page-limit`}>
+            Trang trung gian tối đa {directPageLimit}; dùng Đầu hoặc Cuối để di chuyển nhanh.
+          </span>
+        ) : null}
+      </nav>
+    )
+  }
   return (
     <nav className="public-pagination" aria-label={label}>
       <button
         className="public-btn public-btn-secondary"
         type="button"
-        disabled={page <= 1}
+        disabled={disabled || page <= 1}
         onClick={onPrevious}
       >
         Trước
@@ -81,7 +172,7 @@ export function Pagination({
       <button
         className="public-btn public-btn-secondary"
         type="button"
-        disabled={!hasNext}
+        disabled={disabled || !hasNext}
         onClick={onNext}
       >
         Sau

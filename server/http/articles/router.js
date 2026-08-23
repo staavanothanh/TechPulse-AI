@@ -9,7 +9,7 @@ export function createArticlesRouter({ articleService } = {}) {
   router.get('/api/v1/articles', requireAuthenticated, asyncContentRoute(async (req, res) => {
     const result = await service.list({ auth: req.auth, query: req.query })
     noStoreContent(res)
-    res.status(200).json({ data: result.articles ?? [], meta: { hasNext: Boolean(result.hasNext), nextCursor: result.nextCursor ?? null } })
+    res.status(200).json({ data: result.articles ?? [], meta: { hasNext: Boolean(result.hasNext), nextCursor: result.nextCursor ?? null, totalItems: Number.isInteger(result.totalItems) && result.totalItems >= 0 ? result.totalItems : 0 } })
   }))
   router.get('/api/v1/articles/:articleId', requireAuthenticated, asyncContentRoute(async (req, res) => {
     const article = await service.get({ auth: req.auth, articleId: req.params.articleId })

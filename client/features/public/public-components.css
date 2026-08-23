@@ -444,6 +444,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 8px 0 0;
   color: var(--public-muted);
@@ -452,6 +453,23 @@
   min-height: 38px;
   padding-inline: 15px;
   font-size: 13px;
+}
+.public-pagination-jump {
+  display: inline-flex;
+  align-items: center;
+}
+.public-pagination-input {
+  width: 72px;
+  min-height: 38px;
+  padding-inline: 10px;
+  text-align: center;
+  font-size: 13px;
+}
+.public-pagination-hint {
+  flex-basis: 100%;
+  color: var(--public-muted);
+  font-size: 12px;
+  text-align: center;
 }
 .public-state-card {
   display: grid;

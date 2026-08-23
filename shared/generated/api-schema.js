@@ -450,7 +450,7 @@ export const openApiDocument = {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ArticleListResponse"
+                  "$ref": "#/components/schemas/SavedArticleListResponse"
                 }
               }
             }
@@ -768,6 +768,25 @@ export const openApiDocument = {
           },
           {
             "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "default": 1
+            }
+          },
+          {
+            "name": "lastPage",
+            "in": "query",
+            "description": "Load the final page without a deep page offset.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           },
           {
             "name": "topic",
@@ -4865,7 +4884,50 @@ export const openApiDocument = {
             }
           },
           "meta": {
+            "$ref": "#/components/schemas/ArticleListMeta"
+          }
+        }
+      },
+      "SavedArticleListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArticleCard"
+            }
+          },
+          "meta": {
             "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
+      "ArticleListMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hasNext",
+          "nextCursor",
+          "totalItems"
+        ],
+        "properties": {
+          "hasNext": {
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "totalItems": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },

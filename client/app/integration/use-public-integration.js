@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createContentApi } from '../../features/feed/content-api.js'
 import { validateFeedFilters } from '../../features/feed/feed-validation.js'
 import { validateSearchInput } from '../../features/search/search-validation.js'
@@ -10,6 +10,7 @@ import {
 } from '../../features/qa/qa-validation.js'
 
 const PAGE_SIZE = 10
+const MAX_DIRECT_PAGE = 10_000
 const EMPTY_FILTERS = Object.freeze({
   topic: '',
   sourceId: '',
@@ -143,9 +144,14 @@ function useFeed({
   const [cursors, setCursors] = useState([null])
   const [applying, setApplying] = useState(false)
   const [pendingArticleId, setPendingArticleId] = useState(null)
+  const requestSequence = useRef(0)
+  const failedRequest = useRef(null)
 
   const load = useCallback(
-    async ({ values = applied, targetPage = 1, cursor = null, filterChange = false } = {}) => {
+    async ({ values = applied, targetPage = 1, cursor = null, requestedPage = 1, lastPage = false, filterChange = false } = {}) => {
+      const sequence = requestSequence.current + 1
+      requestSequence.current = sequence
+      failedRequest.current = { values, targetPage, cursor, requestedPage, lastPage, filterChange }
       setState('loading')
       setError(null)
       setApplying(filterChange)
@@ -153,23 +159,32 @@ function useFeed({
         const response = await contentApi.listArticles({
           limit: PAGE_SIZE,
           ...queryValues(values),
-          ...(cursor ? { cursor } : {}),
+          ...(lastPage ? { lastPage: true } : cursor ? { cursor } : requestedPage > 1 ? { page: requestedPage } : {}),
         })
+        if (sequence !== requestSequence.current) return null
+        const nextMeta = responseMeta(response)
+        const responseTotalItems = Number(nextMeta.totalItems)
+        const resolvedPage = lastPage && Number.isFinite(responseTotalItems)
+          ? Math.max(1, Math.ceil(responseTotalItems / PAGE_SIZE))
+          : targetPage
         setArticles(responseData(response, []))
-        setMeta(responseMeta(response))
-        setPage(targetPage)
+        setMeta(nextMeta)
+        setPage(resolvedPage)
         setCursors((current) => {
-          const next = current.slice(0, targetPage)
-          next[targetPage - 1] = responseMeta(response).nextCursor ?? null
+          const next = current.slice(0, resolvedPage)
+          next[resolvedPage - 1] = nextMeta.nextCursor ?? null
           return next
         })
         setState('ready')
+        failedRequest.current = null
+        return response
       } catch (requestError) {
+        if (sequence !== requestSequence.current) return null
         expire(requestError)
         setError(requestError)
         setState('error')
       } finally {
-        setApplying(false)
+        if (sequence === requestSequence.current) setApplying(false)
       }
     },
     [applied, contentApi, expire],
@@ -209,6 +224,40 @@ function useFeed({
     void load({ values: EMPTY_FILTERS, targetPage: 1 })
   }
 
+  async function goToPage(value) {
+    const totalItems = Number(meta.totalItems)
+    const totalPages = Number.isFinite(totalItems) && totalItems > 0 ? Math.ceil(totalItems / PAGE_SIZE) : 0
+    const requestedPage = Math.min(Math.max(Number.parseInt(value, 10) || 1, 1), totalPages || 1)
+    if (requestedPage > MAX_DIRECT_PAGE && requestedPage !== totalPages) return
+    const targetPage = requestedPage
+    if (targetPage === page) return
+    if (targetPage === 1) {
+      await load({ values: applied, targetPage: 1 })
+      return
+    }
+    if (totalPages > 1 && targetPage === totalPages) {
+      await load({ values: applied, targetPage, lastPage: true })
+      return
+    }
+    await load({ values: applied, targetPage, requestedPage: targetPage })
+  }
+
+  function retryPage() {
+    return load(failedRequest.current ?? { values: applied, targetPage: page, requestedPage: page, cursor: null })
+  }
+
+  function loadPreviousPage() {
+    if (page <= 1 || page > MAX_DIRECT_PAGE) return false
+    const cursor = cursors[page - 3]
+    return load({ values: applied, targetPage: page - 1, cursor: cursor ?? null, requestedPage: cursor ? 1 : page - 1 })
+  }
+
+  function loadNextPage() {
+    if (!meta.hasNext) return false
+    const cursor = cursors[page - 1]
+    return load({ values: applied, targetPage: page + 1, cursor: cursor ?? null, requestedPage: cursor ? 1 : page + 1 })
+  }
+
   return {
     state,
     articles,
@@ -224,17 +273,12 @@ function useFeed({
       onFilterChange: (field, value) => setFilters((current) => ({ ...current, [field]: value })),
       onSubmit: submit,
       onClearFilters: clear,
-      onRetry: () =>
-        load({ values: applied, targetPage: page, cursor: page > 1 ? cursors[page - 2] : null }),
-      onPreviousPage: () =>
-        page > 1 &&
-        load({
-          values: applied,
-          targetPage: page - 1,
-          cursor: page > 2 ? cursors[page - 3] : null,
-        }),
-      onNextPage: () =>
-        meta.hasNext && load({ values: applied, targetPage: page + 1, cursor: cursors[page - 1] }),
+      onRetry: retryPage,
+      onPreviousPage: loadPreviousPage,
+      onNextPage: loadNextPage,
+      onFirstPage: () => goToPage(1),
+      onLastPage: () => goToPage(Math.ceil(Number(meta.totalItems) / PAGE_SIZE)),
+      onPageChange: (value) => goToPage(value),
       onSaveToggle: save,
       onOpenArticle: openArticle,
       onOpenSearch: () => onNavigate?.('search'),

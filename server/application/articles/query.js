@@ -46,6 +46,22 @@ function limitValue(value) {
   return limit
 }
 
+function pageValue(value) {
+  if (value === undefined || value === null || value === '') return 1
+  const page = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(page) || page < 1 || page > 10000) throw new ContentError(422, 'validation_error', 'page is invalid', [{ field: 'page', message: 'page must be from 1 to 10000', code: 'range' }])
+  return page
+}
+
+function booleanValue(value, field) {
+  if (value === undefined || value === null || value === '') return false
+  if (value === true || value === 'true') return true
+  if (value === false || value === 'false') return false
+  throw new ContentError(422, 'validation_error', `${field} is invalid`, [{ field, message: `${field} must be true or false`, code: 'boolean' }])
+}
+
+const MAX_PAGE_OFFSET = 100_000
+
 export function contentListQuery(query = {}) {
   const publishedAfter = dateValue(query.publishedAfter, 'publishedAfter')
   const publishedBefore = dateValue(query.publishedBefore, 'publishedBefore')
@@ -58,6 +74,16 @@ export function contentListQuery(query = {}) {
     cursor: optionalString(query.cursor, 'cursor', { maximum: 1000 }),
     limit: limitValue(query.limit),
   }
+}
+
+export function pagedContentListQuery(query = {}) {
+  const parsed = contentListQuery(query)
+  const page = pageValue(query.page)
+  const lastPage = booleanValue(query.lastPage, 'lastPage')
+  if (lastPage && page > 1) throw new ContentError(422, 'validation_error', 'lastPage cannot be combined with page', [{ field: 'page', message: 'page cannot be used with lastPage', code: 'conflict' }])
+  if (!lastPage && (page - 1) * parsed.limit > MAX_PAGE_OFFSET) throw new ContentError(422, 'validation_error', 'page is too deep', [{ field: 'page', message: 'page is too deep', code: 'range' }])
+  if (parsed.cursor && (page > 1 || lastPage)) throw new ContentError(422, 'validation_error', 'cursor and page cannot be used together', [{ field: 'page', message: 'page cannot be used with cursor', code: 'conflict' }])
+  return { ...parsed, page, lastPage }
 }
 
 export function savedListQuery(query = {}) {
