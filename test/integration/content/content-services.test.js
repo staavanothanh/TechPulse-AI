@@ -31,7 +31,7 @@ const auth = {
 describe('Step 8 content application services', () => {
   it('validates feed filters and passes only the authenticated user identity to the repository', async () => {
     const repository = {
-      listVisibleArticles: vi.fn(async () => ({ articles: [article], hasNext: false, nextCursor: null })),
+      listVisibleArticles: vi.fn(async () => ({ articles: [article], hasNext: false, nextCursor: null, totalItems: 1 })),
     }
     const service = createArticleService({ repository })
 
@@ -40,8 +40,17 @@ describe('Step 8 content application services', () => {
       query: { topic: 'AI', sourceId: article.source.id, publishedAfter: '2026-08-01T00:00:00.000Z', publishedBefore: '2026-08-11T00:00:00.000Z', limit: '20' },
     })
 
-    expect(result).toEqual({ articles: [article], hasNext: false, nextCursor: null })
+    expect(result).toEqual({ articles: [article], hasNext: false, nextCursor: null, totalItems: 1 })
     expect(repository.listVisibleArticles).toHaveBeenCalledWith(expect.objectContaining({ userId: USER_ID, topic: 'AI', limit: 20 }))
+    await service.list({ auth, query: { page: '3', limit: '10' } })
+    expect(repository.listVisibleArticles).toHaveBeenLastCalledWith(expect.objectContaining({ userId: USER_ID, page: 3, limit: 10 }))
+    await service.list({ auth, query: { lastPage: 'true', limit: '10' } })
+    expect(repository.listVisibleArticles).toHaveBeenLastCalledWith(expect.objectContaining({ userId: USER_ID, lastPage: true, page: 1, limit: 10 }))
+    await expect(service.list({ auth, query: { page: '0' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+    await expect(service.list({ auth, query: { page: '2', cursor: 'opaque' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+    await expect(service.list({ auth, query: { lastPage: 'invalid' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+    await expect(service.list({ auth, query: { page: '2', lastPage: 'true' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+    await expect(service.list({ auth, query: { page: '10000', limit: '100' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
     await expect(service.list({ auth, query: { publishedAfter: '2026-08-12T00:00:00.000Z', publishedBefore: '2026-08-11T00:00:00.000Z' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
   })
 

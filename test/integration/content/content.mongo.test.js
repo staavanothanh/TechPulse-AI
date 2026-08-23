@@ -126,8 +126,8 @@ describeMongo('Step 8 disposable Mongo visibility, ownership and pagination', ()
   it('paginates visible articles with an opaque cursor and never returns hidden or blocked content', async () => {
     const firstPage = await repository.listVisibleArticles({ userId: USER_ID.toHexString(), limit: 1 })
     const secondPage = await repository.listVisibleArticles({ userId: USER_ID.toHexString(), limit: 1, cursor: firstPage.nextCursor })
-    expect(firstPage).toEqual(expect.objectContaining({ hasNext: true, articles: [expect.objectContaining({ id: FIRST_ID.toHexString(), isSaved: true })] }))
-    expect(secondPage).toEqual(expect.objectContaining({ hasNext: false, nextCursor: null, articles: [expect.objectContaining({ id: SECOND_ID.toHexString(), isSaved: false })] }))
+    expect(firstPage).toEqual(expect.objectContaining({ hasNext: true, totalItems: 2, articles: [expect.objectContaining({ id: FIRST_ID.toHexString(), isSaved: true })] }))
+    expect(secondPage).toEqual(expect.objectContaining({ hasNext: false, nextCursor: null, totalItems: 2, articles: [expect.objectContaining({ id: SECOND_ID.toHexString(), isSaved: false })] }))
     expect(JSON.stringify([firstPage, secondPage])).not.toMatch(new RegExp(`${HIDDEN_ID}|${BLOCKED_ID}`))
   })
 

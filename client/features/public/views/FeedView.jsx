@@ -9,6 +9,8 @@ import {
 } from '../components/reader-primitives.jsx'
 import { EMPTY_FILTERS } from '../components/reader-format.js'
 
+const MAX_DIRECT_PAGE = 10_000
+
 export default function FeedView({
   state = 'loading',
   articles = [],
@@ -26,6 +28,8 @@ export default function FeedView({
   const nextFilters = { ...EMPTY_FILTERS, ...filters }
   const hasFilters = Object.values(nextFilters).some(Boolean)
   const sourceItems = Array.isArray(sources) ? sources : []
+  const totalItems = Number(meta.totalItems)
+  const totalPages = Number.isFinite(totalItems) && totalItems > 0 ? Math.ceil(totalItems / 10) : undefined
   return (
     <section
       className="public-view public-feed-view"
@@ -99,8 +103,15 @@ export default function FeedView({
           <Pagination
             page={page}
             hasNext={Boolean(meta.hasNext)}
+            totalPages={totalPages}
             onPrevious={handlers.onPreviousPage}
             onNext={handlers.onNextPage}
+            onFirst={handlers.onFirstPage}
+            onLast={handlers.onLastPage}
+            onPageChange={handlers.onPageChange}
+            disabled={state === 'loading'}
+            maxPage={MAX_DIRECT_PAGE}
+            canGoPrevious={page <= MAX_DIRECT_PAGE}
             label="Phân trang feed"
           />
         </div>

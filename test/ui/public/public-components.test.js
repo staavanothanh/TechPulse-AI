@@ -133,6 +133,48 @@ describe('public feature presentation contract', () => {
     expect(search).not.toMatch(/score|semanticScore|providerPayload|rawHtml/i)
   })
 
+  it('renders numbered feed pagination from totalItems without exposing the opaque cursor', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [article],
+      page: 2,
+      meta: { hasNext: true, nextCursor: 'opaque-feed-cursor', totalItems: 35 },
+      handlers,
+    })
+
+    expect(html).toContain('Trang 2/4')
+    expect(html).toContain('>Đầu</button>')
+    expect(html).toContain('>Cuối</button>')
+    expect(html).toContain('type="number"')
+    expect(html).toContain('value="2"')
+    expect(html).not.toContain('opaque-feed-cursor')
+  })
+
+  it('explains the safe intermediate-page limit while keeping the final-page shortcut', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [article],
+      page: 1,
+      meta: { hasNext: true, nextCursor: 'opaque-feed-cursor', totalItems: 200000 },
+      handlers,
+    })
+
+    expect(html).toContain('Trang trung gian tối đa 10000; dùng Đầu hoặc Cuối để di chuyển nhanh.')
+    expect(html).toContain('aria-describedby="phân-trang-feed-page-limit"')
+  })
+
+  it('does not expose an unsupported previous-page request after a deep final-page jump', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [article],
+      page: 20_000,
+      meta: { hasNext: false, nextCursor: null, totalItems: 200000 },
+      handlers,
+    })
+
+    expect(html).toMatch(/disabled=""[^>]*>Trước<\/button>/)
+  })
+
   it('renders saved empty state and article detail with a safe canonical source link', () => {
     const empty = render(SavedView, {
       state: 'ready',

@@ -57,7 +57,7 @@ describe('Step 8 Mongo content repository', () => {
     const currentSource = source()
     const first = { ...document(), _currentSource: currentSource, _isSaved: [{ _id: new ObjectId() }] }
     const second = { ...document({ _id: new ObjectId('507f1f77bcf86cd799439012'), titleOriginal: 'Second article' }), _currentSource: currentSource, _isSaved: [] }
-    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [first, second]) }))
+    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [{ page: [first, second], total: [{ totalItems: 2 }] }]) }))
     const repository = new MongoArticleRepository({ db: {}, client: {} })
     repository.articles = () => ({ aggregate })
 
@@ -66,11 +66,80 @@ describe('Step 8 Mongo content repository', () => {
     expect(page.articles).toEqual([expect.objectContaining({ id: ARTICLE_ID, source: { id: SOURCE_ID, name: 'Tech Review', authorityTier: 'editorial' }, isSaved: true, summaryStatus: 'pending', summaryVi: null, summaryBasis: null })])
     expect(page.hasNext).toBe(true)
     expect(page.nextCursor).toEqual(expect.any(String))
+    expect(page.totalItems).toBe(2)
     expect(page.nextCursor).not.toMatch(/507f1f77bcf86cd799439011|2026-08-10/)
-    expect(aggregate.mock.calls[0][0]).toEqual(expect.arrayContaining([
+    const pipeline = aggregate.mock.calls[0][0]
+    expect(pipeline).toEqual(expect.arrayContaining([
       expect.objectContaining({ $lookup: expect.objectContaining({ from: 'sources' }) }),
       expect.objectContaining({ $match: expect.objectContaining({ '_currentSource.operationalStatus': 'active', '_currentSource.licenseStatus': { $in: ['permitted', 'metadata-only'] } }) }),
     ]))
+  })
+
+  it('supports direct page jumps without applying a cursor position', async () => {
+    const currentSource = source()
+    const target = { ...document({ _id: new ObjectId('507f1f77bcf86cd799439013'), titleOriginal: 'Third article' }), _currentSource: currentSource, _isSaved: [] }
+    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [{ page: [target], total: [{ totalItems: 3 }] }]) }))
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate })
+
+    const page = await repository.listVisibleArticles({ userId: USER_ID, page: 3, limit: 1 })
+
+    expect(page).toEqual(expect.objectContaining({ totalItems: 3, articles: [expect.objectContaining({ id: target._id.toHexString() })] }))
+    const pagePipeline = aggregate.mock.calls[0][0].find((stage) => stage.$facet)?.$facet.page
+    expect(pagePipeline).toContainEqual({ $skip: 2 })
+  })
+
+  it('loads the final page with a bounded page request even when its offset is deep', async () => {
+    const currentSource = source()
+    const target = { ...document({ _id: new ObjectId('507f1f77bcf86cd799439014'), titleOriginal: 'Final article' }), _currentSource: currentSource, _isSaved: [] }
+    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [{ page: [target], total: [{ totalItems: 250001 }] }]) }))
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate })
+
+    const page = await repository.listVisibleArticles({ userId: USER_ID, lastPage: true, limit: 1 })
+
+    expect(page).toEqual(expect.objectContaining({ totalItems: 250001, hasNext: false, articles: [expect.objectContaining({ id: target._id.toHexString() })] }))
+    expect(aggregate).toHaveBeenCalledTimes(1)
+    const facet = aggregate.mock.calls[0][0].find((stage) => stage.$facet)?.$facet
+    expect(facet?.page).toEqual(expect.arrayContaining([{ $sort: { publishedAt: 1, _id: 1 } }, { $limit: 1 }]))
+    expect(facet?.page).not.toContainEqual(expect.objectContaining({ $skip: expect.any(Number) }))
+  })
+
+  it('returns exactly the remainder-sized final page when the total is not divisible by the limit', async () => {
+    const currentSource = source()
+    const ascending = Array.from({ length: 10 }, (_, index) => ({
+      ...document({ _id: new ObjectId((index + 1).toString(16).padStart(24, '0')), titleOriginal: `Article ${index + 1}` }),
+      _currentSource: currentSource,
+      _isSaved: [],
+    }))
+    const aggregate = vi.fn(() => ({ toArray: vi.fn(async () => [{ page: ascending, total: [{ totalItems: 25 }] }]) }))
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate })
+
+    const page = await repository.listVisibleArticles({ userId: USER_ID, lastPage: true, limit: 10 })
+
+    expect(page.articles.map((article) => article.id)).toEqual(ascending.slice(0, 5).toReversed().map((article) => article._id.toHexString()))
+    expect(page.articles).toHaveLength(5)
+  })
+
+  it('returns a full final page when the total is divisible by the limit and an empty page for zero rows', async () => {
+    const currentSource = source()
+    const rows = Array.from({ length: 10 }, (_, index) => ({
+      ...document({ _id: new ObjectId((index + 101).toString(16).padStart(24, '0')) }),
+      _currentSource: currentSource,
+      _isSaved: [],
+    }))
+    const aggregate = vi.fn()
+      .mockReturnValueOnce({ toArray: vi.fn(async () => [{ page: rows, total: [{ totalItems: 20 }] }]) })
+      .mockReturnValueOnce({ toArray: vi.fn(async () => [{ page: [], total: [] }]) })
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate })
+
+    const fullPage = await repository.listVisibleArticles({ userId: USER_ID, lastPage: true, limit: 10 })
+    const emptyPage = await repository.listVisibleArticles({ userId: USER_ID, lastPage: true, limit: 10 })
+
+    expect(fullPage.articles).toHaveLength(10)
+    expect(emptyPage).toEqual({ articles: [], hasNext: false, nextCursor: null, totalItems: 0 })
   })
 
   it('never serializes removed summary state or stale/unsafe media metadata', async () => {

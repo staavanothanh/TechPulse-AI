@@ -24,7 +24,7 @@ const authService = {
   verifyCsrf: vi.fn(async () => true),
 }
 const articleService = {
-  list: vi.fn(async () => ({ articles: [article], hasNext: false, nextCursor: null })),
+  list: vi.fn(async () => ({ articles: [article], hasNext: false, nextCursor: null, totalItems: 35 })),
   get: vi.fn(async () => ({ ...article, originalUrl: 'https://example.com/article', author: null, retrievedAt: '2026-08-10T09:00:00.000Z', citation: { sourceId: article.source.id, sourceName: article.source.name, titleOriginal: article.titleOriginal, originalUrl: 'https://example.com/article', author: null, publishedAt: article.publishedAt, sourceLanguage: article.sourceLanguage }, aiDisclosure: 'AI tổng hợp; hãy kiểm chứng với nguồn gốc.' })),
 }
 const searchService = {
@@ -63,7 +63,7 @@ describe('Step 8 content HTTP boundary', () => {
     const detail = await fetch(`${origin}/api/v1/articles/${ARTICLE_ID}`, { headers: headers() })
     const search = await fetch(`${origin}/api/v1/search-results?q=AI&mode=text`, { headers: headers() })
 
-    expect(await feed.json()).toEqual({ data: [article], meta: { hasNext: false, nextCursor: null } })
+    expect(await feed.json()).toEqual({ data: [article], meta: { hasNext: false, nextCursor: null, totalItems: 35 } })
     expect((await detail.json()).data.originalUrl).toBe('https://example.com/article')
     const searchPayload = await search.json()
     expect(searchPayload.meta).toEqual(expect.objectContaining({ requestedMode: 'text', effectiveMode: 'text' }))

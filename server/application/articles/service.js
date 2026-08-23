@@ -1,4 +1,4 @@
-import { ContentError, articleIdValue, contentListQuery, requireContentUser } from './query.js'
+import { ContentError, articleIdValue, pagedContentListQuery, requireContentUser } from './query.js'
 
 function unavailable() {
   throw new ContentError(503, 'service_unavailable', 'Article service is not configured')
@@ -9,7 +9,7 @@ export function createArticleService({ repository } = {}) {
   return Object.freeze({
     async list({ auth, query } = {}) {
       const userId = requireContentUser(auth)
-      return contentRepository.listVisibleArticles({ userId, ...contentListQuery(query) })
+      return contentRepository.listVisibleArticles({ userId, ...pagedContentListQuery(query) })
     },
     async get({ auth, articleId } = {}) {
       const userId = requireContentUser(auth)
