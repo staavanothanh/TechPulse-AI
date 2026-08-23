@@ -38,6 +38,30 @@ describe('Step 9 indexing queue adapter', () => {
     expect(jobRepository.completeWithFence.mock.calls[0][0].error).toMatchObject({ code: 'lease_fence_stale', retryable: true })
   })
 
+  it('defers provider admission denial before an external attempt and preserves Retry-After', async () => {
+    const retryAfterSeconds = 17
+    const admissionDenied = Object.assign(new Error('provider admission denied'), {
+      code: 'provider_unavailable', retryable: true, retryAfterSeconds, externalAttempts: 0,
+    })
+    const fence = { key: `indexing:article:${candidate.articleId}`, jobId: candidate.id, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 3 }
+    const jobRepository = {
+      claimQueuedWithFence: vi.fn(async () => true),
+      deferWithFence: vi.fn(async () => ({ status: 'queued' })),
+      completeWithFence: vi.fn(),
+      cancellationRequestedWithFence: vi.fn(async () => false),
+    }
+    const leaseRepository = { acquire: vi.fn(async () => fence) }
+    const executor = vi.fn(async () => { throw admissionDenied })
+    const adapter = createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, ownerToken: () => 'owner-token-value' })
+
+    await expect(adapter.claimAndExecute({ candidate, now: new Date('2026-08-10T00:00:00.000Z') })).resolves.toEqual(expect.objectContaining({
+      status: 'deferred', claimed: true, retryAfterSeconds,
+    }))
+    expect(jobRepository.deferWithFence).toHaveBeenCalledWith(expect.objectContaining({ jobId: candidate.id, fence, delayMs: expect.any(Number) }))
+    expect(jobRepository.deferWithFence.mock.calls[0][0].delayMs).toBeGreaterThanOrEqual(retryAfterSeconds * 1000)
+    expect(jobRepository.completeWithFence).not.toHaveBeenCalled()
+  })
+
   it('renews an active lease during long indexing work and clears the timer', async () => {
     vi.useFakeTimers()
     try {

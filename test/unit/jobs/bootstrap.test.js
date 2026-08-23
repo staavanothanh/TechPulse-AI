@@ -156,6 +156,20 @@ describe('durable-jobs bootstrap readiness', () => {
     await expect(createConfiguredJobService({ context: readyContext() })).rejects.toThrow(/rate-limit/i)
   })
 
+  it('materializes ingestion before the indexing drain and keeps the drain on the cron path', async () => {
+    const calls = []
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => { calls.push('materialize'); return { hasMore: false } } },
+      indexingDrainRunner: async () => { calls.push('indexing-drain') },
+      coordinatorRunner: async () => { calls.push('coordinate'); return { startedAt: new Date(), finishedAt: new Date() } },
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    await cron()
+
+    expect(calls).toEqual(['materialize', 'coordinate', 'indexing-drain'])
+  })
+
   it('consumes a bounded daily continuation when the first materialization page has more work', async () => {
     const materializeDailyIngestion = vi.fn()
       .mockResolvedValueOnce({ inspected: 100, created: 100, hasMore: true, period: '2026-08-10' })
