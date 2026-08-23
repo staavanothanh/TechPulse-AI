@@ -74,7 +74,7 @@ describe('DeepSeek V4 Flash provider smoke', () => {
     })
   })
 
-  it('binds all probes to deepseek-v4-flash but only admits summary into the policy router', () => {
+  it('binds summary and both Q&A workloads to deepseek-v4-flash with explicit nonconfidential approval', () => {
     const graph = buildDeepSeekV4FlashGraph(NOW)
 
     expect(graph.routes).toHaveLength(3)
@@ -83,6 +83,8 @@ describe('DeepSeek V4 Flash provider smoke', () => {
     expect(graph.routes.every((route) => route.capability === 'nonconfidential')).toBe(true)
     expect(graph.workloadPolicies).toEqual([
       expect.objectContaining({ workloadId: 'summary', operation: 'summary', requiredCapability: 'nonconfidential' }),
+      expect.objectContaining({ workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'nonconfidential' }),
+      expect.objectContaining({ workloadId: 'qa-support', operation: 'support', requiredCapability: 'nonconfidential' }),
     ])
     expect(graph.routes.every((route) => route.reviewedAt === '2026-08-23T00:00:00.000Z')).toBe(true)
     expect(graph.routes.every((route) => route.evidenceExpiresAt === '2026-11-21T00:00:00.000Z')).toBe(true)
@@ -109,8 +111,8 @@ describe('DeepSeek V4 Flash provider smoke', () => {
       mode: 'full',
       outboundRequests: 3,
       summary: { providerId: 'deepseek', model: MODEL },
-      answer: { providerId: 'deepseek', model: MODEL, policyEligible: false },
-      support: { providerId: 'deepseek', model: MODEL, policyEligible: false },
+      answer: { workloadId: 'qa-generation', operation: 'answer', providerId: 'deepseek', model: MODEL, policyEligible: true },
+      support: { workloadId: 'qa-support', operation: 'support', providerId: 'deepseek', model: MODEL, policyEligible: true },
     })
     expect(fetchImpl).toHaveBeenCalledTimes(3)
     for (const [url, init] of fetchImpl.mock.calls) {

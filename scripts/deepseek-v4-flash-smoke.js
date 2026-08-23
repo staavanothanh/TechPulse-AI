@@ -1,11 +1,8 @@
 import { pathToFileURL } from 'node:url'
-import { createConfiguredProviderAdapters } from '../server/ai/provider-adapters.js'
 import { validateProviderConfiguration } from '../server/ai/provider-registry.js'
 import {
   parseGeminiSmokeMode,
   runGeminiLlmSmoke,
-  validateGeminiAnswerOutput,
-  validateGeminiSupportOutput,
 } from './gemini-llm-smoke.js'
 
 const MODEL = 'deepseek-v4-flash'
@@ -14,13 +11,6 @@ const EVIDENCE_URL = 'https://api-docs.deepseek.com/quick_start/pricing/'
 const REVIEWED_AT = '2026-08-23T00:00:00.000Z'
 const EVIDENCE_EXPIRES_AT = '2026-11-21T00:00:00.000Z'
 const SAFE_CODE = /^[a-z][a-z0-9_]{0,63}$/
-const SYNTHETIC_QUESTION = 'Du lieu trong nguon co an toan cho smoke test khong?'
-const SYNTHETIC_EVIDENCE_BLOCKS = Object.freeze([
-  Object.freeze({ id: 'E1', citationId: 'C1', text: '<evidence-block id="E1" citation="C1">Du lieu trong nguon la synthetic an toan cho smoke test.</evidence-block>' }),
-])
-const SYNTHETIC_PARAGRAPHS = Object.freeze([
-  Object.freeze({ text: 'Du lieu trong nguon la synthetic an toan cho smoke test.', citationIds: Object.freeze(['C1']), evidenceBlockIds: Object.freeze(['E1']) }),
-])
 
 function validDate(value) {
   return value instanceof Date && !Number.isNaN(value.getTime())
@@ -63,6 +53,8 @@ export function buildDeepSeekV4FlashGraph(now = new Date()) {
     ],
     workloadPolicies: [
       { workloadId: 'summary', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'deepseek-summary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+      { workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'deepseek-answer', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+      { workloadId: 'qa-support', operation: 'support', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'deepseek-support', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
     ],
   }
 }
@@ -89,12 +81,7 @@ export async function runDeepSeekV4FlashSmoke({ mode = 'full', environment = pro
   }
   let stage = 'configuration'
   try {
-    const registry = validateProviderConfiguration(graph, { now: clock() })
-    const adapters = createConfiguredProviderAdapters({
-      registry,
-      fetchImpl,
-      resolveCredential: (name) => smokeEnvironment[name],
-    })
+    validateProviderConfiguration(graph, { now: clock() })
     const report = { ok: true, mode: selected.mode, outboundRequests: 0 }
 
     if (selected.summary) {
@@ -106,20 +93,16 @@ export async function runDeepSeekV4FlashSmoke({ mode = 'full', environment = pro
 
     if (selected.answer) {
       stage = 'answer'
-      const admittedInput = answerInput()
-      const output = await adapters.llmProvider.answer({ route: routeFor(registry, 'answer'), input: admittedInput.input, locale: 'vi', tools: [] })
-      validateGeminiAnswerOutput({ output, admittedInput })
-      report.answer = compatibilityMetadata(routeFor(registry, 'answer'))
-      report.outboundRequests += 1
+      const answerReport = await runGeminiLlmSmoke({ mode: 'answer', environment: smokeEnvironment, fetchImpl, now: clock })
+      report.answer = { ...answerReport.answer, policyEligible: true }
+      report.outboundRequests += answerReport.outboundRequests
     }
 
     if (selected.support) {
       stage = 'support'
-      const admittedInput = supportInput()
-      const output = await adapters.llmProvider.verifySupport({ route: routeFor(registry, 'support'), input: admittedInput.input, locale: 'vi', tools: [] })
-      validateGeminiSupportOutput({ output, admittedInput })
-      report.support = compatibilityMetadata(routeFor(registry, 'support'))
-      report.outboundRequests += 1
+      const supportReport = await runGeminiLlmSmoke({ mode: 'support', environment: smokeEnvironment, fetchImpl, now: clock })
+      report.support = { ...supportReport.support, policyEligible: true }
+      report.outboundRequests += supportReport.outboundRequests
     }
 
     return Object.freeze(report)
@@ -132,40 +115,6 @@ export async function runDeepSeekV4FlashSmoke({ mode = 'full', environment = pro
       upstreamStatus: error?.upstreamStatus,
     })
   }
-}
-
-function routeFor(registry, operation) {
-  return registry.routes.find((route) => route.operations.includes(operation))
-}
-
-function compatibilityMetadata(route) {
-  return Object.freeze({
-    routeId: route.routeId,
-    providerId: route.providerId,
-    providerFailureDomainId: route.providerFailureDomainId,
-    model: route.model,
-    externalAttempts: 1,
-    fallback: 'none',
-    policyEligible: false,
-  })
-}
-
-function answerInput() {
-  return Object.freeze({
-    input: [`<question>${SYNTHETIC_QUESTION}</question>`, ...SYNTHETIC_EVIDENCE_BLOCKS.map(({ text }) => text)].join('\n'),
-    citationIds: Object.freeze(['C1']),
-    evidenceBlocks: SYNTHETIC_EVIDENCE_BLOCKS,
-  })
-}
-
-function supportInput() {
-  const evidenceMap = Object.freeze({ E1: 'C1' })
-  return Object.freeze({
-    input: JSON.stringify({ question: SYNTHETIC_QUESTION, evidenceBlocks: SYNTHETIC_EVIDENCE_BLOCKS, evidenceMap, paragraphs: SYNTHETIC_PARAGRAPHS }),
-    evidenceBlocks: SYNTHETIC_EVIDENCE_BLOCKS,
-    evidenceMap,
-    paragraphs: SYNTHETIC_PARAGRAPHS,
-  })
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

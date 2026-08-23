@@ -53,7 +53,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | LLM primary | Server chọn route từ workload policy; route chứa provider, model, operation và capability evidence | Provider/model cụ thể là deployment config, không là business invariant |
 | Model fallback | Model khác trong cùng provider failure domain | Chỉ lỗi `model-retryable`; không được hạ privacy capability |
 | Provider fallback | Route thuộc provider failure domain khác | Chỉ lỗi `provider-retryable` hoặc domain unavailable; vẫn pass admission/support gate |
-| Q&A provider route | Chỉ route có current `zdr-verified` evidence | Không có route phù hợp thì refuse/unavailable, không gửi raw question |
+| Q&A provider route | Current route được owner chấp thuận ở capability `nonconfidential` cho DeepSeek `deepseek-v4-flash` | Sensitive input vẫn refuse; route unavailable thì refuse/unavailable, không có fallback trong graph hiện tại |
 | Scheduler | Vercel Cron + admin trigger | Có thể chuyển durable worker hậu MVP |
 
 ### 2.3. Trust boundaries
@@ -197,7 +197,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AI-006 | UI gắn nhãn AI dịch/tổng hợp | Người dùng biết giới hạn |
 | AI-007 | AI không dùng chi tiết chỉ tồn tại trong media chưa xử lý | Không claim từ ảnh/video có `mediaEvidenceStatus=not-analyzed` |
 | AI-008 | AI artifact commit match current Source Policy version | Policy đổi trong lúc provider chạy làm output cũ bị discard, không persist |
-| AI-009 | Provider route có capability evidence và expiry | Q&A raw question chỉ đi `zdr-verified`; nonconfidential route không được chọn/fallback |
+| AI-009 | Provider route có capability evidence và expiry | Q&A raw question/evidence đã admit chỉ đi DeepSeek `deepseek-v4-flash` trên `nonconfidential`; sensitive-input/source-policy gate không được bypass |
 | AI-010 | Admission và route/provider circuits bảo vệ cost và availability | Routes dùng cùng credential tranh chung Mongo admission-domain concurrency/budget; route circuit tách provider-domain circuit; một logical operation tối đa hai external attempts |
 
 ### 4.8. AI Q&A và citation
@@ -211,12 +211,12 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | QA-005 | Conflicting sources được trình bày riêng | Không tự che giấu mâu thuẫn |
 | QA-006 | Thiếu evidence dẫn tới refusal | Không bịa câu trả lời |
 | QA-007 | Prompt injection trong evidence không thay đổi instruction/tool use | External text chỉ là quoted data |
-| QA-008 | Lỗi retryable có thể dùng đúng model hoặc provider fallback theo failure class | Không fallback khi lỗi policy/privacy/validation/schema/support hoặc ambiguous outcome |
+| QA-008 | Current DeepSeek graph không có model/provider fallback; lỗi retryable dùng unavailable hoặc bounded job retry | Không gửi cùng admitted input sang route khác; policy/privacy/validation/schema/support hoặc ambiguous outcome luôn terminal |
 | QA-009 | Delayed Q&A không tái tạo dữ liệu sau deletion/takedown | Final write match active user + exact sessionVersion + current article lifecycle; CAS miss discard output |
 | QA-010 | Grounded answer có actor/session-scoped idempotency | Same key/hash chỉ reserve một quota/provider/chat result; khác hash trả `409` |
 | QA-011 | Community signal chỉ dùng discovery | HN vẫn ở feed/search nhưng không eligible cho Q&A evidence/citation |
 | QA-012 | Citation runtime kiểm tra support trên exact evidence blocks | Paragraph trả internal block IDs; unsupported/uncertain deterministic refuse trong MVP |
-| QA-013 | User question qua privacy admission trước provider routing | Credential/high-risk identifier trả `sensitive-input`; primary/fallback dùng cùng admitted input và metadata-only log |
+| QA-013 | User question qua privacy admission trước provider routing | Credential/high-risk identifier trả `sensitive-input`; admitted input chỉ tới DeepSeek `deepseek-v4-flash` nonconfidential route và metadata-only log |
 
 ### 4.9. Admin operations và governance
 
@@ -363,7 +363,7 @@ approved → completed
 24. TTL không là bằng chứng authorization, account deletion completion hoặc lease fencing; retention/cutoff được enforce tại query/worker path.
 25. Browser mutation không dựa vào CORS/cookie default mơ hồ: exact Origin, `__Host-` tuple và no-store auth response là invariant.
 26. Request vượt ingress bounds hoặc có unknown/duplicate/operator/prototype query bị reject trước route/repository.
-27. Q&A privacy/idempotency/provider admission/support gate áp dụng giống nhau cho primary và fallback; không route nào được bypass gate.
+27. Q&A privacy/idempotency/provider admission/support gate áp dụng cho current DeepSeek route; graph không có fallback và không route nào được bypass gate.
 28. `community-signal` chỉ discovery, không là Q&A evidence trong MVP.
 29. HMAC rotation không reset quota; append-only Mongo lifecycle không được quên predecessor khi env bỏ key, deletion derive mọi non-retired key version và old key chỉ retire sau successor >=30 ngày cùng zero dependent records.
 30. Live governance database/signature không khả dụng thì terminal governance mutation fail closed; backup/restore serving gate là yêu cầu hậu MVP.
@@ -405,8 +405,8 @@ Các invariant sau không thuộc MVP release gate: restored app database không
 - Server-side DNS pinning chỉ bảo vệ server safe-fetch, không bảo vệ direct browser preview; remote media không được coi là trusted evidence và luôn có visual fallback.
 - CRON_SECRET/service secret tách khỏi admin/user credential.
 - Provider credential chỉ được resolve từ environment/secret-store reference; endpoint profile là server-owned và không nhận từ HTTP/admin.
-- Không gửi credential/high-risk identifier, email, token, private chat hoặc unapproved full text tới provider. Raw Q&A chỉ dùng current `zdr-verified` route; không có route phù hợp thì fail closed.
-- Mọi route có privacy evidence được review và có expiry; model/provider fallback không được hạ capability hoặc đổi admitted input.
+- Không gửi credential/high-risk identifier, email, token, unapproved chat history hoặc unapproved full text tới provider. Raw Q&A hiện tại chỉ được gửi sau privacy/source admission tới DeepSeek `deepseek-v4-flash` trên capability `nonconfidential`; dữ liệu được gửi có rủi ro retention do DeepSeek không có bằng chứng ZDR hiện hành.
+- Mọi route có privacy evidence được review và có expiry. Graph hiện tại không có model/provider fallback; nếu bổ sung candidate, candidate không được hạ capability hoặc đổi admitted input.
 - RSS/Atom XML parser không network/DOCTYPE/entity/XInclude và có wire/decoded/depth/node/field/deadline bounds.
 - Quota/IP HMAC keyring có một current + tối đa hai retiring versions; rate-limit bucket lưu fingerprint để phát hiện đổi secret khi giữ nguyên version. Stable version config không làm lifecycle authority: append-only Mongo snapshot revision/hash-chain giữ history và runtime role chỉ được find/insert. Governance runtime signer dùng keyring tách biệt; offline checkpoint keys và sidecar retention thuộc recovery track hậu MVP, chỉ owner giữ ngoài repo/runtime/DB. Không lưu raw subject/secret/key material.
 - Direct domain mutation/audit dùng một transaction-capable runtime Mongo identity/session với per-collection role: domain mutation cần thiết nhưng audit/suppression chỉ insert/find. Separate maintenance/offline credentials không tham gia direct transaction.
@@ -464,7 +464,7 @@ MVP chỉ được xem là hoàn thành khi tất cả gate sau đạt:
 - Refusal cases không tạo unsupported claim.
 - Hidden/removed/review-needed article không xuất hiện trong context.
 - HN/community-only scope refuse `insufficient-evidence`; irrelevant visible evidence block không pass support gate.
-- Sensitive-input sentinel không tới nonconfidential provider; route-specific primary/fallback cùng pass privacy/support evaluation.
+- Sensitive-input sentinel không tới DeepSeek nonconfidential provider; admitted input pass privacy/support evaluation và current graph không tạo fallback call.
 
 Evaluation protocol được version-control cùng fixture:
 

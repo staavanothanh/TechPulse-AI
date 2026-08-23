@@ -18,6 +18,6 @@ export function admitQuestion(question, { capability } = {}) {
     throw new PrivacyAdmissionError('validation_error', 'Question is invalid')
   }
   if (detectSensitiveInput(question)) throw new PrivacyAdmissionError('sensitive-input', 'Question cannot be processed safely')
-  if (capability !== 'zdr-verified') throw new PrivacyAdmissionError('provider-unavailable', 'Current ZDR provider route is unavailable')
+  if (!['zdr-verified', 'nonconfidential'].includes(capability)) throw new PrivacyAdmissionError('provider-unavailable', 'Current AI provider route is unavailable')
   return Object.freeze({ question: question.trim(), capability })
 }

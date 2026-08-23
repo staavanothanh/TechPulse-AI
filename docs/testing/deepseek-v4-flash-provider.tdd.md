@@ -2,7 +2,7 @@
 
 ## User journey
 
-Người vận hành cần xác nhận `deepseek-v4-flash` có thể tạo summary tiếng Việt và thực hiện compatibility probe cho grounded answer/support mà không làm lộ credential hoặc gửi dữ liệu thật.
+Người vận hành cần xác nhận `deepseek-v4-flash` có thể tạo summary tiếng Việt, grounded answer và support qua provider router mà không làm lộ credential hoặc gửi dữ liệu thật.
 
 ## RED
 
@@ -22,15 +22,25 @@ Command:
 npm test -- --run test/unit/ai/deepseek-v4-flash-provider.test.js
 ```
 
-Result: PASS, 9 tests.
+Result: PASS, 9 tests for the adapter smoke file before the Q&A policy cutover.
+
+The cutover RED/GREEN tests also cover `server/bootstrap/qa.js` and the privacy admission boundary.
+
+GREEN command:
+
+```text
+npm test -- --run test/unit/ai/deepseek-v4-flash-provider.test.js test/unit/qa/grounded-answer.test.js test/unit/qa/bootstrap.test.js
+```
+
+Result: PASS, 29 tests.
 
 Targeted coverage command:
 
 ```text
-npm test -- --run test/unit/ai/deepseek-v4-flash-provider.test.js test/unit/ai/provider-adapters.test.js test/unit/ai/provider-router.test.js test/unit/ai/provider-registry-config.test.js test/unit/ai/gemini-provider-adapter.test.js test/unit/ai/gemini-llm-smoke.test.js --coverage --coverage.include=scripts/deepseek-v4-flash-smoke.js --coverage.include=server/ai/provider-adapters.js --coverage.include=server/ai/provider-endpoint-profiles.js --coverage.include=server/ai/provider-router.js
+npm test -- --run test/unit/ai/deepseek-v4-flash-provider.test.js test/unit/ai/provider-adapters.test.js test/unit/ai/provider-router.test.js test/unit/ai/provider-registry-config.test.js test/unit/ai/gemini-provider-adapter.test.js test/unit/ai/gemini-llm-smoke.test.js test/unit/qa/bootstrap.test.js test/unit/qa/grounded-answer.test.js test/unit/qa/service.test.js test/config/runtime.test.js --coverage --coverage.include=scripts/deepseek-v4-flash-smoke.js --coverage.include=server/ai/provider-registry.js --coverage.include=server/ai/provider-adapters.js --coverage.include=server/ai/provider-endpoint-profiles.js --coverage.include=server/bootstrap/qa.js --coverage.include=server/domain/qa/privacy.js --coverage.include=server/ai/provider-router.js
 ```
 
-Result: PASS, 73 tests. Statements 88.31%, branches 85.78%, functions 93.93%, lines 94.63%.
+Result: PASS, 141 tests. Statements 86.27%, branches 84.41%, functions 93.20%, lines 96.18%.
 
 ## Test specification
 
@@ -39,8 +49,8 @@ Result: PASS, 73 tests. Statements 88.31%, branches 85.78%, functions 93.93%, li
 | Endpoint chỉ tới `https://api.deepseek.com/chat/completions` và không theo redirect | Unit | PASS |
 | Adapter dùng Bearer credential, JSON output và `thinking.type=disabled` | Unit | PASS |
 | Summary, answer và support đều yêu cầu model `deepseek-v4-flash` | Unit | PASS |
-| Summary chạy qua provider policy với capability `nonconfidential` | Integration | PASS |
-| Q&A probe không khai báo ZDR và được đánh dấu `policyEligible=false` | Integration | PASS |
+| Summary chạy qua provider router với capability `nonconfidential` | Integration | PASS |
+| Q&A generation và support chạy qua provider router với capability `nonconfidential` đã được owner phê duyệt | Integration | PASS |
 | Grounded answer thiếu citation bị từ chối | Unit | PASS |
 | Credential thiếu làm smoke dừng trước network dispatch | Unit | PASS |
 | HTTP 429 được phân loại retryable mà không đọc provider error body | Unit | PASS |
@@ -54,7 +64,7 @@ Command:
 npm run smoke:deepseek:v4-flash -- full
 ```
 
-Result: PASS. Ba outbound request hoàn tất: summary, answer và support. Mỗi response xác nhận `payload.model=deepseek-v4-flash`.
+Result: PASS. Ba outbound request hoàn tất qua provider router cho summary, answer và support. Mỗi response xác nhận `providerId=deepseek`, `model=deepseek-v4-flash`, `externalAttempts=1`, `fallback=none`; answer/support có `policyEligible=true`. Command xóa biến process rỗng trước khi Node nạp credential từ `.env`; test không đọc hoặc in secret.
 
 Model catalog được kiểm tra bằng một command riêng, không phải command chat smoke:
 
@@ -66,8 +76,10 @@ Result: PASS, HTTP 200. Catalog liệt kê `deepseek-v4-flash`, `deepseek-v4-pro
 
 Credential được nạp bằng `node --env-file-if-exists=.env`. Test không đọc hoặc in `.env`. Smoke chỉ dùng input tổng hợp và không gửi dữ liệu MongoDB.
 
-## Rate limit và privacy gap
+## Rate limit và privacy boundary
 
 Tài liệu DeepSeek hiện công bố concurrency limit 2500 cho `deepseek-v4-flash` ở cấp account. Vượt giới hạn trả HTTP 429. Tài liệu không công bố RPM, RPH hoặc RPD như Gemini.
 
-DeepSeek không công bố Zero Data Retention cho API. Vì vậy provider này chưa đủ điều kiện cho Q&A production theo policy `zdr-verified` hiện tại. Compatibility probe chỉ chứng minh giao thức và output contract với dữ liệu tổng hợp.
+DeepSeek không công bố Zero Data Retention cho API. Cutover này khai báo Q&A là `nonconfidential` theo owner approval. Sensitive-input detector, source-policy fence, citation validation và support validation vẫn chạy trước khi persist kết quả. Không gửi dữ liệu confidential qua route này nếu chưa có evidence `zdr-verified`.
+
+Query embedding vẫn yêu cầu capability `zdr-verified`. Current OpenRouter/BGE-M3 route là `nonconfidential`, vì vậy raw question không được gửi tới OpenRouter và Q&A retrieval dùng keyword fallback. Article embedding vẫn dùng BGE-M3 với compatibility identity cũ.

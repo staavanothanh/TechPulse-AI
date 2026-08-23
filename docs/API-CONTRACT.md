@@ -36,7 +36,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - xem feed/filter/detail với cursor ổn định;
 - render ảnh remote-preview hoặc video link-only đúng `leadMedia`; dùng fallback khi field null/lỗi;
 - search text/hybrid và biết khi hệ thống fallback;
-- gửi câu hỏi theo article/topic/time với `Idempotency-Key`, render paragraph-level citations hoặc refusal; input nhạy cảm và provider privacy không đủ phải fail closed;
+- gửi câu hỏi theo article/topic/time với `Idempotency-Key`, render paragraph-level citations hoặc refusal; input nhạy cảm hoặc admission/source-policy không đủ phải fail closed;
 - xóa chat và tạo automatic account-deletion workflow; request thành công revoke session, không đi qua content takedown.
 
 ### 3.2. Admin client
@@ -76,7 +76,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - Mọi external URL được serialize/render dùng canonical `HttpsUrl`: HTTPS, không username/password credential; runtime parse URL thay vì chỉ tin `format: uri`/regex.
 - Ingestion/indexing job expose server-captured `expectedSourcePolicyVersion`; article/checkpoint/artifact commit phải match current source version/state/config hoặc discard output mà không advance checkpoint.
 - `answered` và `refused` là hai schema loại trừ nhau. Runtime phải kiểm tra citation ID resolve tới retrieved article đang visible, loại `authorityTier=community-signal`, rồi yêu cầu mỗi paragraph có internal evidence-block IDs và một conservative support verdict trước persistence. Public response vẫn citation cấp đoạn, không expose block ID.
-- Q&A privacy gate từ chối credential/high-risk identifier bằng `sensitive-input`. Raw question chỉ được gửi route có current `zdr-verified` evidence. Model/provider fallback nhận cùng admitted input, lặp lại capability/evidence/admission checks và không được client chọn provider/model.
+- Q&A privacy gate từ chối credential/high-risk identifier bằng `sensitive-input`. Current graph gửi raw question và evidence đã được admit tới DeepSeek `deepseek-v4-flash` trên capability `nonconfidential`; route này không phải ZDR và rủi ro retention của provider phải được chấp thuận riêng. Query embedding vẫn yêu cầu `zdr-verified`, nên current OpenRouter/BGE-M3 route không nhận raw question và retrieval dùng keyword fallback. Không có model/provider fallback trong graph hiện tại. Mọi candidate tương lai phải lặp lại capability/evidence/admission checks và không được client chọn provider/model.
 - Historical chat citation có discriminated `available|unavailable` shape; unavailable không có URL/title/publishedAt. Takedown completion luôn có `historicalChatCitationsRedacted=true`.
 - Account deletion response phân biệt `sessionsRevoked` với `sessionsDeleted`; completion chỉ đạt sau direct delete/zero-match session documents. `userQuotaDataDeleted` chỉ bao phủ user-scoped Q&A quota, không bao giờ là shared IP anti-abuse bucket.
 - Account deletion POST không nhận free-form reason; server derive safe category `user-request`. Takedown response dùng nullable `decisionReasonCode`, không có `decisionReason` free-form.
@@ -193,7 +193,7 @@ TP-M01 là historical Step-1 gate và đã đóng. Canonical OpenAPI hiện có 
 - [ ] `/answers` bắt buộc `Idempotency-Key`, có `409`; same-key concurrent fixture chỉ tạo một logical attempt/quota/provider/chat append.
 - [ ] Empty collection và refusal answer có fixture hợp lệ.
 - [ ] Invalid answer fixtures bị reject: answered rỗng/không citation, refused có paragraph hoặc thiếu refusal reason.
-- [ ] `sensitive-input` refusal hợp lệ; non-confidential route không nhận raw question; community-signal/irrelevant evidence block không thể tạo answered response.
+- [ ] `sensitive-input` refusal hợp lệ; sensitive input không tới DeepSeek nonconfidential route; admitted non-sensitive input vẫn qua support gate; community-signal/irrelevant evidence block không thể tạo answered response.
 - [ ] Source policy/connector fixture mâu thuẫn bị reject; technical check `passed` thiếu evidence bị reject.
 - [ ] Source request/response có `attributionRequired=true` và `attributionText=null|missing|empty` bị reject; merged-state domain validation cũng chạy.
 - [ ] SourceReconciliation completed thiếu version/null error hoặc failed thiếu SafeError bị reject; runtime reject `completedPolicyVersion != requiredPolicyVersion`.

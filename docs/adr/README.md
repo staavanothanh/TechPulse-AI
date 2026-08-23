@@ -18,7 +18,8 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0012](0012-separate-privacy-cleanup-and-retention-boundaries.md) | Separate privacy cleanup and retention boundaries | accepted | 2026-08-08 |
 | [0013](0013-use-config-driven-provider-routing.md) | Use configuration-driven provider routing and bounded failover | accepted | 2026-08-15 |
 | [0014](0014-use-inline-leases-for-stable-deletion-workflows.md) | Use inline leases for stable account-deletion workflows | accepted | 2026-08-15 |
-| [0015](0015-adopt-gemini-for-llm-workloads.md) | Chuyen summary va Q&A sang Gemini, giu BGE-M3 embedding | accepted | 2026-08-21 |
+| [0015](0015-adopt-gemini-for-llm-workloads.md) | Chuyen summary va Q&A sang Gemini, giu BGE-M3 embedding | superseded by ADR-0016 | 2026-08-21 |
+| [0016](0016-adopt-deepseek-v4-flash-for-llm-workloads.md) | Chuyen summary va Q&A sang DeepSeek V4 Flash, giu BGE-M3 embedding | accepted | 2026-08-23 |
 
 ## Lifecycle
 
