@@ -20,7 +20,7 @@ function environment() {
 
 function operationFromPayload(payload) {
   const instruction = payload?.messages?.[0]?.content
-  if (instruction?.startsWith('Tom tat')) return 'summary'
+  if (instruction?.startsWith('Summarize')) return 'summary'
   if (instruction?.startsWith('Tra loi')) return 'answer'
   if (instruction?.startsWith('Kiem tra')) return 'support'
   throw new Error('unexpected operation')
