@@ -80,8 +80,8 @@ docs/
 - Account deletion tách `sessionsRevoked` khỏi direct `sessionsDeleted`; xóa direct user-owned chat/saved/answer-attempt data và mọi user Q&A quota bucket theo các HMAC key version còn hiệu lực, còn shared IP anti-abuse bucket có `subjectType=ip` và không thuộc cleanup.
 - Retention schedule cho session/quota/chat/job/governance đã khóa theo ADR-0012; TTL không là deletion-completion hoặc fencing evidence.
 - Browser API same-origin với exact Origin, `__Host-` cookie, no-store auth response và strict target/JSON/query ingress; RSS XML parser fail closed dưới entity/decompression input.
-- Q&A dùng 24h idempotent attempt, privacy-verified route, credential admission domain, route/provider failure-domain circuits và exact evidence-block support; `community-signal` chỉ feed/search.
-- ADR-0013 tách protocol adapter, provider failure domain, credential admission domain, route và workload policy. Model fallback và provider fallback dùng failure class riêng, cùng admitted input và tối đa hai external attempts trong MVP.
+- Q&A dùng 24h idempotent attempt, credential admission domain, route/provider failure-domain circuits và exact evidence-block support. Current graph dùng DeepSeek `deepseek-v4-flash` trên capability `nonconfidential`; sensitive-input/source-policy/support gates vẫn bắt buộc và `community-signal` chỉ feed/search. Query embedding vẫn ZDR-gated, nên current OpenRouter/BGE-M3 route không nhận raw question và Q&A retrieval dùng keyword fallback.
+- ADR-0013 tách protocol adapter, provider failure domain, credential admission domain, route và workload policy. Current DeepSeek graph chỉ có một route cho mỗi LLM workload, không có model/provider fallback và dùng bounded retry; nếu bổ sung fallback phải giữ failure-class, capability và admitted-input gates.
 - Cleanup có fixed machine-only task table + deadline/source-citation indexes; HMAC keyring, closed tombstone và signed `techpulse_governance` checkpoint/suppression state bảo vệ runtime governance. Restore replay và backup sidecar là hậu MVP.
 - Mirrored `runtimeCapabilityProbes` ở hai logical DB chứng minh runtime cross-database transaction/role; probe chỉ có opaque ID/timestamps, TTL 5 phút và immediate cleanup/abort zero residue.
 - Audit IP-HMAC field cleanup dùng Mongo maintenance client/credential riêng; thiếu credential không được fallback sang runtime identity.
@@ -109,7 +109,7 @@ Các release item còn mở:
 
 - chọn và review chính xác 8–10 RSS feed;
 - benchmark embedding route theo compatibility identity trước khi khóa version;
-- cấu hình ít nhất hai provider failure domain độc lập và kiểm tra quota/capability evidence gần ngày demo;
+- kiểm tra quota/capability evidence của DeepSeek gần ngày demo; nếu bật provider fallback hậu kỳ thì phải cấu hình thêm failure domain độc lập và evidence tương đương;
 - verify account-deletion inline recovery index/query plan và mirrored capability-probe role trên Atlas;
 - chốt ngày tắt public deployment sau khi chấm.
 

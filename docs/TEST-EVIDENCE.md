@@ -72,6 +72,20 @@ Preview API/Cron smoke was also observed through `npm run test:e2e:vercel`: heal
 
 The synthetic gates do not prove the Google project has current `zdr-verified` evidence. A Google Pro account does not by itself guarantee an API model's current rate-limit window; the live gate must observe the configured project response. Quota is a capacity/billing property, not privacy-retention evidence; Q&A remains fail-closed until the configured evidence is reviewed and unexpired.
 
+## DeepSeek V4 Flash LLM migration — 2026-08-23
+
+| Gate | Evidence | Result |
+| --- | --- | --- |
+| Focused provider/Q&A/indexing/runtime suite | `npm test -- --run test/unit/ai/deepseek-v4-flash-provider.test.js test/unit/ai/provider-registry-config.test.js test/unit/ai/provider-router.test.js test/unit/ai/provider-admission-router-boundary.test.js test/unit/qa/bootstrap.test.js test/unit/qa/grounded-answer.test.js test/unit/qa/service.test.js test/unit/qa/retrieval-contract.test.js test/unit/indexing/artifact-processor.test.js test/config/runtime.test.js` | PASS, 10 files/129 tests |
+| Q&A HTTP, answer lifecycle and indexing text fallback integration | `npm test -- --run test/integration/qa-http.test.js test/integration/answers.test.js test/integration/indexing/text-fallback.test.js` | PASS, 3 files/11 tests |
+| Scoped coverage for changed provider/Q&A boundaries | Vitest coverage command recorded in `docs/testing/deepseek-v4-flash-provider.tdd.md` | PASS, 141 tests; statements 86.27%, branches 84.41%, functions 93.20%, lines 96.18% |
+| Security suite | `npm run test:security` | PASS, 12 files/77 tests |
+| Contract fixtures | `npm run contract:test` | PASS, 56 operations and all runtime fixture groups |
+| Lint/build | `npm run lint`; `npm run build` | PASS |
+| Live DeepSeek summary, answer and support with synthetic input | `Remove-Item Env:DEEPSEEK_API_KEY -ErrorAction SilentlyContinue; node --env-file-if-exists=.env scripts/deepseek-v4-flash-smoke.js full` | PASS, 3 outbound requests; all used provider `deepseek`, model `deepseek-v4-flash`, one external attempt and no fallback; answer/support policy eligible |
+
+ADR-0016 supersedes the Gemini deployment decision for current LLM traffic. Q&A uses owner-approved capability `nonconfidential`; sensitive-input, Source Registry, citation/support, idempotency and lifecycle gates remain active. Query embedding remains `zdr-verified`-only, so current OpenRouter/BGE-M3 does not receive raw questions and Q&A retrieval uses keyword fallback. Article embedding remains OpenRouter/BGE-M3 with compatibility identity `bge-m3-v1-1024`.
+
 ## Post-MVP recovery evidence
 
 | Recovery gate | Status | Missing authority or implementation |

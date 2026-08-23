@@ -60,11 +60,14 @@ describe('Step 10 privacy admission', () => {
     expect(() => admitQuestion(values[0])).toThrow(PrivacyAdmissionError)
   })
 
-  it('keeps the exact question for a current ZDR route only', () => {
+  it('keeps the exact question for an approved confidential or nonconfidential route', () => {
     expect(admitQuestion('Tóm tắt tác động của mô hình này?', { capability: 'zdr-verified' })).toEqual({
       question: 'Tóm tắt tác động của mô hình này?', capability: 'zdr-verified',
     })
-    expect(() => admitQuestion('Câu hỏi an toàn?', { capability: 'nonconfidential' })).toThrow(/ZDR/i)
+    expect(admitQuestion('Câu hỏi an toàn?', { capability: 'nonconfidential' })).toEqual({
+      question: 'Câu hỏi an toàn?', capability: 'nonconfidential',
+    })
+    expect(() => admitQuestion('Câu hỏi an toàn?', { capability: 'unsupported' })).toThrow(/provider/i)
   })
 })
 

@@ -41,13 +41,14 @@ function routeMetadata({ policy, route, externalAttempts, fallback }) {
 }
 
 export class ProviderRoutingError extends Error {
-  constructor(classification, { metadata, retryAfterSeconds } = {}) {
+  constructor(classification, { metadata, retryAfterSeconds, upstreamStatus } = {}) {
     super('AI provider operation could not complete safely')
     this.name = 'ProviderRoutingError'
     this.code = classification.code
     this.failureClass = classification.failureClass
     this.retryable = classification.retryable === true
     if (metadata) this.metadata = metadata
+    if (Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599) this.upstreamStatus = upstreamStatus
     if (this.failureClass !== 'ambiguous' && Number.isInteger(retryAfterSeconds) && retryAfterSeconds > 0) this.retryAfterSeconds = retryAfterSeconds
   }
 }
@@ -59,6 +60,7 @@ function routingError(error, context = {}) {
   return error instanceof ProviderRoutingError ? error : new ProviderRoutingError(classification, {
     metadata: context.metadata,
     retryAfterSeconds: classification.retryAfterSeconds,
+    upstreamStatus: classification.upstreamStatus,
   })
 }
 

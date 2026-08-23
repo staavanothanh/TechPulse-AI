@@ -248,6 +248,7 @@ function stageError(error, stage) {
   safe.smokeStage = stage
   if (typeof error?.failureClass === 'string' && SAFE_CODE.test(error.failureClass)) safe.failureClass = error.failureClass
   if (error?.retryable === true) safe.retryable = true
+  if (Number.isInteger(error?.upstreamStatus) && error.upstreamStatus >= 400 && error.upstreamStatus <= 599) safe.upstreamStatus = error.upstreamStatus
   return safe
 }
 

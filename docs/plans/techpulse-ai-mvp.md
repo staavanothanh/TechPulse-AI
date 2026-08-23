@@ -79,7 +79,7 @@ Mọi step phải giữ các invariant sau:
 23. Takedown historical citation cleanup dùng indexed bounded per-document update, retry idempotently và zero-match scan; không mở transaction xuyên toàn chat corpus.
 24. Browser API same-origin: exact Origin, `__Host-` cookie/clear tuple, no-store auth response; global ingress reject oversized/non-JSON/compressed/query-pollution trước repository.
 25. Login/register dùng trusted Vercel IP adapter + fixed atomic bounds trước password hash/write; HMAC keyring rotation không reset quota.
-26. Q&A raw question chỉ đi current `zdr-verified` route; 24h idempotent attempt, credential admission domain, route/provider-domain circuits và support gate áp dụng giống nhau cho primary/model/provider fallback.
+26. Q&A raw question chỉ đi sau sensitive-input và Source Registry admission tới current DeepSeek `deepseek-v4-flash` route với capability `nonconfidential`; 24h idempotent attempt, credential admission domain, route/provider-domain circuits và support gate vẫn bắt buộc. Graph hiện tại không có model/provider fallback.
 27. `community-signal` chỉ feed/search discovery, không đi vào Q&A evidence/citation.
 28. RSS/Atom parser cấm DOCTYPE/entity/XInclude/network resolver và có wire/decoded/depth/node/field/time bounds.
 29. Retention/cleanup dùng exact deadline+`_id` indexes và machine-only fixed task table; caller không truyền collection/filter/cutoff/batch.
@@ -683,7 +683,7 @@ Revert user routes/UI theo module; article data/pipeline giữ nguyên. Nếu cu
 
 ### Cold-start context
 
-AI routes chỉ đổi qua server-owned config graph theo ADR-0013. Graph tách installed adapter, provider failure domain, credential admission domain, route và workload policy. Raw user question thuộc Step 10 và chỉ dùng current `zdr-verified`; fallback không được hạ capability. Routes cùng credential tranh aggregate concurrency/budget; circuit có cả route và provider-domain scope. Embedding pin bằng `artifactCompatibilityId`; vector space khác cần version cutover + full re-index. Input/log không có field ngoài scope hoặc media `not-analyzed`.
+AI routes chỉ đổi qua server-owned config graph theo ADR-0013. Graph tách installed adapter, provider failure domain, credential admission domain, route và workload policy. Current graph dùng DeepSeek `deepseek-v4-flash` cho summary, `qa-generation` và `qa-support`, với credential reference `DEEPSEEK_API_KEY`; Q&A capability là `nonconfidential` và không có model/provider fallback. Raw user question chỉ được admit sau sensitive-input và Source Registry gate. Routes cùng credential tranh aggregate concurrency/budget; circuit có cả route và provider-domain scope. Embedding pin bằng `artifactCompatibilityId`; vector space khác cần version cutover + full re-index. Input/log không có field ngoài scope hoặc media `not-analyzed`.
 
 ### Ownership/output
 
@@ -711,7 +711,7 @@ tests/{unit,integration,eval}/ai/**
 6. Implement candidate filter + cosine + hybrid ranking; record effective mode/fallback reason. Retrieval carries authority tier and Q&A candidate adapter excludes `community-signal` before evidence construction.
 7. Implement bounded summary/index job cùng server HTTP admin list/detail/retry/cancel operations và indexing-job UI handoff dưới `client/features/admin/jobs/indexing/**`; failed summary/embedding có state độc lập. Materialize Step 3 marker bằng canonical `reconciliation:source:<sourceId>` lock: mọi claim/cursor/error/retry/completion CAS exact source policy version + marker required version + expected status/cursor; fan-out identity `sourceId:articleId:task:policyVersion`; completed version phải bằng required version.
 8. Create small Vietnamese retrieval benchmark; do not fix version 1 until top-5 gate passes.
-9. Test model-retryable chọn same-provider model fallback; provider-retryable/domain outage chọn cross-provider fallback; policy/privacy/schema/ambiguous errors không fallback; max external attempts=2; exact same admitted input; expired evidence; same-credential cap contention; route/provider-domain circuit; embedding compatibility mismatch → text fallback; media/PII exclusion, stale policy/fence/reconciliation races, queue progress, query plans và temporary-text/log redaction. HN candidate remains feed/search but never enters Q&A adapter.
+9. Test current DeepSeek graph không có model/provider fallback: model/provider outage trả unavailable hoặc bounded job retry, không gửi lại admitted input sang candidate khác; policy/privacy/schema/ambiguous errors không fallback; summary/Q&A generation giữ policy cap 2 nhưng chỉ có một candidate nên tối đa một provider dispatch, support cap 1; expired evidence; same-credential cap contention; route/provider-domain circuit; embedding compatibility mismatch → text fallback; media/PII exclusion, stale policy/fence/reconciliation races, queue progress, query plans và temporary-text/log redaction. HN candidate remains feed/search but never enters Q&A adapter.
 10. Validate serialized search fallback/hybrid và admin indexing responses bằng OpenAPI fixtures.
 
 ### Verification
@@ -736,7 +736,7 @@ npm run eval:retrieval
 - Summary/embedding input không chứa media URL/alt/binary và không claim chi tiết chỉ có trong media.
 - Indexing job có thể poll/retry/cancel sau page reload; summary success không bị ghi đè bởi stale embedding/worker result.
 - Reconciliation marker N chỉ được completed ở exact required version; N→N+1 race không đổi status/cursor/error/completion của N+1.
-- Provider capability startup validation và admission-domain/per-route-circuit tests pass; no raw input in state/log, nonconfidential route cannot receive Q&A.
+- Provider capability startup validation và admission-domain/per-route-circuit tests pass; no raw input in state/log, sensitive-input không tới DeepSeek nonconfidential route, còn admitted non-sensitive Q&A phải qua support/citation gate.
 - Indexing/retention selectors use intended index + `_id`; HN/community candidate is excluded only from Q&A evidence, not discovery.
 
 ### Rollback
@@ -760,7 +760,7 @@ Disable provider config và hybrid mode; text search/UI content tiếp tục ho�
 
 ### Cold-start context
 
-Model không tạo URL. Server gán citation ID + internal block ID, loại community source và chỉ hydrate URL từ MongoDB. Raw question qua privacy gate; credential/high-risk identifier refuse, non-ZDR route không nhận. `/answers` có 24h actor/session idempotency receipt, one quota reserve và provider admission. Workload router phân biệt model fallback với provider fallback theo failure class; cả hai dùng cùng immutable admitted input và tổng generation attempt tối đa hai. Provider output không giữ quyền ghi: final persistence CAS user/session/article lifecycle và exact support verdict.
+Model không tạo URL. Server gán citation ID + internal block ID, loại community source và chỉ hydrate URL từ MongoDB. Raw question qua privacy gate; credential/high-risk identifier refuse. Current DeepSeek route là `nonconfidential`, nên admitted raw question/evidence có thể được gửi tới provider sau Source Registry gate và không có fallback. `/answers` có 24h actor/session idempotency receipt, one quota reserve và provider admission. Provider output không giữ quyền ghi: final persistence CAS user/session/article lifecycle và exact support verdict.
 
 ### Ownership/output
 
@@ -774,15 +774,15 @@ tests/{unit,integration,eval}/qa/**
 
 ### Tasks
 
-1. Implement privacy admission before routing: obvious credential/high-risk identifier → `sensitive-input`, không lossy redact; raw question chỉ current `zdr-verified`. Capture user/session lifecycle.
+1. Implement privacy admission before routing: obvious credential/high-risk identifier → `sensitive-input`, không lossy redact; admitted raw question/evidence chỉ current DeepSeek `nonconfidential` route. Capture user/session lifecycle và ghi rõ owner-approved non-ZDR risk.
 2. Implement/apply/verify `answerAttempts`: hash key, unique opaque user+sessionId+sessionVersion+key, request hash, 24h TTL cùng compound `{expiresAt,_id}` maintenance index. Register fixed `purge-answer-attempts` task. First transaction create/reuse one logical attempt, consolidate/check mọi non-retired quota-key version rồi reserve đúng một logical quota unit dưới current version; mismatch `409`; no session token/raw question/evidence/output in receipt.
 3. Retrieve visible primary/editorial evidence only; HN/community-only scope refuse `insufficient-evidence`. Build delimited prompt with stable citation IDs and internal evidence-block IDs; no tools/model URL.
 4. Parse paragraph + citation IDs + supporting block IDs. Validate existence/visibility/coverage, then one constrained support-verifier call over exact blocks; `unsupported|uncertain` deterministic refuse trong MVP, không repair call. Hydrate URL only server-side.
-5. Handle conflict presentation; mọi generation/support provider call acquire riêng admission/circuit reservation. Allow at most one fallback generation với same admitted input: model fallback cho `model-retryable`, provider fallback cho `provider-retryable`/domain unavailable. Policy/privacy/schema/support/ambiguous error không fallback. Rejection returns safe unavailable/refusal + retry hint without extra provider call.
+5. Handle conflict presentation; mọi generation/support provider call acquire riêng admission/circuit reservation. Current graph không có fallback generation: model/provider retryable hoặc domain unavailable trả safe unavailable/retry hint theo bounded job policy, không gửi cùng admitted input sang route khác. Policy/privacy/schema/support/ambiguous error không fallback. Rejection returns safe unavailable/refusal + retry hint without extra provider call.
 6. Implement/apply/verify chat migration, available/unavailable citation union và indexes `{articleId,_id}` + `{sourceId,_id}`. Chat 30-day cutoff. Final chat/attempt/quota append CAS active user + exact session version + cited article lifecycle; CAS miss discards output. Keep 30 messages, 1.000-char question, 12 paragraphs, 50 citations; list/delete/clear.
 7. Build Q&A UI với loading, paragraphs, citation drawer/link dùng safe external rel, `sensitive-input`/unavailable/conflict states.
 8. Build versioned evaluation >=30 prompt gồm grounded, irrelevant-visible-block, HN-only, sensitive input, insufficient, conflicting, hidden, media-only và injection; labels/adjudication route-specific.
-9. Test 20 concurrent same-key requests → one receipt/quota/provider/chat append; different hash conflict; crash after `provider-running` + expired reservation becomes same safe ambiguous failure without second provider call; timeout storm opens circuit; fallback cannot receive blocked raw input. Fake delayed user/article transition persists nothing. Streaming chỉ sau baseline.
+9. Test 20 concurrent same-key requests → one receipt/quota/provider/chat append; different hash conflict; crash after `provider-running` + expired reservation becomes same safe ambiguous failure without second provider call; timeout storm opens circuit; no fallback call receives blocked raw input. Fake delayed user/article transition persists nothing. Streaming chỉ sau baseline.
 10. Validate answered/refused/rate-limited/error/historical shapes; missing Idempotency-Key, `409`, sensitive-input, invalid support/citation/unavailable URL fixtures.
 
 ### Verification
@@ -804,7 +804,7 @@ npm run eval:citations
 - Không đủ evidence tạo refusal, không dùng model memory để lấp chỗ trống.
 - Hidden/removed/review/blocked content không vào prompt/citation.
 - HN/community-only scope refuses; real visible nhưng irrelevant block không persist answered.
-- Email/token sentinel không tới nonconfidential route; primary/fallback dùng same admitted input và support gate.
+- Email/token sentinel không tới DeepSeek nonconfidential route; admitted non-sensitive input dùng đúng Source Registry/support gate và không có primary/fallback candidate.
 - Same-key concurrency có đúng một quota/provider/chat result; answer attempt không chứa raw question và account deletion có thể zero-verify receipt.
 - Câu hỏi chỉ có câu trả lời trong ảnh/video chưa xử lý phải refuse hoặc nói không đủ bằng chứng, không suy diễn từ metadata.
 - User xóa được chat của mình; cross-user read/delete bị chặn.
@@ -926,14 +926,14 @@ Post-MVP recovery ownership: `tests/restore/**`, `scripts/verify-restore-plan.js
 ### Tasks
 
 1. Validate contract; run full unit/integration/UI/E2E suite và runtime response validation.
-2. Run negative matrix cũ cùng hostile/missing Origin/CORS/cookie/cache, oversized/chunked/compressed/non-JSON/query pollution, trusted-IP register/login, XXE/entity/XInclude/nesting/decompression, same-key Q&A, same-credential admission contention, route/provider-domain circuits, model/provider fallback classification, max-attempt cap, privacy fallback, embedding compatibility degradation, HN/irrelevant evidence, HMAC rotation, maintenance auth, deadline/citation/due explain, closed tombstone và real audit/suppression role atomicity.
+2. Run negative matrix cũ cùng hostile/missing Origin/CORS/cookie/cache, oversized/chunked/compressed/non-JSON/query pollution, trusted-IP register/login, XXE/entity/XInclude/nesting/decompression, same-key Q&A, same-credential admission contention, route/provider-domain circuits, current no-fallback/max-attempt behavior, privacy admission, embedding compatibility degradation, HN/irrelevant evidence, HMAC rotation, maintenance auth, deadline/citation/due explain, closed tombstone và real audit/suppression role atomicity.
 3. Run route-specific retrieval/citation/refusal/support eval trên versioned 30+ dataset; record claim segmentation, precision/coverage/unsupported/refusal, sensitive/HN/irrelevant-block cases, model/route/capability evidence expiry. Disable failing route.
 4. Complete evidence record cho exact demo sources; default unclear feed to metadata-only.
 5. Seed deterministic admin/user/source/demo data without committed secret.
 6. Deploy Vercel + Mongo Atlas config, verify `GET /api/internal/cron/due-work` aggregate/admin POST shared runner, expired-running recovery, due backlog/manual recovery, cold-start/degradation behavior và public URL.
 7. Run browser E2E: user core path gồm approved image/fallback/video link-only, admin source/job/media-policy path, content takedown, account deletion, provider outage/text fallback.
 8. Chạy 3–5 task-based product-validation sessions và lưu learning evidence; đây là demo-readiness evidence, không thay thế technical gate.
-9. Rehearse quota/IP/governance runtime HMAC rotation/retirement inventory và provider capability/admission/provider-domain evidence expiry/circuit recovery. Simulate full primary provider outage and prove cross-provider fallback without privacy downgrade or extra calls.
+9. Rehearse quota/IP/governance runtime HMAC rotation/retirement inventory và DeepSeek provider capability/admission/provider-domain evidence expiry/circuit recovery. Simulate DeepSeek outage and prove safe unavailable/bounded retry with no second provider/model call; rollback graph to Gemini only as a controlled operator action after rechecking capability evidence.
 10. Create demo script, local fallback, troubleshooting, reset-safe seed và post-grading shutdown date.
 11. Critical/high finding làm MVP release gate thất bại; quay lại owner/mutation step, không sửa tràn lan ở Step 12.
 
@@ -1070,6 +1070,7 @@ Không cắt source policy, admin backend authorization, idempotency/lease, text
 | 1.8 | 2026-08-15 | Replace fixed provider/model routing with config-driven model/provider fallback; record inline deletion lease and synchronize Step 9–11 document drift | Project owner approved architecture change; ADR-0013 and ADR-0014 |
 | 1.9 | 2026-08-17 | Giới hạn MVP không bao gồm backup/restore rehearsal, governance sidecar và offline checkpoint custody; chuyển toàn bộ recovery evidence sang post-MVP | Project owner approved scope reduction; runtime governance signing, audit atomicity và live fail-closed rules remain MVP |
 | 1.10 | 2026-08-21 | Chuyen summary, qa-generation va qa-support sang Gemini AI Studio; giu OpenRouter/BGE-M3 embedding va bo sung smoke gate | Project owner approved provider migration; ADR-0015 |
+| 1.11 | 2026-08-23 | Chuyen ca summary, qa-generation va qa-support sang DeepSeek `deepseek-v4-flash`; Q&A dung capability `nonconfidential`, khong fallback; giu OpenRouter/BGE-M3 embedding | Project owner approved quota-driven migration; ADR-0016 supersedes ADR-0015 |
 
 ### v1.8 Pre-Step-12 architecture amendment
 
@@ -1077,11 +1078,17 @@ Steps 1–11 đã có implementation commits. Tuy nhiên, current Step 9/10 prov
 
 Đây là amendment của architecture baseline, không phải detailed implementation plan mới. HTTP operations/DTO không đổi; provider/model vẫn là server-only concern. Account-deletion inline lease theo ADR-0014 cần migration/readiness/query-plan evidence cho recovery predicate trước release.
 
-### v1.10 Gemini provider migration
+### v1.10 Gemini provider migration (historical, superseded by ADR-0016)
 
-Provider graph hiện tại đưa `summary`, `qa-generation` và `qa-support` về Gemini AI Studio qua trusted OpenAI-compatible endpoint profile. Cả ba workload dùng `gemini-2.5-flash`; summary có fallback `gemini-2.5-flash-lite` trong cùng Gemini failure domain. Q&A không tự động có provider fallback nếu chưa có project/credential độc lập với privacy evidence tương đương. Embedding vẫn dùng OpenRouter `baai/bge-m3`, 1024 chiều, version 1 và `bge-m3-v1-1024`, vì vậy migration này không yêu cầu re-index vector space.
+Historical record only; this section does not describe the current deployment. Provider graph đã từng đưa `summary`, `qa-generation` và `qa-support` về Gemini AI Studio qua trusted OpenAI-compatible endpoint profile. Cả ba workload dùng `gemini-2.5-flash`; summary có fallback `gemini-2.5-flash-lite` trong cùng Gemini failure domain. Q&A không tự động có provider fallback nếu chưa có project/credential độc lập với privacy evidence tương đương. Embedding vẫn dùng OpenRouter `baai/bge-m3`, 1024 chiều, version 1 và `bge-m3-v1-1024`, vì vậy migration này không yêu cầu re-index vector space.
 
-Adapter/profile, graph validation và synthetic smoke phải pass trước live smoke. Live smoke chỉ dùng input synthetic đã phân cách, không ghi dữ liệu MongoDB. Google Pro quota chỉ mô tả capacity/billing; route Q&A vẫn fail-closed nếu evidence `zdr-verified` hết hạn hoặc chưa được owner review.
+Historical evidence rule: adapter/profile, graph validation và synthetic smoke phải pass trước live smoke. Live smoke chỉ dùng input synthetic đã phân cách, không ghi dữ liệu MongoDB. Google Pro quota chỉ mô tả capacity/billing; route Q&A khi đó fail-closed nếu evidence `zdr-verified` hết hạn hoặc chưa được owner review.
+
+### v1.11 DeepSeek provider migration
+
+Provider graph chuyển `summary`, `qa-generation` và `qa-support` sang DeepSeek `deepseek-v4-flash` và credential reference `DEEPSEEK_API_KEY`. Graph hiện tại không khai báo model/provider fallback; provider/model unavailable trả unavailable hoặc bounded job retry. Q&A route dùng capability `nonconfidential` theo owner-approved risk vì chưa có bằng chứng ZDR của DeepSeek. Sensitive-input, Source Registry, citation/support, idempotency và lifecycle gates không đổi. Raw question/evidence đã admit có thể được gửi tới DeepSeek. Question chỉ persist trong user-owned chat theo chat contract; provider/admission/answer-attempt state và log không giữ raw question, còn raw evidence/prompt/provider payload không được persist.
+
+Article embedding vẫn dùng OpenRouter `baai/bge-m3`, 1024 chiều, version 1 và `bge-m3-v1-1024`; migration này không đổi vector space. Query embedding của raw question vẫn yêu cầu route `zdr-verified`, nên current OpenRouter route không nhận question và Q&A retrieval dùng keyword fallback. Rollback là chuyển provider graph về Gemini profile, nhưng chỉ bật Q&A nếu capability evidence `zdr-verified` còn hạn; nếu không, Q&A tiếp tục fail closed.
 
 ## 13. Adversarial review record
 

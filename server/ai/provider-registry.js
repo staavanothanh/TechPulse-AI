@@ -212,7 +212,6 @@ export function validateProviderConfiguration(input, {
     exactObject(policy, ['workloadId', 'operation', 'requiredCapability', 'maxExternalAttempts', 'primaryRouteId', 'modelFallbackRouteIds', 'providerFallbackRouteIds'], 'workload policy')
     if (!OPERATIONS.has(policy.operation)) fail('workload policy operation is invalid')
     if (!CAPABILITIES.has(policy.requiredCapability)) fail('workload policy capability is invalid')
-    if (['answer', 'support'].includes(policy.operation) && policy.requiredCapability !== 'zdr-verified') fail('Q&A workload capability must be zdr-verified')
     if (!Number.isInteger(policy.maxExternalAttempts) || policy.maxExternalAttempts < 1 || policy.maxExternalAttempts > 2) fail('workload policy maxExternalAttempts is invalid')
     if (['summary', 'answer'].includes(policy.operation) && policy.maxExternalAttempts !== 2) fail('summary and Q&A maxExternalAttempts must be two')
     if (!Array.isArray(policy.modelFallbackRouteIds) || !Array.isArray(policy.providerFallbackRouteIds)) fail('workload policy fallback routes must be arrays')

@@ -49,4 +49,15 @@ export const TRUSTED_PROVIDER_ENDPOINT_PROFILES = Object.freeze([
     allowRedirects: false,
     classifyHttpFailure: reviewedHttpClassifier,
   }),
+  profile({
+    trustedEndpointProfileId: 'deepseek-openai-v1',
+    adapterId: 'deepseek-openai-compatible',
+    operationEndpoints: {
+      summary: 'https://api.deepseek.com/chat/completions',
+      answer: 'https://api.deepseek.com/chat/completions',
+      support: 'https://api.deepseek.com/chat/completions',
+    },
+    allowRedirects: false,
+    classifyHttpFailure: reviewedHttpClassifier,
+  }),
 ])

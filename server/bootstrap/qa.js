@@ -16,6 +16,8 @@ function stableJson(value) {
   return JSON.stringify(value)
 }
 
+const QA_CAPABILITIES = new Set(['zdr-verified', 'nonconfidential'])
+
 function requireQaWorkloadPolicies(providerRegistry) {
   const policies = providerRegistry?.workloadPolicies
   if (!Array.isArray(policies)) throw new Error('Q&A workload policies are not ready')
@@ -23,8 +25,8 @@ function requireQaWorkloadPolicies(providerRegistry) {
   const byId = new Map(policies.map((policy) => [policy?.workloadId, policy]))
   const generation = byId.get('qa-generation')
   const support = byId.get('qa-support')
-  if (!generation || generation.operation !== 'answer' || generation.requiredCapability !== 'zdr-verified' || generation.maxExternalAttempts !== 2
-    || !support || support.operation !== 'support' || support.requiredCapability !== 'zdr-verified' || support.maxExternalAttempts !== 1) throw new Error('Q&A workload policies are not ready: qa-generation and qa-support are required')
+  if (!generation || generation.operation !== 'answer' || !QA_CAPABILITIES.has(generation.requiredCapability) || generation.maxExternalAttempts !== 2
+    || !support || support.operation !== 'support' || support.requiredCapability !== generation.requiredCapability || support.maxExternalAttempts !== 1) throw new Error('Q&A workload policies are not ready: qa-generation and qa-support are required')
   return Object.freeze({ policies, generation, support })
 }
 

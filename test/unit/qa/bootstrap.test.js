@@ -35,14 +35,15 @@ function readyContext({ indexOverride = {}, validatorOverride = {} } = {}) {
 }
 
 const qaPolicies = [
-  { workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'zdr-verified', maxExternalAttempts: 2, primaryRouteId: 'qa-answer', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
-  { workloadId: 'qa-support', operation: 'support', requiredCapability: 'zdr-verified', maxExternalAttempts: 1, primaryRouteId: 'qa-support', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+  { workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'qa-answer', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+  { workloadId: 'qa-support', operation: 'support', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'qa-support', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
 ]
 
 describe('Step 10 Q&A bootstrap', () => {
   it('binds Q&A to workload policies without vendor, model, or embedding literals', async () => {
     const source = readFileSync(new URL('../../../server/bootstrap/qa.js', import.meta.url), 'utf8')
     expect(source).not.toMatch(/opencode-zen|openrouter|deepseek|bge-m3|baai\/bge-m3/i)
+    expect(source).toMatch(/queryEmbedding\?\.capability === 'zdr-verified'/)
 
     const providerRouter = { execute: vi.fn() }
     const providerRegistry = {
@@ -52,8 +53,8 @@ describe('Step 10 Q&A bootstrap', () => {
         { routeId: 'policy-support', providerId: 'vendor-a', providerFailureDomainId: 'domain-a', model: 'support-model', capability: 'zdr-verified', enabled: true, operations: ['support'] },
       ],
       workloadPolicies: [
-        { workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'zdr-verified', maxExternalAttempts: 2, primaryRouteId: 'policy-answer', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
-        { workloadId: 'qa-support', operation: 'support', requiredCapability: 'zdr-verified', maxExternalAttempts: 1, primaryRouteId: 'policy-support', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+        { workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'policy-answer', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+        { workloadId: 'qa-support', operation: 'support', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'policy-support', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
       ],
     }
     const maintenanceRegistry = { register: vi.fn() }
@@ -76,8 +77,8 @@ describe('Step 10 Q&A bootstrap', () => {
         { routeId: 'policy-support', providerId: 'vendor-a', providerFailureDomainId: 'domain-a', model: 'support-model', capability: 'zdr-verified', enabled: true, operations: ['support'], evidenceExpiresAt: '2099-01-01T00:00:00.000Z' },
       ],
       workloadPolicies: [
-        { workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'zdr-verified', maxExternalAttempts: 2, primaryRouteId: 'policy-answer', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
-        { workloadId: 'qa-support', operation: 'support', requiredCapability: 'zdr-verified', maxExternalAttempts: 1, primaryRouteId: 'policy-support', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+        { workloadId: 'qa-generation', operation: 'answer', requiredCapability: 'nonconfidential', maxExternalAttempts: 2, primaryRouteId: 'policy-answer', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
+        { workloadId: 'qa-support', operation: 'support', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'policy-support', modelFallbackRouteIds: [], providerFallbackRouteIds: [] },
       ],
     }
 
