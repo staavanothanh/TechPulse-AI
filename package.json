@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --env-file-if-exists=.env server/dev.js",
     "setup:hooks": "node scripts/setup-git-hooks.js",
+    "attestation:local": "node --env-file-if-exists=.env scripts/update-local-attestation.js",
     "build": "vite build",
     "lint": "eslint .",
     "format:check": "prettier --check .",

@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  aggregateDueWorkCounters,
   artifactJobRequest,
   isAdminJobRetryable,
   listItems,
   mutateAdmin,
+  normalizeDueWorkRun,
+  runAdminDueWork,
   useAdminMutation,
   useAdminResource,
 } from './admin-data.js'
@@ -174,6 +177,61 @@ function JobList({
   )
 }
 
+const DUE_WORK_COUNTERS = Object.freeze([
+  ['claimed', 'Claimed'],
+  ['succeeded', 'Succeeded'],
+  ['partial', 'Partial'],
+  ['failed', 'Failed'],
+  ['deferred', 'Deferred'],
+])
+
+const DUE_WORK_QUEUES = Object.freeze([
+  ['ingestion', 'Ingestion'],
+  ['indexing', 'Indexing'],
+  ['accountDeletion', 'Account deletion'],
+])
+
+function DueWorkRunPanel({ run }) {
+  const normalized = run ?? normalizeDueWorkRun({})
+  const aggregate = aggregateDueWorkCounters(normalized)
+  return (
+    <Panel
+      className="admin-due-work-panel"
+      title="Kết quả bounded run gần nhất"
+      hint="Aggregate an toàn của ba queue đã đăng ký; chi tiết job vẫn nằm trong các tab bên dưới."
+    >
+      <div className="admin-due-work-meta" role="status">
+        {normalized.runId
+          ? `Run ${normalized.runId}`
+          : 'Chưa có lần chạy thủ công nào trong phiên này.'}
+      </div>
+      <div className="admin-due-work-summary" aria-label="Aggregate bounded run counters">
+        {DUE_WORK_COUNTERS.map(([key, label]) => (
+          <div className="admin-due-work-counter" key={key}>
+            <strong>{aggregate[key]}</strong>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="admin-due-work-queues" aria-label="Kết quả theo queue">
+        {DUE_WORK_QUEUES.map(([queueName, label]) => (
+          <div className="admin-due-work-queue" key={queueName}>
+            <h3>{label}</h3>
+            <dl>
+              {DUE_WORK_COUNTERS.map(([key, counterLabel]) => (
+                <div key={key}>
+                  <dt>{counterLabel}</dt>
+                  <dd>{normalized.queues[queueName][key]}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  )
+}
+
 function IngestionCreateForm({ sources, onSubmit, busy }) {
   const [sourceId, setSourceId] = useState('')
   const [batchSize, setBatchSize] = useState('20')
@@ -279,6 +337,9 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
   const [draftQuery, setDraftQuery] = useState({})
   const [appliedQuery, setAppliedQuery] = useState({})
   const seeded = initialData ?? {}
+  const [dueWorkRun, setDueWorkRun] = useState(() =>
+    seeded.dueWorkRun ? normalizeDueWorkRun(seeded.dueWorkRun) : null,
+  )
   const ingestion = useAdminResource(api, 'listIngestionJobs', {
     enabled: tab === 'ingestion',
     initialData: seeded.ingestion,
@@ -343,6 +404,22 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
   }
   function refreshCurrent() {
     ;(tab === 'ingestion' ? ingestion : indexing).reload()
+  }
+
+  function runDueWorkNow() {
+    return mutation
+      .run(
+        () => runAdminDueWork(api, { csrfToken: session?.csrfToken }),
+        'Đã chạy một lượt bounded queue.',
+      )
+      .then((response) => {
+        if (response) {
+          setDueWorkRun(normalizeDueWorkRun(response))
+          ingestion.reload()
+          indexing.reload()
+        }
+        return response
+      })
   }
 
   useEffect(() => {
@@ -435,11 +512,22 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         title="Jobs và queue"
         description="Xem, retry và cancel mọi bounded job qua một operational view duy nhất."
         action={
-          <AdminButton icon="refresh" onClick={refreshCurrent} disabled={mutation.busy}>
-            Làm mới
-          </AdminButton>
+          <>
+            <AdminButton
+              variant="primary"
+              icon="play"
+              onClick={runDueWorkNow}
+              disabled={mutation.busy}
+            >
+              {mutation.busy ? 'Đang chạy queue…' : 'Chạy queue bounded'}
+            </AdminButton>
+            <AdminButton icon="refresh" onClick={refreshCurrent} disabled={mutation.busy}>
+              Làm mới
+            </AdminButton>
+          </>
         }
       />
+      <DueWorkRunPanel run={dueWorkRun} />
       <div className="admin-tabs" role="tablist" aria-label="Loại job">
         <button
           type="button"

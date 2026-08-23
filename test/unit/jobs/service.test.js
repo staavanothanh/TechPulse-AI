@@ -23,7 +23,7 @@ function fixture(overrides = {}) {
   }
   const sourceRepository = { findSourceById: vi.fn(async () => source), ...overrides.sourceRepository }
   const rateLimitAdmission = overrides.rateLimitAdmission ?? { reserve: vi.fn(async () => ({ allowed: true })) }
-  return { jobRepository, sourceRepository, rateLimitAdmission, service: createJobService({ jobRepository, sourceRepository, rateLimitAdmission, now: () => new Date(NOW) }) }
+  return { jobRepository, sourceRepository, rateLimitAdmission, service: createJobService({ jobRepository, sourceRepository, rateLimitAdmission, runDueWork: overrides.runDueWork, now: () => new Date(NOW) }) }
 }
 
 describe('ingestion job service', () => {
@@ -130,5 +130,42 @@ describe('ingestion job service', () => {
     await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-coordinator-0001' })
     expect(coordinator).toHaveBeenCalledTimes(1)
     expect(materializeDailyIngestion).not.toHaveBeenCalled()
+  })
+
+  it('lets only an active admin run one bounded shared coordinator turn', async () => {
+    const result = {
+      runId: 'admin-due-work-run',
+      startedAt: NOW,
+      finishedAt: new Date(NOW.getTime() + 1_000),
+      recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+      queues: {
+        ingestion: { claimed: 1, succeeded: 1, partial: 0, failed: 0, deferred: 0 },
+        indexing: { claimed: 1, succeeded: 1, partial: 0, failed: 0, deferred: 0 },
+        accountDeletion: { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 },
+      },
+      nextAvailableAt: null,
+    }
+    const coordinator = vi.fn(async () => result)
+    const { service, rateLimitAdmission } = fixture({ runDueWork: coordinator })
+
+    await expect(service.runDueWork({ auth })).resolves.toBe(result)
+    expect(coordinator).toHaveBeenCalledTimes(1)
+    expect(rateLimitAdmission.reserve).toHaveBeenCalledWith({ scope: 'admin-trigger', subject: auth.user.id })
+    await expect(service.runDueWork({ auth: { user: { role: 'user', status: 'active' } } })).rejects.toEqual(expect.objectContaining({ status: 403 }))
+    expect(coordinator).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when the shared coordinator is unavailable', async () => {
+    const { service } = fixture()
+    await expect(service.runDueWork({ auth })).rejects.toEqual(expect.objectContaining({ status: 503, code: 'service_unavailable' }))
+  })
+
+  it('returns a bounded Retry-After failure before coordinator execution', async () => {
+    const coordinator = vi.fn()
+    const rateLimitAdmission = { reserve: vi.fn(async () => ({ allowed: false, retryAfterSeconds: 41 })) }
+    const { service } = fixture({ runDueWork: coordinator, rateLimitAdmission })
+
+    await expect(service.runDueWork({ auth })).rejects.toEqual(expect.objectContaining({ status: 429, code: 'rate_limit_exceeded', retryAfter: 41 }))
+    expect(coordinator).not.toHaveBeenCalled()
   })
 })

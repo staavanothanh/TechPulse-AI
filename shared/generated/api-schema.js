@@ -2521,6 +2521,64 @@ export const openApiDocument = {
         }
       }
     },
+    "/api/v1/admin/due-work-runs": {
+      "post": {
+        "tags": [
+          "Admin Jobs"
+        ],
+        "operationId": "runAdminDueWork",
+        "x-persistence": "mongo",
+        "summary": "Run one bounded cross-queue coordinator turn",
+        "description": "Admin-session operation. Runs the shared bounded coordinator without daily cron materialization and never accepts a cron bearer, queue selector, job limit, recovery limit or time budget from the caller.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "One bounded due-work coordinator turn completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CronRunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
     "/api/v1/admin/duplicate-merges": {
       "post": {
         "tags": [

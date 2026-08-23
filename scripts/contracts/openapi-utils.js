@@ -54,7 +54,7 @@ export function runContractChecks(document) {
   const duplicateIds = operationIds.filter((id, index) => operationIds.indexOf(id) !== index)
 
   if (document.openapi !== '3.1.0') failures.push('openapi must be 3.1.0')
-  if (operations.length !== 55) failures.push(`expected 55 operations, found ${operations.length}`)
+  if (operations.length !== 56) failures.push(`expected 56 operations, found ${operations.length}`)
   if (operationIds.some((id) => typeof id !== 'string' || id.length === 0)) failures.push('every operation needs operationId')
   if (duplicateIds.length > 0) failures.push(`duplicate operationId: ${[...new Set(duplicateIds)].join(', ')}`)
 

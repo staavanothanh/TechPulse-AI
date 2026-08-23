@@ -257,6 +257,26 @@ export function createLazyRuntimeOptions({
     }
     return dueWork(...args)
   }
+  const jobService = createLazyService({
+    load: async () => {
+      const jobs = await capabilities.jobs()
+      return {
+        jobService: Object.freeze({
+          ...jobs.jobService,
+          async runDueWork(...args) {
+            try {
+              await capabilities.indexing()
+            } catch {
+              throw serviceUnavailable('Indexing queue is unavailable for admin due work')
+            }
+            return jobs.jobService.runDueWork(...args)
+          },
+        }),
+      }
+    },
+    select: (value) => value.jobService,
+    unavailableMessage: 'Durable job service is unavailable',
+  })
 
   return Object.freeze({
     authService: createLazyService({ load: capabilities.common, select: (value) => value.authService, unavailableMessage: 'Authentication service is unavailable' }),
@@ -264,7 +284,7 @@ export function createLazyRuntimeOptions({
     searchService: createLazyService({ load: capabilities.content, select: (value) => value.searchService, unavailableMessage: 'Search service is unavailable' }),
     savedService: createLazyService({ load: capabilities.content, select: (value) => value.savedService, unavailableMessage: 'Saved-article service is unavailable' }),
     sourceService: createLazyService({ load: capabilities.sources, select: (value) => value.sourceService, unavailableMessage: 'Source Registry service is unavailable' }),
-    jobService: createLazyService({ load: capabilities.jobs, select: (value) => value.jobService, unavailableMessage: 'Durable job service is unavailable' }),
+    jobService,
     indexingJobService: createLazyService({ load: capabilities.indexing, select: (value) => value.indexingJobService, unavailableMessage: 'Indexing job service is unavailable' }),
     qaService: createLazyService({ load: capabilities.qa, select: (value) => value, unavailableMessage: 'Grounded Q&A service is unavailable' }),
     adminGovernanceService: createLazyService({ load: capabilities.governance, select: (value) => value.adminGovernanceService, unavailableMessage: 'Admin governance service is unavailable' }),

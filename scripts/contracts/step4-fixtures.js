@@ -47,6 +47,17 @@ function services() {
     async createIngestionJob({ idempotencyKey }) { if (idempotencyKey === 'step4-conflict-job-key') throw new JobError(409, 'idempotency_mismatch', 'Idempotency mismatch'); return JOB },
     async retryIngestionJob({ jobId }) { if (jobId === '507f1f77bcf86cd799439098') throw new JobError(409, 'conflict', 'Job is not retryable'); return { ...JOB, trigger: 'retry', attempt: 2, parentJobId: JOB_ID } },
     async cancelIngestionJob() { return { ...JOB, status: 'cancelled', finishedAt: NOW } },
+    async runDueWork() {
+      return {
+        runId: 'contract-admin-run-step4', startedAt: new Date(NOW), finishedAt: new Date(NOW),
+        recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+        queues: {
+          ingestion: { claimed: 1, succeeded: 1, partial: 0, failed: 0, deferred: 0 },
+          indexing: { claimed: 1, succeeded: 1, partial: 0, failed: 0, deferred: 0 },
+          accountDeletion: { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 },
+        }, nextAvailableAt: null,
+      }
+    },
   }
   const dueWorkRunner = async () => ({
     runId: 'contract-run-step4', startedAt: new Date(NOW), finishedAt: new Date(NOW),
@@ -99,6 +110,10 @@ export async function runStep4ContractFixtures({ document } = {}) {
     await request('retryIngestionJob', `/api/v1/admin/ingestion-jobs/${JOB_ID}/retries`, { method: 'POST', headers: { ...jsonHeaders, 'Idempotency-Key': 'step4-retry-job-key' }, body: JSON.stringify({ reasonCode: 'job_retry_requested' }) }, 202)
     await request('retryIngestionJob', '/api/v1/admin/ingestion-jobs/507f1f77bcf86cd799439098/retries', { method: 'POST', headers: { ...jsonHeaders, 'Idempotency-Key': 'step4-retry-job-key-2' }, body: JSON.stringify({ reasonCode: 'job_retry_requested' }) }, 409)
     await request('cancelIngestionJob', `/api/v1/admin/ingestion-jobs/${JOB_ID}/cancellation`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ reasonCode: 'job_cancel_requested' }) }, 200)
+    await request('runAdminDueWork', '/api/v1/admin/due-work-runs', { method: 'POST', headers: { Origin: 'http://localhost:3000', Cookie: adminCookie, 'X-CSRF-Token': CSRF_TOKEN } }, 202)
+    await request('runAdminDueWork', '/api/v1/admin/due-work-runs', { method: 'POST', headers: { Origin: 'http://localhost:3000', Cookie: userCookie, 'X-CSRF-Token': CSRF_TOKEN } }, 403)
+    await request('runAdminDueWork', '/api/v1/admin/due-work-runs', { method: 'POST', headers: { Origin: 'http://localhost:3000', Cookie: adminCookie, 'X-CSRF-Token': 'invalid-csrf-token-invalid-csrf-token' } }, 403)
+    await request('runAdminDueWork', '/api/v1/admin/due-work-runs', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ maxJobs: 100 }) }, 422)
     await request('runDueWork', '/api/internal/cron/due-work', { headers: { Authorization: `Bearer ${MACHINE_TOKEN}` } }, 202)
     await request('runDueWork', '/api/internal/cron/due-work?maxJobs=100', { headers: { Authorization: `Bearer ${MACHINE_TOKEN}` } }, 400)
     await request('runDueWork', '/api/internal/cron/due-work', {}, 401)

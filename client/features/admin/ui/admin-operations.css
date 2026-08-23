@@ -30,6 +30,76 @@
   gap: 10px;
   margin-bottom: 16px;
 }
+.redesign-admin .admin-due-work-panel {
+  margin-bottom: 16px;
+}
+.redesign-admin .admin-due-work-meta {
+  margin: -4px 0 15px;
+  color: var(--admin-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+.redesign-admin .admin-due-work-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-sm);
+  background: var(--admin-border);
+}
+.redesign-admin .admin-due-work-counter {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--admin-surface);
+}
+.redesign-admin .admin-due-work-counter strong {
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.redesign-admin .admin-due-work-counter span,
+.redesign-admin .admin-due-work-queue dt {
+  color: var(--admin-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.redesign-admin .admin-due-work-queues {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.redesign-admin .admin-due-work-queue {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-sm);
+  background: var(--admin-surface);
+}
+.redesign-admin .admin-due-work-queue h3 {
+  margin-bottom: 10px;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+.redesign-admin .admin-due-work-queue dl {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.redesign-admin .admin-due-work-queue dl > div {
+  min-width: 0;
+}
+.redesign-admin .admin-due-work-queue dd {
+  margin: 5px 0 0;
+  font-variant-numeric: tabular-nums;
+}
 .redesign-admin .admin-toolbar label,
 .redesign-admin .admin-inline-form > div,
 .redesign-admin .admin-form-grid label {

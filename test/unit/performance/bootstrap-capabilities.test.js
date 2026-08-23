@@ -159,6 +159,45 @@ describe('lazy bootstrap capabilities', () => {
     expect(dueWork).toHaveBeenCalledExactlyOnceWith({})
   })
 
+  it('loads indexing before an admin due-work run without invoking cron materialization', async () => {
+    const common = configuredAuth()
+    const coordinate = vi.fn(async () => ({ queues: { indexing: { claimed: 1 } } }))
+    const cronDueWork = vi.fn()
+    const runDueWork = vi.fn(async (input) => {
+      expect(input.auth.user.role).toBe('admin')
+      return coordinate()
+    })
+    const jobs = { jobService: Object.freeze({ runDueWork }), coordinatorRunner: coordinate, dueWorkRunner: cronDueWork }
+    const factories = {
+      common: vi.fn(async () => common),
+      jobs: vi.fn(async () => jobs),
+      indexing: vi.fn(async () => ({ indexingJobService: {} })),
+      content: vi.fn(), sources: vi.fn(), qa: vi.fn(), governance: vi.fn(),
+    }
+    const options = createLazyRuntimeOptions({ factories, maxAttempts: 1 })
+
+    await expect(options.jobService.runDueWork({ auth: { user: { role: 'admin' } } })).resolves.toEqual({ queues: { indexing: { claimed: 1 } } })
+    expect(factories.indexing).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ common, jobs }))
+    expect(runDueWork).toHaveBeenCalledTimes(1)
+    expect(coordinate).toHaveBeenCalledTimes(1)
+    expect(cronDueWork).not.toHaveBeenCalled()
+  })
+
+  it('fails an admin due-work run closed when indexing cannot register', async () => {
+    const common = configuredAuth()
+    const runDueWork = vi.fn()
+    const factories = {
+      common: vi.fn(async () => common),
+      jobs: vi.fn(async () => ({ jobService: { runDueWork } })),
+      indexing: vi.fn(async () => { throw new Error('indexing unavailable') }),
+      content: vi.fn(), sources: vi.fn(), qa: vi.fn(), governance: vi.fn(),
+    }
+    const options = createLazyRuntimeOptions({ factories, maxAttempts: 1 })
+
+    await expect(options.jobService.runDueWork({ auth: { user: { role: 'admin' } } })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+    expect(runDueWork).not.toHaveBeenCalled()
+  })
+
   it('loads reviewed CSP hosts for articles but not for health', async () => {
     const common = configuredAuth()
     common.authService.authenticate.mockResolvedValue({ user: { id: 'user-1', status: 'active' } })

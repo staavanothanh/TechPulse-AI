@@ -29,10 +29,30 @@ function idempotencyKey(req) {
 function asyncRoute(handler) { return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next) }
 function noStore(res) { res.set('Cache-Control', 'no-store, private') }
 function unavailable() { throw new JobError(503, 'service_unavailable', 'Durable job service is not configured') }
+function iso(value) { return value instanceof Date ? value.toISOString() : value }
+
+function counters(value = {}) {
+  return Object.fromEntries(['claimed', 'succeeded', 'partial', 'failed', 'deferred'].map((key) => [key, Number(value[key] ?? 0)]))
+}
+
+function serializeDueWorkRun(result) {
+  return {
+    runId: String(result.runId),
+    startedAt: iso(result.startedAt),
+    finishedAt: iso(result.finishedAt),
+    recovery: Object.fromEntries(['inspected', 'recovered', 'retriesCreated', 'failed'].map((key) => [key, Number(result.recovery?.[key] ?? 0)])),
+    queues: {
+      ingestion: counters(result.queues?.ingestion),
+      indexing: counters(result.queues?.indexing),
+      accountDeletion: counters(result.queues?.accountDeletion),
+    },
+    nextAvailableAt: result.nextAvailableAt ? iso(result.nextAvailableAt) : null,
+  }
+}
 
 export function createAdminIngestionJobsRouter({ jobService, authService } = {}) {
   const router = Router()
-  const service = jobService ?? { listIngestionJobs: unavailable, getIngestionJob: unavailable, createIngestionJob: unavailable, retryIngestionJob: unavailable, cancelIngestionJob: unavailable }
+  const service = jobService ?? { listIngestionJobs: unavailable, getIngestionJob: unavailable, createIngestionJob: unavailable, retryIngestionJob: unavailable, cancelIngestionJob: unavailable, runDueWork: unavailable }
   const admin = requireRole('admin')
   const csrf = requireCsrf(authService)
 
@@ -63,6 +83,12 @@ export function createAdminIngestionJobsRouter({ jobService, authService } = {})
     const job = await service.cancelIngestionJob({ auth: req.auth, jobId: req.params.jobId, reasonCode: req.body.reasonCode, request: req })
     noStore(res)
     res.status(200).json({ data: serializeIngestionJobResponse(job) })
+  }))
+  router.post('/api/v1/admin/due-work-runs', admin, csrf, asyncRoute(async (req, res) => {
+    if (req.body && Object.keys(req.body).length > 0) throw new JobError(422, 'validation_error', 'Request body must be empty')
+    const result = await service.runDueWork({ auth: req.auth, request: req })
+    noStore(res)
+    res.status(202).json({ data: serializeDueWorkRun(result) })
   }))
   return router
 }

@@ -39,6 +39,9 @@
   .redesign-admin .admin-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+  .redesign-admin .admin-due-work-queues {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 780px) {
@@ -54,6 +57,9 @@
   }
   .redesign-admin .admin-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .redesign-admin .admin-due-work-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .redesign-admin .admin-two-column,
   .redesign-admin .admin-source-workspace {
@@ -76,6 +82,12 @@
   }
   .redesign-admin .admin-metrics {
     gap: 8px;
+  }
+  .redesign-admin .admin-due-work-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .redesign-admin .admin-due-work-queue dl {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .redesign-admin .admin-metric {
     min-height: 108px;

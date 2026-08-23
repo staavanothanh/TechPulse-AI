@@ -61,6 +61,7 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
   if (!jobRepository || !sourceRepository) throw new Error('Job and source repositories are required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   if (typeof jobRepository.createOrReuseIngestionJobWithAdmission !== 'function') throw new Error('Atomic job admission repository is required')
+  const coordinateDueWork = runDueWork
   const sourceFor = async (sourceId) => {
     const source = await sourceRepository.findSourceById(objectIdString(sourceId, 'sourceId'))
     assertEligibleSource(source)
@@ -88,7 +89,7 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
         job, audit, actorFence: actorFence(auth), rateLimitAdmission,
         admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) },
       })
-      await runDueWork?.()
+      await coordinateDueWork?.()
       return created
     },
     async retryIngestionJob({ auth, jobId, idempotencyKey, reasonCode, request } = {}) {
@@ -108,8 +109,20 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
         job, audit, actorFence: actorFence(auth), rateLimitAdmission,
         admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) }, parentJobId: parent.id, nextAttempt: parent.attempt + 1,
       })
-      await runDueWork?.()
+      await coordinateDueWork?.()
       return created
+    },
+    async runDueWork({ auth } = {}) {
+      const actor = requireAdmin(auth)
+      if (typeof coordinateDueWork !== 'function') throw new JobError(503, 'service_unavailable', 'Due-work coordinator is not configured')
+      let admission
+      try {
+        admission = await rateLimitAdmission.reserve({ scope: 'admin-trigger', subject: String(actor.id ?? actor._id) })
+      } catch {
+        throw new JobError(503, 'service_unavailable', 'Admin admission is unavailable')
+      }
+      if (admission?.allowed === false) throw new JobError(429, 'rate_limit_exceeded', 'Request rate limit exceeded', { retryAfter: admission.retryAfterSeconds })
+      return coordinateDueWork()
     },
     async cancelIngestionJob({ auth, jobId, reasonCode, request } = {}) {
       const actor = requireAdmin(auth)

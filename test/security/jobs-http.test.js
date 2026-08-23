@@ -3,6 +3,7 @@ import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { createApp } from '../../server/app.js'
 import { loadOpenApi } from '../../scripts/contracts/openapi-utils.js'
+import { JobError } from '../../server/application/jobs/service.js'
 
 const openApi = loadOpenApi()
 const ajv = new Ajv({ strict: false, allErrors: true })
@@ -31,6 +32,15 @@ const authService = {
 const jobService = {
   listIngestionJobs: vi.fn(async () => ({ jobs: [job], hasNext: false, nextCursor: null })),
   getIngestionJob: vi.fn(async () => job), createIngestionJob: vi.fn(async () => job), retryIngestionJob: vi.fn(async () => job), cancelIngestionJob: vi.fn(async () => job),
+  runDueWork: vi.fn(async () => ({
+    runId: 'run-admin-step4', startedAt: new Date('2026-08-10T00:00:00.000Z'), finishedAt: new Date('2026-08-10T00:00:01.000Z'),
+    recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+    queues: {
+      ingestion: { claimed: 1, succeeded: 1, partial: 0, failed: 0, deferred: 0 },
+      indexing: { claimed: 1, succeeded: 1, partial: 0, failed: 0, deferred: 0 },
+      accountDeletion: { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 },
+    }, nextAvailableAt: null, privateDiagnostic: 'must-not-leak',
+  })),
 }
 const dueWorkRunner = vi.fn(async () => ({
   runId: 'run-step4', startedAt: new Date('2026-08-10T00:00:00.000Z'), finishedAt: new Date('2026-08-10T00:00:01.000Z'),
@@ -112,6 +122,44 @@ describe('Step 4 jobs, cron and maintenance HTTP boundaries', () => {
     expect(response.status).toBe(202)
     expect(validateCron(payload), JSON.stringify(validateCron.errors)).toBe(true)
     expect(Object.keys(payload.data.queues)).toEqual(['ingestion', 'indexing', 'accountDeletion'])
+  })
+
+  it('lets an admin with CSRF run bounded due work without exposing the cron bearer', async () => {
+    const headers = {
+      Origin: 'http://localhost:3000',
+      Cookie: `__Host-techpulse_session=${adminToken}`,
+      'X-CSRF-Token': 'csrf',
+    }
+    const response = await fetch(`${origin}/api/v1/admin/due-work-runs`, { method: 'POST', headers })
+    const payload = await response.json()
+
+    expect(response.status).toBe(202)
+    expect(validateCron(payload), JSON.stringify(validateCron.errors)).toBe(true)
+    expect(payload.data.runId).toBe('run-admin-step4')
+    expect(payload.data).not.toHaveProperty('privateDiagnostic')
+    expect(response.headers.get('cache-control')).toBe('no-store, private')
+    expect(jobService.runDueWork).toHaveBeenCalledWith(expect.objectContaining({ auth: expect.objectContaining({ user: expect.objectContaining({ role: 'admin' }) }) }))
+
+    jobService.runDueWork.mockClear()
+    const regular = await fetch(`${origin}/api/v1/admin/due-work-runs`, {
+      method: 'POST',
+      headers: { ...headers, Cookie: `__Host-techpulse_session=${userToken}` },
+    })
+    expect(regular.status).toBe(403)
+    expect(jobService.runDueWork).not.toHaveBeenCalled()
+
+    const polluted = await fetch(`${origin}/api/v1/admin/due-work-runs`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxJobs: 100 }),
+    })
+    expect(polluted.status).toBe(422)
+    expect(jobService.runDueWork).not.toHaveBeenCalled()
+
+    jobService.runDueWork.mockRejectedValueOnce(new JobError(429, 'rate_limit_exceeded', 'Request rate limit exceeded', { retryAfter: 41 }))
+    const limited = await fetch(`${origin}/api/v1/admin/due-work-runs`, { method: 'POST', headers })
+    expect(limited.status).toBe(429)
+    expect(limited.headers.get('retry-after')).toBe('41')
   })
 
   it('fails closed for machine-route aliases before a runner can execute', async () => {

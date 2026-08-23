@@ -260,6 +260,62 @@ export function artifactJobRequest(task) {
   }
 }
 
+const DUE_WORK_QUEUES = Object.freeze(['ingestion', 'indexing', 'accountDeletion'])
+const DUE_WORK_COUNTERS = Object.freeze(['claimed', 'succeeded', 'partial', 'failed', 'deferred'])
+
+function boundedCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+function normalizeDueWorkQueue(queue) {
+  return Object.fromEntries(
+    DUE_WORK_COUNTERS.map((counter) => [counter, boundedCount(queue?.[counter])]),
+  )
+}
+
+export function normalizeDueWorkRun(response) {
+  const payload = readResponseData(response)
+  const source = payload && typeof payload === 'object' ? payload : {}
+  const normalized = {
+    runId: typeof source.runId === 'string' ? source.runId : null,
+    startedAt: typeof source.startedAt === 'string' ? source.startedAt : null,
+    finishedAt: typeof source.finishedAt === 'string' ? source.finishedAt : null,
+    nextAvailableAt: typeof source.nextAvailableAt === 'string' ? source.nextAvailableAt : null,
+    queues: Object.fromEntries(
+      DUE_WORK_QUEUES.map((queueName) => [
+        queueName,
+        normalizeDueWorkQueue(source.queues?.[queueName]),
+      ]),
+    ),
+  }
+  if (source.recovery && typeof source.recovery === 'object') {
+    normalized.recovery = Object.fromEntries(
+      ['inspected', 'recovered', 'retriesCreated', 'failed'].map((counter) => [
+        counter,
+        boundedCount(source.recovery[counter]),
+      ]),
+    )
+  }
+  return normalized
+}
+
+export function aggregateDueWorkCounters(run) {
+  const normalized = normalizeDueWorkRun(run)
+  return Object.fromEntries(
+    DUE_WORK_COUNTERS.map((counter) => [
+      counter,
+      DUE_WORK_QUEUES.reduce(
+        (total, queueName) => total + normalized.queues[queueName][counter],
+        0,
+      ),
+    ]),
+  )
+}
+
+export function runAdminDueWork(api, { csrfToken } = {}) {
+  return mutateAdmin(api, 'runAdminDueWork', { csrfToken })
+}
+
 export function isAdminJobRetryable(job) {
   if (!job || !['partial', 'failed'].includes(job.status)) return false
   const statusAllowsRetry = job.status === 'partial' || job.error?.retryable === true

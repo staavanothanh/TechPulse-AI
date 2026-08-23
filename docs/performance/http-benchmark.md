@@ -86,3 +86,19 @@ The hook reads the final branch SHA from Git's pre-push input, runs the eight ve
 Keep the gate disabled until the local or CI release environment has a Vercel API token and linked project configuration. To enable it, set `PREPUSH_ATTESTATION_ENABLED=true` and `PREPUSH_VERCEL_UPDATE=true`; configure `PREPUSH_VERCEL_API_TOKEN_ENV`, and either `PREPUSH_VERCEL_PROJECT_ID`/`PREPUSH_VERCEL_TEAM_ID` or a local `.vercel/project.json`. The token and `SCHEMA_ATTESTATION_PRIVATE_KEY` stay outside Git and outside the Vercel runtime. The hook never prints verifier output, URI, token, key or attestation payload contents.
 
 The hook updates the environment variable before the Git push. Vercel environment changes apply to a new deployment, so the subsequent Git deployment must use the same final SHA. If the Vercel API update fails, the hook exits non-zero and blocks the push.
+
+### Local attestation refresh
+
+When a local checkout has moved to a new commit, refresh the local release
+attestation before starting `npm run dev`:
+
+```text
+npm run attestation:local
+```
+
+The command reads the current `HEAD`, runs the same eight verification scopes,
+and updates only `SCHEMA_ATTESTATION_COMMIT` and
+`RUNTIME_SCHEMA_ATTESTATIONS_JSON` in `.env` after every scope succeeds. It
+does not call Vercel and does not print the URI, credentials, key material, or
+attestation registry. Restart the local server after the update so its
+environment is reloaded.

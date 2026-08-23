@@ -470,6 +470,18 @@ const operations = [
     ]
   },
   {
+    "operationId": "runAdminDueWork",
+    "method": "POST",
+    "path": "/api/v1/admin/due-work-runs",
+    "requiredHeaders": [
+      "X-CSRF-Token"
+    ],
+    "browserManagedHeaders": [
+      "Origin"
+    ],
+    "pathParams": []
+  },
+  {
     "operationId": "mergeDuplicateArticles",
     "method": "POST",
     "path": "/api/v1/admin/duplicate-merges",
@@ -708,6 +720,7 @@ export function createApiClient(clientOptions = {}) {
     getIndexingJob: (init = {}) => requestOperation('getIndexingJob', init, clientOptions),
     retryIndexingJob: (init = {}) => requestOperation('retryIndexingJob', init, clientOptions),
     cancelIndexingJob: (init = {}) => requestOperation('cancelIndexingJob', init, clientOptions),
+    runAdminDueWork: (init = {}) => requestOperation('runAdminDueWork', init, clientOptions),
     mergeDuplicateArticles: (init = {}) => requestOperation('mergeDuplicateArticles', init, clientOptions),
     listTakedownRequests: (init = {}) => requestOperation('listTakedownRequests', init, clientOptions),
     createTakedownRequest: (init = {}) => requestOperation('createTakedownRequest', init, clientOptions),
