@@ -57,3 +57,49 @@ npm test -- --run test/unit/jobs/service.test.js
 
 Result: expected failure (`15 passed`, `1 failed`) because create/retry auto-kick
 and explicit admin draining still share one runner.
+
+### GREEN
+
+```text
+npm test -- --run test/unit/jobs/indexing-drain.test.js test/unit/indexing/queue.test.js test/unit/jobs/bootstrap.test.js test/unit/jobs/service.test.js test/unit/indexing/artifact-processor.test.js test/unit/ai/provider-router.test.js test/vercel/deployment-config.test.js
+```
+
+Result: PASS (`7 files`, `80 tests`).
+
+```text
+npm test -- --run test/unit/jobs/coordinator.test.js test/unit/indexing/repository.test.js test/unit/indexing/bootstrap.test.js test/unit/indexing/service.test.js test/unit/jobs/service.test.js test/security/jobs-http.test.js test/ui/admin/admin-due-work.test.js
+```
+
+Result: PASS (`7 files`, `51 tests`). The repository selector regression was
+then added and passed separately (`1 file`, `5 tests`).
+
+```text
+npm test -- --run test/integration/jobs-leases.mongo.test.js
+```
+
+Result: Mongo integration suite was discovered but skipped because
+`MONGODB_TEST_URI` was not present in the test process (`14 skipped`).
+
+```text
+npm run lint
+npm run build
+git diff --check
+```
+
+Result: PASS.
+
+```text
+npm test -- --run --coverage test/unit/jobs/indexing-drain.test.js test/unit/indexing/queue.test.js test/unit/jobs/bootstrap.test.js test/unit/jobs/service.test.js test/unit/indexing/artifact-processor.test.js test/unit/ai/provider-router.test.js test/unit/indexing/repository.test.js test/vercel/deployment-config.test.js
+```
+
+Result: all focused tests passed (`8 files`, `86 tests`). The command still
+exited non-zero because the repository-wide coverage threshold was evaluated
+against only this focused subset (`34.32%` lines globally). Changed focused
+modules reported, among others, `91.01%` lines for the new drain, `79.68%` for
+the indexing queue, `94.64%` for provider routing, `96.70%` for artifact
+processing, `97.40%` for the jobs service, and `97.05%` for jobs bootstrap.
+The global coverage gate remains for the final verification phase; it is not
+reported as passing here.
+
+Final focused GREEN rerun, including HTTP security and admin UI regression:
+`10 files`, `101 tests`, PASS.

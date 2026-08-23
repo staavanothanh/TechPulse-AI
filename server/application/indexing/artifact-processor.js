@@ -28,6 +28,20 @@ function embeddingTargetValue(value = {}) {
 
 function policyChanged() { return new ProviderAdapterError('policy') }
 
+function externalAttemptCount(error) {
+  const metadataAttempts = error?.metadata?.externalAttempts
+  const directAttempts = error?.externalAttempts
+  if (Number.isInteger(metadataAttempts) && metadataAttempts >= 0) {
+    // Older callers attached the count directly after constructing the error.
+    // Allow that compatibility shape to override the constructor's default zero
+    // without ever overriding an explicit non-zero metadata count.
+    if (metadataAttempts === 0 && Number.isInteger(directAttempts) && directAttempts > 0) return directAttempts
+    return metadataAttempts
+  }
+  if (Number.isInteger(directAttempts) && directAttempts >= 0) return directAttempts
+  return undefined
+}
+
 export function createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerRouter, llmProvider, embeddingProvider, embeddingTarget, now = () => new Date() } = {}) {
   if (!articleRepository || !sourceRepository || !providerRouter) throw new Error('Artifact processor dependencies are required')
   const target = embeddingTargetValue(embeddingTarget)
@@ -137,6 +151,10 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
         throw new ArtifactProcessingError('indexing_task_invalid', 'Indexing task is invalid')
       } catch (error) {
         if (error?.code === 'indexing_cancelled') return resetCancelledArtifact()
+        if (error?.retryable === true && externalAttemptCount(error) === 0) {
+          if (!await transition('resetArtifactPending')) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact retry fence is stale')
+          throw error
+        }
         let failed
         try { failed = await transition('markArtifactFailed', error) } catch { throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact failure fence is stale') }
         if (!failed) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact failure fence is stale')

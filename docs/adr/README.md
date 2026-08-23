@@ -20,6 +20,7 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0014](0014-use-inline-leases-for-stable-deletion-workflows.md) | Use inline leases for stable account-deletion workflows | accepted | 2026-08-15 |
 | [0015](0015-adopt-gemini-for-llm-workloads.md) | Chuyen summary va Q&A sang Gemini, giu BGE-M3 embedding | superseded by ADR-0016 | 2026-08-21 |
 | [0016](0016-adopt-deepseek-v4-flash-for-llm-workloads.md) | Chuyen summary va Q&A sang DeepSeek V4 Flash, giu BGE-M3 embedding | accepted | 2026-08-23 |
+| [0017](0017-add-bounded-indexing-drain-after-fair-queue-turn.md) | Add a bounded indexing drain after the fair queue turn | accepted | 2026-08-23 |
 
 ## Lifecycle
 

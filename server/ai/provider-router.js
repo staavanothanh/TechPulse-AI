@@ -15,6 +15,25 @@ function immutableCopy(value) {
   return freeze(copy)
 }
 
+function externalAttemptCount(value) {
+  return Number.isInteger(value) && value >= 0 ? value : 0
+}
+
+function safeRoutingMetadata(metadata, externalAttempts) {
+  const source = metadata && typeof metadata === 'object' ? metadata : {}
+  const safe = {
+    ...(typeof source.workloadId === 'string' ? { workloadId: source.workloadId } : {}),
+    ...(typeof source.operation === 'string' ? { operation: source.operation } : {}),
+    ...(typeof source.routeId === 'string' ? { routeId: source.routeId } : {}),
+    ...(typeof source.providerId === 'string' ? { providerId: source.providerId } : {}),
+    ...(typeof source.providerFailureDomainId === 'string' ? { providerFailureDomainId: source.providerFailureDomainId } : {}),
+    ...(typeof source.model === 'string' ? { model: source.model } : {}),
+    externalAttempts: externalAttemptCount(externalAttempts ?? source.externalAttempts),
+    ...(typeof source.fallback === 'string' ? { fallback: source.fallback } : {}),
+  }
+  return Object.freeze(safe)
+}
+
 function capabilityAllows(actual, required) {
   return actual === required || actual === 'zdr-verified' && required === 'nonconfidential'
 }
@@ -28,26 +47,27 @@ function operationKind(operation, fallback) {
 
 function routeMetadata({ policy, route, externalAttempts, fallback }) {
   if (!FALLBACKS.has(fallback)) throw new Error('Provider fallback metadata is invalid')
-  return Object.freeze({
-    workloadId: policy.workloadId,
-    operation: policy.operation,
-    routeId: route.routeId,
-    providerId: route.providerId,
-    providerFailureDomainId: route.providerFailureDomainId,
-    model: route.model,
-    externalAttempts,
+  return safeRoutingMetadata({
+    workloadId: policy?.workloadId,
+    operation: policy?.operation,
+    routeId: route?.routeId,
+    providerId: route?.providerId,
+    providerFailureDomainId: route?.providerFailureDomainId,
+    model: route?.model,
     fallback,
-  })
+  }, externalAttempts)
 }
 
 export class ProviderRoutingError extends Error {
-  constructor(classification, { metadata, retryAfterSeconds, upstreamStatus } = {}) {
+  constructor(classification, { metadata, retryAfterSeconds, upstreamStatus, externalAttempts } = {}) {
     super('AI provider operation could not complete safely')
     this.name = 'ProviderRoutingError'
     this.code = classification.code
     this.failureClass = classification.failureClass
     this.retryable = classification.retryable === true
-    if (metadata) this.metadata = metadata
+    const attempts = externalAttemptCount(externalAttempts ?? metadata?.externalAttempts)
+    this.metadata = safeRoutingMetadata(metadata, attempts)
+    this.externalAttempts = attempts
     if (Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599) this.upstreamStatus = upstreamStatus
     if (this.failureClass !== 'ambiguous' && Number.isInteger(retryAfterSeconds) && retryAfterSeconds > 0) this.retryAfterSeconds = retryAfterSeconds
   }
@@ -57,10 +77,12 @@ function routingError(error, context = {}) {
   const classification = error instanceof ProviderRoutingError
     ? { failureClass: error.failureClass, code: error.code, retryable: error.retryable }
     : classifyProviderError(error)
-  return error instanceof ProviderRoutingError ? error : new ProviderRoutingError(classification, {
-    metadata: context.metadata,
-    retryAfterSeconds: classification.retryAfterSeconds,
-    upstreamStatus: classification.upstreamStatus,
+  const attempts = externalAttemptCount(context.externalAttempts ?? error?.externalAttempts ?? error?.metadata?.externalAttempts)
+  return new ProviderRoutingError(classification, {
+    metadata: context.metadata ?? error?.metadata,
+    retryAfterSeconds: context.retryAfterSeconds ?? error?.retryAfterSeconds ?? classification.retryAfterSeconds,
+    upstreamStatus: context.upstreamStatus ?? error?.upstreamStatus ?? classification.upstreamStatus,
+    externalAttempts: attempts,
   })
 }
 
@@ -118,22 +140,41 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
     async execute({ workloadId, admittedInput, attemptId, units = 1, invoke, validateOutput } = {}) {
       const policy = policies.get(workloadId)
       if (!policy || typeof attemptId !== 'string' || attemptId.length < 1 || typeof invoke !== 'function' || typeof validateOutput !== 'function' || !Number.isFinite(units) || units <= 0) throw configError()
-      const input = immutableCopy(admittedInput)
+      let input
+      try {
+        input = immutableCopy(admittedInput)
+      } catch (error) {
+        throw routingError(error, {
+          metadata: routeMetadata({ policy, route: null, externalAttempts: 0, fallback: 'none' }), externalAttempts: 0,
+        })
+      }
       const primaryRoute = admission.getRoute(policy.primaryRouteId)
-      assertCandidate(primaryRoute, { policy, primaryRoute, fallback: 'none', now })
+      try {
+        assertCandidate(primaryRoute, { policy, primaryRoute, fallback: 'none', now })
+      } catch (error) {
+        throw routingError(error, { metadata: routeMetadata({ policy, route: primaryRoute, externalAttempts: 0, fallback: 'none' }), externalAttempts: 0 })
+      }
       let fallback = 'none'
       let externalAttempts = 0
       let lastError
+      let lastRoute = primaryRoute
 
       while (externalAttempts < policy.maxExternalAttempts) {
         const routeId = candidateIds(policy, fallback)[0]
         const route = admission.getRoute(routeId)
-        assertCandidate(route, { policy, primaryRoute, fallback, now })
+        lastRoute = route
+        try {
+          assertCandidate(route, { policy, primaryRoute, fallback, now })
+        } catch (error) {
+          throw routingError(error, { metadata: routeMetadata({ policy, route, externalAttempts, fallback }), externalAttempts })
+        }
         let domainAdmission
         try {
           domainAdmission = await admission.admitProviderDomain({ routeId, attemptId })
         } catch {
-          throw configError()
+          throw routingError(new ProviderAdapterError('config'), {
+            metadata: routeMetadata({ policy, route, externalAttempts, fallback }), externalAttempts,
+          })
         }
         if (!domainAdmission?.allowed) {
           const unavailable = new ProviderAdapterError('provider-retryable', { retryAfterSeconds: domainAdmission?.retryAfterSeconds })
@@ -142,7 +183,9 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
             lastError = unavailable
             continue
           }
-          throw routingError(unavailable)
+          throw routingError(unavailable, {
+            metadata: routeMetadata({ policy, route, externalAttempts, fallback }), externalAttempts,
+          })
         }
 
         let output
@@ -171,7 +214,9 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
               errorCode: classification.code,
             })
           } catch {
-            throw routingError(new ProviderAdapterError('ambiguous'))
+            throw routingError(new ProviderAdapterError('ambiguous'), {
+              metadata: routeMetadata({ policy, route, externalAttempts, fallback }), externalAttempts,
+            })
           }
           lastError = error
           if (externalAttempts >= policy.maxExternalAttempts) break
@@ -184,11 +229,15 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
         try {
           await admission.reportProviderDomain({ routeId, reservationId: domainAdmission.reservationId, outcome: 'succeeded' })
         } catch {
-          throw routingError(new ProviderAdapterError('ambiguous'))
+          throw routingError(new ProviderAdapterError('ambiguous'), {
+            metadata: routeMetadata({ policy, route, externalAttempts, fallback }), externalAttempts,
+          })
         }
         return Object.freeze({ output, metadata: routeMetadata({ policy, route, externalAttempts, fallback }) })
       }
-      throw routingError(lastError ?? new ProviderAdapterError('config'))
+      throw routingError(lastError ?? new ProviderAdapterError('config'), {
+        metadata: routeMetadata({ policy, route: lastRoute, externalAttempts, fallback }), externalAttempts,
+      })
     },
   })
 }

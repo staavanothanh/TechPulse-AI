@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner } from '../../../server/bootstrap/jobs.js'
+import { assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner } from '../../../server/bootstrap/jobs.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES, GOVERNANCE_INDEXES } from '../../../scripts/migrations/governance.js'
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
@@ -168,6 +168,37 @@ describe('durable-jobs bootstrap readiness', () => {
     await cron()
 
     expect(calls).toEqual(['materialize', 'coordinate', 'indexing-drain'])
+  })
+
+  it('counts the fair turn against the profile cap and merges drain counters into indexing', async () => {
+    const candidate = { id: 'job-1', articleId: 'article-1', task: 'summary' }
+    const queue = {
+      selectDue: vi.fn(async () => candidate),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    const queueRegistry = { get: vi.fn(() => queue), registered: vi.fn(() => [queue]) }
+    const runner = createProfiledIndexingDrainRunner({
+      queueRegistry,
+      profile: { maxJobs: 4, budgetMs: 45_000 },
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+    const empty = { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 }
+    const result = await runner({
+      runId: 'base-run',
+      startedAt: new Date('2026-08-10T00:00:00.000Z'),
+      finishedAt: new Date('2026-08-10T00:00:01.000Z'),
+      recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+      queues: {
+        accountDeletion: { ...empty, deferred: 1 },
+        ingestion: { ...empty, deferred: 1 },
+        indexing: { ...empty, claimed: 1, succeeded: 1 },
+      },
+      nextAvailableAt: null,
+    })
+
+    expect(queue.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(result.queues.indexing).toEqual({ claimed: 2, succeeded: 2, partial: 0, failed: 0, deferred: 0 })
   })
 
   it('consumes a bounded daily continuation when the first materialization page has more work', async () => {

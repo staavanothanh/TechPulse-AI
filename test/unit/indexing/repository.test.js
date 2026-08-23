@@ -1,6 +1,6 @@
 import { ObjectId } from 'mongodb'
-import { describe, expect, it } from 'vitest'
-import { buildIngestionArtifactJobs, indexingJobDocument, purgeAfterForIndexing, serializeIndexingJob } from '../../../server/repositories/mongo/indexing-job-repository.js'
+import { describe, expect, it, vi } from 'vitest'
+import { buildIngestionArtifactJobs, indexingJobDocument, MongoIndexingJobRepository, purgeAfterForIndexing, serializeIndexingJob } from '../../../server/repositories/mongo/indexing-job-repository.js'
 
 const createdAt = new Date('2026-08-10T00:00:00.000Z')
 const embeddingTarget = { dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1' }
@@ -52,5 +52,38 @@ describe('Step 9 indexing Mongo repository documents', () => {
     const changedEmbedding = changed.find(({ task }) => task === 'embedding')
     expect(changedEmbedding.idempotencyKey).not.toBe(firstEmbedding.idempotencyKey)
     expect(changedEmbedding.requestHash).not.toBe(firstEmbedding.requestHash)
+  })
+
+  it('selects one due task while excluding articles already active in the drain', async () => {
+    const filters = []
+    const cursor = {
+      sort() { return this },
+      hint() { return this },
+      limit() { return this },
+      async next() { return null },
+    }
+    const collection = { find: vi.fn((filter) => { filters.push(filter); return cursor }) }
+    const repository = new MongoIndexingJobRepository({
+      client: {},
+      db: { collection: vi.fn(() => collection) },
+      now: () => createdAt,
+    })
+
+    await expect(repository.selectDueIndexing({
+      now: createdAt,
+      task: 'summary',
+      excludeArticleIds: [job.articleId],
+    })).resolves.toBeNull()
+
+    expect(filters).toHaveLength(2)
+    expect(filters[0]).toEqual(expect.objectContaining({
+      status: 'queued',
+      task: 'summary',
+      articleId: { $nin: [new ObjectId(job.articleId)] },
+      agingEligibleAt: { $lte: createdAt },
+    }))
+    expect(filters[1]).toEqual(expect.objectContaining({ agingEligibleAt: { $gt: createdAt } }))
+    await expect(repository.selectDueIndexing({ now: createdAt, task: 'unknown' })).rejects.toThrow(/task filter/i)
+    await expect(repository.deferWithFence({ jobId: job.id, fence: {}, delayMs: 999 })).rejects.toThrow(/defer delay/i)
   })
 })

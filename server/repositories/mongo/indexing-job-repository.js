@@ -64,6 +64,23 @@ function dateValue(value, label = 'Indexing job date') {
   return value
 }
 
+function dueTaskFilter({ task, tasks } = {}) {
+  const requested = task === undefined ? tasks : [task]
+  if (requested === undefined) return undefined
+  if (!Array.isArray(requested) || requested.length < 1 || requested.length > TASKS.size || requested.some((value) => !TASKS.has(value))) throw new Error('Indexing due task filter is invalid')
+  const unique = [...new Set(requested)]
+  return unique.length === 1 ? unique[0] : { $in: unique }
+}
+
+function excludedArticleIds(values) {
+  if (values === undefined) return []
+  if (!Array.isArray(values) || values.length > 200) throw new Error('Indexing article exclusion is invalid')
+  return [...new Map(values.map((value) => {
+    const id = idValue(value)
+    return [id.toHexString(), id]
+  })).values()]
+}
+
 function safeErrorDocument(error) {
   if (!error) return undefined
   const safe = { code: String(error.code).slice(0, 128), message: String(error.message).slice(0, 500), retryable: Boolean(error.retryable), occurredAt: dateValue(error.occurredAt) }
@@ -389,10 +406,19 @@ export class MongoIndexingJobRepository {
     return { jobs: page.map(serializeIndexingJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }
   }
 
-  async selectDueIndexing({ now = new Date() } = {}) {
-    const aged = await this.jobs().find({ status: 'queued', availableAt: { $lte: now }, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_aged').limit(1).next()
+  async selectDueIndexing({ now = new Date(), task, tasks, excludeArticleIds } = {}) {
+    dateValue(now, 'Indexing due clock')
+    const taskFilter = dueTaskFilter({ task, tasks })
+    const excluded = excludedArticleIds(excludeArticleIds)
+    const common = {
+      status: 'queued',
+      availableAt: { $lte: now },
+      ...(taskFilter ? { task: taskFilter } : {}),
+      ...(excluded.length > 0 ? { articleId: { $nin: excluded } } : {}),
+    }
+    const aged = await this.jobs().find({ ...common, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_aged').limit(1).next()
     if (aged) return serializeIndexingJob(aged)
-    return serializeIndexingJob(await this.jobs().find({ status: 'queued', availableAt: { $lte: now }, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_normal').limit(1).next())
+    return serializeIndexingJob(await this.jobs().find({ ...common, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_normal').limit(1).next())
   }
 
   async nextAvailableAt() {
@@ -468,6 +494,7 @@ export class MongoIndexingJobRepository {
   }
 
   async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000 } = {}) {
+    if (!Number.isInteger(delayMs) || delayMs < 1_000 || delayMs > 15 * 60 * 1_000) throw new Error('Indexing defer delay is invalid')
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
     return this.withTransaction(async (session) => {
       const leaseFilter = { key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash, 'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now } }
