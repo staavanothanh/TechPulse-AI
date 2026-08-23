@@ -21,6 +21,11 @@ export const INSTALLED_PROVIDER_ADAPTERS = Object.freeze([
     protocol: 'openai-compatible-v1',
     supportedOperations: Object.freeze(['summary', 'answer', 'support', 'embedding']),
   }),
+  Object.freeze({
+    adapterId: 'deepseek-openai-compatible',
+    protocol: 'openai-compatible-v1',
+    supportedOperations: Object.freeze(['summary', 'answer', 'support']),
+  }),
 ])
 
 function failureClassForStatus(status) {
@@ -128,6 +133,19 @@ function openAiCompatiblePlugin() {
 
 export const OPENAI_COMPATIBLE_PROTOCOL_ADAPTER = openAiCompatiblePlugin()
 
+export const DEEPSEEK_OPENAI_COMPATIBLE_PROTOCOL_ADAPTER = Object.freeze({
+  ...OPENAI_COMPATIBLE_PROTOCOL_ADAPTER,
+  adapterId: 'deepseek-openai-compatible',
+  supportedOperations: Object.freeze(['summary', 'answer', 'support']),
+  buildPayload(input) {
+    return { ...OPENAI_COMPATIBLE_PROTOCOL_ADAPTER.buildPayload(input), thinking: { type: 'disabled' } }
+  },
+  parsePayload(input) {
+    if (input?.payload?.model !== input?.route?.model) throw new ProviderAdapterError('config')
+    return OPENAI_COMPATIBLE_PROTOCOL_ADAPTER.parsePayload(input)
+  },
+})
+
 function pluginMap(adapterPlugins) {
   if (!Array.isArray(adapterPlugins) || adapterPlugins.length === 0) throw new Error('Provider adapter plugins are required')
   const result = new Map()
@@ -198,7 +216,7 @@ function createBoundary({ registry, fetchImpl, resolveCredential, timeouts, adap
     if (type !== 'application/json') throw new ProviderAdapterError('schema')
     const payload = await readBoundedJson(response, operation === 'embedding' ? MAX_EMBEDDING_RESPONSE_BYTES : MAX_RESPONSE_BYTES)
     try {
-      return plugin.parsePayload({ operation, payload, ...requestInput })
+      return plugin.parsePayload({ operation, payload, route, ...requestInput })
     } catch (error) {
       if (error instanceof ProviderAdapterError) throw error
       throw new ProviderAdapterError('ambiguous', { cause: error })
@@ -212,7 +230,7 @@ export function createConfiguredProviderAdapters({
   resolveCredential = (name) => process.env[name],
   summaryTimeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
   embeddingTimeoutMs = DEFAULT_EMBEDDING_TIMEOUT_MS,
-  adapterPlugins = [OPENAI_COMPATIBLE_PROTOCOL_ADAPTER],
+  adapterPlugins = [OPENAI_COMPATIBLE_PROTOCOL_ADAPTER, DEEPSEEK_OPENAI_COMPATIBLE_PROTOCOL_ADAPTER],
   trustedEndpointProfiles = TRUSTED_PROVIDER_ENDPOINT_PROFILES,
 } = {}) {
   if (typeof fetchImpl !== 'function' || typeof resolveCredential !== 'function' || !Number.isInteger(summaryTimeoutMs) || !Number.isInteger(embeddingTimeoutMs) || summaryTimeoutMs < 100 || embeddingTimeoutMs < 100 || summaryTimeoutMs > 60_000 || embeddingTimeoutMs > 60_000) throw new Error('Provider adapter configuration is invalid')
