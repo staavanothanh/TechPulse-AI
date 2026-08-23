@@ -56,9 +56,10 @@ describe('Step 9 indexing Mongo repository documents', () => {
 
   it('selects one due task while excluding articles already active in the drain', async () => {
     const filters = []
+    const hints = []
     const cursor = {
       sort() { return this },
-      hint() { return this },
+      hint(name) { hints.push(name); return this },
       limit() { return this },
       async next() { return null },
     }
@@ -83,7 +84,64 @@ describe('Step 9 indexing Mongo repository documents', () => {
       agingEligibleAt: { $lte: createdAt },
     }))
     expect(filters[1]).toEqual(expect.objectContaining({ agingEligibleAt: { $gt: createdAt } }))
+    expect(hints).toEqual(['indexing_drain_task_aged', 'indexing_drain_task_normal'])
     await expect(repository.selectDueIndexing({ now: createdAt, task: 'unknown' })).rejects.toThrow(/task filter/i)
     await expect(repository.deferWithFence({ jobId: job.id, fence: {}, delayMs: 999 })).rejects.toThrow(/defer delay/i)
+  })
+
+  it.each([
+    { attempt: 2, expectedStatus: 'pending', retriesCreated: 1, parentStatus: 'failed', cancelled: false },
+    { attempt: 3, expectedStatus: 'failed', retriesCreated: 0, parentStatus: 'failed', cancelled: false },
+    { attempt: 2, expectedStatus: 'pending', retriesCreated: 0, parentStatus: 'cancelled', cancelled: true },
+  ])('repairs a processing summary after expired attempt $attempt (cancelled: $cancelled)', async ({ attempt, expectedStatus, retriesCreated, parentStatus, cancelled }) => {
+    const expiredAt = new Date(createdAt.getTime() + 60_000)
+    const parent = indexingJobDocument({
+      ...job,
+      status: 'running',
+      task: 'summary',
+      attempt,
+      leaseGeneration: 2,
+      startedAt: createdAt,
+      heartbeatAt: createdAt,
+      ...(cancelled ? { cancellationRequestedAt: createdAt } : {}),
+      updatedAt: createdAt,
+    })
+    const snapshot = {
+      _id: new ObjectId('507f1f77bcf86cd799439099'),
+      key: `indexing:article:${job.articleId}`,
+      activeOwner: {
+        jobId: parent._id,
+        ownerTokenHash: 'a'.repeat(64),
+        leaseGeneration: 2,
+        expiresAt: createdAt,
+      },
+    }
+    const jobs = {
+      findOne: vi.fn(async () => parent),
+      updateOne: vi.fn(async (_filter, update) => ({ matchedCount: 1, upsertedCount: update?.$setOnInsert ? 1 : 0 })),
+    }
+    const articles = { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }
+    const leases = { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }
+    const audits = { findOne: vi.fn(async () => null), insertOne: vi.fn(async () => ({ acknowledged: true })) }
+    const collections = { indexingJobs: jobs, articles, jobLeases: leases, adminAuditLogs: audits }
+    const session = { withTransaction: vi.fn(async (work) => work()), endSession: vi.fn(async () => {}) }
+    const repository = new MongoIndexingJobRepository({
+      client: { startSession: () => session },
+      db: { collection: (name) => collections[name] },
+      now: () => expiredAt,
+    })
+
+    await expect(repository.recoverExpiredIndexing({
+      leaseRepository: { listExpired: vi.fn(async () => [snapshot]) },
+      now: expiredAt,
+      limit: 1,
+    })).resolves.toEqual({ inspected: 1, recovered: 1, retriesCreated, failed: 0 })
+
+    expect(articles.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: parent.articleId, summaryStatus: 'processing' }),
+      expect.objectContaining({ $set: expect.objectContaining({ summaryStatus: expectedStatus }) }),
+      { session },
+    )
+    expect(jobs.updateOne.mock.calls[0][1]).toEqual(expect.objectContaining({ $set: expect.objectContaining({ status: parentStatus }) }))
   })
 })

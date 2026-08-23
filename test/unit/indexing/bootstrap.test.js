@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { assertIndexingJobsReady, createConfiguredIndexingRuntime } from '../../../server/bootstrap/indexing.js'
 import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from '../../../scripts/migrations/indexing-jobs.js'
+import { INDEXING_DRAIN_PERFORMANCE_INDEXES } from '../../../scripts/migrations/indexing-drain-performance.js'
 import { PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../../scripts/migrations/provider-routing-v2.js'
 
 function indexesFor(name) {
   const base = name === 'articles' ? INDEXING_ARTICLE_INDEXES : INDEXING_JOB_INDEXES[name] ?? []
-  const merged = new Map([...base, ...(PROVIDER_ROUTING_V2_INDEXES[name] ?? [])].map((index) => [index.name, index]))
+  const merged = new Map([...base, ...(INDEXING_DRAIN_PERFORMANCE_INDEXES[name] ?? []), ...(PROVIDER_ROUTING_V2_INDEXES[name] ?? [])].map((index) => [index.name, index]))
   return [...merged.values()].map((index) => index.name === 'articles_search_text'
     ? { name: index.name, key: { _fts: 'text', _ftsx: 1 }, weights: Object.fromEntries(Object.keys(index.key).map((field) => [field, 1])), ...(index.options ?? {}) }
     : { name: index.name, key: index.key, ...(index.options ?? {}) })
@@ -77,5 +78,13 @@ describe('Step 9 indexing bootstrap readiness', () => {
   it('fails startup when the configured embedding workload is absent', async () => {
     const jobRuntime = { queueRegistry: { register: vi.fn() }, maintenanceRegistry: { register: vi.fn() }, coordinatorRunner: vi.fn(), leaseRepository: {}, cronMaterializers: [] }
     await expect(createConfiguredIndexingRuntime({ context: readyContext(), jobRuntime, rateLimitAdmission: { reserve: vi.fn() }, providerRegistry: { domains: [], routes: [], workloadPolicies: [] } })).rejects.toThrow(/workload embedding/)
+  })
+
+  it('fails closed when task-aware drain indexes are missing', async () => {
+    const drainNames = new Set(INDEXING_DRAIN_PERFORMANCE_INDEXES.indexingJobs.map(({ name }) => name))
+    const indexOverride = {
+      indexingJobs: indexesFor('indexingJobs').filter(({ name }) => !drainNames.has(name)),
+    }
+    await expect(assertIndexingJobsReady(readyContext({ indexOverride }))).rejects.toThrow(/indexes/i)
   })
 })

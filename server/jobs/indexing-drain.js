@@ -52,6 +52,7 @@ function scheduleCandidate({ candidate, task, queue, wave, waveArticleIds, block
       onInfrastructureError(error)
       throw error
     })
+  guardedRun.catch(() => {})
   wave.push({ task, promise: guardedRun })
   return true
 }
@@ -127,8 +128,8 @@ export function createIndexingDrainRunner({ queue, maxClaims, deadline, now = ()
       if (firstInfrastructureError) break
     }
 
-    const nextAvailableAt = await queue.nextAvailableAt({ now: currentTime() })
     if (firstInfrastructureError) throw firstInfrastructureError
+    const nextAvailableAt = await queue.nextAvailableAt({ now: currentTime() })
     return { startedAt, finishedAt: currentTime(), counters, nextAvailableAt }
   }
 }

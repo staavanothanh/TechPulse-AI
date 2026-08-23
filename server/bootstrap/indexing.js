@@ -15,6 +15,7 @@ import { MongoProviderFailureDomainRepository } from '../repositories/mongo/prov
 import { MongoSourceRepository } from '../repositories/mongo/source-repository.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from '../../scripts/migrations/indexing-jobs.js'
+import { INDEXING_DRAIN_PERFORMANCE_INDEXES } from '../../scripts/migrations/indexing-drain-performance.js'
 import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
 import { PROVIDER_ADMISSION_STATE_VALIDATOR_V2, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
@@ -34,7 +35,8 @@ export async function assertIndexingJobsReady(context) {
     const acceptedValidators = name === 'providerAdmissionStates' ? [definition.validator, PROVIDER_ADMISSION_STATE_VALIDATOR_V2] : name === 'indexingJobs' ? [definition.validator, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR] : [definition.validator]
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !acceptedValidators.some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs validator is not ready')
     const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
-    if (INDEXING_JOB_INDEXES[name].some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('indexing-jobs indexes are not ready')
+    const expectedIndexes = [...INDEXING_JOB_INDEXES[name], ...(INDEXING_DRAIN_PERFORMANCE_INDEXES[name] ?? [])]
+    if (expectedIndexes.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('indexing-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
   if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')

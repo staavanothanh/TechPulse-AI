@@ -9,7 +9,7 @@ export const RUNTIME_SCHEMA_GENERATIONS = Object.freeze({
   sources: 'sources-v1',
   'durable-jobs': 'durable-jobs-v1',
   articles: 'articles-provider-routing-v2-v1',
-  'indexing-jobs': 'indexing-jobs-provider-routing-v2-v1',
+  'indexing-jobs': 'indexing-jobs-drain-performance-v1',
   'provider-routing-v2': 'provider-routing-v2-v1',
   'chat-sessions': 'chat-sessions-provider-routing-v2-v1',
   governance: 'governance-provider-routing-v2-v1',

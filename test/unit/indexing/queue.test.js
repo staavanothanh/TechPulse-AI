@@ -38,6 +38,30 @@ describe('Step 9 indexing queue adapter', () => {
     expect(jobRepository.completeWithFence.mock.calls[0][0].error).toMatchObject({ code: 'lease_fence_stale', retryable: true })
   })
 
+  it('releases the lease and skips a job when the claim loses a completion race', async () => {
+    const fence = { key: `indexing:article:${candidate.articleId}`, jobId: candidate.id, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2 }
+    const conflict = Object.assign(new Error('Indexing job is no longer claimable'), { status: 409, code: 'conflict' })
+    const jobRepository = { claimQueuedWithFence: vi.fn(async () => { throw conflict }) }
+    const leaseRepository = { acquire: vi.fn(async () => fence), release: vi.fn(async () => true) }
+    const executor = vi.fn()
+    const adapter = createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, ownerToken: () => 'owner-token-value' })
+
+    await expect(adapter.claimAndExecute({ candidate })).resolves.toEqual({ status: 'deferred', claimed: false })
+    expect(leaseRepository.release).toHaveBeenCalledWith({ ...fence, ownerToken: 'owner-token-value' })
+    expect(executor).not.toHaveBeenCalled()
+  })
+
+  it('does not swallow non-conflict errors from the job claim', async () => {
+    const fence = { key: `indexing:article:${candidate.articleId}`, jobId: candidate.id, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2 }
+    const failure = Object.assign(new Error('database unavailable'), { status: 503, code: 'database_unavailable' })
+    const jobRepository = { claimQueuedWithFence: vi.fn(async () => { throw failure }) }
+    const leaseRepository = { acquire: vi.fn(async () => fence), release: vi.fn() }
+    const adapter = createIndexingQueueAdapter({ jobRepository, leaseRepository, ownerToken: () => 'owner-token-value' })
+
+    await expect(adapter.claimAndExecute({ candidate })).rejects.toBe(failure)
+    expect(leaseRepository.release).toHaveBeenCalledWith({ ...fence, ownerToken: 'owner-token-value' })
+  })
+
   it('defers provider admission denial before an external attempt and preserves Retry-After', async () => {
     const retryAfterSeconds = 17
     const admissionDenied = Object.assign(new Error('provider admission denied'), {
@@ -80,6 +104,39 @@ describe('Step 9 indexing queue adapter', () => {
       const calls = leaseRepository.heartbeat.mock.calls.length
       await vi.advanceTimersByTimeAsync(2000)
       expect(leaseRepository.heartbeat).toHaveBeenCalledTimes(calls)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('aborts indexing and avoids terminal writes when lease heartbeat ownership is lost', async () => {
+    vi.useFakeTimers()
+    try {
+      const fence = { key: `indexing:article:${candidate.articleId}`, jobId: candidate.id, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2 }
+      const jobRepository = {
+        claimQueuedWithFence: vi.fn(async () => true),
+        completeWithFence: vi.fn(),
+        deferWithFence: vi.fn(),
+      }
+      const leaseRepository = {
+        acquire: vi.fn(async () => fence),
+        heartbeat: vi.fn(async () => false),
+      }
+      let receivedSignal
+      const executor = vi.fn(({ signal }) => new Promise((resolve, reject) => {
+        receivedSignal = signal
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      }))
+      const adapter = createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, leaseMs: 300, ownerToken: () => 'owner-token-value' })
+      const run = adapter.claimAndExecute({ candidate })
+      const rejection = expect(run).rejects.toMatchObject({ code: 'lease_heartbeat_lost', retryable: true })
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(100)
+
+      await rejection
+      expect(receivedSignal.aborted).toBe(true)
+      expect(jobRepository.completeWithFence).not.toHaveBeenCalled()
+      expect(jobRepository.deferWithFence).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

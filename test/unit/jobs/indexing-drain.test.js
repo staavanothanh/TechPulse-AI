@@ -147,6 +147,45 @@ describe('indexing drain runner', () => {
     }))
   })
 
+  it('settles an early claim rejection before awaiting a later candidate selection', async () => {
+    const infrastructureError = new Error('claim failed')
+    let selectCalls = 0
+    const delayedSelection = new Promise((resolve) => setTimeout(() => resolve(null), 25))
+    const queue = {
+      selectDue: vi.fn(async ({ task }) => {
+        if (selectCalls++ === 0) return job('failing', 'article-a', task)
+        await delayedSelection
+        return null
+      }),
+      claimAndExecute: vi.fn(() => Promise.reject(infrastructureError)),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    const unhandledReasons = []
+    const onUnhandledRejection = (reason) => { unhandledReasons.push(reason) }
+    process.prependListener('unhandledRejection', onUnhandledRejection)
+
+    try {
+      await expect(runDrain(queue, { maxClaims: 2 })).rejects.toBe(infrastructureError)
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandledRejection)
+    }
+
+    expect(unhandledReasons).toEqual([])
+  })
+
+  it('throws the first infrastructure error before querying next availability', async () => {
+    const infrastructureError = new Error('claim failed')
+    const availabilityError = new Error('availability failed')
+    const queue = {
+      selectDue: vi.fn(async ({ task }) => job('failing', 'article-a', task)),
+      claimAndExecute: vi.fn(() => Promise.reject(infrastructureError)),
+      nextAvailableAt: vi.fn(async () => { throw availabilityError }),
+    }
+
+    await expect(runDrain(queue, { maxClaims: 1 })).rejects.toBe(infrastructureError)
+    expect(queue.nextAvailableAt).not.toHaveBeenCalled()
+  })
+
   it('honors maxClaims and stops before the absolute deadline', async () => {
     const deadline = new Date(NOW.getTime() + 60_000)
     const queue = queueFixture({

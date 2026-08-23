@@ -103,3 +103,43 @@ reported as passing here.
 
 Final focused GREEN rerun, including HTTP security and admin UI regression:
 `10 files`, `101 tests`, PASS.
+
+### Independent review remediation
+
+Independent code and security review found three concurrency/error-path defects
+and one Atlas query-plan defect. Each was reproduced with a failing regression
+test before implementation:
+
+- a fast wave rejection could become an unhandled rejection before settlement;
+- a claim conflict after lease acquisition could stop the complete drain;
+- an availability query could mask the first infrastructure failure;
+- heartbeat loss did not cancel the provider request;
+- task-aware selectors still forced the task-unaware due indexes;
+- in-flight cancellation could publish output across a check/commit race;
+- final-attempt lease loss could leave an artifact `processing` forever.
+
+The GREEN remediation propagates lease cancellation into provider adapters,
+prevents stale artifact transitions, releases claim-race leases, observes wave
+rejections immediately, preserves the original infrastructure error, and adds
+an idempotent task-aware index migration. Artifact commits now fence the
+cancellation state atomically, and expired-lease recovery repairs the matching
+artifact state.
+
+```text
+npm test -- --run test/unit/jobs/indexing-drain.test.js test/unit/indexing/queue.test.js test/unit/indexing/artifact-processor.test.js test/unit/ai/deepseek-v4-flash-provider.test.js test/unit/indexing/repository.test.js test/migrations/indexing-drain-performance.test.js test/unit/indexing/bootstrap.test.js test/unit/performance/schema-readiness.test.js
+```
+
+Result: PASS (`8 files`, `81 tests`).
+
+Final focused regression expansion: PASS (`16 files`, `168 tests`). Security
+regression: PASS (`12 files`, `77 tests`). `contract:validate`, `contract:test`,
+`npm run lint`, `npm run build`, and `git diff --check` all pass.
+
+```text
+npm run db:migrate:dry-run -- --to indexing-drain-performance
+```
+
+Result: PASS with two non-destructive `createIndex` operations. The migration
+was not applied to the shared Atlas database. The Mongo lease integration suite
+was discovered again but remained skipped because `MONGODB_TEST_URI` was not
+available in the test process (`14 skipped`).

@@ -42,18 +42,25 @@ function externalAttemptCount(error) {
   return undefined
 }
 
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return
+  throw signal.reason instanceof Error ? signal.reason : new ArtifactProcessingError('indexing_cancelled', 'Indexing execution was cancelled', { retryable: true })
+}
+
 export function createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerRouter, llmProvider, embeddingProvider, embeddingTarget, now = () => new Date() } = {}) {
   if (!articleRepository || !sourceRepository || !providerRouter) throw new Error('Artifact processor dependencies are required')
   const target = embeddingTargetValue(embeddingTarget)
 
   return Object.freeze({
-    async execute({ job, fence } = {}) {
+    async execute({ job, fence, signal } = {}) {
+      throwIfAborted(signal)
       const article = await articleRepository.findArticleForIndexing(job?.articleId)
       if (!article || String(article.sourceId) !== String(job?.sourceId)) throw new ArtifactProcessingError('article_unavailable', 'Article is unavailable for indexing')
       const source = await sourceRepository.findSourceById(job.sourceId)
       if (!source || String(sourceId(source)) !== String(job.sourceId) || source.policyVersion !== job.expectedSourcePolicyVersion) throw new ArtifactProcessingError('policy_version_mismatch', 'Current source policy changed before artifact processing')
       const generatedAt = now()
       if (job.task === 'visibility-reconcile') {
+        throwIfAborted(signal)
         const committed = await articleRepository.reconcileArticleVisibility({ job, fence, article, source, expectedSourcePolicyVersion: job.expectedSourcePolicyVersion, now: generatedAt })
         if (!committed) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact reconciliation fence is stale')
         return { status: 'succeeded' }
@@ -91,9 +98,14 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
         })
       }
       if (await cancellationRequested()) return { status: 'cancelled' }
+      throwIfAborted(signal)
       if (!await transition('markArtifactProcessing')) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact processing fence is stale')
       const resetCancelledArtifact = async () => {
-        if (!await transition('resetArtifactPending')) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact cancellation fence is stale')
+        const reset = await articleRepository.resetArtifactPending({
+          job, fence, expectedSourcePolicyVersion: job.expectedSourcePolicyVersion, purpose: job.task,
+          inputHash: input.inputHash, cancellationRequested: true,
+        })
+        if (!reset) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact cancellation fence is stale')
         return { status: 'cancelled' }
       }
       const assertInputStillAdmitted = async () => {
@@ -111,11 +123,14 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
           const result = await providerRouter.execute({
             workloadId: 'summary', admittedInput: input, attemptId: String(job.id),
             invoke: async ({ route, admittedInput }) => {
+              throwIfAborted(signal)
               await assertInputStillAdmitted()
-              return llmProvider.summarize({ route, input: admittedInput.text, locale: 'vi', tools: [], outputSchema: { titleVi: 'string', summaryVi: 'string' } })
+              return llmProvider.summarize({ route, input: admittedInput.text, locale: 'vi', tools: [], outputSchema: { titleVi: 'string', summaryVi: 'string' }, signal })
             },
             validateOutput: ({ output }) => validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi }),
           })
+          throwIfAborted(signal)
+          if (await cancellationRequested()) return resetCancelledArtifact()
           const committed = await articleRepository.commitSummaryArtifact({
             job, fence, expectedSourcePolicyVersion: job.expectedSourcePolicyVersion, inputHash: input.inputHash,
             summary: { ...result.output, summaryStatus: 'ready', summaryBasis: input.basis, summaryModel: result.metadata?.model, summaryInputHash: input.inputHash, summarySourcePolicyVersion: input.policyVersion, summaryGeneratedAt: generatedAt, summaryError: null },
@@ -129,8 +144,9 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
           const result = await providerRouter.execute({
             workloadId: 'embedding', admittedInput: input, attemptId: String(job.id),
             invoke: async ({ route, admittedInput }) => {
+              throwIfAborted(signal)
               await assertInputStillAdmitted()
-              return embeddingProvider.embed({ route, input: admittedInput.text, model: route.model, dimensions: target.dimensions })
+              return embeddingProvider.embed({ route, input: admittedInput.text, model: route.model, dimensions: target.dimensions, signal })
             },
             validateOutput: ({ route, output }) => {
               if (typeof route?.model !== 'string' || !route.model || typeof route.artifactCompatibilityId !== 'string' || !route.artifactCompatibilityId || target.artifactCompatibilityId && route.artifactCompatibilityId !== target.artifactCompatibilityId) throw new ProviderAdapterError('config')
@@ -139,6 +155,8 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
               return { model: route.model, dimensions: target.dimensions, version: target.version, artifactCompatibilityId: route.artifactCompatibilityId, embedding: vector }
             },
           })
+          throwIfAborted(signal)
+          if (await cancellationRequested()) return resetCancelledArtifact()
           const artifact = result.output
           assertEmbeddingJobTarget()
           const committed = await articleRepository.commitEmbeddingArtifact({
@@ -150,6 +168,8 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
         }
         throw new ArtifactProcessingError('indexing_task_invalid', 'Indexing task is invalid')
       } catch (error) {
+        if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : error
+        if (await cancellationRequested()) return resetCancelledArtifact()
         if (error?.code === 'indexing_cancelled') return resetCancelledArtifact()
         if (error?.retryable === true && externalAttemptCount(error) === 0) {
           if (!await transition('resetArtifactPending')) throw new ArtifactProcessingError('artifact_commit_stale', 'Artifact retry fence is stale')

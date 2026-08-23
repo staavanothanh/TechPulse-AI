@@ -88,6 +88,27 @@ function safeErrorDocument(error) {
   return safe
 }
 
+function expiredArtifactRecovery(parent, now, returnToPending) {
+  if (!['summary', 'embedding'].includes(parent?.task)) return null
+  const statusField = parent.task === 'summary' ? 'summaryStatus' : 'embeddingStatus'
+  const error = returnToPending ? null : { code: 'lease_expired', message: 'AI artifact did not complete safely', retryable: true, occurredAt: now }
+  const fields = parent.task === 'summary'
+    ? {
+        titleVi: null, summaryVi: null, summaryStatus: returnToPending ? 'pending' : 'failed', summaryBasis: null,
+        summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null,
+        summaryError: error, updatedAt: now,
+      }
+    : {
+        embeddingStatus: returnToPending ? 'pending' : 'failed', embedding: null, embeddingModel: null,
+        embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null,
+        embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: error, updatedAt: now,
+      }
+  return {
+    filter: { _id: parent.articleId, sourceId: parent.sourceId, status: 'published', [statusField]: 'processing' },
+    update: { $set: fields, ...(parent.task === 'embedding' ? { $unset: { embeddingArtifactCompatibilityId: '' } } : {}) },
+  }
+}
+
 export function indexingJobDocument(job) {
   return {
     _id: idValue(job.id), idempotencyKey: job.idempotencyKey, actorScope: job.actorScope, requestHash: job.requestHash,
@@ -416,9 +437,11 @@ export class MongoIndexingJobRepository {
       ...(taskFilter ? { task: taskFilter } : {}),
       ...(excluded.length > 0 ? { articleId: { $nin: excluded } } : {}),
     }
-    const aged = await this.jobs().find({ ...common, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_aged').limit(1).next()
+    const agedIndex = taskFilter ? 'indexing_drain_task_aged' : 'indexing_due_aged'
+    const normalIndex = taskFilter ? 'indexing_drain_task_normal' : 'indexing_due_normal'
+    const aged = await this.jobs().find({ ...common, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint(agedIndex).limit(1).next()
     if (aged) return serializeIndexingJob(aged)
-    return serializeIndexingJob(await this.jobs().find({ ...common, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_normal').limit(1).next())
+    return serializeIndexingJob(await this.jobs().find({ ...common, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint(normalIndex).limit(1).next())
   }
 
   async nextAvailableAt() {
@@ -545,8 +568,21 @@ export class MongoIndexingJobRepository {
           let retriesCreated = 0
           if (parent) {
             const safe = { code: 'lease_expired', message: 'Indexing lease expired before completion', retryable: true, occurredAt: now }
-            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, { $set: { status: 'failed', error: safe, finishedAt: now, purgeAfter: purgeAfterForIndexing('failed', now, parent.idempotencyExpiresAt), updatedAt: now } }, { session })
-            if (parent.attempt < 3) {
+            const cancelled = Boolean(parent.cancellationRequestedAt)
+            const terminalStatus = cancelled ? 'cancelled' : 'failed'
+            const terminalUpdate = {
+              $set: {
+                status: terminalStatus,
+                ...(!cancelled ? { error: safe } : {}),
+                finishedAt: now,
+                purgeAfter: purgeAfterForIndexing(terminalStatus, now, parent.idempotencyExpiresAt),
+                updatedAt: now,
+              },
+              ...(cancelled ? { $unset: { error: '' } } : {}),
+            }
+            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, terminalUpdate, { session })
+            const willRetry = !cancelled && parent.attempt < 3
+            if (willRetry) {
               const nextAttempt = parent.attempt + 1
               const child = {
                 ...parent, _id: recoveryChildId(parent._id.toHexString(), nextAttempt), idempotencyKey: `system-recovery:${parent._id.toHexString()}:${nextAttempt}`, actorScope: 'system-recovery',
@@ -558,6 +594,8 @@ export class MongoIndexingJobRepository {
               const inserted = await this.jobs().updateOne({ parentJobId: child.parentJobId, attempt: child.attempt }, { $setOnInsert: child }, { upsert: true, session })
               retriesCreated = inserted.upsertedCount === 1 ? 1 : 0
             }
+            const artifactRecovery = expiredArtifactRecovery(parent, now, willRetry || cancelled)
+            if (artifactRecovery) await this.articles().updateOne(artifactRecovery.filter, artifactRecovery.update, { session })
             const audit = createJobAuditEvent({ actor: { id: 'system:due-work', role: 'system-worker' }, action: 'indexing_job_lease_recovered', targetId: parent._id.toHexString(), changedFields: ['status', 'error'], reasonCode: 'lease_expired_recovered', request: { serverRequestId: `recovery:${parent._id.toHexString()}:${parent.leaseGeneration}` }, createdAt: now })
             await this.insertAudit(audit, session)
           }
