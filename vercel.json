@@ -3,6 +3,11 @@
   "version": 2,
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 300
+    }
+  },
   "routes": [
     {
       "src": "^/api(?:/.*)?$",

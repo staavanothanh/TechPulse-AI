@@ -684,7 +684,7 @@ export class MongoArticleRepository {
     return serializeArticle(await this.articles().findOne({ _id: id, status: { $ne: 'removed' } }, options))
   }
 
-  async commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, unsetFields = [], onCommitted } = {}) {
+  async commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, unsetFields = [], onCommitted, cancellationRequested = false } = {}) {
     const articleId = contentObjectId(job?.articleId, { nullable: true })
     const sourceId = contentObjectId(job?.sourceId, { nullable: true })
     const jobId = contentObjectId(job?.id, { nullable: true })
@@ -703,6 +703,7 @@ export class MongoArticleRepository {
       if (touched.matchedCount !== 1) return false
       const currentJob = await this.indexingJobs().findOne({
         _id: jobId, articleId, sourceId, expectedSourcePolicyVersion, task: purpose, status: 'running', leaseGeneration: fence.leaseGeneration,
+        cancellationRequestedAt: { $exists: cancellationRequested },
       }, { session })
       if (!currentJob) return false
       const source = await this.sources().findOne({
@@ -761,12 +762,12 @@ export class MongoArticleRepository {
     return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
 
-  async resetArtifactPending({ job, fence, expectedSourcePolicyVersion, purpose, inputHash } = {}) {
+  async resetArtifactPending({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, cancellationRequested = false } = {}) {
     if (!['summary', 'embedding'].includes(purpose) || typeof inputHash !== 'string') return false
     const fields = purpose === 'summary'
       ? { titleVi: null, summaryVi: null, summaryStatus: 'pending', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
       : { embeddingStatus: 'pending', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null }
-    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
+    return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, cancellationRequested, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
 
   async markArtifactFailed({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, error } = {}) {

@@ -143,6 +143,25 @@ describe('config-driven provider router', () => {
     expect(boundary.run).toHaveBeenCalledWith(expect.objectContaining({ routeId: 'provider-fallback' }))
   })
 
+  it('exposes zero external attempts and the retry hint when admission denies before invoke', async () => {
+    const boundary = admission({ unavailableDomains: ['domain-a'] })
+    const router = createProviderRouter({
+      workloadPolicies: [{ ...workloads[0], maxExternalAttempts: 1, modelFallbackRouteIds: [], providerFallbackRouteIds: [] }],
+      admission: boundary,
+    })
+    const invoke = vi.fn()
+
+    let failure
+    try { await execute(router, invoke) } catch (error) { failure = error }
+
+    expect(failure).toMatchObject({
+      name: 'ProviderRoutingError', failureClass: 'provider-retryable', retryable: true, retryAfterSeconds: 30,
+    })
+    expect(failure.externalAttempts ?? failure.metadata?.externalAttempts).toBe(0)
+    expect(invoke).not.toHaveBeenCalled()
+    expect(boundary.run).not.toHaveBeenCalled()
+  })
+
   it.each(['policy', 'privacy', 'sensitive-input', 'config', 'schema', 'support', 'ambiguous'])(
     'treats %s as terminal and never calls a fallback',
     async (failureClass) => {

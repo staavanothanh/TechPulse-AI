@@ -30,6 +30,7 @@ import { RUNTIME_CAPABILITY_PROBE_COLLECTION, RUNTIME_CAPABILITY_PROBE_DEFINITIO
 import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from './migrations/governance-retention-hardening.js'
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from './migrations/article-governance-hardening.js'
 import { ADMIN_PERFORMANCE_INDEXES } from './migrations/admin-performance-indexes.js'
+import { INDEXING_DRAIN_PERFORMANCE_INDEXES } from './migrations/indexing-drain-performance.js'
 import {
   actionsForCollection,
   probeAuditRoleCapabilities,
@@ -234,9 +235,9 @@ async function probeProviderRoutingRoleCapabilities({ client, db } = {}) {
     transaction: stateProbe.transactionStarted && pathProbe.transactionStarted && stateProbe.sessionHealthy && pathProbe.sessionHealthy,
   }
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'provider-routing-v2', 'chat-sessions', 'governance'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'governance'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, provider-routing-v2, chat-sessions, governance',
+    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, governance',
   )
   process.exitCode = 2
 } else {
@@ -267,6 +268,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
             ? ARTICLE_COLLECTIONS
             : target === 'indexing-jobs'
               ? INDEXING_JOB_COLLECTIONS
+              : target === 'indexing-drain-performance'
+                ? INDEXING_JOB_COLLECTIONS
               : target === 'provider-routing-v2'
                 ? PROVIDER_ROUTING_V2_COLLECTIONS
               : target === 'chat-sessions'
@@ -282,7 +285,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
           : target === 'articles'
             ? ARTICLE_INDEXES
             : target === 'indexing-jobs'
-              ? INDEXING_JOB_INDEXES
+              ? Object.fromEntries(Object.entries(INDEXING_JOB_INDEXES).map(([name, indexes]) => [name, [...indexes, ...(INDEXING_DRAIN_PERFORMANCE_INDEXES[name] ?? [])]]))
+              : target === 'indexing-drain-performance'
+                ? Object.fromEntries(Object.entries(INDEXING_JOB_INDEXES).map(([name, indexes]) => [name, [...indexes, ...(INDEXING_DRAIN_PERFORMANCE_INDEXES[name] ?? [])]]))
               : target === 'provider-routing-v2'
                 ? PROVIDER_ROUTING_V2_INDEXES
               : target === 'chat-sessions'
@@ -313,9 +318,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
               ]
             : target === 'articles' && name === 'articles'
               ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator]
-              : target === 'indexing-jobs' && name === 'providerAdmissionStates'
+              : ['indexing-jobs', 'indexing-drain-performance'].includes(target) && name === 'providerAdmissionStates'
                 ? [INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator, PROVIDER_ROUTING_V2_COLLECTIONS.providerAdmissionStates.validator]
-                : target === 'indexing-jobs' && name === 'indexingJobs'
+                : ['indexing-jobs', 'indexing-drain-performance'].includes(target) && name === 'indexingJobs'
                   ? [INDEXING_JOB_COLLECTIONS.indexingJobs.validator, PROVIDER_ROUTING_V2_COLLECTIONS.indexingJobs.validator]
                   : target === 'chat-sessions' && name === 'answerAttempts'
                     ? [CHAT_SESSION_COLLECTIONS.answerAttempts.validator, PROVIDER_ROUTING_V2_COLLECTIONS.answerAttempts.validator]
@@ -397,13 +402,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
       target === 'durable-jobs' ||
       target === 'articles' ||
       target === 'indexing-jobs' ||
+      target === 'indexing-drain-performance' ||
       target === 'chat-sessions'
     ) {
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')
       else {
         const acceptedAuditValidators =
-          target === 'indexing-jobs' || target === 'chat-sessions'
+          target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'chat-sessions'
             ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR]
             : target === 'durable-jobs' || target === 'articles'
               ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR]
@@ -424,7 +430,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
         if (index.expireAfterSeconds !== undefined)
           missing.push(`jobLeases:index:${index.name}:ttl-forbidden`)
     }
-    if (target === 'indexing-jobs') {
+    if (target === 'indexing-jobs' || target === 'indexing-drain-performance') {
       if (!collectionMap.has('articles')) missing.push('articles:collection')
       else {
         const actualByName = new Map(
@@ -558,8 +564,39 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
                     'articles_embedding_compatibility',
                   ],
                 ]
+            : target === 'indexing-drain-performance'
+            ? [
+                [
+                  'indexing_drain_due_normal',
+                  'indexingJobs',
+                  { status: 'queued', task: 'embedding', availableAt: { $lte: new Date() }, agingEligibleAt: { $gt: new Date() } },
+                  { priority: -1, availableAt: 1, createdAt: 1, _id: 1 },
+                  'indexing_drain_task_normal',
+                ],
+                [
+                  'indexing_drain_due_aged',
+                  'indexingJobs',
+                  { status: 'queued', task: 'summary', agingEligibleAt: { $lte: new Date() }, availableAt: { $lte: new Date() } },
+                  { agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 },
+                  'indexing_drain_task_aged',
+                ],
+              ]
             : target === 'indexing-jobs'
             ? [
+                [
+                  'indexing_drain_due_normal',
+                  'indexingJobs',
+                  { status: 'queued', task: 'embedding', availableAt: { $lte: new Date() }, agingEligibleAt: { $gt: new Date() } },
+                  { priority: -1, availableAt: 1, createdAt: 1, _id: 1 },
+                  'indexing_drain_task_normal',
+                ],
+                [
+                  'indexing_drain_due_aged',
+                  'indexingJobs',
+                  { status: 'queued', task: 'summary', agingEligibleAt: { $lte: new Date() }, availableAt: { $lte: new Date() } },
+                  { agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 },
+                  'indexing_drain_task_aged',
+                ],
                 [
                   'indexing_due_normal',
                   'indexingJobs',
@@ -820,6 +857,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
       target === 'durable-jobs' ||
       target === 'articles' ||
       target === 'indexing-jobs' ||
+      target === 'indexing-drain-performance' ||
       target === 'chat-sessions' || target === 'governance'
         ? 'not-requested'
         : 'unavailable-local'
@@ -841,7 +879,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
                 { database: context.database, collection: 'articles', label: 'provider article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
                 { database: context.database, collection: 'answerAttempts', label: 'provider answer path', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
               ]
-          : ['durable-jobs', 'indexing-jobs', 'chat-sessions'].includes(target)
+          : ['durable-jobs', 'indexing-jobs', 'indexing-drain-performance', 'chat-sessions'].includes(target)
             ? []
             : [
                 { database: context.database, collection: 'adminAuditLogs', label: 'audit', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
@@ -901,7 +939,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
       const probe = await probeProviderRoutingRoleCapabilities(context)
       for (const [capability, passed] of Object.entries(probe)) if (!passed) roleProblems.push(`provider-routing runtime capability failed: ${capability}`)
       roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
-    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs')) {
+    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs' || target === 'indexing-drain-performance')) {
       roleStatus = 'not-requested'
     } else if (requireRole && target === 'chat-sessions') {
       const probe = await probeChatSessionsRoleCapabilities(context)
@@ -942,7 +980,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
       let runtimeSchemaAttestation
       if (issueRuntimeAttestation) {
         verificationStage = 'runtime-schema-attestation'
-        runtimeSchemaAttestation = issueReleaseVerifiedSchemaAttestation(target, process.env)
+        const attestationScope = target === 'indexing-drain-performance' ? 'indexing-jobs' : target
+        runtimeSchemaAttestation = issueReleaseVerifiedSchemaAttestation(attestationScope, process.env)
       }
       console.log(
         JSON.stringify({

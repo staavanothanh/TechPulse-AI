@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createArtifactProcessor } from '../../../server/application/indexing/artifact-processor.js'
-import { ProviderAdapterError } from '../../../server/ai/provider-error-taxonomy.js'
+import { ProviderAdapterError, providerFailure } from '../../../server/ai/provider-error-taxonomy.js'
+import { ProviderRoutingError } from '../../../server/ai/provider-router.js'
 import { buildPolicyDerivedInput } from '../../../server/ai/policy-input.js'
 
 const ARTICLE_ID = '507f1f77bcf86cd799439011'
@@ -168,6 +169,55 @@ describe('Step 9 artifact processor', () => {
     expect(articleRepository.markArtifactFailed).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'summary', error: expect.objectContaining({ code: 'provider_unavailable', retryable: true }) }))
   })
 
+  it('resets a provider-admission denial to pending when no external call started', async () => {
+    const { processor, articleRepository, providerRouter } = setup()
+    const failure = Object.assign(new ProviderRoutingError(providerFailure('provider-retryable'), { retryAfterSeconds: 30 }), { externalAttempts: 0 })
+    providerRouter.execute.mockRejectedValue(failure)
+
+    await expect(processor.execute({
+      job: { id: '507f1f77bcf86cd799439057', articleId: ARTICLE_ID, sourceId: SOURCE_ID, expectedSourcePolicyVersion: 4, task: 'summary' }, fence,
+    })).rejects.toBe(failure)
+    expect(articleRepository.resetArtifactPending).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'summary', fence, inputHash: expect.any(String) }))
+    expect(articleRepository.markArtifactFailed).not.toHaveBeenCalled()
+  })
+
+  it('keeps a failed artifact state when the provider call already started', async () => {
+    const { processor, articleRepository, providerRouter } = setup()
+    const failure = Object.assign(new ProviderRoutingError(providerFailure('provider-retryable'), { retryAfterSeconds: 30 }), { externalAttempts: 1 })
+    providerRouter.execute.mockRejectedValue(failure)
+
+    await expect(processor.execute({
+      job: { id: '507f1f77bcf86cd799439058', articleId: ARTICLE_ID, sourceId: SOURCE_ID, expectedSourcePolicyVersion: 4, task: 'summary' }, fence,
+    })).rejects.toBe(failure)
+    expect(articleRepository.markArtifactFailed).toHaveBeenCalledWith(expect.objectContaining({
+      purpose: 'summary', fence, error: expect.objectContaining({ code: failure.code, retryable: true }),
+    }))
+    expect(articleRepository.resetArtifactPending).not.toHaveBeenCalled()
+  })
+
+  it('propagates lease cancellation to the provider and skips stale artifact transitions', async () => {
+    const controller = new globalThis.AbortController()
+    const leaseLost = Object.assign(new Error('lease lost'), { code: 'lease_heartbeat_lost', retryable: true })
+    const llmProvider = {
+      summarize: vi.fn(async ({ signal }) => {
+        expect(signal).toBe(controller.signal)
+        controller.abort(leaseLost)
+        throw leaseLost
+      }),
+    }
+    const { processor, articleRepository } = setup({ llmProvider })
+
+    await expect(processor.execute({
+      job: { id: '507f1f77bcf86cd799439059', articleId: ARTICLE_ID, sourceId: SOURCE_ID, expectedSourcePolicyVersion: 4, task: 'summary' },
+      fence,
+      signal: controller.signal,
+    })).rejects.toBe(leaseLost)
+
+    expect(articleRepository.markArtifactFailed).not.toHaveBeenCalled()
+    expect(articleRepository.resetArtifactPending).not.toHaveBeenCalled()
+    expect(articleRepository.commitSummaryArtifact).not.toHaveBeenCalled()
+  })
+
   it('fenced-commits failed when post-processing configuration is unavailable', async () => {
     const { articleRepository, sourceRepository, providerRouter } = setup({ llmProvider: {} })
     await expect(createArtifactProcessor({ articleRepository, sourceRepository, providerAdmission: { getRoute: vi.fn() }, providerRouter, llmProvider: {}, embeddingTarget }).execute({ job: { id: '507f1f77bcf86cd799439049', articleId: ARTICLE_ID, sourceId: SOURCE_ID, expectedSourcePolicyVersion: 4, task: 'summary' }, fence })).rejects.toMatchObject({ code: 'provider_unavailable', retryable: true })
@@ -189,5 +239,32 @@ describe('Step 9 artifact processor', () => {
     expect(articleRepository.markArtifactProcessing).toHaveBeenCalledTimes(1)
     expect(articleRepository.resetArtifactPending).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'summary', fence }))
     expect(providerRouter.execute).not.toHaveBeenCalled()
+  })
+
+  it.each(['summary', 'embedding'])('discards %s provider output when admin cancellation arrives in flight', async (task) => {
+    const indexingJobRepository = {
+      cancellationRequestedWithFence: vi.fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+    }
+    const { processor, articleRepository } = setup({ indexingJobRepository })
+    const job = {
+      id: task === 'summary' ? '507f1f77bcf86cd799439060' : '507f1f77bcf86cd799439061',
+      articleId: ARTICLE_ID,
+      sourceId: SOURCE_ID,
+      expectedSourcePolicyVersion: 4,
+      task,
+      ...(task === 'embedding' ? {
+        targetEmbeddingVersion: embeddingTarget.version,
+        targetEmbeddingArtifactCompatibilityId: embeddingTarget.artifactCompatibilityId,
+      } : {}),
+    }
+
+    await expect(processor.execute({ job, fence })).resolves.toEqual({ status: 'cancelled' })
+    expect(articleRepository.resetArtifactPending).toHaveBeenCalledWith(expect.objectContaining({ purpose: task, fence }))
+    expect(articleRepository.commitSummaryArtifact).not.toHaveBeenCalled()
+    expect(articleRepository.commitEmbeddingArtifact).not.toHaveBeenCalled()
+    expect(articleRepository.markArtifactFailed).not.toHaveBeenCalled()
   })
 })

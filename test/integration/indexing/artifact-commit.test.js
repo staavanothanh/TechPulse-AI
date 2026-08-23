@@ -10,17 +10,23 @@ const now = new Date('2026-08-10T01:00:00.000Z')
 const fence = { key: `indexing:article:${ARTICLE_ID}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2 }
 const embeddingTarget = { model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1' }
 
-function setup({ leaseMatched = 1, task = 'summary', source, article, target = embeddingTarget } = {}) {
+function setup({ leaseMatched = 1, task = 'summary', source, article, target = embeddingTarget, job = {} } = {}) {
   const session = { withTransaction: vi.fn(async (work) => work()), endSession: vi.fn(async () => undefined) }
   const collections = {
     jobLeases: { updateOne: vi.fn(async () => ({ matchedCount: leaseMatched })) },
-    indexingJobs: { findOne: vi.fn(async () => ({ _id: new ObjectId(JOB_ID), articleId: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), expectedSourcePolicyVersion: 4, task, status: 'running', leaseGeneration: 2 })), updateOne: vi.fn(async () => ({ upsertedCount: 1 })) },
+    indexingJobs: { findOne: vi.fn(async () => ({ _id: new ObjectId(JOB_ID), articleId: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), expectedSourcePolicyVersion: 4, task, status: 'running', leaseGeneration: 2, ...job })), updateOne: vi.fn(async () => ({ upsertedCount: 1 })) },
     sources: { findOne: vi.fn(async () => source ?? ({ _id: new ObjectId(SOURCE_ID), id: SOURCE_ID, name: 'Tech Review', policyVersion: 4, operationalStatus: 'active', licenseStatus: 'permitted', llmInputScope: 'metadata', technicalCheck: { status: 'passed' }, storageScope: { metadata: true, excerpt: false, summary: true, embedding: true }, mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false } })) },
     articles: {
       findOne: vi.fn(async () => article ?? ({ _id: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), status: 'published', titleOriginal: 'Article', topics: [], publishedAt: now, summaryStatus: 'pending', updatedAt: now })),
       updateOne: vi.fn(async () => ({ matchedCount: 1 })),
     },
   }
+  const indexingFindOne = collections.indexingJobs.findOne
+  indexingFindOne.mockImplementation(async (filter) => {
+    const document = { _id: new ObjectId(JOB_ID), articleId: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), expectedSourcePolicyVersion: 4, task, status: 'running', leaseGeneration: 2, ...job }
+    if (filter?.cancellationRequestedAt?.$exists === false && document.cancellationRequestedAt) return null
+    return document
+  })
   const repository = new MongoArticleRepository({ db: { collection: (name) => collections[name] }, client: { startSession: () => session }, now: () => now }, { embeddingTarget: target })
   return { repository, collections, session }
 }
@@ -53,6 +59,31 @@ describe('Step 9 Mongo artifact commit fence', () => {
       embedding: { embeddingStatus: 'ready', embedding: Array(3).fill(0), embeddingModel: embeddingTarget.model, embeddingDimensions: embeddingTarget.dimensions, embeddingArtifactCompatibilityId: embeddingTarget.artifactCompatibilityId, embeddingInputHash: 'b'.repeat(64), embeddingVersion: embeddingTarget.version, embeddingSourcePolicyVersion: 4, embeddedAt: now, embeddingError: null },
     })).resolves.toBe(false)
     expect(collections.articles.updateOne).not.toHaveBeenCalled()
+  })
+
+  it('atomically discards provider output when cancellation is already requested', async () => {
+    const { repository, collections } = setup({ job: { cancellationRequestedAt: now } })
+    const source = { id: SOURCE_ID, name: 'Tech Review', policyVersion: 4, operationalStatus: 'active', licenseStatus: 'permitted', llmInputScope: 'metadata', technicalCheck: { status: 'passed' }, storageScope: { metadata: true, excerpt: false, summary: true, embedding: true }, mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false } }
+    const inputHash = buildPolicyDerivedInput({ article: { sourceId: SOURCE_ID, titleOriginal: 'Article', topics: [], publishedAt: now, summaryStatus: 'pending' }, source, purpose: 'summary' }).inputHash
+    await expect(repository.commitSummaryArtifact({
+      job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'summary' }, fence, expectedSourcePolicyVersion: 4, inputHash,
+      summary: { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tóm tắt tiếng Việt.', summaryStatus: 'ready', summaryBasis: 'metadata', summaryModel: 'summary-model', summaryInputHash: inputHash, summarySourcePolicyVersion: 4, summaryGeneratedAt: now, summaryError: null },
+    })).resolves.toBe(false)
+    expect(collections.articles.updateOne).not.toHaveBeenCalled()
+  })
+
+  it('atomically resets processing output only when cancellation is requested', async () => {
+    const processingArticle = { _id: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), status: 'published', titleOriginal: 'Article', topics: [], publishedAt: now, summaryStatus: 'processing', updatedAt: now }
+    const { repository, collections, session } = setup({ article: processingArticle, job: { cancellationRequestedAt: now } })
+    const source = { id: SOURCE_ID, name: 'Tech Review', policyVersion: 4, operationalStatus: 'active', licenseStatus: 'permitted', llmInputScope: 'metadata', technicalCheck: { status: 'passed' }, storageScope: { metadata: true, excerpt: false, summary: true, embedding: true }, mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false } }
+    const inputHash = buildPolicyDerivedInput({ article: { sourceId: SOURCE_ID, titleOriginal: 'Article', topics: [], publishedAt: now, summaryStatus: 'processing' }, source, purpose: 'summary' }).inputHash
+
+    await expect(repository.resetArtifactPending({
+      job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'summary' }, fence,
+      expectedSourcePolicyVersion: 4, purpose: 'summary', inputHash, cancellationRequested: true,
+    })).resolves.toBe(true)
+    expect(collections.indexingJobs.findOne).toHaveBeenCalledWith(expect.objectContaining({ cancellationRequestedAt: { $exists: true } }), { session })
+    expect(collections.articles.updateOne).toHaveBeenCalledWith(expect.any(Object), { $set: expect.objectContaining({ summaryStatus: 'pending' }) }, { session })
   })
 
   it('persists the exact embedding artifact compatibility identity and rejects a mismatched identity', async () => {

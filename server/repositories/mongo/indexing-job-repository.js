@@ -64,11 +64,49 @@ function dateValue(value, label = 'Indexing job date') {
   return value
 }
 
+function dueTaskFilter({ task, tasks } = {}) {
+  const requested = task === undefined ? tasks : [task]
+  if (requested === undefined) return undefined
+  if (!Array.isArray(requested) || requested.length < 1 || requested.length > TASKS.size || requested.some((value) => !TASKS.has(value))) throw new Error('Indexing due task filter is invalid')
+  const unique = [...new Set(requested)]
+  return unique.length === 1 ? unique[0] : { $in: unique }
+}
+
+function excludedArticleIds(values) {
+  if (values === undefined) return []
+  if (!Array.isArray(values) || values.length > 200) throw new Error('Indexing article exclusion is invalid')
+  return [...new Map(values.map((value) => {
+    const id = idValue(value)
+    return [id.toHexString(), id]
+  })).values()]
+}
+
 function safeErrorDocument(error) {
   if (!error) return undefined
   const safe = { code: String(error.code).slice(0, 128), message: String(error.message).slice(0, 500), retryable: Boolean(error.retryable), occurredAt: dateValue(error.occurredAt) }
   if (Number.isInteger(error.upstreamStatus)) safe.upstreamStatus = error.upstreamStatus
   return safe
+}
+
+function expiredArtifactRecovery(parent, now, returnToPending) {
+  if (!['summary', 'embedding'].includes(parent?.task)) return null
+  const statusField = parent.task === 'summary' ? 'summaryStatus' : 'embeddingStatus'
+  const error = returnToPending ? null : { code: 'lease_expired', message: 'AI artifact did not complete safely', retryable: true, occurredAt: now }
+  const fields = parent.task === 'summary'
+    ? {
+        titleVi: null, summaryVi: null, summaryStatus: returnToPending ? 'pending' : 'failed', summaryBasis: null,
+        summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null,
+        summaryError: error, updatedAt: now,
+      }
+    : {
+        embeddingStatus: returnToPending ? 'pending' : 'failed', embedding: null, embeddingModel: null,
+        embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null,
+        embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: error, updatedAt: now,
+      }
+  return {
+    filter: { _id: parent.articleId, sourceId: parent.sourceId, status: 'published', [statusField]: 'processing' },
+    update: { $set: fields, ...(parent.task === 'embedding' ? { $unset: { embeddingArtifactCompatibilityId: '' } } : {}) },
+  }
 }
 
 export function indexingJobDocument(job) {
@@ -389,10 +427,21 @@ export class MongoIndexingJobRepository {
     return { jobs: page.map(serializeIndexingJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }
   }
 
-  async selectDueIndexing({ now = new Date() } = {}) {
-    const aged = await this.jobs().find({ status: 'queued', availableAt: { $lte: now }, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_aged').limit(1).next()
+  async selectDueIndexing({ now = new Date(), task, tasks, excludeArticleIds } = {}) {
+    dateValue(now, 'Indexing due clock')
+    const taskFilter = dueTaskFilter({ task, tasks })
+    const excluded = excludedArticleIds(excludeArticleIds)
+    const common = {
+      status: 'queued',
+      availableAt: { $lte: now },
+      ...(taskFilter ? { task: taskFilter } : {}),
+      ...(excluded.length > 0 ? { articleId: { $nin: excluded } } : {}),
+    }
+    const agedIndex = taskFilter ? 'indexing_drain_task_aged' : 'indexing_due_aged'
+    const normalIndex = taskFilter ? 'indexing_drain_task_normal' : 'indexing_due_normal'
+    const aged = await this.jobs().find({ ...common, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint(agedIndex).limit(1).next()
     if (aged) return serializeIndexingJob(aged)
-    return serializeIndexingJob(await this.jobs().find({ status: 'queued', availableAt: { $lte: now }, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('indexing_due_normal').limit(1).next())
+    return serializeIndexingJob(await this.jobs().find({ ...common, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint(normalIndex).limit(1).next())
   }
 
   async nextAvailableAt() {
@@ -468,6 +517,7 @@ export class MongoIndexingJobRepository {
   }
 
   async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000 } = {}) {
+    if (!Number.isInteger(delayMs) || delayMs < 1_000 || delayMs > 15 * 60 * 1_000) throw new Error('Indexing defer delay is invalid')
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
     return this.withTransaction(async (session) => {
       const leaseFilter = { key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash, 'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now } }
@@ -518,8 +568,21 @@ export class MongoIndexingJobRepository {
           let retriesCreated = 0
           if (parent) {
             const safe = { code: 'lease_expired', message: 'Indexing lease expired before completion', retryable: true, occurredAt: now }
-            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, { $set: { status: 'failed', error: safe, finishedAt: now, purgeAfter: purgeAfterForIndexing('failed', now, parent.idempotencyExpiresAt), updatedAt: now } }, { session })
-            if (parent.attempt < 3) {
+            const cancelled = Boolean(parent.cancellationRequestedAt)
+            const terminalStatus = cancelled ? 'cancelled' : 'failed'
+            const terminalUpdate = {
+              $set: {
+                status: terminalStatus,
+                ...(!cancelled ? { error: safe } : {}),
+                finishedAt: now,
+                purgeAfter: purgeAfterForIndexing(terminalStatus, now, parent.idempotencyExpiresAt),
+                updatedAt: now,
+              },
+              ...(cancelled ? { $unset: { error: '' } } : {}),
+            }
+            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, terminalUpdate, { session })
+            const willRetry = !cancelled && parent.attempt < 3
+            if (willRetry) {
               const nextAttempt = parent.attempt + 1
               const child = {
                 ...parent, _id: recoveryChildId(parent._id.toHexString(), nextAttempt), idempotencyKey: `system-recovery:${parent._id.toHexString()}:${nextAttempt}`, actorScope: 'system-recovery',
@@ -531,6 +594,8 @@ export class MongoIndexingJobRepository {
               const inserted = await this.jobs().updateOne({ parentJobId: child.parentJobId, attempt: child.attempt }, { $setOnInsert: child }, { upsert: true, session })
               retriesCreated = inserted.upsertedCount === 1 ? 1 : 0
             }
+            const artifactRecovery = expiredArtifactRecovery(parent, now, willRetry || cancelled)
+            if (artifactRecovery) await this.articles().updateOne(artifactRecovery.filter, artifactRecovery.update, { session })
             const audit = createJobAuditEvent({ actor: { id: 'system:due-work', role: 'system-worker' }, action: 'indexing_job_lease_recovered', targetId: parent._id.toHexString(), changedFields: ['status', 'error'], reasonCode: 'lease_expired_recovered', request: { serverRequestId: `recovery:${parent._id.toHexString()}:${parent.leaseGeneration}` }, createdAt: now })
             await this.insertAudit(audit, session)
           }

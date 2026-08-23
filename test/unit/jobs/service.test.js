@@ -132,6 +132,27 @@ describe('ingestion job service', () => {
     expect(materializeDailyIngestion).not.toHaveBeenCalled()
   })
 
+  it('keeps create auto-kick short while explicit admin due-work uses the bounded drain runner', async () => {
+    const kickDueWork = vi.fn(async () => ({ runId: 'short-kick' }))
+    const runAdminDueWork = vi.fn(async () => ({ runId: 'admin-drain' }))
+    const service = createJobService({
+      jobRepository: { createOrReuseIngestionJobWithAdmission: vi.fn(async ({ job }) => job) },
+      sourceRepository: { findSourceById: vi.fn(async () => source) },
+      rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) },
+      kickDueWork,
+      runAdminDueWork,
+      now: () => new Date(NOW),
+    })
+
+    await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-runner-split-0001' })
+    expect(kickDueWork).toHaveBeenCalledTimes(1)
+    expect(runAdminDueWork).not.toHaveBeenCalled()
+
+    await expect(service.runDueWork({ auth })).resolves.toEqual({ runId: 'admin-drain' })
+    expect(runAdminDueWork).toHaveBeenCalledTimes(1)
+    expect(kickDueWork).toHaveBeenCalledTimes(1)
+  })
+
   it('lets only an active admin run one bounded shared coordinator turn', async () => {
     const result = {
       runId: 'admin-due-work-run',

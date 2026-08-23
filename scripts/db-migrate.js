@@ -17,6 +17,7 @@ import { buildGovernanceCapabilityProbeMigration, runGovernanceCapabilityProbeMi
 import { buildGovernanceRetentionHardeningMigration, runGovernanceRetentionHardeningMigration } from './migrations/governance-retention-hardening.js'
 import { buildArticleGovernanceHardeningMigration, runArticleGovernanceHardeningMigration } from './migrations/article-governance-hardening.js'
 import { buildAdminPerformanceIndexesMigration, runAdminPerformanceIndexesMigration } from './migrations/admin-performance-indexes.js'
+import { buildIndexingDrainPerformanceMigration, runIndexingDrainPerformanceMigration } from './migrations/indexing-drain-performance.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
@@ -32,9 +33,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'provider-routing-v2', 'chat-sessions', 'governance'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'governance'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, provider-routing-v2, chat-sessions, governance',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, governance',
   )
   process.exitCode = 2
 } else {
@@ -57,6 +58,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
             ? buildArticlesMigration
           : target === 'indexing-jobs'
               ? buildIndexingJobsMigration
+              : target === 'indexing-drain-performance'
+                ? buildIndexingDrainPerformanceMigration
               : target === 'provider-routing-v2'
                 ? buildProviderRoutingV2Migration
               : target === 'chat-sessions'
@@ -73,6 +76,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'prov
             ? runArticlesMigration
           : target === 'indexing-jobs'
               ? runIndexingJobsMigration
+              : target === 'indexing-drain-performance'
+                ? runIndexingDrainPerformanceMigration
               : target === 'provider-routing-v2'
                 ? runProviderRoutingV2Migration
               : target === 'chat-sessions'

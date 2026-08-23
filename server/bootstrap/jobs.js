@@ -7,6 +7,7 @@ import { createQueueRegistry } from '../jobs/queue-registry.js'
 import { createIngestionQueueAdapter } from '../jobs/ingestion-queue.js'
 import { createAccountDeletionQueueAdapter } from '../jobs/account-deletion-queue.js'
 import { runDueWork } from '../jobs/due-work-coordinator.js'
+import { createIndexingDrainRunner } from '../jobs/indexing-drain.js'
 import { createMaintenanceRegistry } from '../maintenance/task-registry.js'
 import { createMaintenanceRunner } from '../maintenance/runner.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
@@ -38,14 +39,14 @@ export async function assertDurableJobsReady(context) {
   if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('durable-jobs audit validator is not ready')
 }
 
-export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork, verifySchema = assertDurableJobsReady } = {}) {
+export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork, runAdminDueWork, verifySchema = assertDurableJobsReady } = {}) {
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   await verifySchema(context)
   const jobRepository = new MongoJobRepository(context)
   const leaseRepository = new MongoLeaseRepository(context)
   const sourceRepository = new MongoSourceRepository(context)
   return {
-    jobService: createJobService({ jobRepository, sourceRepository, now, rateLimitAdmission, runDueWork }),
+    jobService: createJobService({ jobRepository, sourceRepository, now, rateLimitAdmission, runDueWork, runAdminDueWork }),
     jobRepository,
     leaseRepository,
   }
@@ -56,6 +57,52 @@ export function createCoordinatorRunner({ queueRegistry, now = () => new Date() 
   return async () => runDueWork({ registry: queueRegistry, maxJobs: 3, maxRecoveries: 3, budgetMs: 8000, now })
 }
 
+export const ADMIN_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 24, budgetMs: 45_000 })
+export const CRON_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 200, budgetMs: 240_000 })
+
+function queueAttempts(queues = {}) {
+  return Object.values(queues).reduce((total, counters = {}) => total
+    + ['succeeded', 'partial', 'failed', 'deferred'].reduce((sum, key) => sum + Math.max(0, Number(counters[key] ?? 0)), 0), 0)
+}
+
+function mergeCounters(left = {}, right = {}) {
+  return Object.fromEntries(['claimed', 'succeeded', 'partial', 'failed', 'deferred']
+    .map((key) => [key, Math.max(0, Number(left[key] ?? 0)) + Math.max(0, Number(right[key] ?? 0))]))
+}
+
+async function nextAvailableAt(queueRegistry, now) {
+  const values = await Promise.all(queueRegistry.registered().map((adapter) => adapter.nextAvailableAt({ now })))
+  const dates = values.filter(Boolean).map((value) => value instanceof Date ? value : new Date(value)).filter((value) => !Number.isNaN(value.getTime()))
+  return dates.length > 0 ? new Date(Math.min(...dates.map((value) => value.getTime()))) : null
+}
+
+export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now = () => new Date() } = {}) {
+  if (!queueRegistry || !profile || !Number.isInteger(profile.maxJobs) || profile.maxJobs < 3 || !Number.isFinite(profile.budgetMs) || profile.budgetMs <= 0) throw new Error('Indexing drain profile is invalid')
+  return async (baseResult) => {
+    if (!baseResult?.startedAt || !baseResult?.queues) throw new Error('Due-work base result is required')
+    const queue = queueRegistry.get('indexing')
+    const remainingClaims = Math.max(0, profile.maxJobs - queueAttempts(baseResult.queues))
+    if (!queue || remainingClaims === 0) return { ...baseResult, finishedAt: now(), nextAvailableAt: await nextAvailableAt(queueRegistry, now()) }
+    const startedAt = baseResult.startedAt instanceof Date ? baseResult.startedAt : new Date(baseResult.startedAt)
+    if (Number.isNaN(startedAt.getTime())) throw new Error('Due-work base clock is invalid')
+    const drain = await createIndexingDrainRunner({
+      queue,
+      maxClaims: remainingClaims,
+      deadline: new Date(startedAt.getTime() + profile.budgetMs),
+      now,
+    })()
+    return {
+      ...baseResult,
+      finishedAt: now(),
+      queues: {
+        ...baseResult.queues,
+        indexing: mergeCounters(baseResult.queues.indexing, drain.counters),
+      },
+      nextAvailableAt: await nextAvailableAt(queueRegistry, now()),
+    }
+  }
+}
+
 export const DAILY_MATERIALIZATION_PAGE_LIMIT = 100
 export const MAX_DAILY_MATERIALIZATION_PAGES = 10
 export const DAILY_MATERIALIZATION_BUDGET_MS = 4_000
@@ -63,13 +110,14 @@ export const DAILY_MATERIALIZATION_BUDGET_MS = 4_000
 export function createCronDueWorkRunner({
   jobRepository,
   coordinatorRunner,
+  indexingDrainRunner,
   now = () => new Date(),
   materializationPageLimit = DAILY_MATERIALIZATION_PAGE_LIMIT,
   maxMaterializationPages = MAX_DAILY_MATERIALIZATION_PAGES,
   materializationBudgetMs = DAILY_MATERIALIZATION_BUDGET_MS,
   materializers = [],
 } = {}) {
-  if (!jobRepository || typeof coordinatorRunner !== 'function') throw new Error('Cron job dependencies are required')
+  if (!jobRepository || typeof coordinatorRunner !== 'function' || indexingDrainRunner !== undefined && typeof indexingDrainRunner !== 'function') throw new Error('Cron job dependencies are required')
   if (!Number.isInteger(materializationPageLimit) || materializationPageLimit < 1 || materializationPageLimit > DAILY_MATERIALIZATION_PAGE_LIMIT) throw new Error('Daily materialization page limit is invalid')
   if (!Number.isInteger(maxMaterializationPages) || maxMaterializationPages < 1) throw new Error('Daily materialization page cap is invalid')
   if (!Number.isFinite(materializationBudgetMs) || materializationBudgetMs <= 0) throw new Error('Daily materialization budget is invalid')
@@ -93,7 +141,8 @@ export function createCronDueWorkRunner({
       hasMore = result?.hasMore === true
       if (hasMore && now().getTime() >= deadline) break
     }
-    return coordinatorRunner()
+    const coordinated = await coordinatorRunner()
+    return typeof indexingDrainRunner === 'function' ? indexingDrainRunner(coordinated) : coordinated
   }
 }
 
@@ -128,14 +177,18 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
   if (adminAuditRepository) maintenanceRegistry.register('purge-audit-ip-hmac', ({ cutoff, limit }) => adminAuditRepository.purgeAuditIpHmac({ cutoff, limit }))
   const maintenanceRunner = createMaintenanceRunner({ registry: maintenanceRegistry, now })
   const coordinatorRunner = createCoordinatorRunner({ queueRegistry, now })
-  const dueWorkRunner = createCronDueWorkRunner({ jobRepository, coordinatorRunner, now, materializers: cronMaterializers })
-  const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner, verifySchema: verifyJobsSchema })
+  const adminIndexingDrainRunner = createProfiledIndexingDrainRunner({ queueRegistry, profile: ADMIN_DUE_WORK_PROFILE, now })
+  const cronIndexingDrainRunner = createProfiledIndexingDrainRunner({ queueRegistry, profile: CRON_DUE_WORK_PROFILE, now })
+  const adminDueWorkRunner = async () => adminIndexingDrainRunner(await coordinatorRunner())
+  const dueWorkRunner = createCronDueWorkRunner({ jobRepository, coordinatorRunner, indexingDrainRunner: cronIndexingDrainRunner, now, materializers: cronMaterializers })
+  const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner, runAdminDueWork: adminDueWorkRunner, verifySchema: verifyJobsSchema })
   return {
     ...configured,
     queueRegistry,
     maintenanceRegistry,
     maintenanceRunner,
     coordinatorRunner,
+    adminDueWorkRunner,
     dueWorkRunner,
     cronMaterializers,
     maintenanceContext: adminAuditRepository ? maintenanceContext : null,

@@ -175,4 +175,26 @@ describe('DeepSeek V4 Flash provider smoke', () => {
     await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe synthetic input', locale: 'vi', tools: [] }))
       .resolves.toMatchObject({ titleVi: expect.any(String), summaryVi: expect.any(String), model: MODEL })
   })
+
+  it('combines a caller cancellation signal with the provider timeout signal', async () => {
+    const registry = buildDeepSeekV4FlashGraph(NOW)
+    let observedSignal
+    const fetchImpl = vi.fn(async (_url, init) => {
+      observedSignal = init.signal
+      return successfulFetch()(_url, init)
+    })
+    const adapters = createConfiguredProviderAdapters({
+      registry,
+      fetchImpl,
+      resolveCredential: (name) => name === 'DEEPSEEK_API_KEY' ? CREDENTIAL : null,
+    })
+    const controller = new globalThis.AbortController()
+    controller.abort(new Error('lease lost'))
+
+    await adapters.llmProvider.summarize({
+      route: registry.routes[0], input: 'safe synthetic input', locale: 'vi', tools: [], signal: controller.signal,
+    })
+
+    expect(observedSignal.aborted).toBe(true)
+  })
 })
