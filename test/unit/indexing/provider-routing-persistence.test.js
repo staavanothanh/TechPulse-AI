@@ -21,6 +21,7 @@ import { INDEXING_ARTICLE_INDEXES } from '../../../scripts/migrations/indexing-j
 import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../../scripts/migrations/chat-sessions.js'
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
 import { ARTICLE_INDEXES } from '../../../scripts/migrations/articles.js'
+import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
 
 const now = new Date('2026-08-15T00:00:00.000Z')
 const failureDomain = Object.freeze({
@@ -147,6 +148,7 @@ describe('ADR-0013 provider-routing persistence migration', () => {
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'articles' })).rejects.toThrow(/downgrade/i)
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'indexing-jobs' })).rejects.toThrow(/downgrade/i)
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'chat-sessions' })).rejects.toThrow(/downgrade/i)
+    await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'sources' })).rejects.toThrow(/downgrade/i)
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'governance' })).resolves.toBeUndefined()
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'provider-routing-v2' })).resolves.toBeUndefined()
   })
@@ -330,6 +332,41 @@ describe('ADR-0013 provider-routing persistence migration', () => {
     ])
   })
 
+  it('accepts the QA evidence-fence article successor when provider-routing-v2 is reapplied', async () => {
+    const articleValidators = []
+    const db = {
+      listCollections: vi.fn(() => ({ toArray: async () => [{
+        name: 'providerAdmissionStates',
+        options: { validator: INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator },
+      }, {
+        name: 'answerAttempts',
+        options: { validator: CHAT_SESSION_COLLECTIONS.answerAttempts.validator },
+      }, {
+        name: 'indexingJobs',
+        options: { validator: INDEXING_JOB_COLLECTIONS.indexingJobs.validator },
+      }, {
+        name: 'articles',
+        options: { validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR },
+      }] })),
+      createCollection: vi.fn(async () => undefined),
+      command: vi.fn(async (command) => {
+        if (command.collMod === 'articles') articleValidators.push(command.validator)
+        return { ok: 1 }
+      }),
+      collection: vi.fn((name) => name === 'articles' ? {
+        find: vi.fn(() => ({ sort: vi.fn(() => ({ limit: vi.fn(() => ({ project: vi.fn(() => ({ toArray: async () => [] })) })) })) })),
+        createIndex: vi.fn(async () => undefined),
+      } : {
+        updateMany: vi.fn(async () => undefined),
+        createIndex: vi.fn(async () => undefined),
+      }),
+    }
+
+    await expect(runProviderRoutingV2Migration({ db })).resolves.toHaveLength(buildProviderRoutingV2Migration().length)
+    expect(articleValidators).toHaveLength(2)
+    expect(articleValidators.every((validator) => JSON.stringify(validator).includes('qnaFenceToken'))).toBe(true)
+  })
+
   it('wires the versioned migration and readiness verification as separate targets', () => {
     const migrateSource = readFileSync(new URL('../../../scripts/db-migrate.js', import.meta.url), 'utf8')
     const verifySource = readFileSync(new URL('../../../scripts/db-verify.js', import.meta.url), 'utf8')
@@ -429,6 +466,23 @@ describe('ADR-0013 shared provider failure-domain circuit', () => {
     })).toMatchObject({ allowed: true, reused: true, reservationId: 'half-open-probe-one' })
   })
 
+  it('recovers a stale half-open probe lease after one cooldown window', () => {
+    const staleHalfOpen = {
+      providerFailureDomainId: 'provider-main', configVersion: 4, state: 'half-open',
+      consecutiveRetryableFailures: 3, halfOpenProbeReservationId: 'abandoned-probe',
+      updatedAt: new Date(now.getTime() - 61_000),
+    }
+
+    const recovered = applyProviderFailureDomainAdmission(staleHalfOpen, {
+      domain: failureDomain,
+      reservationId: 'replacement-probe',
+      now,
+    })
+
+    expect(recovered).toMatchObject({ allowed: true, probe: true, reservationId: 'replacement-probe' })
+    expect(recovered.state).toMatchObject({ state: 'half-open', halfOpenProbeReservationId: 'replacement-probe', consecutiveRetryableFailures: 3, updatedAt: now })
+  })
+
   it('closes a successful half-open probe and ignores model-specific failures', () => {
     const halfOpen = {
       providerFailureDomainId: 'provider-main', configVersion: 4, state: 'half-open',
@@ -458,6 +512,26 @@ describe('ADR-0013 shared provider failure-domain circuit', () => {
     })).toMatchObject({ allowed: true, probe: true })
     expect(closed.state).toMatchObject({ state: 'closed', consecutiveRetryableFailures: 0 })
     expect(closed.state.halfOpenProbeReservationId).toBeUndefined()
+  })
+
+  it('cancels a local-control probe without healing the provider failure domain', () => {
+    const halfOpen = {
+      providerFailureDomainId: 'provider-main', configVersion: 4, state: 'half-open',
+      consecutiveRetryableFailures: 3, halfOpenProbeReservationId: 'half-open-probe-one', updatedAt: now,
+    }
+
+    const cancelled = applyProviderFailureDomainOutcome(halfOpen, {
+      domain: failureDomain,
+      reservationId: 'half-open-probe-one',
+      outcome: 'cancelled',
+      now,
+    })
+
+    expect(cancelled.recorded).toBe(true)
+    expect(cancelled.state).toEqual({
+      providerFailureDomainId: 'provider-main', configVersion: 4, state: 'half-open',
+      consecutiveRetryableFailures: 3, updatedAt: now,
+    })
   })
 
   it('fails closed on stale config before either admission or outcome mutation', () => {

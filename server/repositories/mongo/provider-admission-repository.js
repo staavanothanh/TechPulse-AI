@@ -102,7 +102,7 @@ export function applyProviderRelease(state, { routeId, reservationId, outcome, n
     updatedAt: now,
   }
   const circuit = circuitFor(next, routeId)
-  delete circuit.halfOpenProbeReservationId
+  if (circuit.halfOpenProbeReservationId === reservationId) delete circuit.halfOpenProbeReservationId
   if (outcome === 'retryable-failure') {
     circuit.consecutiveRetryableFailures = Math.min(3, circuit.consecutiveRetryableFailures + 1)
     if (circuit.state === 'half-open' || circuit.consecutiveRetryableFailures >= 3) {

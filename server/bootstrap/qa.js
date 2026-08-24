@@ -9,6 +9,7 @@ import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../scripts/mi
 import { PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
+import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -43,9 +44,24 @@ export async function assertChatSessionsReady(context) {
   }
 }
 
-export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, providerRouter, queryEmbedding, rateLimitAdmission, maintenanceRegistry, now = () => new Date(), verifySchema = assertChatSessionsReady, verifyProviderSchema = assertProviderRoutingReady } = {}) {
+export async function assertQaEvidenceFenceReady(context) {
+  if (!context?.db) throw new Error('Mongo context is required')
+  const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
+  const byName = new Map(collections.map((collection) => [collection.name, collection]))
+  const expected = new Map([
+    ['articles', QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR],
+    ['sources', QA_EVIDENCE_FENCE_SOURCE_VALIDATOR],
+  ])
+  for (const [name, validator] of expected) {
+    const actual = byName.get(name)
+    if (!actual || actual.options?.validationLevel !== 'strict' || actual.options?.validationAction !== 'error' || stableJson(actual.options?.validator) !== stableJson(validator)) throw new Error(`QA evidence fence is not ready for ${name}`)
+  }
+}
+
+export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, providerRouter, queryEmbedding, rateLimitAdmission, maintenanceRegistry, now = () => new Date(), verifySchema = assertChatSessionsReady, verifyProviderSchema = assertProviderRoutingReady, verifyEvidenceSchema = assertQaEvidenceFenceReady } = {}) {
   await verifySchema(context)
   await verifyProviderSchema(context)
+  await verifyEvidenceSchema(context)
   if (typeof maintenanceRegistry?.register !== 'function') throw new Error('Q&A maintenance registry is not ready')
   if (!providerAdapters?.llmProvider?.answer || !providerAdapters?.llmProvider?.verifySupport) throw new Error('Q&A provider adapters are not ready')
   const articleRepository = new MongoArticleRepository(context)

@@ -177,12 +177,17 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
     }
   }
   factories.qa = async ({ common, jobs, indexing }) => {
-    const [{ createConfiguredQaService }, { createReleaseVerifiedSchemaVerifier }] = await Promise.all([
+    const [{ createConfiguredQaService, assertQaEvidenceFenceReady }, { createReleaseVerifiedSchemaVerifier }] = await Promise.all([
       import('./qa.js'),
       import('./schema-readiness.js'),
     ])
-    const verifySchema = createReleaseVerifiedSchemaVerifier('chat-sessions', environment)
+    const verifyChatSchema = createReleaseVerifiedSchemaVerifier('chat-sessions', environment)
     const verifyProviderSchema = createReleaseVerifiedSchemaVerifier('provider-routing-v2', environment)
+    const verifyEvidenceAttestation = createReleaseVerifiedSchemaVerifier('qa-evidence-fence', environment)
+    const verifyEvidenceSchema = async (context) => {
+      await verifyEvidenceAttestation(context)
+      await assertQaEvidenceFenceReady(context)
+    }
     return createConfiguredQaService({
       context: common.context,
       providerRegistry: common.runtime.providerRegistry,
@@ -191,8 +196,9 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       queryEmbedding: indexing.queryEmbedding,
       rateLimitAdmission: common.rateLimitAdmission,
       maintenanceRegistry: jobs.maintenanceRegistry,
-      verifySchema,
+      verifySchema: verifyChatSchema,
       verifyProviderSchema,
+      verifyEvidenceSchema,
     })
   }
   factories.governance = async ({ common }) => {

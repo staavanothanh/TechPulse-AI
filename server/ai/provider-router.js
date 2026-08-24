@@ -205,6 +205,12 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
           })
           completed = true
         } catch (error) {
+          if (error?.providerLocalControl === true) {
+            try {
+              await admission.reportProviderDomain({ routeId, reservationId: domainAdmission.reservationId, outcome: 'cancelled' })
+            } catch { /* the reservation expires without recording a provider failure */ }
+            throw error
+          }
           const classification = classifyProviderError(error)
           try {
             await admission.reportProviderDomain({

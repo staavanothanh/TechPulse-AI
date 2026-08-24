@@ -64,6 +64,20 @@ describe('provider admission router capability', () => {
     }))
   })
 
+  it('releases a local control interruption without recording an admission failure', async () => {
+    const stores = repositories()
+    const boundary = createProviderAdmission({ ...stores, registry })
+    const localControl = Object.assign(new ProviderAdapterError('policy'), { providerLocalControl: true })
+
+    await expect(boundary.run({
+      routeId: 'primary', capability: 'zdr-verified', attemptId: 'attempt-1', kind: 'answer-primary',
+      invoke: async () => { throw localControl },
+    })).rejects.toBe(localControl)
+    expect(stores.repository.releaseProviderCall).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'cancelled',
+    }))
+  })
+
   it('classifies runtime reserve denial as provider-retryable but keeps invalid candidate gates terminal', async () => {
     const denied = repositories()
     denied.repository.reserveProviderCall.mockResolvedValue({ allowed: false, reason: 'concurrency-limit', retryAfterSeconds: 4 })

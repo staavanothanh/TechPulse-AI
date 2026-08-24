@@ -27,7 +27,7 @@ function positiveInteger(value) {
 }
 
 export class ProviderAdapterError extends Error {
-  constructor(failureClass, { upstreamStatus, retryAfterSeconds } = {}) {
+  constructor(failureClass, { upstreamStatus, retryAfterSeconds, localControl = false } = {}) {
     const definition = DEFINITIONS[failureClass]
     if (!definition) throw new Error('Provider failure class is invalid')
     super('AI provider request failed safely')
@@ -35,6 +35,7 @@ export class ProviderAdapterError extends Error {
     this.failureClass = failureClass
     this.code = definition.code
     this.retryable = definition.retryable
+    if (localControl === true) this.providerLocalControl = true
     if (positiveInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599) this.upstreamStatus = upstreamStatus
     if (positiveInteger(retryAfterSeconds)) this.retryAfterSeconds = retryAfterSeconds
   }

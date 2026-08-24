@@ -1,4 +1,5 @@
 import { PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../scripts/migrations/provider-routing-v2.js'
+import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
@@ -24,7 +25,12 @@ export async function assertProviderRoutingReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const [name, definition] of Object.entries(PROVIDER_ROUTING_V2_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    const validatorMatches = stableJson(collection?.options?.validator) === stableJson(definition.validator)
+    const acceptedValidators = name === 'articles'
+      ? [definition.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR]
+      : [definition.validator]
+    const validatorMatches = acceptedValidators.some(
+      (validator) => stableJson(collection?.options?.validator) === stableJson(validator),
+    )
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !validatorMatches) {
       throw new Error(`provider-routing-v2 validator is not ready for ${name}`)
     }

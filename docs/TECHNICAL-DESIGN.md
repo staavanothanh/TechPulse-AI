@@ -1,8 +1,8 @@
 # TechPulse AI — Technical Design
 
 > Trạng thái: Plan-of-Record architecture contract; ADR-0013/0014 amendment trước Step 12
-> Phiên bản: 1.8
-> Cập nhật: 15/08/2026
+> Phiên bản: 1.9
+> Cập nhật: 24/08/2026
 > Product contract: [PRD.md](./PRD.md)  
 > Persistence contract: [DATA-MODEL.md](./DATA-MODEL.md)  
 > HTTP contract: [contracts/openapi.json](./contracts/openapi.json)  
@@ -283,7 +283,32 @@ Question + article/topic/time scope
 
 Provider không được cấp tool. Model không được tự tạo URL; serializer lấy citation metadata từ MongoDB bằng evidence ID đã kiểm tra. Privacy gate từ chối obvious credential/high-risk identifier bằng `sensitive-input`, không silently redact rồi giả vờ giữ nguyên nghĩa. Current graph gửi raw question và evidence đã admit tới DeepSeek `deepseek-v4-flash` trên capability `nonconfidential`; route này không có bằng chứng ZDR và phải được coi là nonconfidential. Graph hiện tại không có model/provider fallback; route không phù hợp trả `provider-unavailable`, còn candidate tương lai không được bypass capability.
 
+Generation và support đều coi question, paragraph và evidence JSON là untrusted data. Support verifier nhận system instruction riêng yêu cầu bỏ qua mọi instruction, prompt, role hoặc yêu cầu đổi verdict nằm trong user JSON; model chỉ được áp dụng system instruction và trả schema support cố định. Evidence content không thể tự nâng vai trò hoặc thay đổi policy gate.
+
 Contract dùng hai shape loại trừ nhau: `answered` có paragraph/citation không rỗng và `refusalReason=null`; `refused` có arrays rỗng và reason code. Public citation vẫn cấp đoạn. Internal provider contract buộc từng paragraph trả supporting block IDs; verifier chạy một constrained check cho toàn answer trên đúng blocks và trả `supported|unsupported|uncertain`. Chỉ `supported` được persist; MVP chuyển hai verdict còn lại thành refusal, không gọi repair. Primary/fallback generation và support verifier đều dùng route-specific capability/admission/circuit/eval. Final chat/attempt/quota write conditionally touch `users._id`, `status=active`, exact captured `sessionVersion` và current article/takedown visibility trong cùng transaction; account deletion hoặc takedown thắng race thì output provider bị bỏ và không được tái tạo user data/citation.
+
+#### 6.7.1. Evidence budget, final fence và transaction session
+
+Q&A dùng một evidence budget cố định trước khi gọi provider:
+
+- chọn tối đa 6 evidence blocks;
+- chọn tối đa 2 article từ mỗi source;
+- nội dung canonical của mỗi block tối đa 2.100 ký tự sau khi loại URL ngoài và delimiter;
+- block có wrapper `<evidence-block>` tối đa 2.400 ký tự;
+- generation prompt phải nhỏ hơn 30.000 ký tự;
+- support verifier chỉ nhận paragraph đã được trích dẫn và evidence blocks tương ứng, với tổng paragraph tối đa 10.000 ký tự và payload JSON nhỏ hơn 30.000 ký tự.
+
+`evidenceAdmissionFence` hash đúng text bounded mà provider nhận và exact citation metadata do server hydrate: article/source identity, title, original URL, publish time và source name theo canonical projection. Fence không hash `updatedAt`; timestamp vận hành không phải evidence content. Finalization chỉ kiểm tra và khóa các article có citation thực sự xuất hiện trong answer cùng các source duy nhất của chúng. Nó dùng `findOneAndUpdate` để ghi `qnaFenceToken` nội bộ trong cùng Mongo transaction, không ghi `updatedAt` và không trả token qua serializer. Article/source không còn khớp status, version, policy, visibility, evidence hash hoặc citation metadata hash thì transaction trả conflict và bỏ provider output.
+
+Mọi operation trong cùng Mongo transaction phải chạy tuần tự trên cùng session. Không dùng `Promise.all` cho các Mongo operation dùng transaction session. Nếu session bị dùng đồng thời, Mongo có thể trả code 117 (`ConflictingOperationInProgress`); application map lỗi hạ tầng này sang canonical `503 service_unavailable` và không để raw Mongo error đi tới client.
+
+Migration `qa-evidence-fence` mở rộng validator của `articles` và `sources` để cho phép `qnaFenceToken` tùy chọn kiểu `objectId`, giữ nguyên schema đóng và mọi nhánh tombstone hiện có. Vì `provider-routing-v2` và `governance` có bước `collMod` article riêng, hai migration tổng hợp này phải reapply `qa-evidence-fence` sau validator nền để không xóa field fence. Runtime chỉ phục vụ Q&A sau khi migration, validator/index và signed schema attestation `qa-evidence-fence-v1` đã sẵn sàng. Cold start không chỉ tin attestation: sau khi verify chữ ký, Q&A đọc live collection metadata và yêu cầu exact fenced validator trên cả `articles` và `sources`. `db:verify -- qa-evidence-fence --require-role` phải chứng minh capability transaction và quyền `find/update` cần thiết trên hai collection. Thiếu migration, live validator, attestation hoặc runtime capability trả trạng thái unavailable; đây là lỗi hạ tầng Mongo và được serialize thành HTTP 503.
+
+Downgrade guard của migration coi `sources`, `articles`, `indexing-jobs` và `chat-sessions` là unsafe older targets sau khi provider-routing-v2 marker đã tồn tại. Operator không được chạy lại migration `sources` cũ để thay closed source validator và xóa `qnaFenceToken`; chỉ migration successor explicit như `provider-routing-v2`, `qa-evidence-fence` hoặc repair aggregate được phép.
+
+Nếu actor/session, evidence policy hoặc Mongo readiness thay đổi trong provider stage, router đánh dấu lỗi là local control interruption. Provider admission release reservation với outcome `cancelled`; provider-domain circuit không nhận failure, không mở circuit và không kích hoạt fallback. Client vẫn nhận đúng `401`, `409` hoặc `503` từ local boundary thay vì một provider refusal giả.
+
+Provider failure-domain half-open chỉ cho một probe reservation hoạt động. Nếu probe không report outcome, reservation hết hạn sau một cooldown window. Admission sau đó clear stale probe và cho phép probe mới; domain không bị khóa vĩnh viễn ở half-open. Probe `succeeded` đóng circuit; retryable provider failure mở lại circuit và tạo cooldown mới; local-control `cancelled` chỉ release probe ownership.
 
 ### 6.8. Takedown
 
@@ -602,6 +627,12 @@ MongoDB hỗ trợ transaction qua nhiều database khi chúng nằm trong cùng
 - [ ] Text search hoạt động khi embedding adapter bị tắt.
 - [ ] Citation serializer không nhận URL do model tạo.
 - [ ] Q&A same-key concurrency chỉ tạo một attempt/quota/provider/chat result; sensitive input không tới DeepSeek nonconfidential route, admitted input qua community/irrelevant-block support gates và current graph không tạo fallback call.
+- [ ] Q&A generation/support giữ generation/support payload dưới 30.000 ký tự, support chỉ nhận cited blocks và final fence bind exact bounded text + citation metadata của cited targets.
+- [ ] Support verifier coi toàn bộ question/paragraph/evidence JSON là untrusted data và bỏ qua embedded instructions.
+- [ ] Local-control interruption release provider admission bằng `cancelled`, không poison provider circuit hoặc kích hoạt fallback.
+- [ ] Half-open provider-domain probe hết hạn sau cooldown và có thể được probe mới thay thế; stale probe không khóa circuit vĩnh viễn.
+- [ ] Q&A cold start verify exact live `qa-evidence-fence` validators sau signed attestation; `provider-routing-v2` và `governance` reapply fenced validator cuối migration tổng hợp.
+- [ ] Migration downgrade guard chặn chạy lại `sources|articles|indexing-jobs|chat-sessions` cũ sau provider-routing-v2 marker.
 - [ ] XML parser cấm DOCTYPE/entity/XInclude/network resolver và wire/decoded/depth/node/time limits pass adversarial fixtures.
 - [ ] Takedown ẩn trước, redacts historical citation URL/title, xóa/index cleanup sau và chỉ completed khi chat evidence true.
 - [ ] Account deletion revoke session trước, direct-delete/zero-verify session/answer-attempt, zero-verify user quota theo mọi key version còn hiệu lực và closed user tombstone trước `completed`; shared IP bucket không bị xóa, delayed Q&A không tái tạo user data.

@@ -90,6 +90,20 @@ describe('config-driven provider router', () => {
     expect(boundary.reportProviderDomain).toHaveBeenCalledWith(expect.objectContaining({ routeId: 'primary', outcome: 'provider-retryable-failure' }))
   })
 
+  it('does not poison provider-domain state or fall back for a local control interruption', async () => {
+    const boundary = admission()
+    const router = createProviderRouter({ workloadPolicies: workloads, admission: boundary })
+    const localControl = Object.assign(new ProviderAdapterError('policy'), { providerLocalControl: true })
+    const invoke = vi.fn(async () => { throw localControl })
+
+    await expect(execute(router, invoke)).rejects.toBe(localControl)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(boundary.run).toHaveBeenCalledTimes(1)
+    expect(boundary.reportProviderDomain).toHaveBeenCalledWith(expect.objectContaining({
+      routeId: 'primary', outcome: 'cancelled',
+    }))
+  })
+
   it('uses a cross-provider fallback when primary route admission is denied before invoke', async () => {
     const domains = [
       { admissionDomainId: 'admission-a', providerId: 'provider-a', maxConcurrency: 1, budgetLimit: 10, budgetWindow: 'day' },

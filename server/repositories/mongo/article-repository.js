@@ -18,7 +18,7 @@ import { buildIngestionArtifactJobs, indexingJobDocument } from './indexing-job-
 import { buildRemovedArticleTombstone, serializeRemovedArticleTombstone, validateRemovedArticleTombstone } from '../../domain/article/removed-tombstone.js'
 
 const COUNTER_KEYS = Object.freeze(['fetched', 'created', 'updated', 'duplicate', 'skipped', 'failed'])
-const FORBIDDEN_FIELDS = Object.freeze(['raw', 'rawHtml', 'html', 'body', 'content', 'fullText', 'translatedFullText', 'mediaBinary', 'binary', 'imageBinary', 'videoBinary', 'audioBinary', 'base64', 'gridFsId', 'providerPayload'])
+const FORBIDDEN_FIELDS = Object.freeze(['raw', 'rawHtml', 'html', 'body', 'content', 'fullText', 'translatedFullText', 'mediaBinary', 'binary', 'imageBinary', 'videoBinary', 'audioBinary', 'base64', 'gridFsId', 'providerPayload', 'qnaFenceToken'])
 const MAX_ARTICLE_PAGE_OFFSET = 100_000
 
 function idValue(value) {

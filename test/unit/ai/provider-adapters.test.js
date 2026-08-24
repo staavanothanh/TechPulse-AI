@@ -84,6 +84,8 @@ describe('Step 9 controlled provider adapters', () => {
 
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
     expect(body.messages[0].content).toMatch(/evidenceBlockIds/)
+    expect(body.messages[0].content).toMatch(/untrusted|khong tin cay/i)
+    expect(body.messages[0].content).toMatch(/ignore|bo qua.*chi thi|khong.*lam theo.*chi thi/i)
   })
 
   it('rejects redirects and oversized provider output without exposing response data', async () => {

@@ -53,6 +53,7 @@ describe('Step 10 atomic chat answer receipt', () => {
     }
     const db = { collection: (name) => ({
       findOne: async () => name === 'users' ? { _id: userId } : name === 'sessions' ? { _id: loginSessionId } : name === 'articles' ? article : name === 'sources' ? source : null,
+      findOneAndUpdate: async () => name === 'articles' ? { value: null } : { value: source },
     }) }
     const session = { withTransaction: async (work) => work(session), endSession: async () => undefined }
     const repository = new MongoChatRepository({ db, client: { startSession: () => session }, now: () => now })
@@ -80,9 +81,11 @@ describe('Step 10 atomic chat answer receipt', () => {
     const writes = []
     const db = { collection: (name) => ({
       findOne: async () => name === 'users' ? { _id: userId } : name === 'sessions' ? { _id: loginSessionId } : name === 'articles' ? article : name === 'sources' ? source : name === 'chatSessions' ? chatDocument ?? null : null,
-      updateOne: async (filter, update) => { writes.push({ name, filter, update }); return { matchedCount: name === 'articles' ? 0 : 1 } },
+      findOneAndUpdate: async (filter, update) => {
+        writes.push({ name, filter, update })
+        return { value: name === 'articles' ? null : source }
+      },
       insertOne: async (document) => { if (name === 'chatSessions') chatDocument = document },
-      findOneAndUpdate: async () => ({ value: null }),
     }) }
     const session = { withTransaction: async (work) => work(session), endSession: async () => undefined }
     const repository = new MongoChatRepository({ db, client: { startSession: () => session }, now: () => now })
@@ -113,7 +116,10 @@ describe('Step 10 atomic chat answer receipt', () => {
     const writes = []
     const db = { collection: (name) => ({
       findOne: async () => name === 'users' ? { _id: userId } : name === 'sessions' ? { _id: loginSessionId } : name === 'articles' ? article : name === 'sources' ? source : null,
-      updateOne: async (filter) => { writes.push({ name, filter }); return { matchedCount: name === 'sources' ? 0 : 1 } },
+      findOneAndUpdate: async (filter, update) => {
+        writes.push({ name, filter, update })
+        return { value: name === 'sources' ? null : article }
+      },
     }) }
     const session = { withTransaction: async (work) => work(session), endSession: async () => undefined }
     const repository = new MongoChatRepository({ db, client: { startSession: () => session }, now: () => now })

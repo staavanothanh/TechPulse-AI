@@ -6,6 +6,7 @@ const OUTCOMES = new Set([
   'model-retryable-failure',
   'provider-retryable-failure',
   'terminal-failure',
+  'cancelled',
 ])
 
 export class ProviderFailureDomainConfigError extends Error {
@@ -74,7 +75,11 @@ export function applyProviderFailureDomainAdmission(
 ) {
   const now = dateValue(nowInput, 'Provider failure-domain admission time')
   validateReservationId(reservationId)
-  const current = baseState(state, domain, now)
+  let current = baseState(state, domain, now)
+  if (current.state === 'half-open' && current.halfOpenProbeReservationId) {
+    const probeExpiresAt = new Date(dateValue(current.updatedAt, 'Provider failure-domain update time').getTime() + domain.cooldownSeconds * 1000)
+    if (probeExpiresAt <= now) current = transitionState(current, { halfOpenProbeReservationId: undefined, updatedAt: now })
+  }
   if (current.state === 'closed') {
     return { allowed: true, reservationId, probe: false, state: current }
   }

@@ -18,6 +18,7 @@ import { buildGovernanceRetentionHardeningMigration, runGovernanceRetentionHarde
 import { buildArticleGovernanceHardeningMigration, runArticleGovernanceHardeningMigration } from './migrations/article-governance-hardening.js'
 import { buildAdminPerformanceIndexesMigration, runAdminPerformanceIndexesMigration } from './migrations/admin-performance-indexes.js'
 import { buildIndexingDrainPerformanceMigration, runIndexingDrainPerformanceMigration } from './migrations/indexing-drain-performance.js'
+import { buildQaEvidenceFenceMigration, runQaEvidenceFenceMigration } from './migrations/qa-evidence-fence.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
@@ -33,9 +34,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'governance'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'governance'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, governance',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, governance',
   )
   process.exitCode = 2
 } else {
@@ -64,6 +65,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? buildProviderRoutingV2Migration
               : target === 'chat-sessions'
                 ? buildChatSessionsMigration
+              : target === 'qa-evidence-fence'
+                ? buildQaEvidenceFenceMigration
               : target === 'governance'
                 ? buildGovernanceMigration
                 : buildAuthCoreMigration
@@ -82,6 +85,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? runProviderRoutingV2Migration
               : target === 'chat-sessions'
                 ? runChatSessionsMigration
+              : target === 'qa-evidence-fence'
+                ? runQaEvidenceFenceMigration
               : target === 'governance'
                 ? runGovernanceMigration
                 : runAuthCoreWithStep4Compatibility
@@ -94,11 +99,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
             ...buildArticleGovernanceHardeningMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildAdminPerformanceIndexesMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildProviderRoutingV2Migration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildQaEvidenceFenceMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
           ]
-        : buildMigration({ dryRun: true })
+        : target === 'provider-routing-v2'
+          ? [...buildMigration({ dryRun: true }), ...buildQaEvidenceFenceMigration({ dryRun: true })]
+          : buildMigration({ dryRun: true })
       : await (async () => {
           const context = await getMongoContext(runtime)
           await assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: context.db, target })
@@ -109,10 +117,13 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
             plan.push(...await runArticleGovernanceHardeningMigration({ db: context.db }))
             plan.push(...await runAdminPerformanceIndexesMigration({ db: context.db }))
             plan.push(...await runProviderRoutingV2Migration({ db: context.db }))
+            plan.push(...await runQaEvidenceFenceMigration({ db: context.db }))
             plan.push(...await runGovernanceCapabilityProbeMigration({ db: context.db }))
             const governanceDb = context.client.db('techpulse_governance')
             await runGovernanceDatabaseMigration({ db: governanceDb })
             plan.push(...await runGovernanceCapabilityProbeMigration({ db: governanceDb }))
+          } else if (target === 'provider-routing-v2') {
+            plan.push(...await runQaEvidenceFenceMigration({ db: context.db }))
           }
           return plan
         })()

@@ -4,6 +4,7 @@ import { PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '..
 import { ARTICLE_INDEXES } from '../../../scripts/migrations/articles.js'
 import { INDEXING_ARTICLE_INDEXES } from '../../../scripts/migrations/indexing-jobs.js'
 import { CHAT_SESSION_INDEXES } from '../../../scripts/migrations/chat-sessions.js'
+import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
 
 function context({ validatorOverride = {}, indexOverride = {} } = {}) {
   const collections = Object.entries(PROVIDER_ROUTING_V2_COLLECTIONS).map(([name, definition]) => ({
@@ -44,6 +45,10 @@ describe('ADR-0013 provider-routing startup readiness', () => {
     const missing = context()
     missing.db.listCollections = () => ({ toArray: async () => [] })
     await expect(assertProviderRoutingReady(missing)).rejects.toThrow(/provider-routing-v2/i)
+  })
+
+  it('accepts the fenced article validator while keeping other provider validators exact', async () => {
+    await expect(assertProviderRoutingReady(context({ validatorOverride: { articles: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } }))).resolves.toBeUndefined()
   })
 
   it('requires inherited article, reconciliation, and answer-attempt indexes', async () => {

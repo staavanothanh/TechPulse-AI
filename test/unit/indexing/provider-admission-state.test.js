@@ -58,4 +58,18 @@ describe('Step 9 aggregate provider admission state', () => {
     const succeeded = applyProviderRelease(reprobe.state, { routeId: 'primary', reservationId: 'next-probe', outcome: 'succeeded', now }).state
     expect(succeeded.routeCircuits[0]).toEqual({ routeId: 'primary', state: 'closed', consecutiveRetryableFailures: 0 })
   })
+
+  it('cancels a local-control reservation without healing its half-open route circuit', () => {
+    const state = {
+      admissionDomainId: 'shared', provider: 'openrouter', maxConcurrency: 1, budgetWindowStart: now,
+      spentUnits: 1, budgetLimit: 2,
+      activeReservations: [{ reservationId: 'half-open-probe', routeId: 'primary', attemptId: '507f1f77bcf86cd799439041', kind: 'summary', expiresAt: new Date(now.getTime() + 60_000) }],
+      routeCircuits: [{ routeId: 'primary', state: 'half-open', consecutiveRetryableFailures: 3, halfOpenProbeReservationId: 'half-open-probe' }], updatedAt: now,
+    }
+
+    const cancelled = applyProviderRelease(state, { routeId: 'primary', reservationId: 'half-open-probe', outcome: 'cancelled', now }).state
+
+    expect(cancelled.activeReservations).toEqual([])
+    expect(cancelled.routeCircuits[0]).toEqual({ routeId: 'primary', state: 'half-open', consecutiveRetryableFailures: 3 })
+  })
 })

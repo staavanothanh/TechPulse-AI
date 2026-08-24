@@ -31,9 +31,9 @@ function sourceDocument(source) {
 
 export function serializeSource(document) {
   if (!document) return null
-  const { _id, ...source } = document
+  const source = Object.fromEntries(Object.entries(document).filter(([field]) => !['_id', 'qnaFenceToken'].includes(field)))
   return {
-    id: _id.toHexString(), ...source,
+    id: document._id.toHexString(), ...source,
     connectorConfig: { ...document.connectorConfig }, storageScope: { ...document.storageScope },
     mediaPolicy: { ...document.mediaPolicy, allowedHosts: [...document.mediaPolicy.allowedHosts] },
     reconciliation: { ...document.reconciliation }, technicalCheck: { ...document.technicalCheck }, health: { ...document.health },

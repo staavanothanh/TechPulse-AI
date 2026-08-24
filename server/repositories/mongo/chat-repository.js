@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ObjectId } from 'mongodb'
 import { canUseQnaEvidence } from '../../domain/article/visibility.js'
+import { admittedEvidenceText, evidenceCitationMetadataHash } from '../../domain/qa/evidence.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const CHAT_RETENTION_MS = 30 * DAY_MS
@@ -25,13 +26,57 @@ function idString(value) {
   return value?.toHexString?.() ?? String(value)
 }
 
-function evidenceText(article, source) {
-  const excerptAllowed = ['excerpt', 'fulltext-temporary'].includes(source?.llmInputScope)
-  return [article?.titleOriginal, excerptAllowed ? article?.excerptOriginal : ''].filter((value) => typeof value === 'string' && value).join('\n')
+function unwrap(value) {
+  return value && typeof value === 'object' && Object.hasOwn(value, 'value') ? value.value : value
 }
 
-function unwrap(value) {
-  return value?.value ?? value
+function conflictError(message) {
+  const error = new Error(message)
+  error.code = 'conflict'
+  error.status = 409
+  return error
+}
+
+function articleFenceFilter(expected) {
+  return expected.articleVersion === null || expected.articleVersion === undefined
+    ? { version: { $exists: false } }
+    : { version: expected.articleVersion }
+}
+
+function articleMatchesFence(article, expected) {
+  if (expected.articleVersion !== null && expected.articleVersion !== undefined && article?.version !== expected.articleVersion) return false
+  if ((expected.articleVersion === null || expected.articleVersion === undefined) && article?.version !== undefined) return false
+  return article?.status === 'published' && article?.evidenceEligible === true && article?.rightsSnapshot?.sourcePolicyVersion === expected.sourcePolicyVersion
+}
+
+function citedEvidenceTargets({ answer, citations, expectedEvidenceFence }) {
+  if (answer?.status !== 'answered') return []
+  const citationIds = new Set((answer.paragraphs ?? []).flatMap(({ citationIds }) => Array.isArray(citationIds) ? citationIds : []))
+  const expectedByArticle = new Map()
+  for (const expected of expectedEvidenceFence?.articles ?? []) {
+    const articleId = idString(objectId(expected.articleId, 'article'))
+    const sourceId = idString(objectId(expected.sourceId, 'source'))
+    const previous = expectedByArticle.get(articleId)
+    if (previous && previous.sourceId !== sourceId) throw conflictError('Answer evidence changed')
+    expectedByArticle.set(articleId, { ...expected, articleId, sourceId })
+  }
+  const citationTargets = new Map()
+  const targets = new Map()
+  for (const citation of [...(citations ?? []), ...(answer.citations ?? [])]) {
+    if (!citationIds.has(citation?.id)) continue
+    const articleId = idString(objectId(citation.articleId, 'citation article'))
+    const sourceId = idString(objectId(citation.sourceId, 'citation source'))
+    const citationTarget = citationTargets.get(citation.id)
+    if (citationTarget && (citationTarget.articleId !== articleId || citationTarget.sourceId !== sourceId)) throw conflictError('Answer evidence changed')
+    citationTargets.set(citation.id, { articleId, sourceId })
+    const expected = expectedByArticle.get(articleId)
+    if (!expected || expected.sourceId !== sourceId) throw conflictError('Answer evidence changed')
+    const previous = targets.get(articleId)
+    if (previous && previous.sourceId !== sourceId) throw conflictError('Answer evidence changed')
+    targets.set(articleId, { articleId, sourceId, expected })
+  }
+  if ([...citationIds].some((citationId) => !citationTargets.has(citationId))) throw conflictError('Answer evidence changed')
+  return [...targets.values()].sort((left, right) => left.articleId.localeCompare(right.articleId))
 }
 
 function encodeCursor(document) {
@@ -195,10 +240,8 @@ export class MongoChatRepository {
   async assertActorFence(actor, options = {}) {
     const values = actorValues(actor)
     const now = this.clock()
-    const [user, session] = await Promise.all([
-      this.users().findOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { ...options, projection: { _id: 1 } }),
-      this.sessions().findOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, { ...options, projection: { _id: 1 } }),
-    ])
+    const user = await this.users().findOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { ...options, projection: { _id: 1 } })
+    const session = await this.sessions().findOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, { ...options, projection: { _id: 1 } })
     return Boolean(user && session)
   }
 
@@ -342,23 +385,46 @@ export class MongoChatRepository {
         const sessionFence = await sessionCollection.updateOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: current }, absoluteExpiresAt: { $gt: current } }, { $set: { lastSeenAt: current } }, tx)
         if (sessionFence.matchedCount !== 1) { const error = new Error('Active session lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
       }
-      for (const expected of expectedEvidenceFence?.articles ?? []) {
-        const versionFilter = expected.articleVersion !== null && expected.articleVersion !== undefined
-          ? { $or: [{ version: expected.articleVersion }, { updatedAt: expected.articleVersion }] }
-          : { version: { $exists: false }, updatedAt: { $exists: false } }
-        if (expected.articleUpdatedAt) versionFilter.updatedAt = dateValue(expected.articleUpdatedAt, 'article updatedAt')
-        const article = await this.collection('articles').findOne({ _id: objectId(expected.articleId, 'article'), sourceId: objectId(expected.sourceId, 'source'), status: 'published', evidenceEligible: true, ...versionFilter }, tx)
-        if (!article) { const error = new Error('Article visibility changed'); error.code = 'conflict'; error.status = 409; throw error }
-        const source = await this.collection('sources').findOne({ _id: article.sourceId, policyVersion: expected.sourcePolicyVersion, operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, 'technicalCheck.status': 'passed', authorityTier: { $in: ['primary', 'editorial'] } }, tx)
-        const textHash = createHash('sha256').update(evidenceText(article, source)).digest('hex')
-        if (!canUseQnaEvidence(article, source) || textHash !== expected.evidenceTextHash) { const error = new Error('Source visibility changed'); error.code = 'conflict'; error.status = 409; throw error }
-        if (typeof this.collection('articles').updateOne === 'function') {
-          const articleFence = await this.collection('articles').updateOne({ _id: objectId(expected.articleId, 'article'), sourceId: objectId(expected.sourceId, 'source'), status: 'published', evidenceEligible: true, ...versionFilter }, { $set: { updatedAt: current } }, tx)
-          if (articleFence.matchedCount !== 1) { const error = new Error('Article lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+      if (assistant.status === 'answered' && expectedEvidenceFence?.articles) {
+        const qnaFenceToken = new ObjectId()
+        const targets = citedEvidenceTargets({ answer, citations, expectedEvidenceFence })
+        const sourceTargets = new Map()
+        for (const target of targets) {
+          const previous = sourceTargets.get(target.sourceId)
+          if (previous && previous.sourcePolicyVersion !== target.expected.sourcePolicyVersion) throw conflictError('Answer evidence changed')
+          sourceTargets.set(target.sourceId, { sourceId: target.sourceId, sourcePolicyVersion: target.expected.sourcePolicyVersion })
         }
-        if (typeof this.collection('sources').updateOne === 'function') {
-          const sourceFence = await this.collection('sources').updateOne({ _id: objectId(expected.sourceId, 'source'), policyVersion: expected.sourcePolicyVersion, operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, 'technicalCheck.status': 'passed', authorityTier: { $in: ['primary', 'editorial'] } }, { $set: { updatedAt: current } }, tx)
-          if (sourceFence.matchedCount !== 1) { const error = new Error('Source lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+        const articleCollection = this.collection('articles')
+        const sourceCollection = this.collection('sources')
+        const lockedArticles = new Map()
+        for (const target of targets) {
+          const article = unwrap(await articleCollection.findOneAndUpdate({
+            _id: objectId(target.articleId, 'article'), sourceId: objectId(target.sourceId, 'source'),
+            status: 'published', evidenceEligible: true, 'rightsSnapshot.sourcePolicyVersion': target.expected.sourcePolicyVersion,
+            ...articleFenceFilter(target.expected),
+          }, { $set: { qnaFenceToken } }, { ...tx, returnDocument: 'after' }))
+          if (!article) throw conflictError('Article visibility changed')
+          lockedArticles.set(target.articleId, { ...target, article })
+        }
+        const lockedSources = new Map()
+        for (const target of [...sourceTargets.values()].sort((left, right) => left.sourceId.localeCompare(right.sourceId))) {
+          const source = unwrap(await sourceCollection.findOneAndUpdate({
+            _id: objectId(target.sourceId, 'source'), policyVersion: target.sourcePolicyVersion,
+            operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] },
+            'technicalCheck.status': 'passed', authorityTier: { $in: ['primary', 'editorial'] },
+          }, { $set: { qnaFenceToken } }, { ...tx, returnDocument: 'after' }))
+          if (!source) throw conflictError('Source visibility changed')
+          lockedSources.set(target.sourceId, source)
+        }
+        for (const target of lockedArticles.values()) {
+          const source = lockedSources.get(target.sourceId)
+          let textHash
+          let citationMetadataHash
+          try {
+            textHash = createHash('sha256').update(admittedEvidenceText(target.article, source)).digest('hex')
+            citationMetadataHash = evidenceCitationMetadataHash(target.article, source)
+          } catch { throw conflictError('Source visibility changed') }
+          if (idString(target.article._id) !== target.articleId || idString(target.article.sourceId) !== target.sourceId || idString(source?._id) !== target.sourceId || source?.policyVersion !== target.expected.sourcePolicyVersion || !articleMatchesFence(target.article, target.expected) || !canUseQnaEvidence(target.article, source) || textHash !== target.expected.evidenceTextHash || citationMetadataHash !== target.expected.citationMetadataHash) throw conflictError('Source visibility changed')
         }
       }
       let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()

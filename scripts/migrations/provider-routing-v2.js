@@ -378,7 +378,7 @@ export async function invalidateLegacyReadyEmbeddings({ db, batchSize = 100 } = 
   return { invalidatedCount, sourceCount: reconciledSources.size }
 }
 
-const UNSAFE_OLDER_TARGETS = new Set(['articles', 'indexing-jobs', 'chat-sessions'])
+const UNSAFE_OLDER_TARGETS = new Set(['sources', 'articles', 'indexing-jobs', 'chat-sessions'])
 
 export async function assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db, target } = {}) {
   if (!db?.listCollections || !UNSAFE_OLDER_TARGETS.has(target)) return
@@ -523,6 +523,31 @@ function stableJson(value) {
   return JSON.stringify(value)
 }
 
+function isProviderRoutingArticleSuccessor(validator) {
+  const branch = validator?.$or?.[0]
+  const schemaRule = branch?.$and?.[0]
+  const schema = schemaRule?.$jsonSchema
+  const token = schema?.properties?.qnaFenceToken
+  if (stableJson(token) !== stableJson({ bsonType: 'objectId' })) return false
+  const properties = Object.fromEntries(
+    Object.entries(schema.properties).filter(([key]) => key !== 'qnaFenceToken'),
+  )
+  const predecessor = {
+    ...validator,
+    $or: [
+      {
+        ...branch,
+        $and: [
+          { ...schemaRule, $jsonSchema: { ...schema, properties } },
+          ...branch.$and.slice(1),
+        ],
+      },
+      ...validator.$or.slice(1),
+    ],
+  }
+  return stableJson(predecessor) === stableJson(PROVIDER_ROUTING_ARTICLE_VALIDATOR)
+}
+
 async function assertPredecessor(db) {
   const collections = await db.listCollections({}, { nameOnly: false }).toArray()
   const byName = new Map(collections.map((collection) => [collection.name, collection]))
@@ -546,16 +571,33 @@ async function assertPredecessor(db) {
     PROVIDER_ROUTING_ARTICLE_COMPATIBILITY_VALIDATOR,
     PROVIDER_ROUTING_ARTICLE_VALIDATOR,
   ]
-  if (!acceptedArticles.some((validator) => stableJson(byName.get('articles')?.options?.validator) === stableJson(validator))) {
+  const installedArticles = byName.get('articles')?.options?.validator
+  if (!acceptedArticles.some((validator) => stableJson(installedArticles) === stableJson(validator))
+    && !isProviderRoutingArticleSuccessor(installedArticles)) {
     throw new Error('governance article hardening must be applied before provider-routing-v2')
+  }
+  return {
+    articleSuccessorValidator: isProviderRoutingArticleSuccessor(installedArticles)
+      ? installedArticles
+      : null,
   }
 }
 
 export async function runProviderRoutingV2Migration({ db, dryRun = false } = {}) {
   if (!db || typeof db.createCollection !== 'function') throw new Error('MongoDB database is required')
-  const plan = buildProviderRoutingV2Migration({ dryRun })
-  if (dryRun) return plan
-  await assertPredecessor(db)
+  const basePlan = buildProviderRoutingV2Migration({ dryRun })
+  if (dryRun) return basePlan
+  const { articleSuccessorValidator } = await assertPredecessor(db)
+  const successorCompatibilityValidator = articleSuccessorValidator
+    ? { $or: [ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, articleSuccessorValidator] }
+    : null
+  const plan = basePlan.map((operation) => {
+    if (!articleSuccessorValidator || operation.type !== 'collMod' || operation.collection !== 'articles') return operation
+    const validator = stableJson(operation.options.validator) === stableJson(PROVIDER_ROUTING_ARTICLE_COMPATIBILITY_VALIDATOR)
+      ? successorCompatibilityValidator
+      : articleSuccessorValidator
+    return { ...operation, options: { ...operation.options, validator } }
+  })
   for (const operation of plan) {
     if (operation.type === 'createCollection') {
       try {

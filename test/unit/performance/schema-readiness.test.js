@@ -196,6 +196,7 @@ describe('release-verified runtime schema readiness', () => {
     ['provider-routing-v2', 'indexing', [{ common: {}, jobs: {} }]],
     ['chat-sessions', 'qa', [{ common: {}, jobs: {}, indexing: {} }]],
     ['provider-routing-v2', 'qa', [{ common: {}, jobs: {}, indexing: {} }]],
+    ['qa-evidence-fence', 'qa', [{ common: {}, jobs: {}, indexing: {} }]],
     ['governance', 'governance', [{ common: {} }]],
   ])(
     'fails the %s dependency before starting the %s runtime factory',

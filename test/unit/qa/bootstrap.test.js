@@ -1,10 +1,12 @@
 import { ObjectId } from 'mongodb'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { assertChatSessionsReady, createConfiguredQaService } from '../../../server/bootstrap/qa.js'
+import { assertChatSessionsReady, assertQaEvidenceFenceReady, createConfiguredQaService } from '../../../server/bootstrap/qa.js'
 import { MongoChatRepository } from '../../../server/repositories/mongo/chat-repository.js'
 import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../../scripts/migrations/chat-sessions.js'
 import { PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../../scripts/migrations/provider-routing-v2.js'
+import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
+import { SOURCE_COLLECTIONS } from '../../../scripts/migrations/sources.js'
 
 function indexesFor(name) {
   const merged = new Map([...(CHAT_SESSION_INDEXES[name] ?? []), ...(PROVIDER_ROUTING_V2_INDEXES[name] ?? [])].map((index) => [index.name, index]))
@@ -19,9 +21,14 @@ function indexesFor(name) {
 function readyContext({ indexOverride = {}, validatorOverride = {} } = {}) {
   const definitions = new Map(Object.entries(CHAT_SESSION_COLLECTIONS))
   for (const entry of Object.entries(PROVIDER_ROUTING_V2_COLLECTIONS)) definitions.set(entry[0], entry[1])
+  definitions.set('sources', SOURCE_COLLECTIONS.sources)
+  const fencedDefaults = {
+    articles: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR,
+    sources: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR,
+  }
   const collections = [...definitions].map(([name, definition]) => ({
     name,
-    options: { validator: validatorOverride[name] ?? definition.validator, validationLevel: 'strict', validationAction: 'error' },
+    options: { validator: validatorOverride[name] ?? fencedDefaults[name] ?? definition.validator, validationLevel: 'strict', validationAction: 'error' },
   }))
   return {
     client: {},
@@ -125,6 +132,38 @@ describe('Step 10 Q&A bootstrap', () => {
     await expect(assertChatSessionsReady(readyContext({ validatorOverride: { answerAttempts: PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR } }))).resolves.toBeUndefined()
     const altered = { ...PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR, $and: PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR.$and.slice(0, -1) }
     await expect(assertChatSessionsReady(readyContext({ validatorOverride: { answerAttempts: altered } }))).rejects.toThrow(/migration/i)
+  })
+
+  it('fails closed when the live article or source validator no longer has the QA fence', async () => {
+    const fenced = readyContext({ validatorOverride: {
+      articles: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR,
+      sources: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR,
+    } })
+
+    await expect(assertQaEvidenceFenceReady(fenced)).resolves.toBeUndefined()
+    await expect(assertQaEvidenceFenceReady(readyContext({ validatorOverride: {
+      articles: PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator,
+      sources: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR,
+    } }))).rejects.toThrow(/qa evidence fence/i)
+  })
+
+  it('verifies the live QA evidence fence inside every configured service bootstrap', async () => {
+    const verifySchema = vi.fn(async () => undefined)
+    const verifyProviderSchema = vi.fn(async () => undefined)
+    const options = {
+      context: readyContext({ validatorOverride: { articles: PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator } }),
+      maintenanceRegistry: { register: vi.fn() },
+      providerRegistry: { routes: [], domains: [{}], workloadPolicies: qaPolicies },
+      providerAdmission: { run: vi.fn() },
+      providerRouter: { execute: vi.fn() },
+      providerAdapters: { llmProvider: { answer: vi.fn(), verifySupport: vi.fn() } },
+      verifySchema,
+      verifyProviderSchema,
+    }
+
+    await expect(createConfiguredQaService(options)).rejects.toThrow(/qa evidence fence/i)
+    expect(verifySchema).toHaveBeenCalledOnce()
+    expect(verifyProviderSchema).toHaveBeenCalledOnce()
   })
 
   it('registers bounded answer-attempt cleanup only after readiness succeeds', async () => {

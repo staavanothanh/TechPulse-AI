@@ -98,6 +98,7 @@ describe('pre-push release attestation', () => {
         'sources',
         'provider-routing-v2',
         'chat-sessions',
+        'qa-evidence-fence',
         'governance',
       ]),
     )

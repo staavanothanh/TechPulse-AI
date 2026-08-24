@@ -59,7 +59,7 @@ export function createProviderAdmission({
       const route = routes.get(routeId)
       const domain = route ? failureDomains.get(route.providerFailureDomainId) : null
       if (!domain) return failureDomains.size === 0
-      if (typeof id !== 'string' || id.length < 1 || !['succeeded', 'model-retryable-failure', 'provider-retryable-failure', 'terminal-failure'].includes(outcome)) throw new Error('Provider failure-domain outcome is invalid')
+      if (typeof id !== 'string' || id.length < 1 || !['succeeded', 'model-retryable-failure', 'provider-retryable-failure', 'terminal-failure', 'cancelled'].includes(outcome)) throw new Error('Provider failure-domain outcome is invalid')
       return reportFailureDomain.call(failureDomainRepository, { domain, reservationId: id, outcome, now: now() })
     },
     async run({ routeId, capability = 'nonconfidential', attemptId, kind, units = 1, invoke } = {}) {
@@ -86,11 +86,13 @@ export function createProviderAdmission({
         await repository.releaseProviderCall({ admissionDomainId: domain.admissionDomainId, routeId, reservationId: id, outcome: 'succeeded', now: now() })
         return result
       } catch (error) {
+        const localControl = error instanceof ProviderAdapterError && error.providerLocalControl === true
         await repository.releaseProviderCall({
           admissionDomainId: domain.admissionDomainId, routeId, reservationId: id,
-          outcome: error?.retryable === true ? 'retryable-failure' : 'nonretryable-failure',
+          outcome: localControl ? 'cancelled' : error?.retryable === true ? 'retryable-failure' : 'nonretryable-failure',
           errorCode: typeof error?.releaseCode === 'string' ? error.releaseCode : typeof error?.code === 'string' ? error.code.slice(0, 128) : 'provider_failed', now: now(),
         })
+        if (localControl) throw error
         if (error?.name === 'EvidenceSelectionError' && ['policy-blocked', 'insufficient-evidence'].includes(error.code)) {
           error.message = error.code === 'policy-blocked' ? 'Provider input is no longer permitted' : 'Provider evidence is no longer sufficient'
           throw error

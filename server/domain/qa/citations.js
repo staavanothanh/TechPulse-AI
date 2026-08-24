@@ -8,7 +8,7 @@ function dateValue(value) {
   return date.toISOString()
 }
 
-function citationRecord(evidence, index) {
+export function citationEvidenceMetadata(evidence) {
   const article = evidence?.article
   const source = evidence?.source
   const articleId = idValue(article?.id ?? article?._id)
@@ -21,7 +21,6 @@ function citationRecord(evidence, index) {
   } catch { throw new Error('Citation evidence is unavailable') }
   if (!articleId || !sourceId || typeof article?.titleOriginal !== 'string' || !article.titleOriginal || article.publishedAt === undefined) throw new Error('Citation evidence is unavailable')
   return {
-    id: `C${index + 1}`,
     articleId,
     sourceId,
     sourceName: typeof source?.name === 'string' ? source.name : '',
@@ -31,6 +30,10 @@ function citationRecord(evidence, index) {
     publishedAt: dateValue(article.publishedAt),
     sourceLanguage: typeof article.sourceLanguage === 'string' ? article.sourceLanguage : 'unknown',
   }
+}
+
+function citationRecord(evidence, index) {
+  return { id: `C${index + 1}`, ...citationEvidenceMetadata(evidence) }
 }
 
 export function validateParagraphCitations({ paragraphs, citationIds, evidenceBlocks } = {}) {

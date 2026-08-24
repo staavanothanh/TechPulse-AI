@@ -12,6 +12,7 @@ export const RUNTIME_SCHEMA_GENERATIONS = Object.freeze({
   'indexing-jobs': 'indexing-jobs-drain-performance-v1',
   'provider-routing-v2': 'provider-routing-v2-v1',
   'chat-sessions': 'chat-sessions-provider-routing-v2-v1',
+  'qa-evidence-fence': 'qa-evidence-fence-v1',
   governance: 'governance-provider-routing-v2-v1',
 })
 

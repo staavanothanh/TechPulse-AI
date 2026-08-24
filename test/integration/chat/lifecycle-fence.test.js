@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { ObjectId } from 'mongodb'
 import { createQaService } from '../../../server/application/qa/service.js'
 import { MongoChatRepository } from '../../../server/repositories/mongo/chat-repository.js'
 import { createStep11Mongo } from '../../helpers/step11-mongo.js'
 import { createProviderRouterFixture } from '../../unit/qa/provider-router-fixture.js'
+import { evidenceAdmissionFence } from '../../../server/domain/qa/evidence.js'
 
 const now = new Date('2026-08-14T00:00:00.000Z')
 const userId = new ObjectId('507f1f77bcf86cd799439101')
@@ -71,13 +71,13 @@ describe('Step 11 delayed Q&A lifecycle fence', () => {
 
   it('binds the production append fence to the admitted source policy and evidence text hash', async () => {
     const fixture = setup()
-    const evidenceTextHash = createHash('sha256').update(`${article().titleOriginal}\n${article().excerptOriginal}`).digest('hex')
+    const expectedEvidenceFence = evidenceAdmissionFence([{ article: article(), source: source() }])
     await expect(fixture.repository.appendAnswer({
       actor: { userId, sessionId, sessionVersion: 2 }, chatSessionId: null, scope: { articleId }, question: 'Cau hoi an toan',
       answer: { id: 'answer-fence', status: 'answered', paragraphs: [{ text: 'Ket luan.', citationIds: ['C1'] }] },
       citations: [{ id: 'C1', articleId, sourceId, originalUrl: 'https://example.test/article', titleOriginal: article().titleOriginal, publishedAt: now }],
       attempt: null, now,
-      expectedEvidenceFence: { articles: [{ articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), articleVersion: 1, sourcePolicyVersion: 1, evidenceTextHash }] },
+      expectedEvidenceFence,
     })).resolves.toMatchObject({ answer: { status: 'answered' } })
 
     await expect(fixture.repository.appendAnswer({
@@ -85,7 +85,7 @@ describe('Step 11 delayed Q&A lifecycle fence', () => {
       answer: { id: 'answer-stale', status: 'answered', paragraphs: [{ text: 'Ket luan.', citationIds: ['C1'] }] },
       citations: [{ id: 'C1', articleId, sourceId, originalUrl: 'https://example.test/article', titleOriginal: article().titleOriginal, publishedAt: now }],
       attempt: null, now,
-      expectedEvidenceFence: { articles: [{ articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), articleVersion: 1, sourcePolicyVersion: 99, evidenceTextHash }] },
+      expectedEvidenceFence: { ...expectedEvidenceFence, articles: [{ ...expectedEvidenceFence.articles[0], sourcePolicyVersion: 99 }] },
     })).rejects.toMatchObject({ status: 409, code: 'conflict' })
   })
 })

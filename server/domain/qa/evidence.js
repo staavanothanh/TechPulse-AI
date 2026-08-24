@@ -7,6 +7,12 @@ export class EvidenceSelectionError extends Error {
   }
 }
 
+const MAX_EVIDENCE_BLOCKS = 6
+const MAX_EVIDENCE_BLOCKS_PER_SOURCE = 2
+const MAX_EVIDENCE_BLOCK_CHARS = 2_400
+const MAX_EVIDENCE_CONTENT_CHARS = 2_100
+const MAX_GENERATION_PROMPT_CHARS = 30_000
+
 function idValue(value) {
   return value?.toHexString?.() ?? String(value ?? '')
 }
@@ -17,9 +23,19 @@ function currentVisible(article, source) {
 
 export function filterQnaEvidence(records = []) {
   if (!Array.isArray(records)) throw new EvidenceSelectionError('evidence_invalid', 'Evidence set is invalid')
-  const selected = records.filter(({ article, source }) => currentVisible(article, source))
+  const sourceCounts = new Map()
+  const selected = []
+  for (const record of records) {
+    if (!currentVisible(record?.article, record?.source)) continue
+    const sourceId = idValue(record.source.id ?? record.source._id ?? record.source.sourceId)
+    const count = sourceCounts.get(sourceId) ?? 0
+    if (count >= MAX_EVIDENCE_BLOCKS_PER_SOURCE) continue
+    selected.push(record)
+    sourceCounts.set(sourceId, count + 1)
+    if (selected.length === MAX_EVIDENCE_BLOCKS) break
+  }
   if (selected.length === 0) throw new EvidenceSelectionError('insufficient-evidence', 'No visible primary or editorial evidence is available')
-  return selected.slice(0, 50)
+  return selected
 }
 
 function neutralizeDelimiter(value) {
@@ -27,18 +43,23 @@ function neutralizeDelimiter(value) {
 }
 
 function sourceName(source) {
-  const value = typeof source?.name === 'string' ? source.name.slice(0, 500) : ''
+  const value = typeof source?.name === 'string' ? source.name.slice(0, 200) : ''
   if (containsSensitiveProviderInput(value)) throw new EvidenceSelectionError('policy-blocked', 'Source policy input is not safe for a provider')
   return neutralizeDelimiter(value.replaceAll(/https?:\/\/[^\s<>]+/gi, '[external-url-omitted]'))
 }
 
-function sourceText(article, source) {
+export function admittedEvidenceText(article, source) {
   const title = typeof article?.titleOriginal === 'string' ? article.titleOriginal : ''
   const excerptAllowed = source?.llmInputScope === undefined || ['excerpt', 'fulltext-temporary'].includes(source.llmInputScope)
   const excerpt = excerptAllowed && typeof article?.excerptOriginal === 'string' ? article.excerptOriginal : ''
   const value = [title, excerpt].filter(Boolean).join('\n')
   if (containsSensitiveProviderInput(value)) throw new EvidenceSelectionError('policy-blocked', 'Source policy input is not safe for a provider')
-  return neutralizeDelimiter(value.replaceAll(/https?:\/\/[^\s<>]+/gi, '[external-url-omitted]')).slice(0, 20_000)
+  return neutralizeDelimiter(value.replaceAll(/https?:\/\/[^\s<>]+/gi, '[external-url-omitted]')).slice(0, MAX_EVIDENCE_CONTENT_CHARS)
+}
+
+export function evidenceCitationMetadataHash(article, source) {
+  const canonical = JSON.stringify(citationEvidenceMetadata({ article, source }))
+  return createHash('sha256').update(canonical).digest('hex')
 }
 
 function promptText(value, maximum) {
@@ -51,10 +72,10 @@ export function evidenceAdmissionFence(evidence = []) {
     sourceId: idValue(source.id ?? source._id ?? source.sourceId),
     articleSourceId: idValue(article.sourceId),
     articleStatus: article.status,
-    articleVersion: article.version ?? article.updatedAt ?? null,
-    articleUpdatedAt: article.updatedAt instanceof Date ? article.updatedAt.toISOString() : article.updatedAt ?? null,
+    articleVersion: article.version ?? null,
     admittedSourceName: sourceName(source),
-    admittedSourceText: sourceText(article, source),
+    admittedSourceText: admittedEvidenceText(article, source),
+    citationMetadataHash: evidenceCitationMetadataHash(article, source),
     evidenceEligible: article.evidenceEligible,
     sourcePolicyVersion: article.rightsSnapshot?.sourcePolicyVersion ?? null,
     rightsCapturedAt: article.rightsSnapshot?.capturedAt ?? null,
@@ -69,13 +90,13 @@ export function evidenceAdmissionFence(evidence = []) {
   const canonical = JSON.stringify(records)
   return Object.freeze({
     digest: createHash('sha256').update(canonical).digest('hex'),
-    articles: Object.freeze(records.map(({ articleId, sourceId, articleVersion, articleUpdatedAt, currentPolicyVersion, admittedSourceText }) => Object.freeze({
+    articles: Object.freeze(records.map(({ articleId, sourceId, articleVersion, currentPolicyVersion, admittedSourceText, citationMetadataHash }) => Object.freeze({
       articleId,
       sourceId,
       articleVersion,
-      articleUpdatedAt,
       sourcePolicyVersion: currentPolicyVersion,
       evidenceTextHash: createHash('sha256').update(admittedSourceText).digest('hex'),
+      citationMetadataHash,
     }))),
   })
 }
@@ -90,10 +111,12 @@ export function buildGroundedPrompt({ question, evidence = [] } = {}) {
   const blocks = selected.map(({ article, source }, index) => {
     const citation = citations[index]
     const id = `E${index + 1}`
+    const header = `<evidence-block id="${id}" citation="${citation.id}">\n[source=${sourceName(source)}]\n`
+    const footer = '\n</evidence-block>'
     return Object.freeze({
       id,
       citationId: citation.id,
-      text: `<evidence-block id="${id}" citation="${citation.id}">\n[source=${sourceName(source)}]\n${sourceText(article, source)}\n</evidence-block>`,
+      text: `${header}${admittedEvidenceText(article, source)}${footer}`,
     })
   })
   const prompt = [
@@ -103,8 +126,10 @@ export function buildGroundedPrompt({ question, evidence = [] } = {}) {
     ...blocks.map(({ text }) => text),
     'Mỗi paragraph factual phải có ít nhất một citation ID C... tương ứng.',
   ].join('\n')
+  if (prompt.length >= MAX_GENERATION_PROMPT_CHARS || blocks.some(({ text }) => text.length > MAX_EVIDENCE_BLOCK_CHARS)) throw new EvidenceSelectionError('evidence_invalid', 'Evidence prompt exceeds the provider budget')
   return Object.freeze({
     prompt,
+    evidence: Object.freeze([...selected]),
     citations: Object.freeze(citations),
     blocks: Object.freeze(blocks),
     evidenceMap: Object.freeze(Object.fromEntries(blocks.map(({ id, citationId }) => [id, citationId]))),
@@ -115,3 +140,4 @@ export { currentVisible }
 import { createHash } from 'node:crypto'
 import { containsSensitiveProviderInput } from '../../ai/policy-input.js'
 import { canUseQnaEvidence } from '../article/visibility.js'
+import { citationEvidenceMetadata } from './citations.js'

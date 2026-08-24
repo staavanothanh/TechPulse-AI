@@ -3,6 +3,7 @@ import { assertSourcesReady, createConfiguredSourceService } from '../../../serv
 import { SOURCE_AUDIT_VALIDATOR, SOURCE_COLLECTIONS, SOURCE_INDEXES } from '../../../scripts/migrations/sources.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/durable-jobs.js'
 import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/indexing-jobs.js'
+import { QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
 
 function readyContext({ sourceValidator = SOURCE_COLLECTIONS.sources.validator, auditValidator = SOURCE_AUDIT_VALIDATOR, indexes } = {}) {
   const actualIndexes = indexes ?? SOURCE_INDEXES.sources.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) }))
@@ -33,6 +34,10 @@ describe('Source Registry bootstrap readiness', () => {
 
   it('accepts the exact forward-compatible indexing-job audit validator', async () => {
     await expect(assertSourcesReady(readyContext({ auditValidator: INDEXING_JOB_AUDIT_VALIDATOR }))).resolves.toBeUndefined()
+  })
+
+  it('accepts the exact Q&A evidence-fence source validator', async () => {
+    await expect(assertSourcesReady(readyContext({ sourceValidator: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR }))).resolves.toBeUndefined()
   })
 
   it('fails closed for missing context, stale validators, missing indexes, key drift and option drift', async () => {

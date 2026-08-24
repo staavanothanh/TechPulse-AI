@@ -9,6 +9,7 @@ import { GOVERNANCE_HARDENING_INDEXES } from '../../scripts/migrations/governanc
 import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from '../../scripts/migrations/governance-retention-hardening.js'
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../scripts/migrations/article-governance-hardening.js'
 import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
+import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
@@ -53,7 +54,7 @@ export async function assertGovernanceReady(context, { governanceDb } = {}) {
   }, 'governance')
   const appCollections = await collectionMap(context.db)
   const articles = appCollections.get('articles')
-  const acceptedArticleValidators = [ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_ARTICLE_VALIDATOR]
+  const acceptedArticleValidators = [ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_ARTICLE_VALIDATOR, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR]
   if (!articles || articles.options?.validationLevel !== 'strict' || articles.options?.validationAction !== 'error' || !acceptedArticleValidators.some((validator) => stableJson(articles.options?.validator) === stableJson(validator))) {
     throw new Error('governance article tombstone validator is not ready')
   }

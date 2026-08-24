@@ -8,6 +8,8 @@ import { assertSupportedAnswer, deterministicRefusal } from '../../domain/qa/sup
 import { ProviderAdapterError } from '../../ai/provider-error-taxonomy.js'
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
+const MAX_SUPPORT_SERIALIZED_CHARS = 30_000
+const MAX_SUPPORT_PARAGRAPH_CHARS = 10_000
 
 function sha256(value) { return createHash('sha256').update(value).digest('hex') }
 
@@ -17,6 +19,26 @@ function freezeDeep(value) {
   return Object.freeze(value)
 }
 
+function citedEvidenceBlocks({ paragraphs, blocks }) {
+  const citedIds = new Set(paragraphs.flatMap(({ evidenceBlockIds }) => evidenceBlockIds))
+  return blocks.filter(({ id }) => citedIds.has(id))
+}
+
+function boundedSupportInput({ question, paragraphs, blocks }) {
+  const supportParagraphs = paragraphs.map(({ text, citationIds, evidenceBlockIds }) => ({ text, citationIds: [...citationIds], evidenceBlockIds: [...evidenceBlockIds] }))
+  if (supportParagraphs.reduce((total, { text }) => total + text.length, 0) > MAX_SUPPORT_PARAGRAPH_CHARS) throw new ProviderAdapterError('support')
+  const evidenceBlocks = citedEvidenceBlocks({ paragraphs: supportParagraphs, blocks }).map(({ id, citationId, text }) => ({ id, citationId, text }))
+  const supportInput = freezeDeep({
+    question,
+    addressesQuestion: true,
+    paragraphs: supportParagraphs,
+    evidenceBlocks,
+    evidenceMap: Object.fromEntries(evidenceBlocks.map(({ id, citationId }) => [id, citationId])),
+  })
+  if (JSON.stringify(supportInput).length >= MAX_SUPPORT_SERIALIZED_CHARS) throw new ProviderAdapterError('support')
+  return supportInput
+}
+
 function providerMetadataUpdate(metadata) {
   if (!metadata?.routeId || !metadata?.providerFailureDomainId) return null
   const fallbackKind = metadata.fallback === 'model' || metadata.fallback === 'provider' ? metadata.fallback : 'none'
@@ -24,7 +46,26 @@ function providerMetadataUpdate(metadata) {
 }
 
 function isLocalControlFailure(error) {
-  return error instanceof EvidenceSelectionError || error instanceof ContentError && [401, 409].includes(error.status)
+  return error instanceof EvidenceSelectionError || error instanceof ContentError && [401, 409, 503].includes(error.status)
+}
+
+function mapQaInfrastructureError(error, stage) {
+  const name = typeof error?.name === 'string' ? error.name : undefined
+  const code = Number.isInteger(error?.code) ? error.code : undefined
+  const protectedStatus = [401, 409, 429].includes(error?.status)
+  const isMongoError = name?.startsWith('Mongo') || code !== undefined
+  if (!isMongoError || protectedStatus || name === 'ProviderRoutingError') return null
+  console.error('Q&A infrastructure error', { stage, name, code })
+  return new ContentError(503, 'service_unavailable', 'Q&A service is temporarily unavailable')
+}
+
+async function qaRepositoryCall(stage, operation) {
+  try {
+    return await operation()
+  } catch (error) {
+    const mapped = mapQaInfrastructureError(error, stage)
+    throw mapped ?? error
+  }
 }
 
 function scopeValue(scope = {}) {
@@ -76,7 +117,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       try { embedding = await queryEmbedding(admitted.question) } catch { embedding = undefined }
       if (embedding && (typeof embedding.model !== 'string' || !Number.isInteger(embedding.dimensions) || embedding.dimensions < 1 || !Number.isInteger(embedding.version) || embedding.version < 1 || !Array.isArray(embedding.embedding) || embedding.embedding.length !== embedding.dimensions || embedding.embedding.some((value) => typeof value !== 'number' || !Number.isFinite(value)))) embedding = undefined
     }
-    const records = await articleRepo.findQnaEvidence({ question: admitted.question, queryEmbedding: embedding, scope, limit: 50, includeSource: true })
+    const records = await qaRepositoryCall('findQnaEvidence', () => articleRepo.findQnaEvidence({ question: admitted.question, queryEmbedding: embedding, scope, limit: 50, includeSource: true }))
     let evidence
     try {
       evidence = filterQnaEvidence(records)
@@ -84,6 +125,8 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       if (expectedFence && error instanceof EvidenceSelectionError) { error.discard = true; throw error }
       throw error
     }
+    const prompt = buildGroundedPrompt({ question: admitted.question, evidence })
+    evidence = prompt.evidence
     let fence
     try {
       fence = evidenceAdmissionFence(evidence)
@@ -96,7 +139,6 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       error.discard = true
       throw error
     }
-    const prompt = buildGroundedPrompt({ question: admitted.question, evidence })
     return Object.freeze({
       admitted,
       evidence,
@@ -108,7 +150,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
   }
 
   async function assertCurrentEvidenceFence({ providerInput, scope }) {
-    const records = await articleRepo.findQnaEvidence({ question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope, limit: 50, includeSource: true })
+    const records = await qaRepositoryCall('recheckEvidence', () => articleRepo.findQnaEvidence({ question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope, limit: 50, includeSource: true }))
     let currentEvidence
     try { currentEvidence = filterQnaEvidence(records) } catch (error) {
       if (error instanceof EvidenceSelectionError) error.discard = true
@@ -129,10 +171,11 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
 
   async function refusal({ actor, attempt, reason, scope, question, expectedEvidenceFence }) {
     const createdAt = now().toISOString()
-    const chat = typeof chatRepository.appendAnswer === 'function'
-      ? await chatRepository.appendAnswer({ actor, chatSessionId: attempt.chatSessionId, scope, question, answer: answerRefusal({ id: `answer-${attempt._id?.toHexString?.() ?? 'refused'}`, chatSessionId: attempt.chatSessionId, reason, createdAt }), attempt: { id: attempt._id, outcome: 'refused' }, expectedEvidenceFence, now: now() })
-      : null
-    if (!chat?.attemptCommitted && typeof chatRepository.updateAnswerAttempt === 'function') await chatRepository.updateAnswerAttempt(attempt._id, { status: 'refused', resultStatus: 'refused', chatSessionId: chat?.chatSessionId, messageId: chat?.messageId }, { expectedStatuses: ['reserved', 'provider-running'] })
+    let chat = null
+    if (typeof chatRepository.appendAnswer === 'function') {
+      chat = await qaRepositoryCall('appendAnswer', () => chatRepository.appendAnswer({ actor, chatSessionId: attempt.chatSessionId, scope, question, answer: answerRefusal({ id: `answer-${attempt._id?.toHexString?.() ?? 'refused'}`, chatSessionId: attempt.chatSessionId, reason, createdAt }), attempt: { id: attempt._id, outcome: 'refused' }, expectedEvidenceFence, now: now() }))
+    }
+    if (!chat?.attemptCommitted && typeof chatRepository.updateAnswerAttempt === 'function') await qaRepositoryCall('updateAnswerAttempt', () => chatRepository.updateAnswerAttempt(attempt._id, { status: 'refused', resultStatus: 'refused', chatSessionId: chat?.chatSessionId, messageId: chat?.messageId }, { expectedStatuses: ['reserved', 'provider-running'] }))
     return chat?.answer ?? answerRefusal({ id: `answer-${attempt._id?.toHexString?.() ?? 'refused'}`, chatSessionId: chat?.chatSessionId ?? attempt.chatSessionId, reason, createdAt })
   }
 
@@ -140,7 +183,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     if (typeof chatRepository.appendRefusalWithoutQuestion !== 'function') throw new ContentError(503, 'service_unavailable', 'Chat session service is unavailable')
     const createdAt = now().toISOString()
     const answer = answerRefusal({ id: `answer-${randomUUID()}`, chatSessionId, reason: 'sensitive-input', createdAt })
-    const chat = await chatRepository.appendRefusalWithoutQuestion({ actor, chatSessionId, scope, answer, attempt: { id: attempt._id, outcome: 'refused' }, now: now() })
+    const chat = await qaRepositoryCall('appendRefusalWithoutQuestion', () => chatRepository.appendRefusalWithoutQuestion({ actor, chatSessionId, scope, answer, attempt: { id: attempt._id, outcome: 'refused' }, now: now() }))
     return chat?.answer ?? { ...answer, chatSessionId: chat?.chatSessionId ?? chatSessionId }
   }
 
@@ -174,7 +217,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     }
     if (chatSessionId) {
       if (typeof chatRepository.getChatSession !== 'function') throw new ContentError(503, 'service_unavailable', 'Chat session service is unavailable')
-      const existingSession = await chatRepository.getChatSession({ actor, chatSessionId, now: now() })
+      const existingSession = await qaRepositoryCall('getChatSession', () => chatRepository.getChatSession({ actor, chatSessionId, now: now() }))
       if (!existingSession) throw new ContentError(404, 'not_found', 'Chat session not found')
       if (existingSession.scope !== undefined) {
         const persistedScope = scopeValue(existingSession.scope)
@@ -183,11 +226,11 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     }
     const idempotencyKeyHash = sha256(String(idempotencyKey))
     const requestHash = canonicalRequestHash({ question: admittedQuestion?.question ?? question, scope: scopeHashValue(safeScope), chatSessionId: chatSessionId ?? null })
-    let attempt = await answerAttemptRepository.reserveAnswerAttempt({ actor, idempotencyKeyHash, requestHash, chatSessionId, quotaReservationKey: `answer:${actor.userId}`, rateLimitAdmission, quotaScopes: ['answer-minute', 'answer-daily'], now: now() })
+    let attempt = await qaRepositoryCall('reserveAnswerAttempt', () => answerAttemptRepository.reserveAnswerAttempt({ actor, idempotencyKeyHash, requestHash, chatSessionId, quotaReservationKey: `answer:${actor.userId}`, rateLimitAdmission, quotaScopes: ['answer-minute', 'answer-daily'], now: now() }))
     if (attempt?.status === 'mismatch') throw new ContentError(409, 'idempotency_mismatch', 'Answer request conflicts with current idempotency intent')
     if (['completed', 'refused', 'failed'].includes(attempt.status)) {
       if (attempt.resultStatus && attempt.chatSessionId && typeof chatRepository.getAnswerResult === 'function') {
-        const replay = await chatRepository.getAnswerResult({ actor, chatSessionId: attempt.chatSessionId, messageId: attempt.messageId, now: now() })
+        const replay = await qaRepositoryCall('getAnswerResult', () => chatRepository.getAnswerResult({ actor, chatSessionId: attempt.chatSessionId, messageId: attempt.messageId, now: now() }))
         if (replay) return { answer: replay }
       }
       if (attempt.status === 'failed') throw new ContentError(503, 'service_unavailable', 'Answer outcome is unavailable')
@@ -201,8 +244,8 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     let providerInput
     let localControlFailure
     try {
-      if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) {
-        if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' })
+      if (typeof chatRepository.assertActorFence === 'function' && !await qaRepositoryCall('assertActorFence', () => chatRepository.assertActorFence(actor))) {
+        if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' }))
         throw new ContentError(401, 'unauthorized', 'Authentication is required')
       }
       providerInput = await prepareProviderInput({ question, admittedQuestion, scope: safeScope })
@@ -219,10 +262,10 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
         return { providerRouteId: route.routeId, providerFailureDomainId: route.providerFailureDomainId, fallbackKind }
       }
       const renewProviderStage = async (route, { recordRoute = true } = {}) => {
-        if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) throw new ContentError(401, 'unauthorized', 'Authentication is required')
+        if (typeof chatRepository.assertActorFence === 'function' && !await qaRepositoryCall('assertActorFence', () => chatRepository.assertActorFence(actor))) throw new ContentError(401, 'unauthorized', 'Authentication is required')
         if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') {
           const metadata = recordRoute ? routeMetadata(route) : {}
-          attempt = await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'provider-running', providerReservationExpiresAt: new Date(now().getTime() + 60_000), ...metadata }, { expectedStatuses: ['reserved', 'provider-running'] })
+          attempt = await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'provider-running', providerReservationExpiresAt: new Date(now().getTime() + 60_000), ...metadata }, { expectedStatuses: ['reserved', 'provider-running'] }))
         }
       }
       const invokeAnswer = async (invocation) => {
@@ -234,7 +277,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
         } catch (error) {
           if (isLocalControlFailure(error)) {
             localControlFailure = error
-            throw new ProviderAdapterError('policy')
+            throw new ProviderAdapterError('policy', { localControl: true })
           }
           throw error
         }
@@ -254,24 +297,19 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       output = generation?.output
       const metadata = providerMetadataUpdate(generation?.metadata)
       if (metadata && typeof answerAttemptRepository.updateAnswerAttempt === 'function') {
-        attempt = await answerAttemptRepository.updateAnswerAttempt(attempt._id, metadata, { expectedStatuses: ['reserved', 'provider-running'] })
+        attempt = await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, metadata, { expectedStatuses: ['reserved', 'provider-running'] }))
       }
       if (output?.status === 'refused') return { answer: await refusal({ actor, attempt, reason: ['insufficient-evidence', 'policy-blocked', 'sensitive-input', 'provider-unavailable'].includes(output.refusalReason) ? output.refusalReason : 'insufficient-evidence', scope: safeScope, question, expectedEvidenceFence: providerInput?.fence }) }
       const parsed = output
       let paragraphs
       paragraphs = parsed.paragraphs
       {
-        if (typeof chatRepository.assertActorFence === 'function' && !await chatRepository.assertActorFence(actor)) {
-          if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' })
+        if (typeof chatRepository.assertActorFence === 'function' && !await qaRepositoryCall('assertActorFence', () => chatRepository.assertActorFence(actor))) {
+          if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' }))
           throw new ContentError(401, 'unauthorized', 'Authentication is required')
         }
-        const supportInput = freezeDeep({
-          question: providerInput.admitted.question,
-          addressesQuestion: true,
-          paragraphs: paragraphs.map(({ text, citationIds, evidenceBlockIds }) => ({ text, citationIds: [...citationIds], evidenceBlockIds: [...evidenceBlockIds] })),
-          evidenceBlocks: providerInput.prompt.blocks.map(({ id, citationId, text }) => ({ id, citationId, text })),
-          evidenceMap: { ...providerInput.prompt.evidenceMap },
-        })
+        const supportBlocks = citedEvidenceBlocks({ paragraphs, blocks: providerInput.prompt.blocks })
+        const supportInput = boundedSupportInput({ question: providerInput.admitted.question, paragraphs, blocks: providerInput.prompt.blocks })
         const invokeSupport = async (invocation) => {
           const route = routeFromInvocation(invocation)
           const admittedInput = inputFromInvocation(invocation, supportInput)
@@ -281,7 +319,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
           } catch (error) {
             if (isLocalControlFailure(error)) {
               localControlFailure = error
-              throw new ProviderAdapterError('policy')
+              throw new ProviderAdapterError('policy', { localControl: true })
             }
             throw error
           }
@@ -301,12 +339,12 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
           supportError.code = verdict?.addressesQuestion === true ? verdictValue : 'uncertain'
           throw supportError
         }
-        assertSupportedAnswer({ verdict: verdictValue, verdictEvidenceBlockIds: verdict?.evidenceBlockIds, paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks })
+        assertSupportedAnswer({ verdict: verdictValue, verdictEvidenceBlockIds: verdict?.evidenceBlockIds, paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: supportBlocks })
       }
       const hydrated = hydrateAnswerCitations({ citationIds: [...new Set(paragraphs.flatMap(({ citationIds }) => citationIds))], evidence: providerInput.evidence })
       const answer = { id: parsed.id ?? `answer-${attempt._id?.toHexString?.()}`, status: 'answered', paragraphs: paragraphs.map(({ text, citationIds }) => ({ text, citationIds })), citations: hydrated, refusalReason: null, chatSessionId: chatSessionId ?? undefined, createdAt: now().toISOString() }
-      const chat = await chatRepository.appendAnswer({ actor, chatSessionId, scope: safeScope, question: providerInput.admitted.question, answer, citations: hydrated, attempt: { id: attempt._id, outcome: 'completed' }, expectedEvidenceFence: providerInput.fence, now: now() })
-      if (!chat?.attemptCommitted && typeof answerAttemptRepository.updateAnswerAttempt === 'function') await answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'completed', resultStatus: 'answered', chatSessionId: chat.chatSessionId, messageId: chat.messageId }, { expectedStatus: 'provider-running' })
+      const chat = await qaRepositoryCall('appendAnswer', () => chatRepository.appendAnswer({ actor, chatSessionId, scope: safeScope, question: providerInput.admitted.question, answer, citations: hydrated, attempt: { id: attempt._id, outcome: 'completed' }, expectedEvidenceFence: providerInput.fence, now: now() }))
+      if (!chat?.attemptCommitted && typeof answerAttemptRepository.updateAnswerAttempt === 'function') await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'completed', resultStatus: 'answered', chatSessionId: chat.chatSessionId, messageId: chat.messageId }, { expectedStatus: 'provider-running' }))
       return { answer: { ...answer, chatSessionId: chat.chatSessionId } }
     } catch (error) {
       if (localControlFailure) {
@@ -338,21 +376,21 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
 
   async function listChatSessions({ auth, query } = {}) {
     const actor = contentActorFence(auth)
-    return chatRepository.listChatSessions({ actor, cursor: query?.cursor, limit: query?.limit === undefined ? 20 : Number(query.limit), now: now() })
+    return qaRepositoryCall('listChatSessions', () => chatRepository.listChatSessions({ actor, cursor: query?.cursor, limit: query?.limit === undefined ? 20 : Number(query.limit), now: now() }))
   }
   async function getChatSession({ auth, chatSessionId } = {}) {
     const actor = contentActorFence(auth)
-    const session = await chatRepository.getChatSession({ actor, chatSessionId, now: now() })
+    const session = await qaRepositoryCall('getChatSession', () => chatRepository.getChatSession({ actor, chatSessionId, now: now() }))
     if (!session) throw new ContentError(404, 'not_found', 'Chat session not found')
     return { session }
   }
   async function deleteChatSession({ auth, chatSessionId } = {}) {
     const actor = contentActorFence(auth)
-    await chatRepository.deleteChatSession({ actor, chatSessionId })
+    await qaRepositoryCall('deleteChatSession', () => chatRepository.deleteChatSession({ actor, chatSessionId }))
   }
   async function clearChatSessions({ auth } = {}) {
     const actor = contentActorFence(auth)
-    await chatRepository.clearChatSessions({ actor })
+    await qaRepositoryCall('clearChatSessions', () => chatRepository.clearChatSessions({ actor }))
   }
   return Object.freeze({ createAnswer, listChatSessions, getChatSession, deleteChatSession, clearChatSessions })
 }
