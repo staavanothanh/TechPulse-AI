@@ -3,12 +3,29 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { FeedView, QaView } from '../../../client/features/public/index.js'
+import { DonateView, FeedView, QaView } from '../../../client/features/public/index.js'
+import { DONATION_DETAILS, buildVietQrImageUrl } from '../../../client/features/public/donation.js'
 
 const render = (Component, props = {}) =>
   renderToStaticMarkup(React.createElement(Component, props))
 
 describe('public feature contract boundaries', () => {
+  it('renders the owner donation details with an amount-free VietQR image URL', () => {
+    const qrUrl = new URL(buildVietQrImageUrl(DONATION_DETAILS))
+    const html = render(DonateView)
+
+    expect(qrUrl.hostname).toBe('img.vietqr.io')
+    expect(qrUrl.pathname).toBe('/image/970422-0392375486-compact2.png')
+    expect(qrUrl.searchParams.get('accountName')).toBe('TA VAN THANH')
+    expect(qrUrl.searchParams.get('addInfo')).toBe(DONATION_DETAILS.transferContent)
+    expect(qrUrl.searchParams.has('amount')).toBe(false)
+    expect(html).toContain(DONATION_DETAILS.bankName)
+    expect(html).toContain(DONATION_DETAILS.accountName)
+    expect(html).toContain(DONATION_DETAILS.accountNumber)
+    expect(html).toContain(DONATION_DETAILS.transferContent)
+    expect(html).toContain('img.vietqr.io/image/970422-0392375486-compact2.png')
+  })
+
   it('renders answered and refused Q&A branches from the public response shape', () => {
     const answered = render(QaView, {
       state: 'ready',

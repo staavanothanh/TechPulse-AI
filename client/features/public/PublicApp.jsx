@@ -3,6 +3,7 @@ import ReaderShell from './components/ReaderShell.jsx'
 import {
   AccountView,
   ArticleView,
+  DonateView,
   FeedView,
   QaView,
   SavedView,
@@ -10,7 +11,7 @@ import {
 } from './views/ReaderViews.jsx'
 import './public.css'
 
-const ROUTES = new Set(['feed', 'search', 'saved', 'article', 'qa', 'account'])
+const ROUTES = new Set(['feed', 'search', 'saved', 'article', 'qa', 'account', 'donate'])
 
 function SessionLoading() {
   return (
@@ -52,6 +53,7 @@ function activeView(route, props) {
   if (route === 'saved') return <SavedView {...props} />
   if (route === 'article') return <ArticleView {...props} />
   if (route === 'qa') return <QaView {...props} />
+  if (route === 'donate') return <DonateView {...props} />
   if (route === 'account') return <AccountView {...props} />
   return <FeedView {...props} />
 }
@@ -108,6 +110,7 @@ export default function PublicApp({
     saved: { ...saved, ...shared },
     article: { ...article, ...shared },
     qa: { ...qa, ...shared },
+    donate: { ...shared },
     account: { ...account, user, ...shared },
   }
   return (

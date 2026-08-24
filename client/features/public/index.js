@@ -9,6 +9,7 @@ export { PUBLIC_NAV_ITEMS, READER_NAV } from './navigation.js'
 export {
   AccountView,
   ArticleView,
+  DonateView,
   FeedView,
   QaView,
   SavedView,
