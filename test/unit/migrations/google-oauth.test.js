@@ -49,6 +49,7 @@ describe('Google OAuth migration contract', () => {
     }
     await expect(runGoogleOAuthMigration({ db })).resolves.toHaveLength(3)
     await expect(runGoogleOAuthMigration({ db })).resolves.toHaveLength(3)
+    expect(db.listCollections).toHaveBeenLastCalledWith({ name: /^(users|adminAuditLogs)$/ }, { nameOnly: false })
     expect(db.command).toHaveBeenCalledTimes(4)
   })
 })
