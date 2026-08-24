@@ -5,13 +5,13 @@ import {
   PRESERVED_APP_COLLECTIONS,
   parseClearArgs,
   planCollectionClears,
-} from '../../.tmp/clear-non-account-data.js'
+} from '../../scripts/real-feed-tools.js'
 import {
   aiReadySource,
   buildIndexingJobs,
   parseSeedArgs,
   refreshAuditIdentities,
-} from '../../.tmp/seed-real-feed.js'
+} from '../../scripts/real-feed-tools.js'
 
 describe('real feed maintenance tools', () => {
   it('requires an explicit apply flag and preserves account/security collections', () => {

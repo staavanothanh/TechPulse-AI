@@ -133,7 +133,7 @@ describe('QA evidence fence migration contract', () => {
     expect(verify).toContain('QA_EVIDENCE_FENCE_SOURCE_VALIDATOR')
     expect(verify).toMatch(/governance-tombstone[\s\S]*QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR/)
     expect(RUNTIME_SCHEMA_GENERATIONS['qa-evidence-fence']).toBe('qa-evidence-fence-v1')
-    expect(runtime).toContain("createReleaseVerifiedSchemaVerifier('qa-evidence-fence', environment)")
+    expect(runtime).toContain("createReleaseVerifiedSchemaVerifier('summary-detail-v1', environment)")
     expect(runtime).toMatch(/verifyEvidenceSchema[\s\S]*createConfiguredQaService/)
   })
 
@@ -141,7 +141,7 @@ describe('QA evidence fence migration contract', () => {
     const verify = readFileSync(new URL('../../../scripts/db-verify.js', import.meta.url), 'utf8')
 
     expect(verify).toMatch(/target === 'provider-routing-v2' && name === 'articles'[\s\S]*QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR/)
-    expect(verify).toMatch(/target === 'qa-evidence-fence'\s*\?\s*\[\]/)
+    expect(verify).toMatch(/target === 'qa-evidence-fence'\s*\|\|\s*target === 'summary-detail-v1'\s*\?\s*\[\]/)
     expect(verify).toMatch(/Q&A evidence article path.*required: \['find', 'update', 'listIndexes', 'listCollections'\]/)
     expect(verify).toMatch(/Q&A evidence source path.*required: \['find', 'update', 'listIndexes', 'listCollections'\]/)
   })

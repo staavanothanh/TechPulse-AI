@@ -109,7 +109,11 @@ function summaryInput() {
 
 function validateSummaryOutput({ output }) {
   try {
-    return validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi })
+    return validateVietnameseSummary({
+      titleVi: output?.titleVi,
+      summaryVi: output?.summaryVi,
+      summaryParagraphsVi: output?.summaryParagraphsVi,
+    })
   } catch (error) {
     const message = String(error?.message ?? '')
     error.summaryValidation = true

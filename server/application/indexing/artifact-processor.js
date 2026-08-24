@@ -80,7 +80,7 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
         if (error instanceof PolicyInputError) throw new ArtifactProcessingError(error.code, error.message)
         throw error
       }
-      if (job.task === 'summary' && article.summaryStatus === 'ready' && article.summaryInputHash === input.inputHash && article.summarySourcePolicyVersion === input.policyVersion) return { status: 'succeeded', inputHash: input.inputHash, cached: true }
+      if (job.task === 'summary' && article.summaryStatus === 'ready' && article.summaryDetailStatus === 'ready' && Array.isArray(article.summaryParagraphsVi) && article.summaryInputHash === input.inputHash && article.summarySourcePolicyVersion === input.policyVersion) return { status: 'succeeded', inputHash: input.inputHash, cached: true }
       const embeddingCompatible = article.embeddingStatus === 'ready'
         && article.embeddingInputHash === input.inputHash
         && article.embeddingSourcePolicyVersion === input.policyVersion
@@ -125,15 +125,15 @@ export function createArtifactProcessor({ articleRepository, sourceRepository, i
             invoke: async ({ route, admittedInput }) => {
               throwIfAborted(signal)
               await assertInputStillAdmitted()
-              return llmProvider.summarize({ route, input: admittedInput.text, locale: 'vi', tools: [], outputSchema: { titleVi: 'string', summaryVi: 'string' }, signal })
+              return llmProvider.summarize({ route, input: admittedInput.text, locale: 'vi', tools: [], outputSchema: { titleVi: 'string', summaryVi: 'string', summaryParagraphsVi: 'string[]' }, signal })
             },
-            validateOutput: ({ output }) => validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi }),
+            validateOutput: ({ output }) => validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi, summaryParagraphsVi: output?.summaryParagraphsVi }),
           })
           throwIfAborted(signal)
           if (await cancellationRequested()) return resetCancelledArtifact()
           const committed = await articleRepository.commitSummaryArtifact({
             job, fence, expectedSourcePolicyVersion: job.expectedSourcePolicyVersion, inputHash: input.inputHash,
-            summary: { ...result.output, summaryStatus: 'ready', summaryBasis: input.basis, summaryModel: result.metadata?.model, summaryInputHash: input.inputHash, summarySourcePolicyVersion: input.policyVersion, summaryGeneratedAt: generatedAt, summaryError: null },
+            summary: { ...result.output, summaryStatus: 'ready', summaryDetailStatus: 'ready', summaryBasis: input.basis, summaryModel: result.metadata?.model, summaryInputHash: input.inputHash, summarySourcePolicyVersion: input.policyVersion, summaryGeneratedAt: generatedAt, summaryError: null },
           })
           if (!committed) throw new ArtifactProcessingError('artifact_commit_stale', 'Summary commit fence is stale')
           return { status: 'succeeded', inputHash: input.inputHash, metadata: result.metadata }

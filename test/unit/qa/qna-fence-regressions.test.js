@@ -5,7 +5,7 @@ import { serializeSource as serializeAdminSource } from '../../../server/http/ad
 import { serializeArticle } from '../../../server/repositories/mongo/article-repository.js'
 import { MongoChatRepository } from '../../../server/repositories/mongo/chat-repository.js'
 import { serializeSource as serializeRepositorySource } from '../../../server/repositories/mongo/source-repository.js'
-import { buildGroundedPrompt, evidenceAdmissionFence } from '../../../server/domain/qa/evidence.js'
+import { admittedEvidenceText, buildGroundedPrompt, evidenceAdmissionFence } from '../../../server/domain/qa/evidence.js'
 import { createStep11Mongo } from '../../helpers/step11-mongo.js'
 
 const now = new Date('2026-08-12T00:00:00.000Z')
@@ -126,6 +126,14 @@ describe('Q&A evidence fence regressions', () => {
     expect(fence.articles[0].evidenceTextHash).toBe(sha256(body))
   })
 
+  it('includes exact trusted source identity in the fence and keeps lookalike keys blocked', () => {
+    const article = articleDocument(firstArticleId, firstSourceId, { titleOriginal: 'Nội dung có email dev@example.com' })
+    const trustedSource = sourceDocument(firstSourceId, { sourceKey: 'arxiv:cs-ai', connectorType: 'arxiv', authorityTier: 'primary' })
+    expect(admittedEvidenceText(article, trustedSource)).toContain('dev@example.com')
+    expect(evidenceAdmissionFence(qnaEvidence(article, trustedSource)).articles[0]).toEqual(expect.objectContaining({ sourceKey: 'arxiv:cs-ai' }))
+    expect(() => admittedEvidenceText(article, { ...trustedSource, sourceKey: 'arxiv:other' })).toThrow(/policy/i)
+  })
+
   it('does not change the evidence fence when only text outside the provider bound changes', () => {
     const source = sourceDocument(firstSourceId)
     const first = articleDocument(firstArticleId, firstSourceId, { excerptOriginal: `${'A'.repeat(8_000)}tail-a` })
@@ -181,6 +189,7 @@ describe('Q&A evidence fence regressions', () => {
     ['article publication time', { article: { publishedAt: new Date(now.getTime() + 1_000) } }],
     ['article author', { article: { author: 'Tac gia moi' } }],
     ['article language', { article: { sourceLanguage: 'vi' } }],
+    ['source exact key', { source: { sourceKey: 'rss:changed-key' } }],
     ['source name', { source: { name: 'Nguon da doi ten' } }],
   ])('returns 409 when cited %s changes after citation hydration', async (_label, change) => {
     const article = articleDocument(firstArticleId, firstSourceId, { author: 'Tac gia cu', sourceLanguage: 'en' })

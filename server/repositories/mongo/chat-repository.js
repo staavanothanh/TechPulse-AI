@@ -391,8 +391,8 @@ export class MongoChatRepository {
         const sourceTargets = new Map()
         for (const target of targets) {
           const previous = sourceTargets.get(target.sourceId)
-          if (previous && previous.sourcePolicyVersion !== target.expected.sourcePolicyVersion) throw conflictError('Answer evidence changed')
-          sourceTargets.set(target.sourceId, { sourceId: target.sourceId, sourcePolicyVersion: target.expected.sourcePolicyVersion })
+          if (previous && (previous.sourcePolicyVersion !== target.expected.sourcePolicyVersion || (previous.sourceKey ?? null) !== (target.expected.sourceKey ?? null))) throw conflictError('Answer evidence changed')
+          sourceTargets.set(target.sourceId, { sourceId: target.sourceId, sourcePolicyVersion: target.expected.sourcePolicyVersion, sourceKey: target.expected.sourceKey ?? null })
         }
         const articleCollection = this.collection('articles')
         const sourceCollection = this.collection('sources')
@@ -424,7 +424,7 @@ export class MongoChatRepository {
             textHash = createHash('sha256').update(admittedEvidenceText(target.article, source)).digest('hex')
             citationMetadataHash = evidenceCitationMetadataHash(target.article, source)
           } catch { throw conflictError('Source visibility changed') }
-          if (idString(target.article._id) !== target.articleId || idString(target.article.sourceId) !== target.sourceId || idString(source?._id) !== target.sourceId || source?.policyVersion !== target.expected.sourcePolicyVersion || !articleMatchesFence(target.article, target.expected) || !canUseQnaEvidence(target.article, source) || textHash !== target.expected.evidenceTextHash || citationMetadataHash !== target.expected.citationMetadataHash) throw conflictError('Source visibility changed')
+          if (idString(target.article._id) !== target.articleId || idString(target.article.sourceId) !== target.sourceId || idString(source?._id) !== target.sourceId || source?.policyVersion !== target.expected.sourcePolicyVersion || (source?.sourceKey ?? null) !== (target.expected.sourceKey ?? null) || !articleMatchesFence(target.article, target.expected) || !canUseQnaEvidence(target.article, source) || textHash !== target.expected.evidenceTextHash || citationMetadataHash !== target.expected.citationMetadataHash) throw conflictError('Source visibility changed')
         }
       }
       let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()

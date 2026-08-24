@@ -35,6 +35,7 @@ import {
   QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR,
   QA_EVIDENCE_FENCE_SOURCE_VALIDATOR,
 } from './migrations/qa-evidence-fence.js'
+import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from './migrations/summary-detail-v1.js'
 import {
   actionsForCollection,
   probeAuditRoleCapabilities,
@@ -264,9 +265,9 @@ async function probeQaEvidenceFenceRoleCapabilities({ client, db } = {}) {
   }
 }
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'governance'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, governance',
+    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance',
   )
   process.exitCode = 2
 } else {
@@ -308,6 +309,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                     articles: { validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR },
                     sources: { validator: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR },
                   }
+              : target === 'summary-detail-v1'
+                ? { articles: { validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR } }
               : target === 'governance'
                 ? { ...GOVERNANCE_COLLECTIONS, takedownRequests: { ...GOVERNANCE_COLLECTIONS.takedownRequests, validator: GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } }
                 : AUTH_CORE_COLLECTIONS
@@ -328,6 +331,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? CHAT_SESSION_INDEXES
               : target === 'qa-evidence-fence'
                 ? { articles: ARTICLE_INDEXES.articles, sources: SOURCE_INDEXES.sources }
+              : target === 'summary-detail-v1'
+                ? { articles: ARTICLE_INDEXES.articles }
               : target === 'governance' ? { ...GOVERNANCE_INDEXES, takedownRequests: [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests] } : AUTH_CORE_INDEXES
     verificationStage = 'schema-app'
     for (const name of Object.keys(expectedCollections)) {
@@ -353,13 +358,15 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 GOVERNANCE_AUDIT_VALIDATOR,
               ]
             : target === 'articles' && name === 'articles'
-              ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR]
+                ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR]
+              : target === 'summary-detail-v1' && name === 'articles'
+                ? [SUMMARY_DETAIL_ARTICLE_VALIDATOR]
               : target === 'provider-routing-v2' && name === 'articles'
-                ? [PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR]
+                ? [PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR]
               : target === 'sources' && name === 'sources'
                 ? [SOURCE_COLLECTIONS.sources.validator, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR]
-                : target === 'qa-evidence-fence'
-                  ? [expectedCollections[name].validator]
+              : target === 'qa-evidence-fence'
+                  ? name === 'articles' ? [expectedCollections[name].validator, SUMMARY_DETAIL_ARTICLE_VALIDATOR] : [expectedCollections[name].validator]
               : ['indexing-jobs', 'indexing-drain-performance'].includes(target) && name === 'providerAdmissionStates'
                 ? [INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator, PROVIDER_ROUTING_V2_COLLECTIONS.providerAdmissionStates.validator]
                 : ['indexing-jobs', 'indexing-drain-performance'].includes(target) && name === 'indexingJobs'
@@ -396,7 +403,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       verificationStage = 'schema-governance'
       const articleCollection = collectionMap.get('articles')
       if (!articleCollection) missing.push('articles:collection:governance-tombstone')
-      else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || ![ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR].some((validator) => stableJson(articleCollection.options?.validator) === stableJson(validator))) validatorProblems.push('articles:validator-definition:governance-tombstone')
+      else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || ![ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR].some((validator) => stableJson(articleCollection.options?.validator) === stableJson(validator))) validatorProblems.push('articles:validator-definition:governance-tombstone')
       if (governanceMetadataUnavailable) validatorProblems.push('techpulse_governance:metadata-unavailable')
       for (const [name, definition] of governanceMetadataUnavailable ? [] : Object.entries(GOVERNANCE_DATABASE_COLLECTIONS)) {
         const collection = governanceMap.get(name)
@@ -446,7 +453,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
       target === 'chat-sessions' ||
-      target === 'qa-evidence-fence'
+      target === 'qa-evidence-fence' ||
+      target === 'summary-detail-v1'
     ) {
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')
@@ -502,8 +510,22 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       )
       if (invalidCompatibilityCount > 0) validatorProblems.push('articles:embedding-compatibility-state')
     }
+    if (target === 'summary-detail-v1') {
+      verificationStage = 'summary-detail-backfill'
+      const legacyDetailCount = await context.db.collection('articles').countDocuments(
+        {
+          status: { $ne: 'removed' },
+          $or: [
+            { summaryDetailStatus: { $exists: false } },
+            { summaryParagraphsVi: { $exists: false } },
+          ],
+        },
+        { limit: 1 },
+      )
+      if (legacyDetailCount > 0) validatorProblems.push('articles:legacy-summary-detail')
+    }
     const plans =
-      target === 'qa-evidence-fence'
+      target === 'qa-evidence-fence' || target === 'summary-detail-v1'
         ? []
         : target === 'sources'
         ? [
@@ -903,7 +925,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       target === 'articles' ||
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
-      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'governance'
+      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'summary-detail-v1' || target === 'governance'
         ? 'not-requested'
         : 'unavailable-local'
     const roleProblems = []
@@ -928,6 +950,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
             ? [
                 { database: context.database, collection: 'articles', label: 'Q&A evidence article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
                 { database: context.database, collection: 'sources', label: 'Q&A evidence source path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
+              ]
+          : target === 'summary-detail-v1'
+            ? [
+                { database: context.database, collection: 'articles', label: 'summary detail article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
               ]
           : ['durable-jobs', 'indexing-jobs', 'indexing-drain-performance', 'chat-sessions'].includes(target)
             ? []
@@ -1003,6 +1029,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       const probe = await probeQaEvidenceFenceRoleCapabilities(context)
       for (const [capability, passed] of Object.entries(probe))
         if (!passed) roleProblems.push(`Q&A evidence fence runtime capability failed: ${capability}`)
+      roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
+    } else if (requireRole && target === 'summary-detail-v1') {
+      const probe = await probeQaEvidenceFenceRoleCapabilities(context)
+      if (!probe.articleRuntime || !probe.transaction) roleProblems.push('summary detail article runtime capability failed')
       roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
     } else if (requireRole && target === 'governance') {
       verificationStage = 'governance-role-probe'

@@ -189,8 +189,8 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 
 | ID | Requirement | Acceptance summary |
 |---|---|---|
-| AI-001 | System tạo `summaryVi` ngắn từ allowed input | Không dùng field ngoài `llmInputScope` |
-| AI-002 | Summary lưu `summaryBasis`, model và status | Biết được tạo từ metadata/excerpt/fulltext-temp |
+| AI-001 | System tạo `summaryVi` ngắn và `summaryParagraphsVi` chi tiết từ allowed input | Feed dùng summary ngắn; detail dùng 2–5 đoạn khi detail status `ready` |
+| AI-002 | Summary lưu `summaryBasis`, model và status độc lập cho short/detail | Biết được tạo từ metadata/excerpt/fulltext-temp/official-payload và không hiển thị artifact chưa sẵn sàng |
 | AI-003 | Giữ title/excerpt/language/URL gốc | Không overwrite source data |
 | AI-004 | Không lưu full text sau xử lý tạm | Không có field/collection chứa article body lâu dài |
 | AI-005 | Summary lỗi có retry/review flow | Không publish summary hỏng như thành công |
@@ -199,6 +199,7 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 | AI-008 | AI artifact commit match current Source Policy version | Policy đổi trong lúc provider chạy làm output cũ bị discard, không persist |
 | AI-009 | Provider route có capability evidence và expiry | Q&A raw question/evidence đã admit chỉ đi DeepSeek `deepseek-v4-flash` trên `nonconfidential`; sensitive-input/source-policy gate không được bypass |
 | AI-010 | Admission và route/provider circuits bảo vệ cost và availability | Routes dùng cùng credential tranh chung Mongo admission-domain concurrency/budget; route circuit tách provider-domain circuit; một logical operation tối đa hai external attempts |
+| AI-011 | Ba connector seed được phép dùng payload đã normalize cho summary với prompt-injection fence | Exact `sourceKey` được duyệt; nội dung vẫn là untrusted data trong delimiter, không gọi tool và không lưu raw HTML/provider payload |
 
 ### 4.8. AI Q&A và citation
 

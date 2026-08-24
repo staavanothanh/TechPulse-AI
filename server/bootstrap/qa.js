@@ -9,7 +9,8 @@ import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../scripts/mi
 import { PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
-import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
+import { QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
+import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../scripts/migrations/summary-detail-v1.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -49,7 +50,7 @@ export async function assertQaEvidenceFenceReady(context) {
   const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
   const byName = new Map(collections.map((collection) => [collection.name, collection]))
   const expected = new Map([
-    ['articles', QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR],
+    ['articles', SUMMARY_DETAIL_ARTICLE_VALIDATOR],
     ['sources', QA_EVIDENCE_FENCE_SOURCE_VALIDATOR],
   ])
   for (const [name, validator] of expected) {

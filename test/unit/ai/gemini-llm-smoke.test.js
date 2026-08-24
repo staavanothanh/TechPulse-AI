@@ -4,6 +4,7 @@ import {
   createGeminiSmokePlan,
   parseGeminiRegistry,
   runGeminiLlmSmoke,
+  validateGeminiSummaryOutput,
 } from '../../../scripts/gemini-llm-smoke.js'
 
 const NOW = new Date('2026-08-21T00:00:00.000Z')
@@ -96,7 +97,11 @@ function responseFor(operation, { invalid = false } = {}) {
     return { verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E9'] }
   }
   if (operation === 'summary') {
-    return { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Tóm tắt tiếng Việt có nguồn.' }
+    return {
+      titleVi: 'Tiêu đề tiếng Việt',
+      summaryVi: 'Tóm tắt tiếng Việt có nguồn.',
+      summaryParagraphsVi: ['Đoạn chi tiết thứ nhất có nguồn bằng tiếng Việt.', 'Đoạn chi tiết thứ hai không thêm dữ kiện ngoài nguồn.'],
+    }
   }
   if (operation === 'answer') {
     return { status: 'answered', paragraphs: [{ text: 'Ket luan duoc neu trong nguon.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
@@ -106,7 +111,7 @@ function responseFor(operation, { invalid = false } = {}) {
 
 function operationFromPayload(payload) {
   const instruction = payload?.messages?.[0]?.content
-  if (instruction?.startsWith('Tom tat')) return 'summary'
+  if (instruction?.startsWith('Summarize')) return 'summary'
   if (instruction?.startsWith('Tra loi')) return 'answer'
   if (instruction?.startsWith('Kiem tra')) return 'support'
   throw new Error('unexpected synthetic operation')
@@ -124,6 +129,13 @@ function fakeFetch({ invalidOperation, failFirstSummary = false } = {}) {
 }
 
 describe('Gemini LLM smoke harness', () => {
+  it('preserves validated detail paragraphs in the summary output', () => {
+    const output = responseFor('summary')
+
+    expect(validateGeminiSummaryOutput({ output })).toEqual(output)
+    expect(validateGeminiSummaryOutput({ output }).summaryParagraphsVi).toHaveLength(2)
+  })
+
   it('validates the server graph and selects only the three LLM workloads', () => {
     const registry = parseGeminiRegistry(environment(), { now: NOW, ...PROFILE_OPTIONS })
     const plan = createGeminiSmokePlan(registry)

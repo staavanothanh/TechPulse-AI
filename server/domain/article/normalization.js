@@ -154,6 +154,8 @@ export function normalizeCandidateToArticle(candidate, { source, now = new Date(
     ...media,
     summaryVi: null,
     summaryStatus: 'pending',
+    summaryParagraphsVi: null,
+    summaryDetailStatus: 'pending',
     summaryBasis: null,
     summaryModel: null,
     summaryInputHash: null,

@@ -21,6 +21,18 @@ export function policyDraftForSource(source = {}) {
   }
 }
 
+function normalizeMediaHosts(value) {
+  const values = Array.isArray(value) ? value : String(value ?? '').split(',')
+  const hosts = values
+    .map((host) => String(host).trim().toLowerCase().replace(/\.$/, ''))
+    .filter((host) => {
+      if (!host || host.length > 253 || /[:/@*\s]/.test(host) || !host.includes('.')) return false
+      if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || /\.(?:internal|local|localhost|localdomain|home|lan)$/.test(host)) return false
+      return host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+    })
+  return [...new Set(hosts)].slice(0, 20)
+}
+
 export function buildSourceCreateInput(form) {
   const batchSize = Number(form.batchSize)
   const base = { name: form.name.trim(), sourceKey: form.sourceKey.trim(), publisherName: form.publisherName.trim(), domain: form.domain.trim().toLowerCase(), connectorType: form.connectorType }
@@ -46,9 +58,9 @@ export function buildPolicyReview(form) {
     mediaPolicy: {
       imageMode: blocked ? 'none' : form.imageMode,
       videoMode: blocked ? 'none' : form.videoMode,
-      allowedHosts: blocked ? [] : form.allowedHosts.split(',').map((host) => host.trim()).filter(Boolean),
+      allowedHosts: blocked ? [] : normalizeMediaHosts(form.allowedHosts),
       attributionRequired: blocked ? false : Boolean(form.mediaAttributionRequired),
-      evidenceNote: blocked ? null : form.mediaEvidenceNote.trim() || null,
+      evidenceNote: blocked ? null : String(form.mediaEvidenceNote ?? '').trim() || null,
     },
     attributionRequired: Boolean(form.attributionRequired),
     attributionText: form.attributionText.trim() || null,

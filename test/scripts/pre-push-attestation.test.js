@@ -99,6 +99,7 @@ describe('pre-push release attestation', () => {
         'provider-routing-v2',
         'chat-sessions',
         'qa-evidence-fence',
+        'summary-detail-v1',
         'governance',
       ]),
     )

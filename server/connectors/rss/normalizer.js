@@ -161,6 +161,7 @@ function mediaCandidateFor(item, feedUrl, feedType, limits) {
   const atomEnclosures = feedType === 'atom'
     ? children(item, ['link']).filter((node) => attribute(node, ['rel']).value?.toLowerCase() === 'enclosure')
     : []
+  const candidates = []
   for (const node of [...mediaNodes, ...enclosures, ...atomEnclosures]) {
     const url = attribute(node, ['url', 'href'])
     const mediaUrl = safeHttpsUrl(url.present ? url.value : nodeText(node), feedUrl)
@@ -175,9 +176,13 @@ function mediaCandidateFor(item, feedUrl, feedType, limits) {
     else if (attrAlt.present) candidate.alt = normalizedText(attrAlt.value, limits)
     if (credit.present) candidate.credit = credit.value
     else if (attrCredit.present) candidate.credit = normalizedText(attrCredit.value, limits)
-    return candidate
+    const localName = node.localName.toLowerCase()
+    const isAtomEnclosure = localName === 'link' && attribute(node, ['rel']).value?.toLowerCase() === 'enclosure'
+    const sourcePriority = localName === 'content' ? 3 : localName === 'enclosure' || isAtomEnclosure ? 2 : 1
+    const typePriority = type === 'image' ? 2 : 1
+    candidates.push({ candidate, priority: sourcePriority * 10 + typePriority })
   }
-  return undefined
+  return candidates.sort((left, right) => right.priority - left.priority)[0]?.candidate
 }
 
 function externalIdFor(item, feedType, limits) {

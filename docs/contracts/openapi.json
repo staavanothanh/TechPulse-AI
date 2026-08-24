@@ -4432,6 +4432,7 @@
               "metadata",
               "excerpt",
               "fulltext-temporary",
+              "official-payload",
               null
             ]
           },
@@ -4454,7 +4455,7 @@
             "then": {
               "properties": {
                 "summaryVi": { "type": "string", "minLength": 1, "maxLength": 4000 },
-                "summaryBasis": { "type": "string", "enum": ["metadata", "excerpt", "fulltext-temporary"] }
+                "summaryBasis": { "type": "string", "enum": ["metadata", "excerpt", "fulltext-temporary", "official-payload"] }
               }
             },
             "else": {
@@ -4478,7 +4479,9 @@
           "sourceLanguage",
           "topics",
           "summaryVi",
+          "summaryParagraphsVi",
           "summaryStatus",
+          "summaryDetailStatus",
           "summaryBasis",
           "leadMedia",
           "isSaved",
@@ -4506,10 +4509,18 @@
           "sourceLanguage": { "type": "string" },
           "topics": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
           "summaryVi": { "type": ["string", "null"] },
+          "summaryParagraphsVi": {
+            "type": ["array", "null"],
+            "items": { "type": "string", "minLength": 20, "maxLength": 2000 },
+            "minItems": 2,
+            "maxItems": 5,
+            "description": "Detailed Vietnamese article summary. Null until the canonical rich-summary artifact is ready. The server also enforces a 6000-character aggregate limit."
+          },
           "summaryStatus": { "$ref": "#/components/schemas/PublicArtifactStatus" },
+          "summaryDetailStatus": { "$ref": "#/components/schemas/PublicArtifactStatus" },
           "summaryBasis": {
             "type": ["string", "null"],
-            "enum": ["metadata", "excerpt", "fulltext-temporary", null]
+            "enum": ["metadata", "excerpt", "fulltext-temporary", "official-payload", null]
           },
           "leadMedia": {
             "anyOf": [
@@ -4533,13 +4544,35 @@
             "then": {
               "properties": {
                 "summaryVi": { "type": "string", "minLength": 1, "maxLength": 4000 },
-                "summaryBasis": { "type": "string", "enum": ["metadata", "excerpt", "fulltext-temporary"] }
+                "summaryBasis": { "type": "string", "enum": ["metadata", "excerpt", "fulltext-temporary", "official-payload"] }
               }
             },
             "else": {
               "properties": {
                 "summaryVi": { "type": "null" },
                 "summaryBasis": { "type": "null" }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "summaryDetailStatus": { "const": "ready" } },
+              "required": ["summaryDetailStatus"]
+            },
+            "then": {
+              "properties": {
+                "summaryStatus": { "const": "ready" },
+                "summaryParagraphsVi": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 20, "maxLength": 2000 },
+                  "minItems": 2,
+                  "maxItems": 5
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "summaryParagraphsVi": { "type": "null" }
               }
             }
           }

@@ -19,6 +19,8 @@ describe('article normalization and policy gates', () => {
       status: 'published',
       contentScope: 'excerpt',
       summaryStatus: 'pending',
+      summaryDetailStatus: 'pending',
+      summaryParagraphsVi: null,
       embeddingStatus: 'pending',
       leadMediaStatus: 'available',
       leadMedia: expect.objectContaining({ displayMode: 'remote-preview', mediaEvidenceStatus: 'not-analyzed', url: 'https://cdn.example.com/image.jpg' }),

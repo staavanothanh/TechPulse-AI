@@ -4,6 +4,7 @@ import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrati
 import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from '../../../scripts/migrations/articles.js'
 import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
+import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../../scripts/migrations/summary-detail-v1.js'
 
 function readyContext({ validator = ARTICLE_COLLECTIONS.articles.validator, indexes, sources = [] } = {}) {
   const actualIndexes = indexes ?? ARTICLE_INDEXES.articles.map((index) => index.name === 'articles_search_text'
@@ -54,6 +55,10 @@ describe('Step 8 content bootstrap readiness', () => {
 
   it('accepts the exact Q&A evidence-fence article validator', async () => {
     await expect(assertArticlesReady(readyContext({ validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR }))).resolves.toBeUndefined()
+  })
+
+  it('requires the summary-detail-v1 article validator after rich detail is deployed', async () => {
+    await expect(assertArticlesReady(readyContext({ validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR }))).resolves.toBeUndefined()
   })
 
   it('fails closed when the article validator or any exact index is not ready', async () => {

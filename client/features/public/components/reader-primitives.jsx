@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { safeExternalUrl, safeMediaUrl } from '../safe-url.js'
 import { articleTitle, formatDate, sourceDomain, sourceName, topicLabel } from './reader-format.js'
 
@@ -203,6 +204,29 @@ export function Summary({ article }) {
   )
 }
 
+export function MediaImage({ src, alt = '', fallbackLabel = 'Ảnh nguồn không khả dụng', className = 'public-card-media' }) {
+  const [failedSrc, setFailedSrc] = useState(null)
+  const failed = failedSrc === src
+  if (!src || failed) {
+    return (
+      <div className={`${className} ${className.includes('detail') ? 'public-detail-media-fallback' : 'public-card-media-placeholder'}`} role="img" aria-label={fallbackLabel}>
+        <span>{fallbackLabel}</span>
+      </div>
+    )
+  }
+  return (
+    <img
+      className={className}
+      src={src}
+      alt={alt}
+      loading="lazy"
+      crossOrigin="anonymous"
+      referrerPolicy="no-referrer"
+      onError={() => setFailedSrc(src)}
+    />
+  )
+}
+
 export function ArticleCard({ article, busy = false, savedOverride, onOpenArticle, onSaveToggle }) {
   const saved = typeof savedOverride === 'boolean' ? savedOverride : Boolean(article?.isSaved)
   const sourceLabel = sourceName(article)
@@ -213,10 +237,12 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
   const mediaKind = media?.kind || media?.type
   const mediaUrl =
     mediaKind === 'image' && media?.displayMode === 'remote-preview'
-      ? safeMediaUrl(media?.url)
+      ? safeMediaUrl(media?.url, media?.allowedHosts)
       : null
   const videoUrl =
-    mediaKind === 'video' && media?.displayMode === 'link-only' ? safeExternalUrl(media?.url) : null
+    mediaKind === 'video' && media?.displayMode === 'link-only'
+      ? safeExternalUrl(media?.sourcePageUrl)
+      : null
   return (
     <article
       className="public-article-card"
@@ -232,13 +258,7 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
       </div>
       {mediaUrl ? (
         <figure className="public-card-media-figure">
-          <img
-            className="public-card-media"
-            src={mediaUrl}
-            alt={media?.altText || ''}
-            loading="lazy"
-            referrerPolicy="no-referrer"
-          />
+          <MediaImage src={mediaUrl} alt={media?.altText || ''} fallbackLabel={`Ảnh nguồn: ${sourceLabel}`} />
           {media?.attribution ? <figcaption>{media.attribution}</figcaption> : null}
         </figure>
       ) : videoUrl ? (

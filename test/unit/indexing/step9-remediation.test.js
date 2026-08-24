@@ -51,14 +51,16 @@ function validatedProviderGraph(overrides = {}) {
 describe('Step 9 remediation adversarial regressions', () => {
   it('projects an adapter summary before strict validation and keeps the configured summary timeout bounded', async () => {
     const harness = readFileSync(new URL('../../../scripts/step9-real-provider-smoke.js', import.meta.url), 'utf8')
-    const adapterResult = { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tiếng Việt an toàn có nguồn.', model: 'summary-model-v1' }
-    expect(validateVietnameseSummary({ titleVi: adapterResult.titleVi, summaryVi: adapterResult.summaryVi })).toEqual({ titleVi: adapterResult.titleVi, summaryVi: adapterResult.summaryVi })
-    expect(() => validateVietnameseSummary(adapterResult)).toThrow(/shape/i)
-    expect(harness).toContain('validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi })')
+    const adapterResult = { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tiếng Việt an toàn có nguồn.', summaryParagraphsVi: ['Đoạn chi tiết thứ nhất chỉ dùng dữ liệu nguồn đã được cấp.', 'Đoạn chi tiết thứ hai giữ nguyên các thuật ngữ kỹ thuật cần thiết.'] }
+    const providerResponse = { model: 'summary-model-v1', choices: [{ message: { content: JSON.stringify(adapterResult) } }] }
+    expect(validateVietnameseSummary(adapterResult)).toEqual(expect.objectContaining({ titleVi: adapterResult.titleVi, summaryVi: adapterResult.summaryVi, summaryParagraphsVi: adapterResult.summaryParagraphsVi }))
+    expect(() => validateVietnameseSummary({ titleVi: adapterResult.titleVi, summaryVi: adapterResult.summaryVi })).toThrow(/shape/i)
+    expect(harness).toContain('validateVietnameseSummary({')
+    expect(harness).toContain('summaryParagraphsVi: output?.summaryParagraphsVi')
 
     const registry = validatedProviderGraph()
     const abortTimeout = vi.spyOn(globalThis.AbortSignal, 'timeout').mockReturnValue(new globalThis.AbortController().signal)
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(adapterResult) } }] }), { headers: { 'Content-Type': 'application/json' } }))
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(providerResponse), { headers: { 'Content-Type': 'application/json' } }))
     const adapters = createConfiguredProviderAdapters({ registry, trustedEndpointProfiles, fetchImpl, resolveCredential: () => 'secret' })
     await adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })
     expect(abortTimeout).toHaveBeenCalledWith(30_000)
@@ -68,7 +70,7 @@ describe('Step 9 remediation adversarial regressions', () => {
 
   it('binds the configured adapter profile and rejects unknown provider startup routes', async () => {
     const registry = validatedProviderGraph()
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ titleVi: 'Tieu de', summaryVi: 'Tom tat.' }) } }] }), { headers: { 'Content-Type': 'application/json' } }))
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ titleVi: 'Tiêu đề', summaryVi: 'Tóm tắt tiếng Việt.', summaryParagraphsVi: ['Đoạn chi tiết thứ nhất nêu kết quả chính của bài viết.', 'Đoạn chi tiết thứ hai mô tả bối cảnh và giới hạn.'] }) } }] }), { headers: { 'Content-Type': 'application/json' } }))
     const adapters = createConfiguredProviderAdapters({ registry, trustedEndpointProfiles, fetchImpl, resolveCredential: () => 'secret' })
     await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).resolves.toMatchObject({ model: 'summary-model-v1' })
     expect(fetchImpl.mock.calls[0][0]).toBe('https://summary.example/v1/chat/completions')

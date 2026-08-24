@@ -74,4 +74,19 @@ describe('Step 9 policy-derived AI input', () => {
       expect(() => buildPolicyDerivedInput({ article: { ...article, titleOriginal: sentinel }, source, purpose: 'summary' })).toThrow(PolicyInputError)
     }
   })
+
+  it('allows the reviewed connector payload exception only for an exact trusted source key', () => {
+    const credentialArticle = { ...article, titleOriginal: 'Nghiên cứu có email dev@example.com' }
+    expect(buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey: 'rss:the-verge' }, purpose: 'summary' })).toEqual(expect.objectContaining({ basis: 'official-payload' }))
+    expect(() => buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey: 'rss:the-verge' }, purpose: 'embedding' })).toThrow(PolicyInputError)
+    expect(() => buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey: 'rss:other-verge-copy' }, purpose: 'summary' })).toThrow(PolicyInputError)
+  })
+
+  it('recognizes the exact demo source keys used by the live connector seed', () => {
+    const credentialArticle = { ...article, titleOriginal: 'Nghiên cứu có email dev@example.com' }
+    for (const sourceKey of ['demo:rss-the-verge', 'demo:arxiv-cs-ai', 'demo:hn-topstories']) {
+      expect(buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey }, purpose: 'summary' }))
+        .toEqual(expect.objectContaining({ basis: 'official-payload' }))
+    }
+  })
 })

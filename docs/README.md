@@ -50,7 +50,7 @@ docs/
 ├── adr/
 │   ├── README.md
 │   ├── template.md
-│   └── 0001..0018
+│   └── 0001..0019
 └── plans/
     └── techpulse-ai-mvp.md
 ```
@@ -63,6 +63,7 @@ docs/
 - Quota HMAC ghi stable `currentVersion`/`retiringVersions` qua runtime env; bucket lưu `keyFingerprint` để phát hiện đổi secret cùng version. Mongo snapshot revision/hash-chain giữ mọi predecessor đã quan sát; startup chỉ append transition và retire từng version sau successor >=30 ngày cùng zero rate-limit/session/audit dependents. Runtime role không update/delete lifecycle history.
 - Auth HTTP đã có register/login/logout/current-user/preferences và admin user foundation; session token chỉ lưu hash, CSRF giữ trong memory, public register luôn role `user`.
 - UI, summary và Q&A dùng tiếng Việt; giữ title/language/URL nguồn nguyên bản.
+- Summary feed dùng `summaryVi` ngắn; trang chi tiết dùng `summaryParagraphsVi` 2–5 đoạn khi `summaryDetailStatus=ready`, có fallback rõ ràng khi đang chờ hoặc lỗi. Prompt summary/Q&A luôn coi dữ liệu nguồn là untrusted và chặn prompt injection.
 - Citation cấp bài ở detail/summary và cấp đoạn ở Q&A.
 - Không lưu full text; chỉ xử lý tạm khi source policy cho phép.
 - Ảnh nguồn chỉ được remote-preview khi Source Registry cho phép; video quan trọng là link-only và phải ghi rõ AI chưa phân tích video. Không tải về/rehost binary ảnh hoặc video trong MongoDB.

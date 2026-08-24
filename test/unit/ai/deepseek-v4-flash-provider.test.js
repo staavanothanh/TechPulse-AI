@@ -27,7 +27,11 @@ function operationFromPayload(payload) {
 }
 
 function responseFor(operation) {
-  if (operation === 'summary') return { titleVi: 'Hệ thống làm mát mới', summaryVi: 'Dữ liệu tổng hợp an toàn cho phép kiểm tra tóm tắt.' }
+  if (operation === 'summary') return {
+    titleVi: 'Hệ thống làm mát mới',
+    summaryVi: 'Dữ liệu tổng hợp an toàn cho phép kiểm tra tóm tắt.',
+    summaryParagraphsVi: ['Đoạn chi tiết thứ nhất mô tả hệ thống làm mát bằng tiếng Việt.', 'Đoạn chi tiết thứ hai chỉ dùng dữ liệu tổng hợp đã cung cấp.'],
+  }
   if (operation === 'answer') return { status: 'answered', paragraphs: [{ text: 'Nguồn xác nhận dữ liệu tổng hợp an toàn.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
   return { verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }
 }
@@ -102,6 +106,12 @@ describe('DeepSeek V4 Flash provider smoke', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('resolves a credential through the configured environment indirection', async () => {
+    const fetchImpl = successfulFetch()
+    await expect(runDeepSeekV4FlashSmoke({ mode: 'summary', environment: { LLM_PRIMARY_API_KEY_ENV: 'DEEPSEEK_PRIMARY_SECRET', DEEPSEEK_PRIMARY_SECRET: CREDENTIAL }, fetchImpl, now: () => NOW }))
+      .resolves.toMatchObject({ ok: true, outboundRequests: 1 })
+  })
+
   it('runs summary, answer and support through the adapter boundary without exposing the credential', async () => {
     const fetchImpl = successfulFetch()
     const report = await runDeepSeekV4FlashSmoke({ environment: environment(), fetchImpl, now: () => NOW })
@@ -173,7 +183,7 @@ describe('DeepSeek V4 Flash provider smoke', () => {
     })
 
     await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: 'safe synthetic input', locale: 'vi', tools: [] }))
-      .resolves.toMatchObject({ titleVi: expect.any(String), summaryVi: expect.any(String), model: MODEL })
+      .resolves.toMatchObject({ titleVi: expect.any(String), summaryVi: expect.any(String), summaryParagraphsVi: expect.any(Array), model: MODEL })
   })
 
   it('combines a caller cancellation signal with the provider timeout signal', async () => {

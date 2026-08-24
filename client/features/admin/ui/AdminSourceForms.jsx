@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AdminButton } from './AdminShared.jsx'
+import { buildPolicyReview } from '../sources/source-form.js'
 
 export function SourcePolicy({ source }) {
   return (
@@ -162,6 +163,13 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
     evidenceNote: source.evidenceNote ?? '',
     storeSummary: Boolean(source.storageScope?.summary),
     storeEmbedding: Boolean(source.storageScope?.embedding),
+    storeMetadata: Boolean(source.storageScope?.metadata ?? true),
+    storeExcerpt: false,
+    imageMode: mediaPolicy.imageMode,
+    videoMode: mediaPolicy.videoMode,
+    allowedHosts: mediaPolicy.allowedHosts.join(', '),
+    mediaAttributionRequired: Boolean(mediaPolicy.attributionRequired),
+    mediaEvidenceNote: mediaPolicy.evidenceNote ?? '',
   })
   const set = (key) => (event) =>
     setForm((current) => ({
@@ -171,37 +179,7 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
   function submit(event) {
     event.preventDefault()
     const blocked = form.licenseStatus === 'blocked'
-    const metadataOnly = form.licenseStatus === 'metadata-only'
-    const llmInputScope = blocked
-      ? 'none'
-      : metadataOnly && !['none', 'metadata'].includes(form.llmInputScope)
-        ? 'metadata'
-        : form.llmInputScope
-    void onSubmit({
-      licenseStatus: form.licenseStatus,
-      llmInputScope,
-      storageScope: {
-        metadata: !blocked,
-        excerpt: false,
-        summary: !blocked && !['none'].includes(llmInputScope) && form.storeSummary,
-        embedding: !blocked && !['none'].includes(llmInputScope) && form.storeEmbedding,
-      },
-      mediaPolicy: blocked
-        ? {
-            imageMode: 'none',
-            videoMode: 'none',
-            allowedHosts: [],
-            attributionRequired: false,
-            evidenceNote: null,
-          }
-        : mediaPolicy,
-      attributionRequired: Boolean(form.attributionRequired),
-      attributionText: form.attributionText.trim() || null,
-      termsUrl: form.termsUrl.trim() || null,
-      licenseUrl: form.licenseUrl.trim() || null,
-      evidenceNote: form.evidenceNote.trim(),
-      reasonCode: 'source_policy_reviewed',
-    })
+    void onSubmit(buildPolicyReview({ ...form, blocked }))
   }
   return (
     <form className="admin-source-create admin-policy-review-form" onSubmit={submit}>
@@ -213,7 +191,7 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
         <span className="admin-chip">v{source.policyVersion ?? 'n/a'}</span>
       </div>
       <p className="admin-form-hint">
-        Ghi bằng chứng review trước khi lưu. Server vẫn kiểm tra policy và trạng thái nguồn.
+        Ghi bằng chứng review trước khi lưu. Server vẫn kiểm tra policy và trạng thái nguồn. Sau khi đổi host preview, cần reload/restart runtime để cập nhật CSP; trước khi reload, preview mới sẽ fail closed.
       </p>
       <div className="admin-form-grid">
         <label>
@@ -282,6 +260,51 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
             Lưu embedding
           </label>
         </div>
+        <label>
+          Chế độ preview ảnh
+          <select value={form.imageMode} onChange={set('imageMode')} disabled={form.licenseStatus === 'blocked'}>
+            <option value="none">Không hiển thị</option>
+            <option value="remote-preview">Remote preview</option>
+          </select>
+        </label>
+        <label>
+          Chế độ video
+          <select value={form.videoMode} onChange={set('videoMode')} disabled={form.licenseStatus === 'blocked'}>
+            <option value="none">Không hiển thị</option>
+            <option value="link-only">Chỉ link nguồn</option>
+          </select>
+        </label>
+        <label className="admin-form-full">
+          Host media được duyệt
+          <input
+            value={form.allowedHosts}
+            onChange={set('allowedHosts')}
+            maxLength="5200"
+            placeholder="cdn.example.com, media.example.com"
+            disabled={form.licenseStatus === 'blocked'}
+          />
+          <small className="admin-form-hint">Nhập hostname HTTPS chính xác, phân tách bằng dấu phẩy. Không dùng wildcard.</small>
+        </label>
+        <label>
+          Attribution media
+          <input
+            type="checkbox"
+            checked={form.mediaAttributionRequired}
+            onChange={set('mediaAttributionRequired')}
+            disabled={form.licenseStatus === 'blocked'}
+          />{' '}
+          Bắt buộc attribution media
+        </label>
+        <label className="admin-form-full">
+          Bằng chứng media policy
+          <textarea
+            value={form.mediaEvidenceNote}
+            onChange={set('mediaEvidenceNote')}
+            maxLength="4000"
+            rows="3"
+            disabled={form.licenseStatus === 'blocked'}
+          />
+        </label>
         <label className="admin-form-full">
           Bằng chứng policy
           <textarea
@@ -294,7 +317,7 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
           />
         </label>
       </div>
-      <AdminButton variant="primary" icon="shield" disabled={busy}>
+      <AdminButton type="submit" variant="primary" icon="shield" disabled={busy}>
         Lưu quyết định review
       </AdminButton>
     </form>

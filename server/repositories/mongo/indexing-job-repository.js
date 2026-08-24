@@ -93,8 +93,8 @@ function expiredArtifactRecovery(parent, now, returnToPending) {
   const statusField = parent.task === 'summary' ? 'summaryStatus' : 'embeddingStatus'
   const error = returnToPending ? null : { code: 'lease_expired', message: 'AI artifact did not complete safely', retryable: true, occurredAt: now }
   const fields = parent.task === 'summary'
-    ? {
-        titleVi: null, summaryVi: null, summaryStatus: returnToPending ? 'pending' : 'failed', summaryBasis: null,
+      ? {
+        titleVi: null, summaryVi: null, summaryParagraphsVi: null, summaryStatus: returnToPending ? 'pending' : 'failed', summaryDetailStatus: returnToPending ? 'pending' : 'failed', summaryBasis: null,
         summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null,
         summaryError: error, updatedAt: now,
       }

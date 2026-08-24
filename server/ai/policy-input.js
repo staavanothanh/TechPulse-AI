@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { evaluateContentPolicy } from '../domain/policy/content-policy.js'
 import { sanitizeText } from '../domain/article/normalization.js'
+import { canUseTrustedProviderInput } from './trusted-source-policy.js'
 
 const PURPOSES = new Set(['summary', 'embedding'])
 const DATE_FIELDS = new Set(['publishedAt'])
@@ -49,7 +50,8 @@ function safeField(field, value) {
   return sanitizeText(value, field === 'excerptOriginal' || field === 'fullTextTemporary' ? 20_000 : 2_000)
 }
 
-function inputBasis(gate) {
+function inputBasis(gate, source, purpose) {
+  if (purpose === 'summary' && canUseTrustedProviderInput(source, purpose)) return 'official-payload'
   if (gate.inputScope === 'fulltext-temporary') return 'fulltext-temporary'
   if (gate.inputScope === 'excerpt') return 'excerpt'
   return 'metadata'
@@ -81,12 +83,12 @@ export function buildPolicyDerivedInput({ article, source, purpose, fullTextTemp
     if (safe !== undefined && (!Array.isArray(safe) || safe.length > 0)) fields[field] = safe
   }
   if (!fields.titleOriginal) throw new PolicyInputError('policy_input_invalid', 'AI input needs an allowed title')
-  if (containsSensitiveProviderInput(JSON.stringify(fields))) throw new PolicyInputError('privacy_input_blocked', 'Privacy boundary rejected provider input')
+  if (containsSensitiveProviderInput(JSON.stringify(fields)) && !canUseTrustedProviderInput(source, purpose)) throw new PolicyInputError('privacy_input_blocked', 'Privacy boundary rejected provider input')
   const canonical = stableJson({ purpose, policyVersion: gate.policyVersion, fields })
   return Object.freeze({
     purpose,
     policyVersion: gate.policyVersion,
-    basis: inputBasis(gate),
+    basis: inputBasis(gate, source, purpose),
     fields: Object.freeze(fields),
     text: `<external-source-data>\n${canonical}\n</external-source-data>`,
     inputHash: createHash('sha256').update(canonical).digest('hex'),

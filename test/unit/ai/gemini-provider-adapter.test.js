@@ -21,7 +21,11 @@ const operationCases = [
   {
     operation: 'summary',
     call: (adapters) => adapters.llmProvider.summarize({ route: routes.summary, input: 'nguon da phan cach', locale: 'vi', tools: [] }),
-    providerValue: { titleVi: 'Tin mới', summaryVi: 'Bản tóm tắt có nguồn.' },
+    providerValue: {
+      titleVi: 'Tin mới',
+      summaryVi: 'Bản tóm tắt có nguồn.',
+      summaryParagraphsVi: ['Đoạn chi tiết thứ nhất có nguồn bằng tiếng Việt.', 'Đoạn chi tiết thứ hai không thêm dữ kiện ngoài nguồn.'],
+    },
   },
   {
     operation: 'answer',

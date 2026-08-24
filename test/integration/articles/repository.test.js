@@ -198,6 +198,7 @@ describe('article repository fence contract', () => {
     const result = await repository.findQnaEvidence({ question: 'Kubernetes autoscaling dùng metrics CPU thế nào?', limit: 1, includeSource: true })
 
     expect(result).toHaveLength(1)
+    expect(result[0].source).toEqual(expect.objectContaining({ sourceKey: source.sourceKey }))
     expect(result[0].article.titleOriginal).toBe('Kubernetes autoscaling')
   })
 

@@ -22,6 +22,67 @@ body {
   min-height: 100dvh;
 }
 
+.public-detail-media-figure {
+  position: relative;
+  margin: 28px 0 0;
+  overflow: hidden;
+  border: 1px solid var(--public-border);
+  border-radius: var(--public-radius);
+  background: var(--public-surface);
+}
+
+.public-detail-media {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  min-height: 220px;
+  object-fit: cover;
+}
+
+.public-detail-media-fallback {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(120% 120% at 12% 0%, var(--public-accent-soft), transparent 60%),
+    color-mix(in oklch, var(--public-muted) 16%, var(--public-surface));
+  color: var(--public-muted);
+}
+
+.public-detail-media-figure figcaption,
+.public-detail-video small {
+  display: block;
+  padding: 10px 14px;
+  color: var(--public-muted);
+  font-size: 12px;
+}
+
+.public-detail-video {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin-top: 28px;
+  padding: 18px;
+  border: 1px solid var(--public-border);
+  border-radius: var(--public-radius);
+  background: var(--public-surface);
+}
+
+.public-detail-video > span {
+  color: var(--public-muted);
+  font-size: 13px;
+}
+
+.public-detail-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.public-detail-summary-paragraph {
+  margin: 0;
+}
+
 button,
 input,
 select,
