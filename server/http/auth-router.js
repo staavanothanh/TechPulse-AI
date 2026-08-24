@@ -2,7 +2,14 @@ import { Router } from 'express'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { loadOpenApi } from '../../scripts/contracts/openapi-utils.js'
-import { parseSessionCookie, serializeClearSessionCookie, serializeSessionCookie } from './cookies.js'
+import {
+  parseOAuthStateCookie,
+  parseSessionCookie,
+  serializeClearOAuthStateCookie,
+  serializeClearSessionCookie,
+  serializeOAuthStateCookie,
+  serializeSessionCookie,
+} from './cookies.js'
 import { AuthError, serializeAdminUser } from '../application/auth/service.js'
 
 const OPENAPI = loadOpenApi()
@@ -44,7 +51,7 @@ function authPayload(result) {
 }
 
 function setAuthCookie(res, result) {
-  res.set('Set-Cookie', serializeSessionCookie(result.sessionToken, result.maxAgeSeconds))
+  res.append('Set-Cookie', serializeSessionCookie(result.sessionToken, result.maxAgeSeconds))
   noStore(res)
   res.set('Vary', 'Cookie')
 }
@@ -60,7 +67,7 @@ function asyncRoute(handler) {
 export function createAuthRouter({ authService } = {}) {
   const router = Router()
   const unavailable = () => { throw new AuthError(503, 'service_unavailable', 'Authentication service is not configured') }
-  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable }
+  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable, googleLogin: unavailable, generateGoogleAuthUrl: unavailable }
 
   router.post('/api/v1/auth/register', asyncRoute(async (req, res) => {
     validateBody('RegisterRequest', req.body)
@@ -118,6 +125,30 @@ export function createAuthRouter({ authService } = {}) {
     const auth = await requireAuth(service, req)
     const user = await service.updateUserStatus({ auth, userId: req.params.userId, ...req.body, csrfToken: req.get('X-CSRF-Token'), request: req })
     sendValidated(res, 200, 'AdminUserResponse', { data: adminUser(user) })
+  }))
+
+  router.get('/api/v1/auth/google', asyncRoute(async (req, res) => {
+    const result = service.generateGoogleAuthUrl()
+    if (!result || typeof result.authUrl !== 'string' || typeof result.state !== 'string') throw new AuthError(500, 'internal_error', 'Authentication response is invalid')
+    res.set('Set-Cookie', serializeOAuthStateCookie(result.state))
+    noStore(res)
+    res.status(200).json({ data: { authUrl: result.authUrl } })
+  }))
+
+  router.get('/api/v1/auth/google/callback', asyncRoute(async (req, res) => {
+    // The query contains a short-lived authorization code and signed state.
+    // Mark the response private before any validation or provider/database I/O,
+    // including error responses handled by the shared error middleware.
+    noStore(res)
+    const { code, state } = req.query ?? {}
+    if (typeof code !== 'string' || code.length === 0) throw new AuthError(422, 'validation_error', 'Authorization code is required')
+    if (typeof state !== 'string' || state.length === 0) throw new AuthError(422, 'validation_error', 'OAuth state is required')
+    const stateCookie = parseOAuthStateCookie(req.get('Cookie'))
+    res.set('Set-Cookie', serializeClearOAuthStateCookie())
+    const result = await service.googleLogin({ code, state, stateCookie, request: req })
+    setAuthCookie(res, result)
+    noStore(res)
+    res.status(303).location('/').end()
   }))
 
   return router

@@ -73,6 +73,7 @@ export class MongoAuthRepository {
     }
     if (input.suspendedAt) document.suspendedAt = input.suspendedAt
     if (input.suspensionReason) document.suspensionReason = input.suspensionReason
+    if (input.googleSub !== undefined) document.googleSub = input.googleSub
     await this.collection('users').insertOne(document, options)
     return document
   }
@@ -108,6 +109,10 @@ export class MongoAuthRepository {
 
   async findUserByEmail(emailNormalized, options = {}) {
     return this.collection('users').findOne({ emailNormalized }, options)
+  }
+
+  async findUserByGoogleSub(googleSub, options = {}) {
+    return this.collection('users').findOne({ googleSub }, options)
   }
 
   async findUserById(userId, options = {}) {

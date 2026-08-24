@@ -42,6 +42,22 @@ const operations = [
     "pathParams": []
   },
   {
+    "operationId": "getGoogleAuthUrl",
+    "method": "GET",
+    "path": "/api/v1/auth/google",
+    "requiredHeaders": [],
+    "browserManagedHeaders": [],
+    "pathParams": []
+  },
+  {
+    "operationId": "googleCallback",
+    "method": "GET",
+    "path": "/api/v1/auth/google/callback",
+    "requiredHeaders": [],
+    "browserManagedHeaders": [],
+    "pathParams": []
+  },
+  {
     "operationId": "getCurrentUser",
     "method": "GET",
     "path": "/api/v1/me",
@@ -683,6 +699,8 @@ export function createApiClient(clientOptions = {}) {
     registerUser: (init = {}) => requestOperation('registerUser', init, clientOptions),
     login: (init = {}) => requestOperation('login', init, clientOptions),
     logout: (init = {}) => requestOperation('logout', init, clientOptions),
+    getGoogleAuthUrl: (init = {}) => requestOperation('getGoogleAuthUrl', init, clientOptions),
+    googleCallback: (init = {}) => requestOperation('googleCallback', init, clientOptions),
     getCurrentUser: (init = {}) => requestOperation('getCurrentUser', init, clientOptions),
     updatePreferences: (init = {}) => requestOperation('updatePreferences', init, clientOptions),
     requestAccountDeletion: (init = {}) => requestOperation('requestAccountDeletion', init, clientOptions),

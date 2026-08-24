@@ -25,6 +25,11 @@ import {
 } from './migrations/chat-sessions.js'
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_INDEXES, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES } from './migrations/governance.js'
 import { GOVERNANCE_AUDIT_VALIDATOR } from './migrations/governance-audit.js'
+import {
+  GOOGLE_OAUTH_AUDIT_VALIDATOR,
+  GOOGLE_OAUTH_COLLECTIONS,
+  GOOGLE_OAUTH_INDEXES,
+} from './migrations/google-oauth.js'
 import { GOVERNANCE_HARDENING_INDEXES } from './migrations/governance-hardening.js'
 import { RUNTIME_CAPABILITY_PROBE_COLLECTION, RUNTIME_CAPABILITY_PROBE_DEFINITION, RUNTIME_CAPABILITY_PROBE_INDEXES } from './migrations/governance-capability-probes.js'
 import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from './migrations/governance-retention-hardening.js'
@@ -64,6 +69,16 @@ function stableJson(value) {
       .join(',')}}`
   return JSON.stringify(value)
 }
+
+const GOOGLE_OAUTH_AUTH_COLLECTIONS = Object.freeze({
+  ...AUTH_CORE_COLLECTIONS,
+  users: GOOGLE_OAUTH_COLLECTIONS.users,
+  adminAuditLogs: GOOGLE_OAUTH_COLLECTIONS.adminAuditLogs,
+})
+const GOOGLE_OAUTH_AUTH_INDEXES = Object.freeze({
+  ...AUTH_CORE_INDEXES,
+  users: [...AUTH_CORE_INDEXES.users, ...GOOGLE_OAUTH_INDEXES.users],
+})
 
 function exactArticleIndex(actual, expected) {
   if (expected.name !== 'articles_search_text') return exactMongoIndex(actual, expected)
@@ -264,9 +279,9 @@ async function probeQaEvidenceFenceRoleCapabilities({ client, db } = {}) {
   }
 }
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'governance'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'governance', 'google-oauth'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, governance',
+    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, governance, google-oauth',
   )
   process.exitCode = 2
 } else {
@@ -310,6 +325,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                   }
               : target === 'governance'
                 ? { ...GOVERNANCE_COLLECTIONS, takedownRequests: { ...GOVERNANCE_COLLECTIONS.takedownRequests, validator: GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } }
+              : target === 'google-oauth'
+                ? GOOGLE_OAUTH_AUTH_COLLECTIONS
                 : AUTH_CORE_COLLECTIONS
     const expectedIndexes =
       target === 'sources'
@@ -328,7 +345,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? CHAT_SESSION_INDEXES
               : target === 'qa-evidence-fence'
                 ? { articles: ARTICLE_INDEXES.articles, sources: SOURCE_INDEXES.sources }
-              : target === 'governance' ? { ...GOVERNANCE_INDEXES, takedownRequests: [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests] } : AUTH_CORE_INDEXES
+              : target === 'governance' ? { ...GOVERNANCE_INDEXES, takedownRequests: [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests] }
+              : target === 'google-oauth' ? GOOGLE_OAUTH_AUTH_INDEXES
+              : AUTH_CORE_INDEXES
     verificationStage = 'schema-app'
     for (const name of Object.keys(expectedCollections)) {
       const collection = collectionMap.get(name)
@@ -344,14 +363,17 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
         validatorProblems.push(`${name}:validator`)
       else {
         const accepted =
-          target === 'auth-core' && name === 'adminAuditLogs'
+          (target === 'auth-core' || target === 'google-oauth') && name === 'adminAuditLogs'
             ? [
                 AUTH_CORE_COLLECTIONS[name].validator,
                 SOURCE_AUDIT_VALIDATOR,
                 DURABLE_JOB_AUDIT_VALIDATOR,
                 INDEXING_JOB_AUDIT_VALIDATOR,
                 GOVERNANCE_AUDIT_VALIDATOR,
+                GOOGLE_OAUTH_AUDIT_VALIDATOR,
               ]
+            : (target === 'auth-core' || target === 'google-oauth') && name === 'users'
+              ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_COLLECTIONS.users.validator]
             : target === 'articles' && name === 'articles'
               ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR]
               : target === 'provider-routing-v2' && name === 'articles'
@@ -398,6 +420,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       if (!articleCollection) missing.push('articles:collection:governance-tombstone')
       else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || ![ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR].some((validator) => stableJson(articleCollection.options?.validator) === stableJson(validator))) validatorProblems.push('articles:validator-definition:governance-tombstone')
       if (governanceMetadataUnavailable) validatorProblems.push('techpulse_governance:metadata-unavailable')
+      const auditCollection = collectionMap.get('adminAuditLogs')
+      if (!auditCollection) missing.push('adminAuditLogs:collection')
+      else if (auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR].some((validator) => stableJson(auditCollection.options?.validator) === stableJson(validator))) validatorProblems.push('adminAuditLogs:validator-definition:governance')
       for (const [name, definition] of governanceMetadataUnavailable ? [] : Object.entries(GOVERNANCE_DATABASE_COLLECTIONS)) {
         const collection = governanceMap.get(name)
         if (!collection) { missing.push(`techpulse_governance:${name}:collection`); continue }
@@ -453,10 +478,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       else {
         const acceptedAuditValidators =
           target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'chat-sessions'
-            ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR]
+            ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR]
             : target === 'durable-jobs' || target === 'articles'
-              ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR]
-              : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR]
+              ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR]
+              : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR]
         if (
           auditCollection.options?.validationLevel !== 'strict' ||
           auditCollection.options?.validationAction !== 'error' ||
@@ -868,6 +893,13 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                     { revision: -1 },
                   ],
                 ]
+    if (target === 'google-oauth') plans.push([
+      'users_google_sub',
+      'users',
+      { googleSub: 'google-oauth-probe' },
+      { googleSub: 1 },
+      'users_google_sub_unique',
+    ])
     verificationStage = 'query-plans'
     const planProblems = []
     if (target === 'governance') {
@@ -903,7 +935,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       target === 'articles' ||
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
-      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'governance'
+      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'governance' || target === 'google-oauth'
         ? 'not-requested'
         : 'unavailable-local'
     const roleProblems = []
@@ -911,7 +943,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       const connection = await context.db.command({ connectionStatus: 1, showPrivileges: true })
       const privileges = connection.authInfo?.authenticatedUserPrivileges
       if (Array.isArray(privileges) && privileges.length > 0) {
-        if (target === 'auth-core') roleStatus = 'verified'
+        if (target === 'auth-core' || target === 'google-oauth') roleStatus = 'verified'
         const requirements = target === 'sources'
           ? [
               { database: context.database, collection: 'sources', label: 'sources', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
@@ -972,7 +1004,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       for (const [capability, passed] of Object.entries(auditProbe))
         if (!passed) roleProblems.push(`source audit runtime capability failed: ${capability}`)
       if (roleProblems.length === 0) roleStatus = 'verified'
-    } else if (requireRole && target === 'auth-core') {
+    } else if (requireRole && (target === 'auth-core' || target === 'google-oauth')) {
       const probe = await probeAuditRoleCapabilities(context)
       if (!probe.inserted || !probe.findAllowed || !probe.updateDenied || !probe.deleteDenied)
         roleProblems.push('runtime Mongo role capability probe failed')

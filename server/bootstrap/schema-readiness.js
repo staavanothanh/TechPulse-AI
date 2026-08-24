@@ -6,6 +6,7 @@ export const SCHEMA_ATTESTATION_PRIVATE_KEY_ENV = 'SCHEMA_ATTESTATION_PRIVATE_KE
 
 export const RUNTIME_SCHEMA_GENERATIONS = Object.freeze({
   'auth-core': 'auth-core-v1',
+  'google-oauth': 'google-oauth-v1',
   sources: 'sources-v1',
   'durable-jobs': 'durable-jobs-v1',
   articles: 'articles-provider-routing-v2-v1',

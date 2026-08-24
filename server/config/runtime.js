@@ -106,6 +106,22 @@ export function validateRuntimeConfiguration(input = process.env) {
     throw new Error('OFFLINE_CHECKPOINT_KEY_IDS must contain safe key IDs')
   }
   const machineSecretEnv = envName(input.INTERNAL_MACHINE_SECRET_ENV, 'internal machine secret env')
+  const googleOAuth = {
+    clientIdEnv: optionalEnvName(input.GOOGLE_OAUTH_CLIENT_ID_ENV, 'Google OAuth client ID env'),
+    clientSecretEnv: optionalEnvName(input.GOOGLE_OAUTH_CLIENT_SECRET_ENV, 'Google OAuth client secret env'),
+    redirectUriEnv: optionalEnvName(input.GOOGLE_OAUTH_REDIRECT_URI_ENV, 'Google OAuth redirect URI env'),
+    stateSecretEnv: optionalEnvName(input.GOOGLE_OAUTH_STATE_SECRET_ENV, 'Google OAuth state secret env'),
+  }
+  const googleOAuthConfigured = Object.values(googleOAuth).some(Boolean)
+  if (googleOAuthConfigured && Object.values(googleOAuth).some((value) => !value)) throw new Error('Google OAuth environment names must be configured together')
+  if (googleOAuthConfigured) {
+    const redirectValue = requiredString(input[googleOAuth.redirectUriEnv], 'Google OAuth redirect URI')
+    let redirect
+    try { redirect = new URL(redirectValue) } catch { throw new Error('Google OAuth redirect URI is invalid') }
+    if (!['https:', 'http:'].includes(redirect.protocol) || (redirect.protocol === 'http:' && redirect.hostname !== 'localhost') || redirect.username || redirect.password || redirect.search || redirect.hash || redirect.pathname !== '/api/v1/auth/google/callback' || !origins.includes(redirect.origin)) {
+      throw new Error('Google OAuth redirect URI must match a configured public origin')
+    }
+  }
   return {
     origins,
     mongo: mongoConfiguration(input),
@@ -115,6 +131,7 @@ export function validateRuntimeConfiguration(input = process.env) {
     checkpointKeyIds,
     providerRegistry: providerConfiguration(input.PROVIDER_ADMISSION_DOMAINS_JSON, input),
     internalMachineSecretEnv: machineSecretEnv,
+    googleOAuth,
   }
 }
 
@@ -135,4 +152,8 @@ export const RUNTIME_ENV_CONTRACT = Object.freeze([
   'RUNTIME_SCHEMA_ATTESTATIONS_JSON',
   'SCHEMA_ATTESTATION_PUBLIC_KEY',
   'SCHEMA_ATTESTATION_COMMIT',
+  'GOOGLE_OAUTH_CLIENT_ID_ENV',
+  'GOOGLE_OAUTH_CLIENT_SECRET_ENV',
+  'GOOGLE_OAUTH_REDIRECT_URI_ENV',
+  'GOOGLE_OAUTH_STATE_SECRET_ENV',
 ])

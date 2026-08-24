@@ -1,11 +1,13 @@
+import { randomBytes } from 'node:crypto'
 import { csrfTokenForSession, hashCsrfToken, hashSessionToken, createSessionToken, verifyCsrfToken } from '../../security/session-token.js'
 import { hashPassword, verifyPassword } from '../../security/password.js'
 import { createHmacKeyring } from '../../security/hmac-keyring.js'
 import { createAuditEvent } from '../../audit/writer.js'
+import { createGoogleOAuthService, GoogleOAuthError } from './google-oauth.js'
 
 const IDLE_MS = 24 * 60 * 60 * 1000
 const ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000
-const DUMMY_PASSWORD_HASH = hashPassword('techpulse-dummy-password-only-for-timing')
+const DUMMY_PASSWORD_HASH = hashPassword(`oauth-dummy:${randomBytes(32).toString('base64url')}`)
 
 export class AuthError extends Error {
   constructor(status, code, message, options = {}) {
@@ -61,7 +63,7 @@ function requireAdminTargetId(userId) {
   return userId
 }
 
-export function createAuthService({ repository, runtime, clock = () => new Date(), clientIpAdapter, quotaKeyring, rateLimitAdmission } = {}) {
+export function createAuthService({ repository, runtime, environment = process.env, clock = () => new Date(), clientIpAdapter, quotaKeyring, rateLimitAdmission } = {}) {
   if (!repository) throw new Error('auth repository is required')
   const keyring = quotaKeyring ?? (runtime?.quotaKeyring ? createHmacKeyring({ ...runtime.quotaKeyring }) : null)
 
@@ -271,10 +273,85 @@ export function createAuthService({ repository, runtime, clock = () => new Date(
     return outcome.user
   }
 
+  function mapGoogleOAuthError(error) {
+    if (error instanceof GoogleOAuthError) return new AuthError(error.status, error.code, error.message)
+    if (error instanceof AuthError) return error
+    return null
+  }
+
   function mapRepositoryError(error) {
     if (error instanceof AuthError) return error
     if (error?.name?.startsWith('Mongo') || [6, 7, 89, 91, 189].includes(error?.code)) return new AuthError(503, 'service_unavailable', 'Authentication service is temporarily unavailable')
     return error
+  }
+
+  function googleOAuthService() {
+    return createGoogleOAuthService({
+      clientIdEnv: runtime?.googleOAuth?.clientIdEnv,
+      clientSecretEnv: runtime?.googleOAuth?.clientSecretEnv,
+      redirectUriEnv: runtime?.googleOAuth?.redirectUriEnv,
+      stateSecretEnv: runtime?.googleOAuth?.stateSecretEnv,
+      values: environment,
+    })
+  }
+
+  function generateGoogleAuthUrl() {
+    const googleOAuth = googleOAuthService()
+    const state = googleOAuth.createState()
+    return { authUrl: googleOAuth.generateAuthUrl({ state }), state }
+  }
+
+  async function googleLogin({ code, state, stateCookie, request } = {}) {
+    const googleOAuth = googleOAuthService()
+    try {
+      googleOAuth.verifyState(state)
+      if (typeof stateCookie !== 'string' || stateCookie.length === 0) throw new AuthError(403, 'oauth_state_invalid', 'OAuth state cookie is missing')
+      if (stateCookie !== state) throw new AuthError(409, 'oauth_state_replayed', 'OAuth state has already been used')
+    } catch (error) {
+      const mapped = mapGoogleOAuthError(error)
+      if (mapped) throw mapped
+      throw error
+    }
+    // Do not spend the shared login quota on cross-site callbacks that fail
+    // the browser-bound state check before this point.
+    await reserve('login', request)
+    let googleUser
+    try {
+      googleUser = await googleOAuth.verifyGoogleUser(code)
+    } catch (error) {
+      const mapped = mapGoogleOAuthError(error)
+      if (mapped) throw mapped
+      throw new AuthError(502, 'oauth_provider_error', 'Google OAuth verification failed')
+    }
+    const emailNormalized = normalizeEmail(googleUser.email)
+    const existingBySubject = repository.findUserByGoogleSub ? await repository.findUserByGoogleSub(googleUser.sub) : null
+    if (existingBySubject && (existingBySubject.emailNormalized !== emailNormalized || existingBySubject.status !== 'active')) throw new AuthError(409, 'oauth_identity_conflict', 'Google identity is linked to another account')
+    let user = existingBySubject
+    if (!user) {
+      const existingByEmail = await repository.findUserByEmail(emailNormalized)
+      if (existingByEmail) {
+        if (existingByEmail.googleSub !== googleUser.sub) throw new AuthError(409, 'oauth_identity_conflict', 'Email account requires explicit Google linking')
+        user = existingByEmail
+      }
+    }
+    if (!user) {
+      return inTransaction(async (session) => {
+        try {
+          user = await repository.createUser({ emailNormalized, emailDisplay: googleUser.email, passwordHash: await hashPassword(`oauth-dummy:${randomBytes(32).toString('base64url')}`), role: 'user', status: 'active', topicPreferences: [], sessionVersion: 0, googleSub: googleUser.sub }, { session })
+        } catch (error) {
+          if (error?.code === 11000) throw new AuthError(409, 'conflict', 'Account already exists')
+          throw error
+        }
+        const sessionData = await createSession(user, request, session)
+        await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_registered', targetId: user._id, changedFields: ['status'], reasonCode: 'google_oauth_registered', request }), { session })
+        return { user: serializeUser(user), ...sessionData }
+      })
+    }
+    return inTransaction(async (session) => {
+      const sessionData = await createSession(user, request, session)
+      await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_login', targetId: user._id, reasonCode: 'google_oauth_login', request }), { session })
+      return { user: serializeUser(user), ...sessionData }
+    })
   }
 
   const expose = (method) => async (...args) => {
@@ -283,7 +360,7 @@ export function createAuthService({ repository, runtime, clock = () => new Date(
   return Object.freeze({
     register: expose(register), login: expose(login), authenticate: expose(authenticate), currentUser: expose(currentUser),
     verifyCsrf: expose(verifyCsrf), logout: expose(logout), updatePreferences: expose(updatePreferences), listAdminUsers: expose(listAdminUsers),
-    getAdminUser: expose(getAdminUser), updateUserStatus: expose(updateUserStatus),
+    getAdminUser: expose(getAdminUser), updateUserStatus: expose(updateUserStatus), googleLogin: expose(googleLogin), generateGoogleAuthUrl,
   })
 }
 
