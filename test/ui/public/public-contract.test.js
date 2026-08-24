@@ -83,7 +83,12 @@ describe('public feature contract boundaries', () => {
           id: 'video',
           titleOriginal: 'Video',
           source: { name: 'Source' },
-          leadMedia: { type: 'video', displayMode: 'link-only', url: 'https://example.com/video' },
+          leadMedia: {
+            type: 'video',
+            displayMode: 'link-only',
+            url: 'https://example.com/video',
+            sourcePageUrl: 'https://example.com/video-page',
+          },
           summaryStatus: 'pending',
         },
       ],

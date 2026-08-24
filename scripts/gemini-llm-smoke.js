@@ -202,7 +202,11 @@ function supportInput() {
 
 export function validateGeminiSummaryOutput({ output } = {}) {
   try {
-    return validateVietnameseSummary({ titleVi: output?.titleVi, summaryVi: output?.summaryVi })
+    return validateVietnameseSummary({
+      titleVi: output?.titleVi,
+      summaryVi: output?.summaryVi,
+      summaryParagraphsVi: output?.summaryParagraphsVi,
+    })
   } catch {
     throw new ProviderAdapterError('schema')
   }

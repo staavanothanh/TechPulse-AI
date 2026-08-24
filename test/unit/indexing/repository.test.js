@@ -139,7 +139,7 @@ describe('Step 9 indexing Mongo repository documents', () => {
 
     expect(articles.updateOne).toHaveBeenCalledWith(
       expect.objectContaining({ _id: parent.articleId, summaryStatus: 'processing' }),
-      expect.objectContaining({ $set: expect.objectContaining({ summaryStatus: expectedStatus }) }),
+      expect.objectContaining({ $set: expect.objectContaining({ summaryStatus: expectedStatus, summaryParagraphsVi: null, summaryDetailStatus: expectedStatus }) }),
       { session },
     )
     expect(jobs.updateOne.mock.calls[0][1]).toEqual(expect.objectContaining({ $set: expect.objectContaining({ status: parentStatus }) }))

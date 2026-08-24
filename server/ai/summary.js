@@ -1,6 +1,11 @@
 import { sanitizeText } from '../domain/article/normalization.js'
 
-const EXACT_FIELDS = new Set(['titleVi', 'summaryVi'])
+const RICH_FIELDS = new Set(['titleVi', 'summaryVi', 'summaryParagraphsVi'])
+const MIN_DETAIL_PARAGRAPHS = 2
+const MAX_DETAIL_PARAGRAPHS = 5
+const MIN_DETAIL_PARAGRAPH_CHARS = 20
+const MAX_DETAIL_PARAGRAPH_CHARS = 2000
+const MAX_DETAIL_TOTAL_CHARS = 6000
 const VIETNAMESE_SIGNAL = /[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]|\b(?:và|của|được|một|những|trong|với|giúp|nghiên cứu|công nghệ)\b/iu
 
 function boundedPlainText(value, label, maximum) {
@@ -17,10 +22,28 @@ function boundedVietnamese(value, label, maximum) {
   return safe
 }
 
+function hasExactFields(value, fields) {
+  const keys = Object.keys(value)
+  return keys.length === fields.size && keys.every((field) => fields.has(field))
+}
+
+function validateDetailParagraphs(value) {
+  if (!Array.isArray(value) || value.length < MIN_DETAIL_PARAGRAPHS || value.length > MAX_DETAIL_PARAGRAPHS) throw new Error('Vietnamese summary paragraphs count is invalid')
+  const paragraphs = value.map((paragraph) => {
+    const safe = boundedVietnamese(paragraph, 'Vietnamese summary paragraph', MAX_DETAIL_PARAGRAPH_CHARS)
+    if (Array.from(safe).length < MIN_DETAIL_PARAGRAPH_CHARS) throw new Error('Vietnamese summary paragraph length is invalid')
+    return safe
+  })
+  if (paragraphs.reduce((total, paragraph) => total + Array.from(paragraph).length, 0) > MAX_DETAIL_TOTAL_CHARS) throw new Error('Vietnamese summary paragraphs total length is invalid')
+  return Object.freeze(paragraphs)
+}
+
 export function validateVietnameseSummary(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((field) => !EXACT_FIELDS.has(field)) || Object.keys(value).length !== 2) throw new Error('summary output shape is invalid')
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactFields(value, RICH_FIELDS)) throw new Error('summary output shape is invalid')
+  const summaryVi = boundedVietnamese(value.summaryVi, 'Vietnamese summary', 4000)
   return Object.freeze({
     titleVi: boundedPlainText(value.titleVi, 'Summary title', 1000),
-    summaryVi: boundedVietnamese(value.summaryVi, 'Vietnamese summary', 4000),
+    summaryVi,
+    summaryParagraphsVi: validateDetailParagraphs(value.summaryParagraphsVi),
   })
 }

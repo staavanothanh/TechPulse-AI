@@ -100,6 +100,25 @@ describe('Mongo takedown repository integrity', () => {
     expect(result).toEqual(expect.objectContaining({ processed: false }))
   })
 
+  it('clears rich summary fields when a scoped summary cleanup is materialized', async () => {
+    const articles = {
+      updateMany: vi.fn(async () => ({ matchedCount: 1, modifiedCount: 1 })),
+      countDocuments: vi.fn(async () => 1),
+    }
+    const chat = {
+      find: vi.fn(() => ({ hint() { return this }, sort() { return this }, limit() { return this }, toArray: vi.fn(async () => []) })),
+      countDocuments: vi.fn(async () => 0),
+    }
+    const context = { db: { collection: vi.fn((name) => name === 'articles' ? articles : name === 'chatSessions' ? chat : { findOne: vi.fn() }) }, now: () => now }
+    const repository = new MongoTakedownRepository(context)
+    await expect(repository.cleanupArtifacts({ targetType: 'article', targetIds: [firstTarget], requestedScope: ['summary'], session: {}, now })).resolves.toEqual(expect.objectContaining({ summaryRemoved: true }))
+    expect(articles.updateMany).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ $set: expect.objectContaining({ summaryVi: null, summaryParagraphsVi: null, summaryStatus: 'removed', summaryDetailStatus: 'removed' }) }),
+      expect.any(Object),
+    )
+  })
+
   it('keeps equal-deadline workflow purge reachable across bounded pages', async () => {
     const fixture = makeContext()
     const ids = [new ObjectId(), new ObjectId(), new ObjectId()]
@@ -224,7 +243,7 @@ describe('Mongo takedown repository integrity', () => {
       completion: { hidden: true, metadataRemoved: false, mediaMetadataRemoved: false, summaryRemoved: true, embeddingRemoved: false, historicalChatCitationsRedacted: true },
     }
     const articles = {
-      updateMany: vi.fn(async (filter) => ({ matchedCount: filter.summaryStatus === 'removed' && filter.summaryVi === null ? 0 : 1, modifiedCount: 0 })),
+      updateMany: vi.fn(async (filter) => ({ matchedCount: filter.summaryStatus === 'removed' && filter.summaryVi === null && filter.summaryDetailStatus === 'removed' && filter.summaryParagraphsVi === null ? 0 : 1, modifiedCount: 0 })),
       countDocuments: vi.fn(async () => 1),
     }
     const requests = { findOneAndUpdate: vi.fn(async (_filter, update) => ({ value: { ...workflow, ...update.$set } })) }

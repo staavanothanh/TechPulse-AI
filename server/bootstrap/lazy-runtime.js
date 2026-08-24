@@ -199,7 +199,7 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
     ])
     const verifyChatSchema = createReleaseVerifiedSchemaVerifier('chat-sessions', environment)
     const verifyProviderSchema = createReleaseVerifiedSchemaVerifier('provider-routing-v2', environment)
-    const verifyEvidenceAttestation = createReleaseVerifiedSchemaVerifier('qa-evidence-fence', environment)
+    const verifyEvidenceAttestation = createReleaseVerifiedSchemaVerifier('summary-detail-v1', environment)
     const verifyEvidenceSchema = async (context) => {
       await verifyEvidenceAttestation(context)
       await assertQaEvidenceFenceReady(context)

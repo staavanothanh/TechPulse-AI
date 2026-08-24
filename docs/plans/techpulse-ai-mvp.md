@@ -1059,18 +1059,19 @@ Không cắt source policy, admin backend authorization, idempotency/lease, text
 
 | Version | Date | Change | Reason/approval |
 |---|---|---|---|
-| 1.0 | 2026-08-08 | Initial 12-step blueprint | Derived from accepted product/architecture docs; pending adversarial review |
-| 1.1 | 2026-08-08 | Resolve adversarial review findings | Reviewer found no critical blocker; project owner request authorized plan completion |
-| 1.2 | 2026-08-08 | Lock JavaScript/JSX and policy-controlled external media | Project owner explicitly approved both decisions; ADR-0008/0009 |
-| 1.3 | 2026-08-08 | Repair contract, privacy, audit and durable-job semantics before Step 1 | Project owner approved GO WITH CONDITIONS remediation after Claude/Codex audit |
-| 1.4 | 2026-08-08 | Preserve generation high-water, bounded recovery and provider/source security fences | Project owner approved durable-fencing/security repair; ADR-0010 |
-| 1.5 | 2026-08-08 | Close ingestion/reconciliation races, canonical coordination, fairness and delayed lifecycle writes | Project owner approved independent review repair; ADR-0011 |
-| 1.6 | 2026-08-08 | Apply GO WITH CONDITIONS contract/privacy gates from independent Claude Code review | Project owner requested documentation repair; ADR-0012 |
-| 1.7 | 2026-08-09 | Close pre-Step-1 security boundary gaps across browser/API/XML/provider/Mongo cleanup/restore | Project owner requested CC security-audit repair; no new architecture choice/ADR |
-| 1.8 | 2026-08-15 | Replace fixed provider/model routing with config-driven model/provider fallback; record inline deletion lease and synchronize Step 9–11 document drift | Project owner approved architecture change; ADR-0013 and ADR-0014 |
-| 1.9 | 2026-08-17 | Giới hạn MVP không bao gồm backup/restore rehearsal, governance sidecar và offline checkpoint custody; chuyển toàn bộ recovery evidence sang post-MVP | Project owner approved scope reduction; runtime governance signing, audit atomicity và live fail-closed rules remain MVP |
-| 1.10 | 2026-08-21 | Chuyen summary, qa-generation va qa-support sang Gemini AI Studio; giu OpenRouter/BGE-M3 embedding va bo sung smoke gate | Project owner approved provider migration; ADR-0015 |
-| 1.11 | 2026-08-23 | Chuyen ca summary, qa-generation va qa-support sang DeepSeek `deepseek-v4-flash`; Q&A dung capability `nonconfidential`, khong fallback; giu OpenRouter/BGE-M3 embedding | Project owner approved quota-driven migration; ADR-0016 supersedes ADR-0015 |
+| 1.0 | 2026-08-08 | Bản kế hoạch 12 bước ban đầu | Được suy ra từ tài liệu sản phẩm/kiến trúc đã được chấp thuận; đang chờ đánh giá đối kháng |
+| 1.1 | 2026-08-08 | Giải quyết các phát hiện từ đánh giá đối kháng | Người đánh giá không thấy rào cản nghiêm trọng; chủ dự án yêu cầu phê duyệt để hoàn thành kế hoạch |
+| 1.2 | 2026-08-08 | Khóa JavaScript/JSX và media ngoài được kiểm soát bởi policy | Chủ dự án phê duyệt rõ ràng cả hai quyết định; ADR-0008/0009 |
+| 1.3 | 2026-08-08 | Sửa chữa contract, privacy, audit và ngữ nghĩa durable-job trước Bước 1 | Chủ dự án phê duyệt KHẮC PHỤC CÓ ĐIỀU KIỆN sau kiểm toán Claude/Codex |
+| 1.4 | 2026-08-08 | Bảo toàn high-water sinh, phục hồi có giới hạn và hàng rào bảo mật provider/source | Chủ dự án phê duyệt sửa chữa durable-fencing/security; ADR-0010 |
+| 1.5 | 2026-08-08 | Đóng các race ingestion/reconciliation, điều phối chính tắc, công bằng và ghi lifecycle trì hoãn | Chủ dự án phê duyệt sửa chữa từ đánh giá độc lập; ADR-0011 |
+| 1.6 | 2026-08-08 | Áp dụng các cổng contract/privacy từ đánh giá Claude Code độc lập với điều kiện | Chủ dự án yêu cầu sửa chữa tài liệu; ADR-0012 |
+| 1.7 | 2026-08-09 | Đóng các khoảng trống ranh giới bảo mật trước Bước 1 trên browser/API/XML/provider/Mongo dọn dẹp/khôi phục | Chủ dự án yêu cầu sửa chữa kiểm toán bảo mật CC; không có lựa chọn kiến trúc/ADR mới |
+| 1.8 | 2026-08-15 | Thay thế định tuyến provider/model cố định bằng cơ chế dự phòng model/provider theo cấu hình; ghi lại lease xóa nội tuyến và đồng bộ hóa sai lệch tài liệu Bước 9–11 | Chủ dự án phê duyệt thay đổi kiến trúc; ADR-0013 và ADR-0014 |
+| 1.9 | 2026-08-17 | Giới hạn MVP không bao gồm diễn tập backup/restore, sidecar quản trị và lưu giữ checkpoint ngoại tuyến; chuyển toàn bộ bằng chứng phục hồi sang post-MVP | Chủ dự án phê duyệt giảm phạm vi; ký runtime governance, tính nguyên tử audit và quy tắc fail-closed trực tiếp vẫn nằm trong MVP |
+| 1.10 | 2026-08-21 | Chuyển summary, qa-generation và qa-support sang Gemini AI Studio; giữ OpenRouter/BGE-M3 embedding và bổ sung smoke gate | Chủ dự án phê duyệt di chuyển provider; ADR-0015 |
+| 1.11 | 2026-08-23 | Chuyển cả summary, qa-generation và qa-support sang DeepSeek `deepseek-v4-flash`; Q&A dùng capability `nonconfidential`, không fallback; giữ OpenRouter/BGE-M3 embedding | Chủ dự án phê duyệt di chuyển theo hạn ngạch; ADR-0016 thay thế ADR-0015 |
+| 1.12 | 2026-08-24 | Bổ sung summary chi tiết theo đoạn, trusted connector payload có prompt-injection fence, media remote-preview/link-only an toàn và migration `summary-detail-v1` | Chủ dự án phê duyệt chi tiết phong phú hơn, độ tin cậy connector có điều kiện và policy media; ADR-0019 |
 
 ### v1.8 Pre-Step-12 architecture amendment
 

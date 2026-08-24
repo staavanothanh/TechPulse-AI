@@ -18,6 +18,7 @@ export const ROLE_PROBE_SCOPES = Object.freeze([
   'provider-routing-v2',
   'chat-sessions',
   'qa-evidence-fence',
+  'summary-detail-v1',
   'governance',
 ])
 

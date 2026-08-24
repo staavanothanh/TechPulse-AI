@@ -5,7 +5,8 @@ import { assertChatSessionsReady, assertQaEvidenceFenceReady, createConfiguredQa
 import { MongoChatRepository } from '../../../server/repositories/mongo/chat-repository.js'
 import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../../scripts/migrations/chat-sessions.js'
 import { PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../../scripts/migrations/provider-routing-v2.js'
-import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
+import { QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
+import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../../scripts/migrations/summary-detail-v1.js'
 import { SOURCE_COLLECTIONS } from '../../../scripts/migrations/sources.js'
 
 function indexesFor(name) {
@@ -23,7 +24,7 @@ function readyContext({ indexOverride = {}, validatorOverride = {} } = {}) {
   for (const entry of Object.entries(PROVIDER_ROUTING_V2_COLLECTIONS)) definitions.set(entry[0], entry[1])
   definitions.set('sources', SOURCE_COLLECTIONS.sources)
   const fencedDefaults = {
-    articles: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR,
+    articles: SUMMARY_DETAIL_ARTICLE_VALIDATOR,
     sources: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR,
   }
   const collections = [...definitions].map(([name, definition]) => ({
@@ -136,7 +137,7 @@ describe('Step 10 Q&A bootstrap', () => {
 
   it('fails closed when the live article or source validator no longer has the QA fence', async () => {
     const fenced = readyContext({ validatorOverride: {
-      articles: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR,
+      articles: SUMMARY_DETAIL_ARTICLE_VALIDATOR,
       sources: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR,
     } })
 

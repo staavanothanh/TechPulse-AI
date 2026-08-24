@@ -12,6 +12,7 @@ import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from '../../../scripts/migrat
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
 import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
+import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../../scripts/migrations/summary-detail-v1.js'
 
 function materializedIndex(index) {
   return { name: index.name, key: index.key, ...(index.options ?? {}) }
@@ -54,6 +55,10 @@ describe('Step 11 governance bootstrap readiness', () => {
 
   it('accepts the exact Q&A fence article validator without weakening tombstones', async () => {
     await expect(assertGovernanceReady(readyContext({ articleValidator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR }))).resolves.toEqual({ ready: true })
+  })
+
+  it('accepts the summary detail validator without weakening tombstones', async () => {
+    await expect(assertGovernanceReady(readyContext({ articleValidator: SUMMARY_DETAIL_ARTICLE_VALIDATOR }))).resolves.toEqual({ ready: true })
   })
 
   it('fails closed when governance suppression storage is only partially migrated', async () => {

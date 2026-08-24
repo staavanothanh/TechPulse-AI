@@ -15,6 +15,10 @@ const article = {
   id: ARTICLE_ID, sourceId: SOURCE_ID, status: 'published', titleOriginal: 'A safer AI accelerator', titleVi: null,
   author: null, publishedAt: new Date('2026-08-10T00:00:00.000Z'), topics: ['AI'], summaryStatus: 'pending', summaryVi: null,
 }
+const summaryParagraphsVi = [
+  'Bộ tăng tốc AI mới giữ các ràng buộc an toàn khi xử lý khối lượng công việc đã công bố.',
+  'Thiết kế này chỉ dùng dữ liệu nguồn được cho phép và không bổ sung dữ kiện bên ngoài.',
+]
 const fence = { key: `indexing:article:${ARTICLE_ID}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
 const embeddingTarget = { model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1' }
 const routes = {
@@ -45,7 +49,7 @@ function setup({ providerRouter = makeRouter(), sourceLookup = () => source, art
   }
   const sourceRepository = { findSourceById: vi.fn(async () => sourceLookup()) }
   const providerAdmission = { getRoute: vi.fn((routeId) => Object.values(routes).find((route) => route.routeId === routeId) ?? null) }
-  const llm = llmProvider ?? { summarize: vi.fn(async () => ({ titleVi: 'Bộ tăng tốc AI an toàn hơn', summaryVi: 'Thiết kế mới giúp tăng tốc khối lượng công việc AI trong khi duy trì các ràng buộc an toàn đã công bố.' })) }
+  const llm = llmProvider ?? { summarize: vi.fn(async () => ({ titleVi: 'Bộ tăng tốc AI an toàn hơn', summaryVi: 'Thiết kế mới giúp tăng tốc khối lượng công việc AI trong khi duy trì các ràng buộc an toàn đã công bố.', summaryParagraphsVi })) }
   const embedding = embeddingProvider ?? { embed: vi.fn(async () => ({ model: target.model, embedding: [0.01, 0.02, 0.03] })) }
   const processor = createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerAdmission, providerRouter, llmProvider: llm, embeddingProvider: embedding, embeddingTarget: target, now: () => new Date('2026-08-10T01:00:00.000Z') })
   return { processor, articleRepository, sourceRepository, providerAdmission, providerRouter, llmProvider: llm, embeddingProvider: embedding }
@@ -80,6 +84,19 @@ describe('Step 9 artifact processor', () => {
     expect(articleRepository.commitSummaryArtifact).toHaveBeenCalledWith(expect.objectContaining({ summary: expect.objectContaining({ summaryModel: 'summary-model-v1' }) }))
   })
 
+  it('keeps canonical rich detail in the fenced summary artifact and requests its exact schema', async () => {
+    const { processor, articleRepository, llmProvider } = setup()
+
+    await expect(processor.execute({ job: { id: '507f1f77bcf86cd799439062', articleId: ARTICLE_ID, sourceId: SOURCE_ID, expectedSourcePolicyVersion: 4, task: 'summary' }, fence })).resolves.toMatchObject({ status: 'succeeded' })
+
+    expect(llmProvider.summarize).toHaveBeenCalledWith(expect.objectContaining({
+      outputSchema: { titleVi: 'string', summaryVi: 'string', summaryParagraphsVi: 'string[]' },
+    }))
+    expect(articleRepository.commitSummaryArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      summary: expect.objectContaining({ summaryParagraphsVi, summaryDetailStatus: 'ready' }),
+    }))
+  })
+
   it('commits configured embedding metadata and exact artifact compatibility identity', async () => {
     const { processor, articleRepository } = setup()
     await expect(processor.execute({ job: { id: '507f1f77bcf86cd799439042', articleId: ARTICLE_ID, sourceId: SOURCE_ID, expectedSourcePolicyVersion: 4, task: 'embedding', targetEmbeddingVersion: embeddingTarget.version, targetEmbeddingArtifactCompatibilityId: embeddingTarget.artifactCompatibilityId }, fence })).resolves.toMatchObject({ status: 'succeeded' })
@@ -110,7 +127,7 @@ describe('Step 9 artifact processor', () => {
         return { output: validateOutput({ route: fallback, output, admittedInput }), metadata: { routeId: fallback.routeId, model: fallback.model, fallback: 'model' } }
       }),
     }
-    const llm = { summarize: vi.fn(async ({ route, input }) => { calls.push({ route: route.routeId, input }); if (route.routeId === 'summary-primary') throw new ProviderAdapterError('model-retryable'); return { titleVi: 'Bộ tăng tốc AI an toàn hơn', summaryVi: 'Thiết kế mới giúp tăng tốc AI trong khi duy trì các ràng buộc an toàn.' } }) }
+    const llm = { summarize: vi.fn(async ({ route, input }) => { calls.push({ route: route.routeId, input }); if (route.routeId === 'summary-primary') throw new ProviderAdapterError('model-retryable'); return { titleVi: 'Bộ tăng tốc AI an toàn hơn', summaryVi: 'Thiết kế mới giúp tăng tốc AI trong khi duy trì các ràng buộc an toàn.', summaryParagraphsVi } }) }
     const processor = setup({ providerRouter, llmProvider: llm }).processor
     await expect(processor.execute({ job: { id: '507f1f77bcf86cd799439045', articleId: ARTICLE_ID, sourceId: SOURCE_ID, expectedSourcePolicyVersion: 4, task: 'summary' }, fence })).resolves.toMatchObject({ status: 'succeeded' })
     expect(calls).toHaveLength(2)

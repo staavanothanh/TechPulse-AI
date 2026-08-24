@@ -9,6 +9,10 @@ const JOB_ID = '507f1f77bcf86cd799439041'
 const now = new Date('2026-08-10T01:00:00.000Z')
 const fence = { key: `indexing:article:${ARTICLE_ID}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2 }
 const embeddingTarget = { model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1' }
+const summaryParagraphsVi = [
+  'Đoạn chi tiết đầu tiên mô tả nội dung nguồn bằng tiếng Việt và giữ đúng phạm vi đã được phép.',
+  'Đoạn chi tiết thứ hai không đưa thêm dữ kiện ngoài nguồn hoặc bất kỳ chỉ thị không tin cậy nào.',
+]
 
 function setup({ leaseMatched = 1, task = 'summary', source, article, target = embeddingTarget, job = {} } = {}) {
   const session = { withTransaction: vi.fn(async (work) => work()), endSession: vi.fn(async () => undefined) }
@@ -38,7 +42,7 @@ describe('Step 9 Mongo artifact commit fence', () => {
     const inputHash = buildPolicyDerivedInput({ article: { sourceId: SOURCE_ID, titleOriginal: 'Article', topics: [], publishedAt: now, summaryStatus: 'pending' }, source, purpose: 'summary' }).inputHash
     const committed = await repository.commitSummaryArtifact({
       job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'summary' }, fence, expectedSourcePolicyVersion: 4, inputHash,
-      summary: { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tóm tắt tiếng Việt.', summaryStatus: 'ready', summaryBasis: 'metadata', summaryModel: 'summary-model', summaryInputHash: inputHash, summarySourcePolicyVersion: 4, summaryGeneratedAt: now, summaryError: null },
+      summary: { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tóm tắt tiếng Việt.', summaryParagraphsVi, summaryDetailStatus: 'ready', summaryStatus: 'ready', summaryBasis: 'metadata', summaryModel: 'summary-model', summaryInputHash: inputHash, summarySourcePolicyVersion: 4, summaryGeneratedAt: now, summaryError: null },
     })
     expect(committed).toBe(true)
     expect(collections.jobLeases.updateOne).toHaveBeenCalledWith(expect.objectContaining({
@@ -48,7 +52,7 @@ describe('Step 9 Mongo artifact commit fence', () => {
     expect(collections.sources.findOne).toHaveBeenCalledWith(expect.objectContaining({
       _id: new ObjectId(SOURCE_ID), policyVersion: 4, operationalStatus: 'active', 'technicalCheck.status': 'passed', 'storageScope.summary': true,
     }), { session })
-    expect(collections.articles.updateOne).toHaveBeenCalledWith(expect.objectContaining({ _id: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), status: 'published' }), { $set: expect.objectContaining({ summaryStatus: 'ready', summarySourcePolicyVersion: 4, updatedAt: now }) }, { session })
+    expect(collections.articles.updateOne).toHaveBeenCalledWith(expect.objectContaining({ _id: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), status: 'published' }), { $set: expect.objectContaining({ summaryStatus: 'ready', summaryDetailStatus: 'ready', summaryParagraphsVi, summarySourcePolicyVersion: 4, updatedAt: now }) }, { session })
     expect(collections.indexingJobs.updateOne).toHaveBeenCalledWith(expect.any(Object), { $setOnInsert: expect.objectContaining({ task: 'embedding', trigger: 'ingestion' }) }, expect.objectContaining({ upsert: true, session }))
   })
 
@@ -67,7 +71,7 @@ describe('Step 9 Mongo artifact commit fence', () => {
     const inputHash = buildPolicyDerivedInput({ article: { sourceId: SOURCE_ID, titleOriginal: 'Article', topics: [], publishedAt: now, summaryStatus: 'pending' }, source, purpose: 'summary' }).inputHash
     await expect(repository.commitSummaryArtifact({
       job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'summary' }, fence, expectedSourcePolicyVersion: 4, inputHash,
-      summary: { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tóm tắt tiếng Việt.', summaryStatus: 'ready', summaryBasis: 'metadata', summaryModel: 'summary-model', summaryInputHash: inputHash, summarySourcePolicyVersion: 4, summaryGeneratedAt: now, summaryError: null },
+      summary: { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tóm tắt tiếng Việt.', summaryParagraphsVi, summaryDetailStatus: 'ready', summaryStatus: 'ready', summaryBasis: 'metadata', summaryModel: 'summary-model', summaryInputHash: inputHash, summarySourcePolicyVersion: 4, summaryGeneratedAt: now, summaryError: null },
     })).resolves.toBe(false)
     expect(collections.articles.updateOne).not.toHaveBeenCalled()
   })
@@ -101,7 +105,7 @@ describe('Step 9 Mongo artifact commit fence', () => {
     const { repository, collections } = setup()
     await expect(repository.commitSummaryArtifact({
       job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'summary' }, fence, expectedSourcePolicyVersion: 4, inputHash: 'b'.repeat(64),
-      summary: { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tóm tắt tiếng Việt.', summaryStatus: 'ready', summaryBasis: 'metadata', summaryModel: 'summary-model', summaryInputHash: 'b'.repeat(64), summarySourcePolicyVersion: 4, summaryGeneratedAt: now, summaryError: null },
+      summary: { titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tóm tắt tiếng Việt.', summaryParagraphsVi, summaryDetailStatus: 'ready', summaryStatus: 'ready', summaryBasis: 'metadata', summaryModel: 'summary-model', summaryInputHash: 'b'.repeat(64), summarySourcePolicyVersion: 4, summaryGeneratedAt: now, summaryError: null },
     })).resolves.toBe(false)
     expect(collections.articles.updateOne).not.toHaveBeenCalled()
   })
@@ -115,12 +119,12 @@ describe('Step 9 Mongo artifact commit fence', () => {
     }
     const { repository, collections } = setup({ task: 'visibility-reconcile', source: blocked, article: {
       _id: new ObjectId(ARTICLE_ID), sourceId: new ObjectId(SOURCE_ID), status: 'published', titleOriginal: 'Article', excerptOriginal: 'old excerpt',
-      summaryStatus: 'ready', summaryVi: 'old summary', summarySourcePolicyVersion: 3, embeddingStatus: 'ready', embedding: [1], embeddingSourcePolicyVersion: 3,
+      summaryStatus: 'ready', summaryVi: 'old summary', summaryParagraphsVi: ['Đoạn cũ một.', 'Đoạn cũ hai.'], summaryDetailStatus: 'ready', summarySourcePolicyVersion: 3, embeddingStatus: 'ready', embedding: [1], embeddingSourcePolicyVersion: 3,
       leadMedia: { type: 'image', url: 'https://media.example/image.jpg' }, leadMediaStatus: 'available',
     } })
     await expect(repository.reconcileArticleVisibility({ job: { id: JOB_ID, articleId: ARTICLE_ID, sourceId: SOURCE_ID, task: 'visibility-reconcile' }, fence, expectedSourcePolicyVersion: 4, now })).resolves.toBe(true)
     const update = collections.articles.updateOne.mock.calls[0][1]
-    expect(update.$set).toEqual(expect.objectContaining({ status: 'hidden', summaryStatus: 'removed', summaryVi: null, embeddingStatus: 'removed', embedding: null, leadMedia: null, leadMediaStatus: 'hidden' }))
+    expect(update.$set).toEqual(expect.objectContaining({ status: 'hidden', summaryStatus: 'removed', summaryVi: null, summaryParagraphsVi: null, summaryDetailStatus: 'removed', embeddingStatus: 'removed', embedding: null, leadMedia: null, leadMediaStatus: 'hidden' }))
     expect(update.$unset).toEqual(expect.objectContaining({ excerptOriginal: '' }))
     expect(JSON.stringify(update)).not.toMatch(/Tóm tắt|providerPayload/)
   })

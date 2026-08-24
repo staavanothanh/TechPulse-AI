@@ -4814,6 +4814,7 @@ export const openApiDocument = {
               "metadata",
               "excerpt",
               "fulltext-temporary",
+              "official-payload",
               null
             ]
           },
@@ -4855,7 +4856,8 @@ export const openApiDocument = {
                   "enum": [
                     "metadata",
                     "excerpt",
-                    "fulltext-temporary"
+                    "fulltext-temporary",
+                    "official-payload"
                   ]
                 }
               }
@@ -4885,7 +4887,9 @@ export const openApiDocument = {
           "sourceLanguage",
           "topics",
           "summaryVi",
+          "summaryParagraphsVi",
           "summaryStatus",
+          "summaryDetailStatus",
           "summaryBasis",
           "leadMedia",
           "isSaved",
@@ -4948,7 +4952,24 @@ export const openApiDocument = {
               "null"
             ]
           },
+          "summaryParagraphsVi": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 2000
+            },
+            "minItems": 2,
+            "maxItems": 5,
+            "description": "Detailed Vietnamese article summary. Null until the canonical rich-summary artifact is ready. The server also enforces a 6000-character aggregate limit."
+          },
           "summaryStatus": {
+            "$ref": "#/components/schemas/PublicArtifactStatus"
+          },
+          "summaryDetailStatus": {
             "$ref": "#/components/schemas/PublicArtifactStatus"
           },
           "summaryBasis": {
@@ -4960,6 +4981,7 @@ export const openApiDocument = {
               "metadata",
               "excerpt",
               "fulltext-temporary",
+              "official-payload",
               null
             ]
           },
@@ -5020,7 +5042,8 @@ export const openApiDocument = {
                   "enum": [
                     "metadata",
                     "excerpt",
-                    "fulltext-temporary"
+                    "fulltext-temporary",
+                    "official-payload"
                   ]
                 }
               }
@@ -5031,6 +5054,42 @@ export const openApiDocument = {
                   "type": "null"
                 },
                 "summaryBasis": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "summaryDetailStatus": {
+                  "const": "ready"
+                }
+              },
+              "required": [
+                "summaryDetailStatus"
+              ]
+            },
+            "then": {
+              "properties": {
+                "summaryStatus": {
+                  "const": "ready"
+                },
+                "summaryParagraphsVi": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 2000
+                  },
+                  "minItems": 2,
+                  "maxItems": 5
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "summaryParagraphsVi": {
                   "type": "null"
                 }
               }

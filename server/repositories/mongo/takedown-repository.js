@@ -173,7 +173,7 @@ export class MongoTakedownRepository {
         : {
             _id: { $in: ids }, status: 'hidden', evidenceEligible: false,
             ...(requestedScope.includes('media-metadata') ? { leadMedia: null, leadMediaStatus: 'none' } : {}),
-            ...(requestedScope.includes('summary') ? { summaryStatus: 'removed', summaryVi: null } : {}),
+            ...(requestedScope.includes('summary') ? { summaryStatus: 'removed', summaryVi: null, summaryDetailStatus: 'removed', summaryParagraphsVi: null } : {}),
             ...(requestedScope.includes('embedding') ? { embeddingStatus: 'removed', embedding: null } : {}),
           }
       : { _id: { $in: ids }, operationalStatus: 'paused' }
@@ -187,7 +187,7 @@ export class MongoTakedownRepository {
         ? removedMetadataFilter({ sourceId: { $in: ids } })
         : { sourceId: { $in: ids }, status: 'hidden', evidenceEligible: false }
       if (!metadataRequested && requestedScope.includes('media-metadata')) Object.assign(artifactFilter, { leadMedia: null, leadMediaStatus: 'none' })
-      if (!metadataRequested && requestedScope.includes('summary')) Object.assign(artifactFilter, { summaryStatus: 'removed', summaryVi: null })
+      if (!metadataRequested && requestedScope.includes('summary')) Object.assign(artifactFilter, { summaryStatus: 'removed', summaryVi: null, summaryDetailStatus: 'removed', summaryParagraphsVi: null })
       if (!metadataRequested && requestedScope.includes('embedding')) Object.assign(artifactFilter, { embeddingStatus: 'removed', embedding: null })
       const targetCount = await articles.countDocuments({ sourceId: { $in: ids } }, { session, hint: 'articles_status_source_time' })
       const fencedCount = await articles.countDocuments(artifactFilter, { session, hint: 'articles_status_source_time' })
@@ -256,7 +256,7 @@ export class MongoTakedownRepository {
     } else {
       const set = { updatedAt: now, evidenceEligible: false }
       if (requestedScope.includes('media-metadata')) { set.leadMedia = null; set.leadMediaStatus = 'none' }
-      if (requestedScope.includes('summary')) Object.assign(set, { summaryVi: null, summaryStatus: 'removed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null })
+      if (requestedScope.includes('summary')) Object.assign(set, { summaryVi: null, summaryParagraphsVi: null, summaryStatus: 'removed', summaryDetailStatus: 'removed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null })
       if (requestedScope.includes('embedding')) Object.assign(set, { embedding: null, embeddingStatus: 'removed', embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null })
       const articleCount = typeof articleCollection.countDocuments === 'function' ? await articleCollection.countDocuments(articleFilter, { session, hint: 'articles_status_source_time' }) : null
       const articleUpdate = await articleCollection.updateMany(articleFilter, { $set: set }, { session })

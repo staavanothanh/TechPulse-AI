@@ -48,7 +48,11 @@ describe('configured provider smoke harness', () => {
     })
     const fetchImpl = vi.fn(async (url) => url.includes('/embeddings')
       ? new Response(JSON.stringify({ data: vectors }), { headers: { 'Content-Type': 'application/json' } })
-      : new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ titleVi: 'Tiêu đề tiếng Việt', summaryVi: 'Nội dung tiếng Việt an toàn có nguồn.' }) } }] }), { headers: { 'Content-Type': 'application/json' } }))
+      : new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+          titleVi: 'Tiêu đề tiếng Việt',
+          summaryVi: 'Nội dung tiếng Việt an toàn có nguồn.',
+          summaryParagraphsVi: ['Đoạn chi tiết thứ nhất có dữ liệu tiếng Việt an toàn.', 'Đoạn chi tiết thứ hai chỉ dùng thông tin trong nguồn.'],
+        }) } }] }), { headers: { 'Content-Type': 'application/json' } }))
     let fixture
     const report = await runSmoke({
       mode: '--full',
@@ -57,7 +61,7 @@ describe('configured provider smoke harness', () => {
       fetchImpl,
       writeFixture: async (_path, value) => { fixture = value },
     })
-    expect(report).toMatchObject({ ok: true, outboundRequests: 2, summary: { providerId: 'summary-provider', routeId: 'summary-route', model: 'summary-model' }, embedding: { providerId: 'embedding-provider', routeId: 'embedding-route', model: 'embedding-model' } })
+    expect(report).toMatchObject({ ok: true, outboundRequests: 2, summary: { providerId: 'summary-provider', routeId: 'summary-route', model: 'summary-model', structuredVietnamese: true }, embedding: { providerId: 'embedding-provider', routeId: 'embedding-route', model: 'embedding-model' } })
     expect(fixture.provenance).toMatchObject({ providerId: 'embedding-provider', endpointId: 'openrouter-v1', model: 'embedding-model', artifactCompatibilityId: 'embedding-v1' })
     expect(JSON.stringify(report)).not.toContain('test-secret')
     expect(fetchImpl).toHaveBeenCalledTimes(2)

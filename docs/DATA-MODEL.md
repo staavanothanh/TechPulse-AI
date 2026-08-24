@@ -344,7 +344,9 @@ type ActiveArticleDocument = {
 
   summaryVi?: string;
   summaryStatus: "pending" | "processing" | "ready" | "failed" | "removed";
-  summaryBasis?: "metadata" | "excerpt" | "fulltext-temporary";
+  summaryParagraphsVi?: string[];
+  summaryDetailStatus: "pending" | "processing" | "ready" | "failed" | "removed";
+  summaryBasis?: "metadata" | "excerpt" | "fulltext-temporary" | "official-payload";
   summaryModel?: string;
   summaryInputHash?: string;
   summarySourcePolicyVersion?: number;
@@ -406,7 +408,8 @@ Rules:
 
 - Không có field `rawHtml`, `body`, `fullText`, `translatedFullText`, media binary/base64 hoặc GridFS reference.
 - `published` yêu cầu provenance tối thiểu, source policy snapshot và metadata hợp lệ.
-- `summaryStatus=ready` yêu cầu summary, basis, model, hash và timestamp.
+- `summaryStatus=ready` yêu cầu summary, basis, model, hash và timestamp; `summaryDetailStatus=ready` đồng thời yêu cầu short summary ready và 2–5 paragraph detail, tổng tối đa 6000 ký tự.
+- `summaryDetailStatus` khác `ready` bắt buộc `summaryParagraphsVi=null`; summary detail cũ được backfill về trạng thái pending/processing/failed/removed mà không tự tạo nội dung giả.
 - `summaryStatus=ready` còn yêu cầu `summarySourcePolicyVersion` khớp policy đã kiểm tra tại commit.
 - `embeddingStatus=ready` yêu cầu vector length khớp dimensions, đủ model/version/hash/`embeddingArtifactCompatibilityId` và có `embeddingSourcePolicyVersion` hợp lệ. Runtime chỉ so cosine giữa document có cùng compatibility identity.
 - Khi merge duplicate, canonical document giữ union provenance; document phụ trỏ `duplicateOfId` và không published.
@@ -416,7 +419,7 @@ Rules:
 - `leadMediaStatus=available` yêu cầu có `leadMedia`; `hidden` giữ metadata phục vụ audit/khôi phục nhưng user serializer phải trả `leadMedia=null`; `none` nghĩa connector không có candidate hợp lệ.
 - `sourcePageUrl` là trang nguồn để user kiểm chứng; `mediaEvidenceStatus=not-analyzed` ngăn summary/Q&A dùng media như evidence.
 - Policy thay đổi hoặc takedown có thể unset `leadMedia` mà không cần ẩn toàn article.
-- `summaryStatus=removed` bắt buộc unset `summaryVi`, basis/model/hash/generatedAt/error`; `embeddingStatus=removed` bắt buộc unset vector/model/dimensions/compatibility ID/hash/version/embeddedAt/error.
+- `summaryStatus=removed` bắt buộc unset `summaryVi`, `summaryParagraphsVi`, basis/model/hash/generatedAt/error và đặt `summaryDetailStatus=removed`; `embeddingStatus=removed` bắt buộc unset vector/model/dimensions/compatibility ID/hash/version/embeddedAt/error.
 - Public serializer chỉ trả summary khi status `ready`; `removed` không phải public artifact status ngay cả khi article document chưa cleanup xong.
 - Takedown scope `metadata` thay toàn bộ active article bằng closed `RemovedArticleTombstoneDocument`. Tombstone giữ opaque external identity và `canonicalUrlHash` để chống re-ingest/resurrection, kể cả RSS item không có `guid`; không giữ title, URL thô, author, provenance, excerpt/search, topics, media, summary, embedding hoặc rights snapshot.
 

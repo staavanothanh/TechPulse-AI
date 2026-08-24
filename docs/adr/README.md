@@ -22,6 +22,7 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0016](0016-adopt-deepseek-v4-flash-for-llm-workloads.md) | Chuyển summary và Q&A sang DeepSeek V4 Flash, giữ embedding BGE-M3 | accepted | 2026-08-23 |
 | [0017](0017-add-bounded-indexing-drain-after-fair-queue-turn.md) | Thêm drain indexing có giới hạn sau lượt queue công bằng | accepted | 2026-08-23 |
 | [0018](0018-harden-indexing-drain-ownership-and-query-plans.md) | Gia cố quyền sở hữu drain indexing và query plan | accepted | 2026-08-23 |
+| [0019](0019-rich-summary-trusted-connector-payload-media.md) | Tóm tắt chi tiết, payload connector tin cậy có fence và media an toàn | proposed | 2026-08-24 |
 | [0020](0020-add-google-oauth-login.md) | Thêm đăng nhập Google OAuth theo redirect có state được ký | accepted | 2026-08-24 |
 | [0021](0021-add-vietqr-donation-page.md) | Thêm trang ủng hộ công khai bằng VietQR không cố định số tiền | accepted | 2026-08-24 |
 

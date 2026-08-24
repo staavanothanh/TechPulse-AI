@@ -8,6 +8,7 @@ import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../scripts/migrations
 import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from '../../scripts/migrations/articles.js'
 import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
+import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../scripts/migrations/summary-detail-v1.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -20,6 +21,7 @@ const ARTICLE_VALIDATOR_FINGERPRINTS = Object.freeze([
   ARTICLE_GOVERNANCE_HARDENING_VALIDATOR,
   PROVIDER_ROUTING_ARTICLE_VALIDATOR,
   QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR,
+  SUMMARY_DETAIL_ARTICLE_VALIDATOR,
 ].map(stableJson))
 
 export async function assertArticlesReady(context) {

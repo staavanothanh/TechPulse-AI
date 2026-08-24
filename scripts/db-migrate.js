@@ -19,6 +19,7 @@ import { buildArticleGovernanceHardeningMigration, runArticleGovernanceHardening
 import { buildAdminPerformanceIndexesMigration, runAdminPerformanceIndexesMigration } from './migrations/admin-performance-indexes.js'
 import { buildIndexingDrainPerformanceMigration, runIndexingDrainPerformanceMigration } from './migrations/indexing-drain-performance.js'
 import { buildQaEvidenceFenceMigration, runQaEvidenceFenceMigration } from './migrations/qa-evidence-fence.js'
+import { buildSummaryDetailV1Migration, runSummaryDetailV1Migration } from './migrations/summary-detail-v1.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
@@ -34,10 +35,11 @@ const args = new Set(process.argv.slice(2))
 const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
+const summaryDetailWriterMode = args.has('--writers-paused') ? 'paused' : undefined
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'governance', 'google-oauth'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, governance, google-oauth',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth',
   )
   process.exitCode = 2
 } else {
@@ -68,6 +70,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? buildChatSessionsMigration
               : target === 'qa-evidence-fence'
                 ? buildQaEvidenceFenceMigration
+              : target === 'summary-detail-v1'
+                ? buildSummaryDetailV1Migration
               : target === 'governance'
                 ? buildGovernanceMigration
               : target === 'google-oauth'
@@ -90,6 +94,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? runChatSessionsMigration
               : target === 'qa-evidence-fence'
                 ? runQaEvidenceFenceMigration
+              : target === 'summary-detail-v1'
+                ? runSummaryDetailV1Migration
               : target === 'governance'
                 ? runGovernanceMigration
               : target === 'google-oauth'
@@ -110,14 +116,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
             ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
           ]
-        : target === 'provider-routing-v2'
+          : target === 'provider-routing-v2'
           ? [...buildMigration({ dryRun: true }), ...buildQaEvidenceFenceMigration({ dryRun: true })]
           : buildMigration({ dryRun: true })
       : await (async () => {
           const context = await getMongoContext(runtime)
           await assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: context.db, target })
           const appDb = target === 'governance' ? withGoogleOAuthAuditCompatibility(context.db) : context.db
-          const plan = await runMigration({ db: appDb })
+          const plan = await runMigration({ db: appDb, ...(target === 'summary-detail-v1' ? { writerMode: summaryDetailWriterMode } : {}) })
           if (target === 'governance') {
             plan.push(...await runGovernanceHardeningMigration({ db: appDb }))
             plan.push(...await runGovernanceRetentionHardeningMigration({ db: appDb }))

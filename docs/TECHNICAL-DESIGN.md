@@ -211,9 +211,9 @@ One article + one artifact task pending
 → capture expectedSourcePolicyVersion and load current source policy
 → policy gate selects metadata/excerpt/fulltext-temporary/none
 → optional safe fetch + main-content extraction in memory
-→ LLM summary schema validation
+→ LLM summary schema validation (short `summaryVi` + 2–5 `summaryParagraphsVi`)
 → transactionally re-check fence + current policy version
-→ persist short summary + basis + model + input hash + source policy version
+→ persist short/detail summary + basis + model + input hash + source policy version
 → embedding gate selects allowed derived text
 → workload router selects a compatible embedding route
 → validate configured dimensions + artifactCompatibilityId
@@ -222,7 +222,7 @@ One article + one artifact task pending
 → discard temporary text
 ```
 
-Mỗi indexing job chỉ sở hữu một task để summary và embedding có state/retry độc lập. Nếu policy là `none`, provider không được gọi. Nếu source policy đổi sau provider call, commit phải fail với safe `policy_version_mismatch`, discard output và để current reconciliation tạo work phù hợp; không persist artifact sinh dưới policy cũ. Nếu summary lỗi, article có thể vẫn publish với summary state rõ ràng nếu metadata hợp lệ; UI không giả vờ summary đã sẵn sàng. Nếu embedding lỗi, text search tiếp tục hoạt động. Artifact chuyển `removed` phải unset content/model/hash/error/policy-version; public serializer chỉ trả summary khi `ready`.
+Mỗi indexing job chỉ sở hữu một task để summary và embedding có state/retry độc lập. Summary tạo short/detail trong cùng một provider request; feed chỉ đọc `summaryVi`, còn detail chỉ đọc `summaryParagraphsVi` khi `summaryDetailStatus=ready` và fallback rõ ràng khi pending/failed. Ba connector seed có thể dùng payload đã normalize theo exact `sourceKey` cho summary; system prompt đặt payload trong delimiter, coi toàn bộ là untrusted data, bỏ qua prompt injection và không gọi tool. Đây không phải quyền lưu raw full text, HTML, provider payload hoặc media binary. Nếu policy là `none`, provider không được gọi. Nếu source policy đổi sau provider call, commit phải fail với safe `policy_version_mismatch`, discard output và để current reconciliation tạo work phù hợp; không persist artifact sinh dưới policy cũ. Nếu summary lỗi, article có thể vẫn publish với summary state rõ ràng nếu metadata hợp lệ; UI không giả vờ summary đã sẵn sàng. Nếu embedding lỗi, text search tiếp tục hoạt động. Artifact chuyển `removed` phải unset content/model/hash/error/policy-version; public serializer chỉ trả summary khi `ready`.
 
 ### 6.5. Feed/search/detail
 

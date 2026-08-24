@@ -15,8 +15,8 @@ describe('article lifecycle safety', () => {
 
   it('removes all derived artifacts and source media metadata without retaining binary/full text', () => {
     const article = normalizeCandidateToArticle(makeCandidate(), { source: makeSource(), now: RETRIEVED_AT })
-    const removed = removeArticle({ ...article, summaryVi: 'generated summary', summaryStatus: 'ready', embedding: [0.1], embeddingStatus: 'ready', rawHtml: 'must not survive' }, { now: RETRIEVED_AT })
-    expect(removed).toMatchObject({ status: 'removed', leadMedia: null, leadMediaStatus: 'none', summaryVi: null, summaryStatus: 'removed', embedding: null, embeddingStatus: 'removed' })
+    const removed = removeArticle({ ...article, summaryVi: 'generated summary', summaryStatus: 'ready', summaryParagraphsVi: ['Đoạn chi tiết một.', 'Đoạn chi tiết hai.'], summaryDetailStatus: 'ready', embedding: [0.1], embeddingStatus: 'ready', rawHtml: 'must not survive' }, { now: RETRIEVED_AT })
+    expect(removed).toMatchObject({ status: 'removed', leadMedia: null, leadMediaStatus: 'none', summaryVi: null, summaryStatus: 'removed', summaryParagraphsVi: null, summaryDetailStatus: 'removed', embedding: null, embeddingStatus: 'removed' })
     expect(JSON.stringify(removed)).not.toContain('must not survive')
   })
 })

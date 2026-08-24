@@ -32,6 +32,8 @@ const CARD = Object.freeze({
 
 const DETAIL = Object.freeze({
   ...CARD,
+  summaryParagraphsVi: null,
+  summaryDetailStatus: 'pending',
   originalUrl: 'https://example.com/article',
   author: null,
   retrievedAt: '2026-08-10T09:00:00.000Z',

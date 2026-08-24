@@ -35,7 +35,9 @@ function document(overrides = {}) {
     sourceLanguage: 'en',
     topics: ['AI'],
     summaryVi: null,
+    summaryParagraphsVi: null,
     summaryStatus: 'pending',
+    summaryDetailStatus: 'pending',
     summaryBasis: null,
     leadMedia: null,
     leadMediaStatus: 'none',
@@ -152,6 +154,56 @@ describe('Step 8 Mongo content repository', () => {
 
     expect(page.articles[0]).toEqual(expect.objectContaining({ summaryStatus: 'failed', summaryVi: null, summaryBasis: null, leadMedia: null }))
     expect(JSON.stringify(page)).not.toMatch(/must not leak|sourcePolicyVersion|leadMediaStatus|removed/)
+  })
+
+  it('projects legacy short-ready detail as explicit pending/null and emits canonical ready detail', async () => {
+    const currentSource = source()
+    const legacy = {
+      ...document({ summaryStatus: 'ready', summaryVi: 'Tóm tắt ngắn đã có từ bản cũ.', summaryBasis: 'metadata', summaryDetailStatus: 'pending', summaryParagraphsVi: null }),
+      _currentSource: currentSource,
+      _isSaved: [],
+    }
+    const richParagraphs = [
+      'Đoạn chi tiết đầu tiên mô tả nội dung bài viết bằng tiếng Việt và chỉ dùng dữ liệu đã được duyệt.',
+      'Đoạn chi tiết thứ hai giữ nguyên phạm vi nguồn và không thêm dữ kiện ngoài nội dung được cung cấp.',
+    ]
+    const rich = {
+      ...document({ titleVi: 'Tiêu đề tiếng Việt', summaryStatus: 'ready', summaryVi: 'Tóm tắt ngắn mới.', summaryBasis: 'official-payload', summaryDetailStatus: 'ready', summaryParagraphsVi: richParagraphs }),
+      _currentSource: currentSource,
+      _isSaved: [],
+    }
+    const aggregate = vi.fn()
+      .mockReturnValueOnce({ toArray: vi.fn(async () => [legacy]) })
+      .mockReturnValueOnce({ toArray: vi.fn(async () => [rich]) })
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate })
+
+    const legacyDetail = await repository.getVisibleArticle({ userId: USER_ID, articleId: ARTICLE_ID })
+    const richDetail = await repository.getVisibleArticle({ userId: USER_ID, articleId: ARTICLE_ID })
+
+    expect(legacyDetail).toEqual(expect.objectContaining({ summaryStatus: 'ready', summaryVi: 'Tóm tắt ngắn đã có từ bản cũ.', summaryDetailStatus: 'pending', summaryParagraphsVi: null, summaryBasis: 'metadata' }))
+    expect(richDetail).toEqual(expect.objectContaining({ summaryStatus: 'ready', summaryVi: 'Tóm tắt ngắn mới.', summaryDetailStatus: 'ready', summaryParagraphsVi: richParagraphs, summaryBasis: 'official-payload' }))
+  })
+
+  it('fails closed to non-ready detail when stored rich text violates the canonical summary validator', async () => {
+    const currentSource = source()
+    const malformed = {
+      ...document({
+        titleVi: 'Tiêu đề tiếng Việt',
+        summaryStatus: 'ready',
+        summaryVi: 'Tóm tắt tiếng Việt có đủ nội dung cho phần hiển thị ngắn của bài viết.',
+        summaryBasis: 'metadata',
+        summaryDetailStatus: 'ready',
+        summaryParagraphsVi: ['Đoạn chi tiết có ký tự không hợp lệ <b>và không được hiển thị.</b>', 'Đoạn thứ hai vẫn là tiếng Việt nhưng detail phải fail closed.'],
+      }),
+      _currentSource: currentSource,
+      _isSaved: [],
+    }
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate: vi.fn(() => ({ toArray: vi.fn(async () => [malformed]) })) })
+
+    await expect(repository.getVisibleArticle({ userId: USER_ID, articleId: ARTICLE_ID }))
+      .resolves.toEqual(expect.objectContaining({ summaryDetailStatus: 'failed', summaryParagraphsVi: null }))
   })
 
   it('derives public topics for legacy articles that were stored without categories', async () => {

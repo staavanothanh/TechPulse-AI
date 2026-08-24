@@ -1,5 +1,5 @@
-import { safeExternalUrl } from '../safe-url.js'
-import { ErrorState, Skeleton, StateCard } from '../components/reader-primitives.jsx'
+import { safeExternalUrl, safeMediaUrl } from '../safe-url.js'
+import { ErrorState, MediaImage, Skeleton, StateCard } from '../components/reader-primitives.jsx'
 import { articleTitle, formatDate, sourceDomain, sourceName } from '../components/reader-format.js'
 
 export default function ArticleView({
@@ -39,6 +39,19 @@ export default function ArticleView({
       </section>
     )
   const originalUrl = safeExternalUrl(article.originalUrl || article.sourceUrl)
+  const summaryParagraphs = Array.isArray(article.summaryParagraphsVi)
+    ? article.summaryParagraphsVi
+        .filter((paragraph) => typeof paragraph === 'string' && paragraph.trim())
+        .map((paragraph) => paragraph.trim())
+        .slice(0, 5)
+    : []
+  const media = article.leadMedia || article.media
+  const mediaKind = media?.kind || media?.type
+  const isRemoteImage = mediaKind === 'image' && media?.displayMode === 'remote-preview'
+  const mediaUrl = isRemoteImage ? safeMediaUrl(media?.url, media?.allowedHosts) : null
+  const videoUrl = mediaKind === 'video' && media?.displayMode === 'link-only'
+    ? safeExternalUrl(media?.sourcePageUrl)
+    : null
   return (
     <section
       className="public-view public-detail-view"
@@ -62,18 +75,65 @@ export default function ArticleView({
             <time dateTime={article.publishedAt}>{formatDate(article.publishedAt)}</time>
           ) : null}
         </div>
+        {isRemoteImage ? (
+          <figure className="public-detail-media-figure">
+            <MediaImage
+              src={mediaUrl}
+              className="public-detail-media"
+              alt={media?.altText || ''}
+              fallbackLabel="Ảnh nguồn không khả dụng"
+            />
+            {media?.attribution ? <figcaption>{media.attribution}</figcaption> : null}
+          </figure>
+        ) : videoUrl ? (
+          <div className="public-detail-video" aria-label="Video nguồn">
+            <a
+              className="public-media-link"
+              href={videoUrl}
+              target="_blank"
+              rel="noopener noreferrer external"
+            >
+              Mở video nguồn
+            </a>
+            <span>AI chưa phân tích video này.</span>
+            {media?.attribution ? <small>{media.attribution}</small> : null}
+          </div>
+        ) : null}
         <div className="public-detail-body">
           <div className="public-detail-section">
             <h2>Tóm tắt tiếng Việt</h2>
-            {article.summaryStatus === 'ready' && article.summaryVi ? (
+            {article.summaryDetailStatus === 'ready' && summaryParagraphs.length >= 2 ? (
+              <>
+                <div className="public-detail-summary" aria-label="Tóm tắt chi tiết">
+                  {summaryParagraphs.map((paragraph, index) => (
+                    <p className="public-detail-summary-paragraph" key={`${article.id || 'article'}-summary-${index}`}>
+                      {paragraph}
+                    </p>
+                  ))}
+                </div>
+                <span className="public-form-note">Tóm tắt do AI tạo. Kiểm chứng với nguồn gốc trước khi sử dụng.</span>
+              </>
+            ) : article.summaryStatus === 'ready' && article.summaryVi ? (
               <>
                 <p>{article.summaryVi}</p>
-                <span className="public-form-note">
-                  Tóm tắt do AI tạo. Kiểm chứng với nguồn gốc trước khi sử dụng.
-                </span>
+                <span className="public-form-note">Tóm tắt do AI tạo. Kiểm chứng với nguồn gốc trước khi sử dụng.</span>
+                {article.summaryDetailStatus === 'pending' || article.summaryDetailStatus === 'processing' ? (
+                  <p className="public-muted">Đang tạo tóm tắt chi tiết.</p>
+                ) : article.summaryDetailStatus === 'failed' ? (
+                  <p className="public-muted">Tóm tắt chi tiết chưa khả dụng.</p>
+                ) : null}
+              </>
+            ) : article.summaryStatus === 'pending' || article.summaryStatus === 'processing' ? (
+              <>
+                <p className="public-muted">Tóm tắt đang được tạo.</p>
+                {article.summaryDetailStatus === 'pending' || article.summaryDetailStatus === 'processing' ? (
+                  <p className="public-muted">Đang tạo tóm tắt chi tiết.</p>
+                ) : null}
               </>
             ) : (
-              <p className="public-muted">Tóm tắt chưa sẵn sàng.</p>
+              <p className="public-muted">
+                {article.summaryDetailStatus === 'failed' ? 'Tóm tắt chưa khả dụng.' : 'Tóm tắt chưa sẵn sàng.'}
+              </p>
             )}
           </div>
           <div className="public-detail-section">

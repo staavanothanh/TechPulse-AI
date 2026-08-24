@@ -53,7 +53,7 @@ export function admittedEvidenceText(article, source) {
   const excerptAllowed = source?.llmInputScope === undefined || ['excerpt', 'fulltext-temporary'].includes(source.llmInputScope)
   const excerpt = excerptAllowed && typeof article?.excerptOriginal === 'string' ? article.excerptOriginal : ''
   const value = [title, excerpt].filter(Boolean).join('\n')
-  if (containsSensitiveProviderInput(value)) throw new EvidenceSelectionError('policy-blocked', 'Source policy input is not safe for a provider')
+  if (containsSensitiveProviderInput(value) && !canUseTrustedQnaInput(source)) throw new EvidenceSelectionError('policy-blocked', 'Source policy input is not safe for a provider')
   return neutralizeDelimiter(value.replaceAll(/https?:\/\/[^\s<>]+/gi, '[external-url-omitted]')).slice(0, MAX_EVIDENCE_CONTENT_CHARS)
 }
 
@@ -70,6 +70,7 @@ export function evidenceAdmissionFence(evidence = []) {
   const records = filterQnaEvidence(evidence).map(({ article, source }) => ({
     articleId: idValue(article.id ?? article._id),
     sourceId: idValue(source.id ?? source._id ?? source.sourceId),
+    sourceKey: typeof source.sourceKey === 'string' ? source.sourceKey : null,
     articleSourceId: idValue(article.sourceId),
     articleStatus: article.status,
     articleVersion: article.version ?? null,
@@ -90,9 +91,10 @@ export function evidenceAdmissionFence(evidence = []) {
   const canonical = JSON.stringify(records)
   return Object.freeze({
     digest: createHash('sha256').update(canonical).digest('hex'),
-    articles: Object.freeze(records.map(({ articleId, sourceId, articleVersion, currentPolicyVersion, admittedSourceText, citationMetadataHash }) => Object.freeze({
+    articles: Object.freeze(records.map(({ articleId, sourceId, sourceKey, articleVersion, currentPolicyVersion, admittedSourceText, citationMetadataHash }) => Object.freeze({
       articleId,
       sourceId,
+      sourceKey,
       articleVersion,
       sourcePolicyVersion: currentPolicyVersion,
       evidenceTextHash: createHash('sha256').update(admittedSourceText).digest('hex'),
@@ -139,5 +141,6 @@ export function buildGroundedPrompt({ question, evidence = [] } = {}) {
 export { currentVisible }
 import { createHash } from 'node:crypto'
 import { containsSensitiveProviderInput } from '../../ai/policy-input.js'
+import { canUseTrustedQnaInput } from '../../ai/trusted-source-policy.js'
 import { canUseQnaEvidence } from '../article/visibility.js'
 import { citationEvidenceMetadata } from './citations.js'

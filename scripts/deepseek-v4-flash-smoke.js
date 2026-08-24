@@ -11,6 +11,17 @@ const EVIDENCE_URL = 'https://api-docs.deepseek.com/quick_start/pricing/'
 const REVIEWED_AT = '2026-08-23T00:00:00.000Z'
 const EVIDENCE_EXPIRES_AT = '2026-11-21T00:00:00.000Z'
 const SAFE_CODE = /^[a-z][a-z0-9_]{0,63}$/
+const ENV_NAME = /^[A-Z][A-Z0-9_]{1,127}$/
+
+function resolveCredential(environment) {
+  if (typeof environment?.[CREDENTIAL_ENV] === 'string' && environment[CREDENTIAL_ENV].length > 0) return { name: CREDENTIAL_ENV, value: environment[CREDENTIAL_ENV] }
+  for (const referenceName of ['DEEPSEEK_API_KEY_ENV', 'LLM_PRIMARY_API_KEY_ENV']) {
+    const name = environment?.[referenceName]
+    if (typeof name === 'string' && ENV_NAME.test(name) && typeof environment?.[name] === 'string' && environment[name].length > 0) return { name, value: environment[name] }
+  }
+  if (typeof environment?.LLM_PRIMARY_API_KEY === 'string' && environment.LLM_PRIMARY_API_KEY.length > 0) return { name: 'LLM_PRIMARY_API_KEY', value: environment.LLM_PRIMARY_API_KEY }
+  return null
+}
 
 function validDate(value) {
   return value instanceof Date && !Number.isNaN(value.getTime())
@@ -34,7 +45,7 @@ function route({ routeId, operation }) {
   }
 }
 
-export function buildDeepSeekV4FlashGraph(now = new Date()) {
+export function buildDeepSeekV4FlashGraph(now = new Date(), { credentialEnvName = CREDENTIAL_ENV } = {}) {
   if (!validDate(now)) throw new Error('DeepSeek smoke clock is invalid')
   return {
     providerFailureDomains: [
@@ -44,7 +55,7 @@ export function buildDeepSeekV4FlashGraph(now = new Date()) {
       { providerId: 'deepseek', providerFailureDomainId: 'deepseek-control-plane', adapterId: 'deepseek-openai-compatible', trustedEndpointProfileId: 'deepseek-openai-v1' },
     ],
     admissionDomains: [
-      { admissionDomainId: 'deepseek-main', providerId: 'deepseek', credentialEnvName: CREDENTIAL_ENV, maxConcurrency: 4, budgetLimit: 10_000, budgetWindow: 'day' },
+      { admissionDomainId: 'deepseek-main', providerId: 'deepseek', credentialEnvName, maxConcurrency: 4, budgetLimit: 10_000, budgetWindow: 'day' },
     ],
     routes: [
       route({ routeId: 'deepseek-summary', operation: 'summary' }),
@@ -71,13 +82,13 @@ function safeSmokeError(error) {
 
 export async function runDeepSeekV4FlashSmoke({ mode = 'full', environment = process.env, fetchImpl = globalThis.fetch, now = () => new Date() } = {}) {
   const clock = typeof now === 'function' ? now : () => now
-  const credential = environment?.[CREDENTIAL_ENV]
-  if (typeof credential !== 'string' || credential.length < 1) throw safeSmokeError({ code: 'deepseek_credential_unavailable' })
+  const resolvedCredential = resolveCredential(environment)
+  if (!resolvedCredential) throw safeSmokeError({ code: 'deepseek_credential_unavailable' })
   const selected = parseGeminiSmokeMode(mode)
-  const graph = buildDeepSeekV4FlashGraph(clock())
+  const graph = buildDeepSeekV4FlashGraph(clock(), { credentialEnvName: resolvedCredential.name })
   const smokeEnvironment = {
     PROVIDER_ADMISSION_DOMAINS_JSON: JSON.stringify(graph),
-    [CREDENTIAL_ENV]: credential,
+    [resolvedCredential.name]: resolvedCredential.value,
   }
   let stage = 'configuration'
   try {

@@ -167,6 +167,7 @@ function serializeSourceForQna(source) {
   if (!source) return null
   return {
     id: source._id?.toHexString?.() ?? String(source.id ?? source.sourceId),
+    sourceKey: typeof source.sourceKey === 'string' ? source.sourceKey : undefined,
     name: typeof source.name === 'string' ? source.name : '',
     authorityTier: source.authorityTier,
     operationalStatus: source.operationalStatus,
@@ -180,7 +181,7 @@ function serializeSourceForQna(source) {
 }
 
 const PUBLIC_SUMMARY_STATUSES = new Set(['pending', 'processing', 'ready', 'failed'])
-const SUMMARY_BASES = new Set(['metadata', 'excerpt', 'fulltext-temporary'])
+const SUMMARY_BASES = new Set(['metadata', 'excerpt', 'fulltext-temporary', 'official-payload'])
 const EMBEDDING_COMPATIBILITY_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/
 
 function embeddingTargetValue(value = {}) {
@@ -273,6 +274,23 @@ function summaryFields(article) {
   return { summaryStatus: status, summaryVi: ready ? article.summaryVi : null, summaryBasis: ready ? article.summaryBasis : null }
 }
 
+function summaryDetailFields(article) {
+  if (article?.summaryDetailStatus === 'ready' && article.summaryStatus === 'ready') {
+    try {
+      const output = validateVietnameseSummary({
+        titleVi: article.titleVi,
+        summaryVi: article.summaryVi,
+        summaryParagraphsVi: article.summaryParagraphsVi,
+      })
+      return { summaryDetailStatus: 'ready', summaryParagraphsVi: [...output.summaryParagraphsVi] }
+    } catch { /* fail closed below */ }
+  }
+  const status = PUBLIC_SUMMARY_STATUSES.has(article?.summaryDetailStatus) && article.summaryDetailStatus !== 'ready'
+    ? article.summaryDetailStatus
+    : article?.summaryDetailStatus === undefined ? 'pending' : 'failed'
+  return { summaryDetailStatus: status, summaryParagraphsVi: null }
+}
+
 function savedMarker(document) {
   return Boolean(document?._isSaved?.length || document?._saved === true)
 }
@@ -309,6 +327,7 @@ function publicArticleDetail(document, source = document?._currentSource) {
   const author = typeof document.author === 'string' ? document.author : null
   return {
     ...card,
+    ...summaryDetailFields(document),
     originalUrl,
     author,
     retrievedAt: publicDate(document.retrievedAt),
@@ -730,12 +749,12 @@ export class MongoArticleRepository {
 
   async commitSummaryArtifact({ job, fence, expectedSourcePolicyVersion, inputHash, summary } = {}) {
     let output
-    try { output = validateVietnameseSummary({ titleVi: summary?.titleVi, summaryVi: summary?.summaryVi }) } catch { return false }
-    if (summary?.summaryStatus !== 'ready' || !SUMMARY_BASES.has(summary.summaryBasis) || summary.summaryInputHash !== inputHash || summary.summarySourcePolicyVersion !== expectedSourcePolicyVersion || typeof summary.summaryModel !== 'string' || !summary.summaryModel || !(summary.summaryGeneratedAt instanceof Date)) return false
+    try { output = validateVietnameseSummary({ titleVi: summary?.titleVi, summaryVi: summary?.summaryVi, summaryParagraphsVi: summary?.summaryParagraphsVi }) } catch { return false }
+    if (summary?.summaryStatus !== 'ready' || summary?.summaryDetailStatus !== 'ready' || !SUMMARY_BASES.has(summary.summaryBasis) || summary.summaryInputHash !== inputHash || summary.summarySourcePolicyVersion !== expectedSourcePolicyVersion || typeof summary.summaryModel !== 'string' || !summary.summaryModel || !(summary.summaryGeneratedAt instanceof Date)) return false
     return this.commitArtifact({
       job, fence, expectedSourcePolicyVersion, purpose: 'summary',
       inputHash,
-      fields: { ...output, summaryStatus: 'ready', summaryBasis: summary.summaryBasis, summaryModel: summary.summaryModel, summaryInputHash: inputHash, summarySourcePolicyVersion: expectedSourcePolicyVersion, summaryGeneratedAt: summary.summaryGeneratedAt, summaryError: null },
+      fields: { ...output, summaryStatus: 'ready', summaryDetailStatus: 'ready', summaryBasis: summary.summaryBasis, summaryModel: summary.summaryModel, summaryInputHash: inputHash, summarySourcePolicyVersion: expectedSourcePolicyVersion, summaryGeneratedAt: summary.summaryGeneratedAt, summaryError: null },
       onCommitted: async ({ session, source, article: committedArticle, now }) => {
         for (const successor of buildIngestionArtifactJobs({ source: { ...source, id: source._id.toHexString() }, article: committedArticle, now, embeddingTarget: this.embeddingTarget }).filter((item) => item.task === 'embedding')) {
           await this.indexingJobs().updateOne({ actorScope: successor.actorScope, idempotencyKey: successor.idempotencyKey }, { $setOnInsert: indexingJobDocument(successor) }, { upsert: true, session })
@@ -757,7 +776,7 @@ export class MongoArticleRepository {
   async markArtifactProcessing({ job, fence, expectedSourcePolicyVersion, purpose, inputHash } = {}) {
     if (!['summary', 'embedding'].includes(purpose) || typeof inputHash !== 'string') return false
     const fields = purpose === 'summary'
-      ? { titleVi: null, summaryVi: null, summaryStatus: 'processing', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
+      ? { titleVi: null, summaryVi: null, summaryParagraphsVi: null, summaryStatus: 'processing', summaryDetailStatus: 'processing', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
       : { embeddingStatus: 'processing', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null }
     return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
@@ -765,7 +784,7 @@ export class MongoArticleRepository {
   async resetArtifactPending({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, cancellationRequested = false } = {}) {
     if (!['summary', 'embedding'].includes(purpose) || typeof inputHash !== 'string') return false
     const fields = purpose === 'summary'
-      ? { titleVi: null, summaryVi: null, summaryStatus: 'pending', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
+      ? { titleVi: null, summaryVi: null, summaryParagraphsVi: null, summaryStatus: 'pending', summaryDetailStatus: 'pending', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null }
       : { embeddingStatus: 'pending', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null }
     return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, cancellationRequested, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
@@ -775,7 +794,7 @@ export class MongoArticleRepository {
     const occurredAt = dateValue(this.clock(), 'Artifact failure clock')
     const safe = { code: typeof error?.code === 'string' ? error.code.slice(0, 128) : 'artifact_failed', message: 'AI artifact did not complete safely', retryable: Boolean(error?.retryable), occurredAt }
     const fields = purpose === 'summary'
-      ? { titleVi: null, summaryVi: null, summaryStatus: 'failed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: safe }
+      ? { titleVi: null, summaryVi: null, summaryParagraphsVi: null, summaryStatus: 'failed', summaryDetailStatus: 'failed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: safe }
       : { embeddingStatus: 'failed', embedding: null, embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: safe }
     return this.commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, ...(purpose === 'embedding' ? { unsetFields: ['embeddingArtifactCompatibilityId'] } : {}) })
   }
@@ -810,7 +829,7 @@ export class MongoArticleRepository {
       if (!productionEligible && article.status === 'published') { set.status = 'hidden'; set.hiddenReason = 'source_policy_changed' }
       if (!mediaAllowed && article.leadMedia) { set.leadMedia = null; set.leadMediaStatus = 'hidden'; set.leadMediaHiddenReason = 'source_policy_changed' }
       if (!summaryCurrent) Object.assign(set, {
-        titleVi: null, summaryVi: null, summaryStatus: summaryAllowed ? 'pending' : 'removed', summaryBasis: null, summaryModel: null,
+        titleVi: null, summaryVi: null, summaryParagraphsVi: null, summaryStatus: summaryAllowed ? 'pending' : 'removed', summaryDetailStatus: summaryAllowed ? 'pending' : 'removed', summaryBasis: null, summaryModel: null,
         summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null,
       })
       if (!embeddingCurrent) Object.assign(set, {
