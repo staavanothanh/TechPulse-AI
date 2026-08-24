@@ -128,7 +128,7 @@ export function createAuthRouter({ authService } = {}) {
   }))
 
   router.get('/api/v1/auth/google', asyncRoute(async (req, res) => {
-    const result = service.generateGoogleAuthUrl()
+    const result = await service.generateGoogleAuthUrl()
     if (!result || typeof result.authUrl !== 'string' || typeof result.state !== 'string') throw new AuthError(500, 'internal_error', 'Authentication response is invalid')
     res.set('Set-Cookie', serializeOAuthStateCookie(result.state))
     noStore(res)

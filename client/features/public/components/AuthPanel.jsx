@@ -18,9 +18,11 @@ function AuthAlert({ error, notice }) {
 export default function AuthPanel({
   mode: initialMode = 'login',
   busy = false,
+  googleBusy = false,
   error = null,
   notice = null,
   onSubmit,
+  onGoogleLogin,
   onModeChange,
   onGuestBrowse,
 }) {
@@ -51,6 +53,7 @@ export default function AuthPanel({
   }
 
   const register = mode === 'register'
+  const authPending = busy || googleBusy
   const submitLabel = busy
     ? register
       ? 'Đang tạo...'
@@ -121,12 +124,23 @@ export default function AuthPanel({
         <button
           className="public-btn public-btn-primary public-btn-block"
           type="submit"
-          disabled={busy}
-          aria-busy={busy || undefined}
+          disabled={authPending}
+          aria-busy={authPending || undefined}
         >
           {submitLabel}
         </button>
       </form>
+      {!register ? (
+        <button
+          className="public-btn public-btn-secondary public-btn-block"
+          type="button"
+          onClick={onGoogleLogin}
+          disabled={authPending}
+          aria-busy={authPending || undefined}
+        >
+          {googleBusy ? 'Đang chuyển đến Google...' : 'Đăng nhập bằng Google'}
+        </button>
+      ) : null}
       <p className="public-auth-switch">
         {register ? 'Đã có tài khoản?' : 'Chưa có tài khoản?'}{' '}
         <button type="button" onClick={switchMode}>

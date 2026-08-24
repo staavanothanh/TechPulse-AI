@@ -5,6 +5,25 @@ import {
 import { isSessionAccessFailure } from './routing.js'
 
 const DELETION_NOTICE = 'Yêu cầu xóa tài khoản đã được chấp nhận. Phiên của bạn đã bị thu hồi.'
+const GOOGLE_AUTH_URL_ERROR = 'Không thể bắt đầu đăng nhập bằng Google.'
+
+function redirectToGoogleAuth(authUrl) {
+  if (typeof globalThis.location?.assign !== 'function')
+    throw new Error('Không thể chuyển hướng đến Google trong môi trường hiện tại.')
+  globalThis.location.assign(authUrl)
+}
+
+function validatedGoogleAuthUrl(response) {
+  const authUrl = response?.data?.authUrl
+  if (typeof authUrl !== 'string' || authUrl.length === 0) throw new Error(GOOGLE_AUTH_URL_ERROR)
+  try {
+    const parsed = new URL(authUrl)
+    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Unsupported URL scheme')
+  } catch {
+    throw new Error(GOOGLE_AUTH_URL_ERROR)
+  }
+  return authUrl
+}
 
 function csrfHeaders(csrfToken, extra = {}) {
   if (!csrfToken)
@@ -40,6 +59,7 @@ export function createSessionActions({
   getCsrfToken,
   applySession,
   createIdempotencyKey = () => `account-deletion-${Date.now()}`,
+  redirect = redirectToGoogleAuth,
 }) {
   async function authenticate({ mode, email, password }) {
     const operation = mode === 'register' ? api.registerUser : api.login
@@ -49,6 +69,12 @@ export function createSessionActions({
       headers: { 'Content-Type': 'application/json' },
     })
     applySession(response.data.user, response.data.csrfToken, null)
+    return response
+  }
+
+  async function authenticateWithGoogle() {
+    const response = await api.getGoogleAuthUrl({ credentials: 'same-origin' })
+    redirect(validatedGoogleAuthUrl(response))
     return response
   }
 
@@ -82,5 +108,11 @@ export function createSessionActions({
     return response
   }
 
-  return Object.freeze({ authenticate, logout, requestDeletion, updatePreferences })
+  return Object.freeze({
+    authenticate,
+    authenticateWithGoogle,
+    logout,
+    requestDeletion,
+    updatePreferences,
+  })
 }

@@ -69,6 +69,7 @@ export default function PublicApp({
   onRetrySession,
   onSessionExpired,
   onAuthSubmit,
+  onGoogleLogin,
   onAuthModeChange,
   onGuestBrowse,
   auth = {},
@@ -95,6 +96,7 @@ export default function PublicApp({
         auth={{
           ...auth,
           onSubmit: auth.onSubmit || onAuthSubmit,
+          onGoogleLogin: auth.onGoogleLogin || onGoogleLogin,
           onModeChange: auth.onModeChange || onAuthModeChange,
         }}
         onGuestBrowse={onGuestBrowse}

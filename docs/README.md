@@ -18,6 +18,21 @@
 
 [TechPulse-AI.md](./TechPulse-AI.md) giữ idea log và toàn bộ quyết định/ràng buộc gốc. Nó hữu ích để hiểu lịch sử, nhưng PRD/contract chuyên biệt ở trên là authority khi implementation bắt đầu.
 
+### Google OAuth local setup
+
+Google OAuth dùng authorization-code redirect. Frontend gọi `GET /api/v1/auth/google`, nhận `data.authUrl`, rồi chuyển trình duyệt tới URL đó. Callback `GET /api/v1/auth/google/callback` kiểm tra state đã ký, tạo session và redirect về cùng origin.
+
+Để bật flow trong môi trường local:
+
+1. Khai báo bốn tên biến trong `.env`: `GOOGLE_OAUTH_CLIENT_ID_ENV`, `GOOGLE_OAUTH_CLIENT_SECRET_ENV`, `GOOGLE_OAUTH_REDIRECT_URI_ENV` và `GOOGLE_OAUTH_STATE_SECRET_ENV`.
+2. Cấp các giá trị tương ứng cho `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` và `GOOGLE_OAUTH_STATE_SECRET`. Dùng callback URI chính xác của origin đang chạy, ví dụ `http://localhost:3000/api/v1/auth/google/callback`.
+3. Apply và verify migration `google-oauth` trước khi bật runtime:
+   `npm run db:migrate -- --to google-oauth`
+   `npm run db:verify -- google-oauth`
+4. Mở landing page và chọn `Đăng nhập bằng Google`. Khi URL không tạo được, UI giữ người dùng trên form và hiển thị lỗi accessible.
+
+Không đưa client secret, state secret hoặc authorization code vào frontend, log, test fixture hoặc MongoDB. Xem [ADR-0020](./adr/0020-add-google-oauth-login.md) để biết invariant bảo mật và callback contract.
+
 ## 2. Authority map
 
 | Câu hỏi | Tài liệu authority |

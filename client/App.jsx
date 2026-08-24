@@ -36,6 +36,7 @@ function PublicSurface({
   onRetrySession,
   onSessionExpired,
   onAuthSubmit,
+  onGoogleLogin,
   onAuthModeChange,
   onGuestBrowse,
   auth,
@@ -69,6 +70,7 @@ function PublicSurface({
       onRetrySession={onRetrySession}
       onSessionExpired={onSessionExpired}
       onAuthSubmit={onAuthSubmit}
+      onGoogleLogin={onGoogleLogin}
       onAuthModeChange={onAuthModeChange}
       onGuestBrowse={onGuestBrowse}
       auth={auth}
@@ -89,7 +91,13 @@ export default function App() {
   const [session, setSession] = useState(EMPTY_SESSION)
   const [publicRoute, setPublicRoute] = useState('feed')
   const [adminRoute, setAdminRoute] = useState('overview')
-  const [auth, setAuth] = useState({ mode: 'login', busy: false, error: null, notice: null })
+  const [auth, setAuth] = useState({
+    mode: 'login',
+    busy: false,
+    googleBusy: false,
+    error: null,
+    notice: null,
+  })
 
   const loadSession = useCallback((isActive = () => true) => {
     void api
@@ -125,7 +133,13 @@ export default function App() {
       error: null,
       notice: nextNotice,
     })
-    setAuth((current) => ({ ...current, busy: false, error: null, notice: nextNotice }))
+    setAuth((current) => ({
+      ...current,
+      busy: false,
+      googleBusy: false,
+      error: null,
+      notice: nextNotice,
+    }))
     if (!nextUser) setPublicRoute('feed')
   }, [])
 
@@ -150,11 +164,44 @@ export default function App() {
   const publicSession = publicSessionForRole(session)
 
   async function authenticate(credentials) {
-    setAuth((current) => ({ ...current, busy: true, error: null, notice: null }))
+    setAuth((current) => ({
+      ...current,
+      busy: true,
+      googleBusy: false,
+      error: null,
+      notice: null,
+    }))
     try {
       await accountActions.authenticate(credentials)
     } catch (error) {
-      setAuth((current) => ({ ...current, busy: false, error, notice: null }))
+      setAuth((current) => ({
+        ...current,
+        busy: false,
+        googleBusy: false,
+        error,
+        notice: null,
+      }))
+    }
+  }
+
+  async function authenticateWithGoogle() {
+    setAuth((current) => ({
+      ...current,
+      busy: true,
+      googleBusy: true,
+      error: null,
+      notice: null,
+    }))
+    try {
+      await accountActions.authenticateWithGoogle()
+    } catch (error) {
+      setAuth((current) => ({
+        ...current,
+        busy: false,
+        googleBusy: false,
+        error,
+        notice: null,
+      }))
     }
   }
 
@@ -203,6 +250,7 @@ export default function App() {
       onRetrySession={retrySession}
       onSessionExpired={expireSession}
       onAuthSubmit={authenticate}
+      onGoogleLogin={authenticateWithGoogle}
       onAuthModeChange={(mode) => setAuth((current) => ({ ...current, mode, error: null }))}
       onGuestBrowse={guestBrowseNotice}
       auth={auth}

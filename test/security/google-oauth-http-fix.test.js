@@ -23,7 +23,7 @@ function authResult() {
 let server
 let origin
 const authService = {
-  generateGoogleAuthUrl: vi.fn(() => ({ authUrl: `https://accounts.google.com/o/oauth2/v2/auth?state=${STATE}`, state: STATE })),
+  generateGoogleAuthUrl: vi.fn(async () => ({ authUrl: `https://accounts.google.com/o/oauth2/v2/auth?state=${STATE}`, state: STATE })),
   googleLogin: vi.fn(async () => authResult()),
   authenticate: vi.fn(),
 }
@@ -39,7 +39,7 @@ beforeAll(async () => {
 afterAll(() => server?.close())
 
 describe('Google OAuth HTTP boundary', () => {
-  it('sets a host-only state cookie when starting OAuth', async () => {
+  it('awaits the lazy auth service and sets a host-only state cookie when starting OAuth', async () => {
     const response = await fetch(`${origin}/api/v1/auth/google`)
     expect(response.status).toBe(200)
     expect((await response.json()).data.authUrl).toContain(`state=${STATE}`)
