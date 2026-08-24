@@ -26,6 +26,7 @@ import {
 } from './migrations/step4-compatibility.js'
 import { configureDns } from './configure-dns.js'
 import { migrationUriEnvName } from './migration-credential.js'
+import { buildGoogleOAuthMigration, runGoogleOAuthMigration, withGoogleOAuthAuditCompatibility } from './migrations/google-oauth.js'
 
 configureDns()
 
@@ -34,9 +35,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'governance'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'governance', 'google-oauth'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, governance',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, governance, google-oauth',
   )
   process.exitCode = 2
 } else {
@@ -69,6 +70,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? buildQaEvidenceFenceMigration
               : target === 'governance'
                 ? buildGovernanceMigration
+              : target === 'google-oauth'
+                ? buildGoogleOAuthMigration
                 : buildAuthCoreMigration
     const runMigration =
       target === 'sources'
@@ -89,6 +92,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? runQaEvidenceFenceMigration
               : target === 'governance'
                 ? runGovernanceMigration
+              : target === 'google-oauth'
+                ? runGoogleOAuthMigration
                 : runAuthCoreWithStep4Compatibility
     const plan = dryRun
       ? target === 'governance'
@@ -101,6 +106,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
             ...buildProviderRoutingV2Migration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildQaEvidenceFenceMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
+            ...buildGoogleOAuthMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_app' })),
             ...buildGovernanceDatabaseMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
             ...buildGovernanceCapabilityProbeMigration({ dryRun: true }).map((operation) => ({ ...operation, database: 'techpulse_governance' })),
           ]
@@ -110,15 +116,17 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       : await (async () => {
           const context = await getMongoContext(runtime)
           await assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: context.db, target })
-          const plan = await runMigration({ db: context.db })
+          const appDb = target === 'governance' ? withGoogleOAuthAuditCompatibility(context.db) : context.db
+          const plan = await runMigration({ db: appDb })
           if (target === 'governance') {
-            plan.push(...await runGovernanceHardeningMigration({ db: context.db }))
-            plan.push(...await runGovernanceRetentionHardeningMigration({ db: context.db }))
-            plan.push(...await runArticleGovernanceHardeningMigration({ db: context.db }))
-            plan.push(...await runAdminPerformanceIndexesMigration({ db: context.db }))
-            plan.push(...await runProviderRoutingV2Migration({ db: context.db }))
-            plan.push(...await runQaEvidenceFenceMigration({ db: context.db }))
-            plan.push(...await runGovernanceCapabilityProbeMigration({ db: context.db }))
+            plan.push(...await runGovernanceHardeningMigration({ db: appDb }))
+            plan.push(...await runGovernanceRetentionHardeningMigration({ db: appDb }))
+            plan.push(...await runArticleGovernanceHardeningMigration({ db: appDb }))
+            plan.push(...await runAdminPerformanceIndexesMigration({ db: appDb }))
+            plan.push(...await runProviderRoutingV2Migration({ db: appDb }))
+            plan.push(...await runQaEvidenceFenceMigration({ db: appDb }))
+            plan.push(...await runGovernanceCapabilityProbeMigration({ db: appDb }))
+            plan.push(...await runGoogleOAuthMigration({ db: context.db }))
             const governanceDb = context.client.db('techpulse_governance')
             await runGovernanceDatabaseMigration({ db: governanceDb })
             plan.push(...await runGovernanceCapabilityProbeMigration({ db: governanceDb }))

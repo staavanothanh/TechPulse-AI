@@ -64,4 +64,21 @@ describe('Step 1 runtime configuration contract', () => {
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, INTERNAL_MACHINE_SECRET_ENV: 'bad-name' })).toThrow(/environment variable name/)
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, PROVIDER_ADMISSION_DOMAINS_JSON: '[{}]' })).toThrow(/legacy|graph/i)
   })
+
+  it('requires complete Google OAuth configuration and binds redirect URI to a public origin', () => {
+    const environment = {
+      ...validEnvironment,
+      GOOGLE_OAUTH_CLIENT_ID_ENV: 'GOOGLE_CLIENT_ID',
+      GOOGLE_OAUTH_CLIENT_SECRET_ENV: 'GOOGLE_CLIENT_SECRET',
+      GOOGLE_OAUTH_REDIRECT_URI_ENV: 'GOOGLE_REDIRECT_URI',
+      GOOGLE_OAUTH_STATE_SECRET_ENV: 'GOOGLE_OAUTH_STATE_SECRET',
+      GOOGLE_CLIENT_ID: 'client-id',
+      GOOGLE_CLIENT_SECRET: 'client-secret',
+      GOOGLE_REDIRECT_URI: 'https://techpulse.example/api/v1/auth/google/callback',
+      GOOGLE_OAUTH_STATE_SECRET: 's'.repeat(32),
+    }
+    expect(validateRuntimeConfiguration(environment).googleOAuth.stateSecretEnv).toBe('GOOGLE_OAUTH_STATE_SECRET')
+    expect(() => validateRuntimeConfiguration({ ...environment, GOOGLE_OAUTH_STATE_SECRET_ENV: undefined })).toThrow(/configured together/i)
+    expect(() => validateRuntimeConfiguration({ ...environment, GOOGLE_REDIRECT_URI: 'https://other.example/api/v1/auth/google/callback' })).toThrow(/public origin/i)
+  })
 })

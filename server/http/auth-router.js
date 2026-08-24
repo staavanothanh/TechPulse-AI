@@ -2,7 +2,14 @@ import { Router } from 'express'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { loadOpenApi } from '../../scripts/contracts/openapi-utils.js'
-import { parseSessionCookie, serializeClearSessionCookie, serializeSessionCookie } from './cookies.js'
+import {
+  parseOAuthStateCookie,
+  parseSessionCookie,
+  serializeClearOAuthStateCookie,
+  serializeClearSessionCookie,
+  serializeOAuthStateCookie,
+  serializeSessionCookie,
+} from './cookies.js'
 import { AuthError, serializeAdminUser } from '../application/auth/service.js'
 
 const OPENAPI = loadOpenApi()
@@ -44,7 +51,7 @@ function authPayload(result) {
 }
 
 function setAuthCookie(res, result) {
-  res.set('Set-Cookie', serializeSessionCookie(result.sessionToken, result.maxAgeSeconds))
+  res.append('Set-Cookie', serializeSessionCookie(result.sessionToken, result.maxAgeSeconds))
   noStore(res)
   res.set('Vary', 'Cookie')
 }
@@ -121,17 +128,27 @@ export function createAuthRouter({ authService } = {}) {
   }))
 
   router.get('/api/v1/auth/google', asyncRoute(async (req, res) => {
-    const url = service.generateGoogleAuthUrl({ state: req.query.state })
+    const result = service.generateGoogleAuthUrl()
+    if (!result || typeof result.authUrl !== 'string' || typeof result.state !== 'string') throw new AuthError(500, 'internal_error', 'Authentication response is invalid')
+    res.set('Set-Cookie', serializeOAuthStateCookie(result.state))
     noStore(res)
-    res.status(200).json({ data: { authUrl: url } })
+    res.status(200).json({ data: { authUrl: result.authUrl } })
   }))
 
-  router.post('/api/v1/auth/google/callback', asyncRoute(async (req, res) => {
-    const { code } = req.body ?? {}
+  router.get('/api/v1/auth/google/callback', asyncRoute(async (req, res) => {
+    // The query contains a short-lived authorization code and signed state.
+    // Mark the response private before any validation or provider/database I/O,
+    // including error responses handled by the shared error middleware.
+    noStore(res)
+    const { code, state } = req.query ?? {}
     if (typeof code !== 'string' || code.length === 0) throw new AuthError(422, 'validation_error', 'Authorization code is required')
-    const result = await service.googleLogin({ code, request: req })
+    if (typeof state !== 'string' || state.length === 0) throw new AuthError(422, 'validation_error', 'OAuth state is required')
+    const stateCookie = parseOAuthStateCookie(req.get('Cookie'))
+    res.set('Set-Cookie', serializeClearOAuthStateCookie())
+    const result = await service.googleLogin({ code, state, stateCookie, request: req })
     setAuthCookie(res, result)
-    res.status(200).json(authPayload(result))
+    noStore(res)
+    res.status(303).location('/').end()
   }))
 
   return router

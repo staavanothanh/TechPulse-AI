@@ -88,6 +88,15 @@ function createLazyFunction({ load, select, unavailableMessage }) {
   }
 }
 
+function googleOAuthEnvironmentConfigured(environment) {
+  return [
+    'GOOGLE_OAUTH_CLIENT_ID_ENV',
+    'GOOGLE_OAUTH_CLIENT_SECRET_ENV',
+    'GOOGLE_OAUTH_REDIRECT_URI_ENV',
+    'GOOGLE_OAUTH_STATE_SECRET_ENV',
+  ].some((name) => typeof environment?.[name] === 'string' && environment[name].trim() !== '')
+}
+
 export function createConfiguredRuntimeFactories({ environment = process.env } = {}) {
   const factories = {}
   factories.common = async () => {
@@ -97,7 +106,14 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       import('./schema-readiness.js'),
     ])
     const verifySchema = createReleaseVerifiedSchemaVerifier('auth-core', environment)
-    const configured = await createConfiguredAuthService({ environment, verifySchema })
+    // Do not evaluate the optional OAuth attestation until OAuth is enabled.
+    // createReleaseVerifiedSchemaVerifier validates immediately, so creating
+    // it unconditionally would block password auth on deployments that have
+    // not opted into Google OAuth yet.
+    const verifyOAuthSchema = googleOAuthEnvironmentConfigured(environment)
+      ? createReleaseVerifiedSchemaVerifier('google-oauth', environment)
+      : async () => undefined
+    const configured = await createConfiguredAuthService({ environment, verifySchema, verifyOAuthSchema })
     return Object.freeze({
       ...configured,
       rateLimitAdmission: createRateLimitAdmission({ repository: configured.authRepository, keyring: configured.quotaKeyring }),

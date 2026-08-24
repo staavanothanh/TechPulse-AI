@@ -17,6 +17,7 @@ import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from '../../scripts/migrations/indexing-jobs.js'
 import { INDEXING_DRAIN_PERFORMANCE_INDEXES } from '../../scripts/migrations/indexing-drain-performance.js'
 import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
+import { GOOGLE_OAUTH_AUDIT_VALIDATOR } from '../../scripts/migrations/google-oauth.js'
 import { PROVIDER_ADMISSION_STATE_VALIDATOR_V2, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
 
@@ -39,7 +40,7 @@ export async function assertIndexingJobsReady(context) {
     if (expectedIndexes.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('indexing-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
   const articleIndexes = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
   if (INDEXING_ARTICLE_INDEXES.some((expected) => !exactMongoIndex(articleIndexes.get(expected.name), expected))) throw new Error('article reconciliation index is not ready')
 }

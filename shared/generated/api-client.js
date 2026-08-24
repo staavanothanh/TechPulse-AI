@@ -51,12 +51,10 @@ const operations = [
   },
   {
     "operationId": "googleCallback",
-    "method": "POST",
+    "method": "GET",
     "path": "/api/v1/auth/google/callback",
     "requiredHeaders": [],
-    "browserManagedHeaders": [
-      "Origin"
-    ],
+    "browserManagedHeaders": [],
     "pathParams": []
   },
   {

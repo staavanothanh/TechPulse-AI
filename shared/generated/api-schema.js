@@ -269,21 +269,13 @@ export const openApiDocument = {
         "x-persistence": "none",
         "summary": "Get Google OAuth authorization URL",
         "security": [],
-        "parameters": [
-          {
-            "name": "state",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 512
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Authorization URL generated",
             "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetOAuthStateCookie"
+              },
               "Cache-Control": {
                 "$ref": "#/components/headers/PrivateNoStore"
               }
@@ -303,7 +295,7 @@ export const openApiDocument = {
       }
     },
     "/api/v1/auth/google/callback": {
-      "post": {
+      "get": {
         "tags": [
           "Auth"
         ],
@@ -313,35 +305,24 @@ export const openApiDocument = {
         "security": [],
         "parameters": [
           {
-            "$ref": "#/components/parameters/BrowserOriginHeader"
+            "$ref": "#/components/parameters/GoogleOAuthCode"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthState"
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GoogleCallbackRequest"
-              }
-            }
-          }
-        },
         "responses": {
-          "200": {
-            "description": "Google OAuth login successful",
+          "303": {
+            "description": "Session created and browser returned to the same-origin UI",
             "headers": {
               "Set-Cookie": {
-                "$ref": "#/components/headers/SetSessionCookie"
+                "$ref": "#/components/headers/OAuthCallbackSetCookies"
+              },
+              "Location": {
+                "$ref": "#/components/headers/OAuthSuccessLocation"
               },
               "Cache-Control": {
                 "$ref": "#/components/headers/PrivateNoStore"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthResponse"
-                }
               }
             }
           },
@@ -350,6 +331,12 @@ export const openApiDocument = {
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
@@ -3578,10 +3565,35 @@ export const openApiDocument = {
           "type": "string"
         }
       },
+      "SetOAuthStateCookie": {
+        "description": "Exactly __Host-techpulse_google_oauth_state=<signed>; Path=/; Max-Age=600; Secure; HttpOnly; SameSite=Lax. Domain is absent.",
+        "schema": {
+          "type": "string"
+        }
+      },
       "ClearSessionCookie": {
         "description": "Expires __Host-techpulse_session with the same host-only Path=/, Secure, HttpOnly and SameSite=Lax tuple using Max-Age=0. Domain remains absent.",
         "schema": {
           "type": "string"
+        }
+      },
+      "ClearOAuthStateCookie": {
+        "description": "Expires __Host-techpulse_google_oauth_state with Path=/, Secure, HttpOnly and SameSite=Lax using Max-Age=0. Domain remains absent.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "OAuthCallbackSetCookies": {
+        "description": "The callback emits two Set-Cookie lines: the new __Host-techpulse_session cookie and a cleared __Host-techpulse_google_oauth_state cookie (Max-Age=0), both host-only with Path=/, Secure, HttpOnly and SameSite=Lax.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "OAuthSuccessLocation": {
+        "description": "Fixed relative same-origin UI location after OAuth callback.",
+        "schema": {
+          "type": "string",
+          "const": "/"
         }
       },
       "PrivateNoStore": {
@@ -3734,6 +3746,27 @@ export const openApiDocument = {
           "$ref": "#/components/schemas/MaintenanceTaskName"
         },
         "description": "Closed server-owned task name. It maps to one collection/state/deadline predicate and a maximum batch of 100."
+      },
+      "GoogleOAuthCode": {
+        "name": "code",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "GoogleOAuthState": {
+        "name": "state",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 512,
+          "pattern": "^[0-9]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+        }
       }
     },
     "responses": {
@@ -4240,20 +4273,6 @@ export const openApiDocument = {
             "type": "string",
             "minLength": 1,
             "maxLength": 128
-          }
-        }
-      },
-      "GoogleCallbackRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "code"
-        ],
-        "properties": {
-          "code": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048
           }
         }
       },
@@ -9265,17 +9284,28 @@ export const openApiDocument = {
           "unauthorized",
           "csrf_invalid",
           "forbidden",
+          "oauth_state_invalid",
+          "oauth_state_expired",
           "not_found",
           "conflict",
+          "oauth_state_replayed",
+          "oauth_identity_conflict",
           "idempotency_mismatch",
           "invalid_state_transition",
           "source_policy_blocked",
           "rate_limit_exceeded",
+          "invalid_oauth_code",
+          "invalid_access_token",
+          "invalid_user_info",
+          "unverified_email",
+          "non_gmail_address",
           "payload_too_large",
           "unsupported_media_type",
           "provider_unavailable",
           "database_unavailable",
           "service_unavailable",
+          "oauth_provider_error",
+          "oauth_provider_timeout",
           "internal_error"
         ],
         "description": "Stable machine-readable taxonomy. Operations may document a narrower subset; clients must not branch on message text."
