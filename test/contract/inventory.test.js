@@ -5,7 +5,7 @@ describe('canonical OpenAPI inventory', () => {
   it('closes persistence and body-response completeness for all operations', () => {
     const result = runContractChecks(loadOpenApi())
     expect(result.failures).toEqual([])
-    expect(result.operations).toHaveLength(56)
+    expect(result.operations).toHaveLength(58)
   })
 
   it('rejects an operation without x-persistence', () => {

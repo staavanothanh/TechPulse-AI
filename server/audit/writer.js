@@ -5,6 +5,8 @@ export const AUDIT_RULES = Object.freeze({
   user_preferences_updated: Object.freeze({ reasonCode: 'preferences_updated', changedFields: ['topicPreferences'] }),
   user_suspended: Object.freeze({ reasonCode: 'user_suspended', changedFields: ['status', 'sessionVersion'] }),
   user_restored: Object.freeze({ reasonCode: 'user_restored', changedFields: ['status', 'sessionVersion'] }),
+  google_oauth_registered: Object.freeze({ reasonCode: 'google_oauth_registered', changedFields: ['status'] }),
+  google_oauth_login: Object.freeze({ reasonCode: 'google_oauth_login', changedFields: [] }),
 })
 
 export function createAuditEvent({ actor, action, targetId, changedFields = [], reasonCode, request, result = 'succeeded', stateTransition } = {}) {

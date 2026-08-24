@@ -2,6 +2,7 @@ import { csrfTokenForSession, hashCsrfToken, hashSessionToken, createSessionToke
 import { hashPassword, verifyPassword } from '../../security/password.js'
 import { createHmacKeyring } from '../../security/hmac-keyring.js'
 import { createAuditEvent } from '../../audit/writer.js'
+import { createGoogleOAuthService, GoogleOAuthError } from './google-oauth.js'
 
 const IDLE_MS = 24 * 60 * 60 * 1000
 const ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000
@@ -271,10 +272,65 @@ export function createAuthService({ repository, runtime, clock = () => new Date(
     return outcome.user
   }
 
+  function mapGoogleOAuthError(error) {
+    if (error instanceof GoogleOAuthError) return new AuthError(error.status, error.code, error.message)
+    if (error instanceof AuthError) return error
+    return null
+  }
+
   function mapRepositoryError(error) {
     if (error instanceof AuthError) return error
     if (error?.name?.startsWith('Mongo') || [6, 7, 89, 91, 189].includes(error?.code)) return new AuthError(503, 'service_unavailable', 'Authentication service is temporarily unavailable')
     return error
+  }
+
+  function generateGoogleAuthUrl({ state } = {}) {
+    const googleOAuth = createGoogleOAuthService({
+      clientIdEnv: runtime?.googleOAuth?.clientIdEnv,
+      clientSecretEnv: runtime?.googleOAuth?.clientSecretEnv,
+      redirectUriEnv: runtime?.googleOAuth?.redirectUriEnv,
+      values: {},
+    })
+    return googleOAuth.generateAuthUrl({ state })
+  }
+
+  async function googleLogin({ code, request } = {}) {
+    await reserve('login', request)
+    const googleOAuth = createGoogleOAuthService({
+      clientIdEnv: runtime?.googleOAuth?.clientIdEnv,
+      clientSecretEnv: runtime?.googleOAuth?.clientSecretEnv,
+      redirectUriEnv: runtime?.googleOAuth?.redirectUriEnv,
+      values: {},
+    })
+    let googleUser
+    try {
+      googleUser = await googleOAuth.verifyGoogleUser(code)
+    } catch (error) {
+      const mapped = mapGoogleOAuthError(error)
+      if (mapped) throw mapped
+      throw new AuthError(502, 'oauth_provider_error', 'Google OAuth verification failed')
+    }
+    const emailNormalized = normalizeEmail(googleUser.email)
+    const existing = await repository.findUserByEmail(emailNormalized)
+    let user = existing
+    if (!user) {
+      return inTransaction(async (session) => {
+        try {
+          user = await repository.createUser({ emailNormalized, emailDisplay: googleUser.email, passwordHash: null, role: 'user', status: 'active', topicPreferences: [], sessionVersion: 0, googleSub: googleUser.sub }, { session })
+        } catch (error) {
+          if (error?.code === 11000) throw new AuthError(409, 'conflict', 'Account already exists')
+          throw error
+        }
+        const sessionData = await createSession(user, request, session)
+        await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_registered', targetId: user._id, changedFields: ['status'], reasonCode: 'google_oauth_registered', request }), { session })
+        return { user: serializeUser(user), ...sessionData }
+      })
+    }
+    return inTransaction(async (session) => {
+      const sessionData = await createSession(user, request, session)
+      await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_login', targetId: user._id, reasonCode: 'google_oauth_login', request }), { session })
+      return { user: serializeUser(user), ...sessionData }
+    })
   }
 
   const expose = (method) => async (...args) => {
@@ -283,7 +339,7 @@ export function createAuthService({ repository, runtime, clock = () => new Date(
   return Object.freeze({
     register: expose(register), login: expose(login), authenticate: expose(authenticate), currentUser: expose(currentUser),
     verifyCsrf: expose(verifyCsrf), logout: expose(logout), updatePreferences: expose(updatePreferences), listAdminUsers: expose(listAdminUsers),
-    getAdminUser: expose(getAdminUser), updateUserStatus: expose(updateUserStatus),
+    getAdminUser: expose(getAdminUser), updateUserStatus: expose(updateUserStatus), googleLogin: expose(googleLogin), generateGoogleAuthUrl,
   })
 }
 

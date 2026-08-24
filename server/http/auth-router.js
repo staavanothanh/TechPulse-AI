@@ -60,7 +60,7 @@ function asyncRoute(handler) {
 export function createAuthRouter({ authService } = {}) {
   const router = Router()
   const unavailable = () => { throw new AuthError(503, 'service_unavailable', 'Authentication service is not configured') }
-  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable }
+  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable, googleLogin: unavailable, generateGoogleAuthUrl: unavailable }
 
   router.post('/api/v1/auth/register', asyncRoute(async (req, res) => {
     validateBody('RegisterRequest', req.body)
@@ -118,6 +118,20 @@ export function createAuthRouter({ authService } = {}) {
     const auth = await requireAuth(service, req)
     const user = await service.updateUserStatus({ auth, userId: req.params.userId, ...req.body, csrfToken: req.get('X-CSRF-Token'), request: req })
     sendValidated(res, 200, 'AdminUserResponse', { data: adminUser(user) })
+  }))
+
+  router.get('/api/v1/auth/google', asyncRoute(async (req, res) => {
+    const url = service.generateGoogleAuthUrl({ state: req.query.state })
+    noStore(res)
+    res.status(200).json({ data: { authUrl: url } })
+  }))
+
+  router.post('/api/v1/auth/google/callback', asyncRoute(async (req, res) => {
+    const { code } = req.body ?? {}
+    if (typeof code !== 'string' || code.length === 0) throw new AuthError(422, 'validation_error', 'Authorization code is required')
+    const result = await service.googleLogin({ code, request: req })
+    setAuthCookie(res, result)
+    res.status(200).json(authPayload(result))
   }))
 
   return router

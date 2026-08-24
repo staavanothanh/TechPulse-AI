@@ -5,12 +5,15 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 const nodeGlobals = {
   Buffer: 'readonly',
   console: 'readonly',
+  fetch: 'readonly',
+  global: 'readonly',
   globalThis: 'readonly',
   process: 'readonly',
   Response: 'readonly',
   setTimeout: 'readonly',
   structuredClone: 'readonly',
   URL: 'readonly',
+  URLSearchParams: 'readonly',
 }
 
 const browserGlobals = {
@@ -70,7 +73,7 @@ export default [
   },
   {
     files: ['test/**/*.test.js'],
-    languageOptions: { globals: { ...nodeGlobals, fetch: 'readonly' } },
+    languageOptions: { globals: nodeGlobals },
   },
   {
     files: ['scripts/**/*.js'],
