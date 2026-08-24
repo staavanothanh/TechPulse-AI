@@ -136,4 +136,4 @@ Final remediation verification used a fresh local replica-set disposable databas
 | `npm run build` | PASS — Vite production build |
 | `git diff --check` | PASS |
 
-The first combined integration invocation had one transient Step 3 `source-flow` idempotency response failure; the isolated rerun and the complete rerun both passed. The disposable database used for direct migration/verification was dropped after checks. No Atlas, `.env`, Step 5, commit, push, PR or deployment was used.
+Lần gọi integration kết hợp đầu tiên có một lỗi response idempotency tạm thời ở Step 3 `source-flow`; lần chạy isolated và lần chạy đầy đủ sau đó đều pass. Database disposable dùng cho migration/verification trực tiếp đã được drop sau khi kiểm tra. Không sử dụng Atlas, `.env`, Step 5, commit, push, PR hoặc deployment.

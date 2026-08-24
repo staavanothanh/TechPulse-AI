@@ -1,41 +1,50 @@
-# TDD evidence: Admin Source Registry navigation
+# Bằng chứng TDD: điều hướng Source Registry của admin
 
-## Scope
+## Phạm vi
 
-This journey was derived from the user request; no separate plan file was supplied.
+Hành trình này được rút ra từ yêu cầu người dùng; không có file plan riêng.
 
-As an admin, I want a visible Source Registry destination in the dashboard so that I can review source policy and lifecycle state through the existing Source Registry screen.
+Với vai trò admin, tôi muốn có đích đến Source Registry dễ thấy trong dashboard
+để có thể xem policy của source và trạng thái lifecycle qua màn hình Source Registry
+hiện có.
 
-## RED/GREEN checkpoints
+## Các mốc RED/GREEN
 
-| Stage | Commit | Evidence |
+| Giai đoạn | Commit | Bằng chứng |
 |---|---|---|
-| RED | `0401ca2` | `npm test -- --run test/client/app-shell.test.js` executed before the implementation: 3 failed, 3 passed. Failures were the missing Source Registry desktop destination and mobile control. |
-| GREEN | `d033d7f` | The same target passed: 1 file, 6 tests. |
-| Refactor | `cf0812c` | Mobile `aria-current` styling was aligned with the existing admin navigation styles; the focused suite remained green. |
+| RED | `0401ca2` | Chạy `npm test -- --run test/client/app-shell.test.js` trước implementation: 3 failed, 3 passed. Failure là thiếu đích đến Source Registry trên desktop và control trên mobile. |
+| GREEN | `d033d7f` | Cùng target pass: 1 file, 6 tests. |
+| Refactor | `cf0812c` | Căn chỉnh style `aria-current` trên mobile theo admin navigation style hiện có; focused suite tiếp tục green. |
 
-## Guarantees
+## Các bảo đảm
 
-| # | Guarantee | Test | Type | Result |
+| # | Bảo đảm | Test | Loại | Kết quả |
 |---|---|---|---|---|
-| 1 | Desktop admin navigation exposes `Source Registry` and marks it current when selected. | `test/client/app-shell.test.js` | unit | PASS |
-| 2 | Selecting the desktop Source Registry button calls `onNavigate('sources')`. | `test/client/app-shell.test.js` | unit | PASS |
-| 3 | Mobile admin workspaces expose both Source Registry and account controls, including Jobs and Sources routes. | `test/client/app-shell.test.js` | unit | PASS |
-| 4 | The existing Source Registry screen and mounted admin route regressions remain green. | `test/client/source-registry.test.js`, `test/ui/admin/admin-mounted.test.js` | unit/mounted | PASS |
+| 1 | Admin navigation trên desktop expose `Source Registry` và đánh dấu current khi được chọn. | `test/client/app-shell.test.js` | unit | PASS |
+| 2 | Chọn Source Registry button trên desktop gọi `onNavigate('sources')`. | `test/client/app-shell.test.js` | unit | PASS |
+| 3 | Admin workspace trên mobile expose cả Source Registry và account control, gồm route Jobs và Sources. | `test/client/app-shell.test.js` | unit | PASS |
+| 4 | Source Registry screen hiện có và các regression của admin route đã mount vẫn green. | `test/client/source-registry.test.js`, `test/ui/admin/admin-mounted.test.js` | unit/mounted | PASS |
 
-## Verification
+## Kiểm chứng
 
-Commands actually run on the branch:
+Các command thực sự đã chạy trên branch:
 
 - `npm test -- --run test/client/app-shell.test.js`: PASS, 1 file/6 tests.
 - `npm test -- --run test/client/app-shell.test.js test/client/source-registry.test.js test/ui/admin/admin-mounted.test.js`: PASS, 3 files/33 tests.
-- `npx eslint client/App.jsx client/styles.css test/client/app-shell.test.js`: no errors; `styles.css` is intentionally ignored by the project ESLint configuration.
-- `npm run build`: PASS, Vite built 70 modules.
+- `npx eslint client/App.jsx client/styles.css test/client/app-shell.test.js`: không có error; `styles.css` được project ESLint config bỏ qua có chủ đích.
+- `npm run build`: PASS, Vite build 70 modules.
 - `git diff --check`: PASS.
-- `npm test -- --run`: PASS, 169 files/1,013 tests; 16 files/66 tests remain skipped by the repository's existing configuration.
+- `npm test -- --run`: PASS, 169 files/1.013 tests; 16 files/66 tests vẫn skipped theo configuration hiện có của repository.
 
-The full coverage command `npm test -- --run --coverage` completed all 169 files and 1,013 tests, reporting 67.09% statements, 65.44% branches, 72.13% functions, and 73.98% lines; the repository global thresholds (80% statements/lines/functions and 75% branches) therefore remain unmet outside this feature's scope. A prior coverage attempt also observed an intermittent RSS parser timeout, but the normal full suite and the final coverage run completed all tests. The focused coverage command cannot represent the global project threshold because Vitest instruments the whole application while selecting only two files.
+Command coverage đầy đủ `npm test -- --run --coverage` đã hoàn tất 169 files và
+1.013 tests, báo cáo 67,09% statements, 65,44% branches, 72,13% functions và
+73,98% lines; global threshold của repository (80% statements/lines/functions và
+75% branches) vì thế vẫn chưa đạt ngoài phạm vi feature này. Một lần chạy coverage
+trước đó cũng gặp RSS parser timeout không ổn định, nhưng full suite thông thường và
+lần coverage cuối đều hoàn tất. Focused coverage command không đại diện cho global
+threshold của project vì Vitest instrument toàn bộ application khi chỉ chọn hai file.
 
-## Merge evidence
+## Bằng chứng merge
 
-Before merge, rerun the focused suite, lint, build, and `git diff --check` on this branch. Merge with fast-forward only after those checks pass; no push is performed by this task.
+Trước khi merge, chạy lại focused suite, lint, build và `git diff --check` trên branch.
+Chỉ fast-forward merge sau khi các kiểm tra pass; task này không thực hiện push.

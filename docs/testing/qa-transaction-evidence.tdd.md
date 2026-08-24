@@ -1,4 +1,4 @@
-# Q&A transaction và evidence — TDD evidence
+# Transaction Q&A và evidence — bằng chứng TDD
 
 ## Phạm vi
 
@@ -12,7 +12,7 @@ Bản sửa này xử lý hai nhóm lỗi trong luồng Q&A:
 HTTP contract không đổi. Không thêm provider call, không thêm dependency và
 không dùng raw question/evidence trong log.
 
-## Root cause
+## Nguyên nhân gốc
 
 `MongoChatRepository.assertActorFence` dùng `Promise.all` để đọc `users` và
 `sessions` bằng cùng session đang có transaction. MongoDB không cho phép các
@@ -25,7 +25,7 @@ vượt 30.000 ký tự trước khi gọi provider. Finalization cũng ghi `upd
 trên mọi article/source trong fence, kể cả target không được answer cite. Việc
 này làm thay đổi timestamp vận hành và mở rộng contention không cần thiết.
 
-## Acceptance criteria
+## Tiêu chí chấp nhận
 
 - Actor fence và quota reads chạy tuần tự trên cùng transaction session.
 - Evidence chọn tối đa 6 blocks và tối đa 2 articles cho mỗi source.
@@ -59,9 +59,9 @@ này làm thay đổi timestamp vận hành và mở rộng contention không c�
 - Q&A cold start kiểm tra exact live validator trên `articles` và `sources` sau
   khi schema attestation hợp lệ.
 
-## TDD matrix
+## Ma trận TDD
 
-| Guarantee | Test | Result |
+| Bảo đảm | Test | Kết quả |
 | --- | --- | --- |
 | Transaction session không bị dùng đồng thời | `test/unit/chat/transaction-session-serialization.test.js` | PASS |
 | Generation/support giữ dưới budget và support chỉ nhận cited blocks | `test/unit/qa/evidence-budget-and-fence.test.js` | PASS |
@@ -73,7 +73,7 @@ này làm thay đổi timestamp vận hành và mở rộng contention không c�
 | Half-open stale probe hết hạn và circuit có thể recover | provider failure-domain persistence tests | PASS |
 | Cold start fail closed nếu live article/source validator mất fence | Q&A bootstrap/readiness tests | PASS |
 
-## RED checkpoint
+## Checkpoint RED
 
 Orchestrator ghi nhận RED trước GREEN trong cùng scope:
 
@@ -89,7 +89,7 @@ Orchestrator ghi nhận RED trước GREEN trong cùng scope:
 Đây là bằng chứng RED của worktree trước implementation. Không chạy lại RED sau
 khi sửa.
 
-## GREEN verification
+## Kiểm chứng GREEN
 
 Command đã chạy:
 
@@ -97,7 +97,7 @@ Command đã chạy:
 npm test -- --run test/unit/chat/transaction-session-serialization.test.js test/unit/qa/evidence-budget-and-fence.test.js test/unit/qa/infrastructure-error-mapping.test.js test/unit/qa/qna-fence-regressions.test.js test/unit/migrations/qa-evidence-fence.test.js
 ```
 
-Result: PASS — 5 test files, 22 tests.
+Kết quả: PASS — 5 test files, 22 tests.
 
 Broad Q&A/fence verification hiện tại:
 
@@ -106,7 +106,7 @@ $qaTests = rg --files test | Where-Object { $_ -match '(qa|chat|provider-router|
 npx vitest run $qaTests
 ```
 
-Result: PASS — 28 test files passed, 2 test files skipped; 236 tests passed,
+Kết quả: PASS — 28 test files passed, 2 test files skipped; 236 tests passed,
 3 tests skipped. Các test Atlas bị skip vì process không có
 `MONGODB_TEST_URI`.
 
@@ -116,7 +116,7 @@ Security remediation verification:
 npm test -- --run test/unit/ai/provider-adapters.test.js test/unit/indexing/provider-routing-persistence.test.js
 ```
 
-Result: PASS — 2 test files, 37 tests. Bộ test chứng minh support system
+Kết quả: PASS — 2 test files, 37 tests. Bộ test chứng minh support system
 instruction coi user JSON là untrusted và downgrade guard chặn `sources` cũ.
 Provider failure-domain persistence regressions trong broad run chứng minh stale
 half-open probe hết hạn và probe mới có thể claim sau cooldown.
@@ -130,7 +130,7 @@ npm run eval:citations
 npm run smoke:deepseek:v4-flash -- full
 ```
 
-Result: PASS — retrieval `6/6`, groundedness `31/31`, citations `31/31`.
+Kết quả: PASS — retrieval `6/6`, groundedness `31/31`, citations `31/31`.
 DeepSeek full smoke PASS với 3 outbound operations cho summary, answer và
 support. Smoke dùng input tổng hợp; command không in credential.
 
@@ -142,7 +142,7 @@ npm run db:migrate -- --to qa-evidence-fence
 npm run db:verify -- qa-evidence-fence --require-role
 ```
 
-Result: PASS — dry-run và migration đều báo 2 operations; verification trả
+Kết quả: PASS — dry-run và migration đều báo 2 operations; verification trả
 `verified=true` và role gate pass.
 
 Coverage lõi Q&A/provider:
@@ -151,7 +151,7 @@ Coverage lõi Q&A/provider:
 npx vitest run test/unit/qa test/unit/ai/provider-admission-router-boundary.test.js test/unit/ai/provider-router.test.js test/integration/qa-http.test.js --coverage --coverage.include=server/application/qa/** --coverage.include=server/domain/qa/** --coverage.include=server/ai/provider-admission.js --coverage.include=server/ai/provider-router.js
 ```
 
-Result: PASS — statements `85.39%`, branches `80.14%`, functions `91.91%`,
+Kết quả: PASS — statements `85.39%`, branches `80.14%`, functions `91.91%`,
 lines `92.43%`.
 
 Coverage mở rộng gồm toàn bộ Mongo repository liên quan chưa đạt global
@@ -165,13 +165,13 @@ npm run lint
 npm run build
 ```
 
-Result: PASS.
+Kết quả: PASS.
 
 ```text
 git diff --check
 ```
 
-Result: PASS. Git chỉ in cảnh báo line-ending cho các file JavaScript đang được
+Kết quả: PASS. Git chỉ in cảnh báo line-ending cho các file JavaScript đang được
 agent khác sửa; không có whitespace error.
 
 ## Runtime và migration gate

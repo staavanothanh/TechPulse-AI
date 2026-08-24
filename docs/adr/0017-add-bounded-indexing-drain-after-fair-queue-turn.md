@@ -1,62 +1,59 @@
-# ADR-0017: Add a bounded indexing drain after the fair queue turn
+# ADR-0017: Thêm drain indexing có giới hạn sau lượt queue công bằng
 
-- Status: accepted
-- Date: 2026-08-23
-- Extends: ADR-0011
+- **Trạng thái**: accepted
+- **Ngày**: 2026-08-23
+- **Mở rộng**: ADR-0011
 
-## Context
+## Bối cảnh
 
-ADR-0011 gives every registered durable queue one reserved turn, then spills
-the remaining capacity to the oldest due queue. The production runner was
-configured for three total attempts, which is enough for queue fairness but
-not for indexing throughput: one ingestion batch can create a summary and an
-embedding job for every published article.
+ADR-0011 cấp cho mỗi durable queue đã đăng ký một lượt được giữ chỗ, sau đó
+chuyển phần capacity còn lại cho queue đến hạn lâu nhất. Production runner
+được cấu hình ba attempt tổng cộng; mức này đủ cho tính công bằng của queue
+nhưng không đủ cho throughput indexing: một ingestion batch có thể tạo một job
+summary và một job embedding cho mỗi bài viết đã publish.
 
-Vercel cron is the only automatic worker trigger in the MVP deployment and is
-scheduled daily. Leaving indexing on the three-attempt runner makes the
-backlog grow even when provider capacity is available.
+Vercel cron là worker trigger tự động duy nhất trong deployment MVP và được
+lập lịch hằng ngày. Giữ indexing trên runner ba attempt khiến backlog tăng
+ngay cả khi provider còn capacity.
 
-## Decision
+## Quyết định
 
-Keep the reserved fair turn from ADR-0011. After that turn:
+Giữ lượt công bằng được dành riêng từ ADR-0011. Sau lượt đó:
 
-- the explicit admin due-work operation may run a server-owned indexing drain
-  with a 24-attempt, 45-second start budget;
-- the daily cron may run a server-owned indexing drain with a 200-attempt,
-  240-second start budget;
-- summary, embedding, and visibility work have independent concurrency caps;
-- two jobs for the same article are never executed concurrently;
-- claim attempts, including lease conflicts, consume the invocation cap;
-- no new work starts after the deadline guard, and all started work settles
-  before the invocation returns;
-- create and retry requests keep the short fair auto-kick and do not inherit
-  the longer admin drain;
-- HTTP callers cannot set queue selection, budgets, claim caps, or concurrency.
+- operation due-work rõ ràng của admin có thể chạy server-owned indexing drain
+  với ngân sách bắt đầu 24 attempt trong 45 giây;
+- cron hằng ngày có thể chạy server-owned indexing drain với ngân sách bắt đầu
+  200 attempt trong 240 giây;
+- công việc summary, embedding và visibility có concurrency cap độc lập;
+- không bao giờ chạy đồng thời hai job cho cùng một article;
+- claim attempt, kể cả lease conflict, đều tiêu thụ invocation cap;
+- sau deadline guard không bắt đầu work mới, và mọi work đã bắt đầu đều settle
+  trước khi invocation trả về;
+- request create và retry giữ short fair auto-kick, không kế thừa admin drain dài hơn;
+- HTTP caller không thể đặt queue selection, budget, claim cap hoặc concurrency.
 
-Provider admission denial before an outbound attempt is deferred with a
-bounded retry delay. Configuration, privacy, evidence, and post-outbound
-failures remain terminal under the existing recovery policy.
+Provider admission denial trước outbound attempt được defer với retry delay có
+giới hạn. Configuration, privacy, evidence và failure sau outbound vẫn là
+terminal theo recovery policy hiện tại.
 
-## Consequences
+## Hệ quả
 
-- Indexing can use the available serverless invocation without starving the
-  account-deletion and ingestion reserved turns.
-- Admin can make bounded manual progress without waiting for the next daily
-  cron.
-- The due-work response and OpenAPI contract remain unchanged; drain counters
-  are merged into the existing indexing queue counters.
-- Existing due indexes remain valid for the initial patch, although task and
-  article exclusions are post-filters. A new migration is required if explain
-  evidence later shows unacceptable scans; committed migrations are not
-  modified.
-- The Vercel API function receives a five-minute execution ceiling, while the
-  application budget remains lower to retain shutdown margin.
+- Indexing có thể dùng serverless invocation khả dụng mà không làm thiếu lượt
+  dành cho account-deletion và ingestion.
+- Admin có thể tạo tiến triển thủ công có giới hạn mà không phải chờ cron hằng ngày tiếp theo.
+- Due-work response và OpenAPI contract giữ nguyên; drain counter được gộp vào
+  indexing queue counter hiện có.
+- Due index hiện tại vẫn hợp lệ cho patch ban đầu, dù task và article exclusion
+  là post-filter. Nếu explain evidence sau này cho thấy scan không chấp nhận được,
+  cần migration mới; không sửa migration đã commit.
+- Vercel API function có execution ceiling năm phút, còn application budget thấp
+  hơn để giữ margin khi shutdown.
 
-## Rejected alternatives
+## Phương án không chọn
 
-- Increasing the shared coordinator from three attempts without concurrency:
-  provider calls would remain sequential and could overrun the invocation.
-- Running an unbounded `Promise.all`: this could exceed provider admission,
-  duplicate article work, and return before all lease-owning tasks settle.
-- Using the long drain for every create/retry request: unrelated backlog would
-  add unacceptable synchronous latency to admin mutations.
+- Tăng shared coordinator từ ba attempt mà không có concurrency: provider call
+  vẫn tuần tự và có thể vượt quá invocation.
+- Chạy `Promise.all` không giới hạn: có thể vượt provider admission, trùng article
+  work và trả về trước khi mọi task đang sở hữu lease settle.
+- Dùng drain dài cho mọi create/retry request: backlog không liên quan sẽ thêm
+  synchronous latency không chấp nhận được vào admin mutation.

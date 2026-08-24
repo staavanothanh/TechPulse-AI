@@ -193,6 +193,11 @@ async function assertResponse(response, operation) {
   throw new Error(`Vercel ${operation} failed${status}`)
 }
 
+async function updateLocalAttestation({ commit, value, cwd = process.cwd() } = {}) {
+  const { runLocalAttestation } = await import('./update-local-attestation.js')
+  return runLocalAttestation({ commit, cwd, generatedRegistry: { value } })
+}
+
 export async function resolveVercelProject({
   environment = process.env,
   cwd = process.cwd(),
@@ -271,6 +276,7 @@ export async function runPrePushAttestation({
   scopes = ATTESTATION_SCOPES,
   runVerifier = runDbVerify,
   updateVercel = updateVercelEnvironmentVariable,
+  updateLocal = updateLocalAttestation,
 } = {}) {
   const push = parsePrePushInput(input)
   if (!push) return Object.freeze({ skipped: true })
@@ -289,6 +295,10 @@ export async function runPrePushAttestation({
     value: generated.value,
     commit: push.commit,
     branch: push.branch,
+  })
+  await updateLocal({
+    commit: push.commit,
+    value: generated.value,
   })
   return Object.freeze({
     branch: push.branch,

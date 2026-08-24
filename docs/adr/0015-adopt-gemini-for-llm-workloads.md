@@ -1,52 +1,52 @@
-# ADR-0015: Chuyen cac LLM workload sang Gemini
+# ADR-0015: Chuyển các workload LLM sang Gemini
 
-**Ngay**: 2026-08-21
-**Trang thai**: accepted
-**Nguoi quyet dinh**: Project owner
-**Thay doi pham vi**: `summary`, `qa-generation`, `qa-support`; embedding khong thay doi
+**Ngày**: 2026-08-21
+**Trạng thái**: accepted
+**Người quyết định**: Project owner
+**Thay đổi phạm vi**: `summary`, `qa-generation`, `qa-support`; embedding không thay đổi
 
-## Boi canh
+## Bối cảnh
 
-Deployment baseline cu dung OpenCode Zen/DeepSeek cho LLM va OpenRouter/BGE-M3 cho embedding. Provider routing da duoc tach khoi business flow trong ADR-0013, nhung graph hien tai van tro cac LLM workload ve profile OpenCode.
+Baseline triển khai cũ dùng OpenCode Zen/DeepSeek cho LLM và OpenRouter/BGE-M3 cho embedding. Provider routing đã được tách khỏi business flow trong ADR-0013, nhưng graph hiện tại vẫn trỏ các workload LLM về profile OpenCode.
 
-Project owner muon dung model Gemini voi API key tu Google AI Studio cho summary va toan bo Q&A, dong thoi giu vector space BGE-M3 hien tai de tranh full re-index embedding.
+Project owner muốn dùng model Gemini với API key từ Google AI Studio cho summary và toàn bộ Q&A, đồng thời giữ vector space BGE-M3 hiện tại để tránh full re-index embedding.
 
-## Quyet dinh
+## Quyết định
 
-- Them trusted endpoint profile server-owned cho Gemini OpenAI-compatible endpoint.
-- Tai su dung adapter protocol `openai-compatible` neu contract test xac nhan auth, payload va structured output tuong thich; neu khong, them adapter Gemini rieng thay vi them nhanh vendor vao adapter chung.
-- `summary`, `qa-generation` va `qa-support` deu tro ve provider Gemini trong provider graph.
-- `gemini-2.5-flash` la model chinh cho ca summary va hai workload Q&A; summary fallback dung `gemini-2.5-flash-lite` trong cung Gemini failure domain. Khong dung OpenRouter embedding credential lam LLM fallback.
-- Q&A chi duoc bat khi Gemini project co evidence hien hanh cho capability `zdr-verified`; quota Google Pro khong tu dong thay the evidence nay.
-- Embedding van dung OpenRouter `baai/bge-m3`, dimensions 1024, version 1 va compatibility identity `bge-m3-v1-1024`.
-- Model, credential va route evidence van do server/operator quan ly trong env graph; khong expose cho client/admin va khong ghi secret vao log/DB.
+- Thêm trusted endpoint profile do server sở hữu cho Gemini OpenAI-compatible endpoint.
+- Tái sử dụng adapter protocol `openai-compatible` nếu contract test xác nhận auth, payload và structured output tương thích; nếu không, thêm adapter Gemini riêng thay vì thêm nhanh vendor vào adapter chung.
+- `summary`, `qa-generation` và `qa-support` đều trỏ về provider Gemini trong provider graph.
+- `gemini-2.5-flash` là model chính cho cả summary và hai workload Q&A; summary fallback dùng `gemini-2.5-flash-lite` trong cùng Gemini failure domain. Không dùng OpenRouter embedding credential làm LLM fallback.
+- Q&A chỉ được bật khi Gemini project có evidence hiện hành cho capability `zdr-verified`; quota Google Pro không tự động thay thế evidence này.
+- Embedding vẫn dùng OpenRouter `baai/bge-m3`, dimensions 1024, version 1 và compatibility identity `bge-m3-v1-1024`.
+- Model, credential và route evidence vẫn do server/operator quản lý trong env graph; không expose cho client/admin và không ghi secret vào log/DB.
 
-## Hau qua
+## Hệ quả
 
-### Tich cuc
+### Tích cực
 
-- Ba LLM workload dung chung provider Gemini va mot credential admission domain duoc quan ly tap trung.
-- Business service, router, API contract va article schema khong phu thuoc vendor.
-- Embedding hien tai khong bi invalid vector space; khong can re-embed toan bo corpus.
+- Ba workload LLM dùng chung provider Gemini và một credential admission domain được quản lý tập trung.
+- Business service, router, API contract và article schema không phụ thuộc vendor.
+- Embedding hiện tại không bị invalid vector space; không cần re-embed toàn bộ corpus.
 
-### Tieu cuc va gate
+### Tiêu cực và gate
 
-- Google AI Studio/OpenAI compatibility endpoint van la beta; phai co contract test cho response format, parser va error taxonomy.
-- Q&A co the bi disable neu project khong co ZDR evidence phu hop; khong duoc ha capability xuong `nonconfidential` de lam cho chay.
-- Neu can provider-level fallback, phai co Gemini project/credential doc lap voi privacy evidence tuong duong. Khi chua co, workload phai tra unavailable/refused an toan.
-- Summary artifact cu can duoc regenerate co kiem soat; embedding artifact cu giu nguyen.
+- Google AI Studio/OpenAI compatibility endpoint vẫn là beta; phải có contract test cho response format, parser và error taxonomy.
+- Q&A có thể bị disable nếu project không có ZDR evidence phù hợp; không được hạ capability xuống `nonconfidential` để làm cho chạy.
+- Nếu cần provider-level fallback, phải có Gemini project/credential độc lập với privacy evidence tương đương. Khi chưa có, workload phải trả unavailable/refused an toàn.
+- Summary artifact cũ cần được regenerate có kiểm soát; embedding artifact cũ giữ nguyên.
 
-## Phuong an khong chon
+## Phương án không chọn
 
-1. Giu OpenRouter lam LLM fallback: khong dap ung yeu cau toan bo LLM workload dung Gemini va co the vi pham capability Q&A.
-2. Goi Gemini SDK truc tiep trong indexing/Q&A service: lam payload/error vendor lan vao business flow va vi pham ADR-0013.
-3. Doi embedding sang Gemini: tao vector space moi, bat buoc tang version va full re-index, khong thuoc pham vi migration nay.
+1. Giữ OpenRouter làm LLM fallback: không đáp ứng yêu cầu toàn bộ workload LLM dùng Gemini và có thể vi phạm capability Q&A.
+2. Gọi Gemini SDK trực tiếp trong indexing/Q&A service: làm payload/error vendor lan vào business flow và vi phạm ADR-0013.
+3. Đổi embedding sang Gemini: tạo vector space mới, bắt buộc tăng version và full re-index, không thuộc phạm vi migration này.
 
 ## Merge gate
 
-- Gemini adapter/profile unit tests pass, khong lo secret/raw provider payload.
-- Provider graph validation pass cho ba LLM workload va OpenRouter embedding.
-- Real smoke pass cho summary, answer va support verifier bang input synthetic an toan.
-- Q&A route chi pass khi co ZDR evidence; neu thieu thi fail closed.
-- Article summary regeneration ghi `summaryModel` Gemini va `summaryStatus=ready`; embedding model/version/compatibility khong doi.
-- Integration, security, E2E, lint, build va docs evidence pass.
+- Gemini adapter/profile unit tests pass, không lộ secret/raw provider payload.
+- Provider graph validation pass cho ba workload LLM và OpenRouter embedding.
+- Real smoke pass cho summary, answer và support verifier bằng input synthetic an toàn.
+- Q&A route chỉ pass khi có ZDR evidence; nếu thiếu thì fail closed.
+- Article summary regeneration ghi `summaryModel` Gemini và `summaryStatus=ready`; embedding model/version/compatibility không đổi.
+- Integration, security, E2E, lint, build và docs evidence pass.

@@ -108,6 +108,7 @@ describe('pre-push release attestation', () => {
   it('runs scopes sequentially, then updates only the selected Vercel environment', async () => {
     const calls = []
     const updateVercel = vi.fn(async (input) => calls.push(input))
+    const updateLocal = vi.fn(async (input) => calls.push({ local: true, ...input }))
     const runVerifier = vi.fn(async ({ scope }) => verifierResult(scope))
     const result = await runPrePushAttestation({
       input: hookInput(),
@@ -115,12 +116,25 @@ describe('pre-push release attestation', () => {
       scopes: ['auth-core', 'sources'],
       runVerifier,
       updateVercel,
+      updateLocal,
     })
     expect(runVerifier.mock.calls.map(([input]) => input.scope)).toEqual(['auth-core', 'sources'])
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
     expect(calls[0].target).toBe('production')
     expect(calls[0].value).toContain('"auth-core"')
+    expect(calls[1]).toMatchObject({ local: true, commit: COMMIT, value: calls[0].value })
     expect(result).toMatchObject({ branch: 'main', commit: COMMIT, target: 'production' })
+  })
+
+  it('blocks the push when local attestation cannot be written', async () => {
+    await expect(runPrePushAttestation({
+      input: hookInput(),
+      environment: { PREPUSH_VERCEL_UPDATE: 'true' },
+      scopes: ['auth-core'],
+      runVerifier: vi.fn(async ({ scope }) => verifierResult(scope)),
+      updateVercel: vi.fn(async () => undefined),
+      updateLocal: vi.fn(async () => { throw new Error('local attestation write failed') }),
+    })).rejects.toThrow(/local attestation write failed/i)
   })
 
   it('fails closed when Vercel update is disabled or fails', async () => {

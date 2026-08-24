@@ -1,44 +1,58 @@
-# Post-MVP backup/restore runbook
+# Runbook backup/restore hậu MVP
 
-Status: post-MVP planning and local preflight only. Backup/restore is not part of the MVP release gate. No Atlas dump, governance sidecar, restore rehearsal, reconciliation, key rotation or credential revocation has been performed from this repository.
+Trạng thái: chỉ lập kế hoạch hậu MVP và preflight local. Backup/restore không thuộc
+MVP release gate. Repository này chưa thực hiện Atlas dump, governance sidecar,
+restore rehearsal, reconciliation, key rotation hoặc credential revocation.
 
-This runbook defines the later recovery track. It does not authorize a production restore and does not make a restore target safe to serve. The MVP keeps the live `techpulse_governance` database and runtime signed governance mutations; it does not promise backup recoverability or restore serving evidence.
+Runbook định nghĩa recovery track về sau. Nó không cấp quyền production restore và
+không làm restore target an toàn để phục vụ traffic. MVP giữ database
+`techpulse_governance` live cùng signed governance mutation runtime; MVP không cam
+kết backup recoverability hoặc restore serving evidence.
 
-## Safety boundary
+## Ranh giới an toàn
 
-- Back up `techpulse_app` with a dedicated read-only Atlas credential.
-- Export `techpulse_governance` as a separate read-only signed sidecar.
-- Store both artifacts in owner-only encrypted private storage outside the repository.
-- Destroy both artifacts no later than seven days after creation and record the destruction evidence.
-- Restore the app dump only to a new `techpulse_app_restore_*` database.
-- Keep the restore target isolated and non-serving.
-- Never overwrite live `techpulse_governance` during an app-only rehearsal.
-- Never put a Mongo URI, password, token, HMAC secret, private key or key material in the inventory.
+- Backup `techpulse_app` bằng Atlas credential read-only riêng.
+- Export `techpulse_governance` thành signed sidecar read-only riêng.
+- Lưu cả hai artifact trong private encrypted storage chỉ owner truy cập, bên ngoài repository.
+- Hủy cả hai artifact không muộn hơn bảy ngày sau khi tạo và ghi lại destruction evidence.
+- Chỉ restore app dump vào database mới `techpulse_app_restore_*`.
+- Giữ restore target isolated và không serving.
+- Không bao giờ overwrite `techpulse_governance` live trong app-only rehearsal.
+- Không bao giờ đặt Mongo URI, password, token, HMAC secret, private key hoặc key material trong inventory.
 
-The local preflight also rejects common secret field names such as `apiKey`, `mongoUri`, `accessToken`, `hmacKey` and `credentials`. It rejects Mongo URIs, HTTP URLs with user information, bearer/API tokens, JWTs and long opaque high-entropy values even when they appear under an unrelated field name.
+Local preflight cũng từ chối các secret field name phổ biến như `apiKey`, `mongoUri`,
+`accessToken`, `hmacKey` và `credentials`. Nó từ chối Mongo URI, HTTP URL có user
+information, bearer/API token, JWT và value opaque entropy cao dù value nằm dưới field
+name không liên quan.
 
-The serving gate stays closed when governance state is missing, unavailable, stale or has an invalid signature/chain.
+Serving gate vẫn đóng khi governance state thiếu, unavailable, stale hoặc có
+signature/chain không hợp lệ.
 
-## Roles and external authority
+## Role và authority bên ngoài
 
-| Action | Required authority | Repository status |
+| Action | Authority bắt buộc | Trạng thái repository |
 | --- | --- | --- |
-| Create the app dump | Atlas owner-created read-only backup user and MongoDB Database Tools | Pending external action |
-| Export and sign the governance sidecar | Atlas read-only access plus the owner-only offline checkpoint HMAC key | Pending; signer/exporter is not implemented |
-| Restore to an isolated database | Atlas owner/operator and a confirmed new target database | Pending external action |
-| Verify checkpoint, manifest and suppression chains | Offline verification key inventory plus a verifier | Pending; integrity verifier is not implemented |
-| Reconcile restored privacy/governance state | Restore-only mutation credential and approved runner | Pending; reconciliation runner is not implemented |
-| Rotate secrets and revoke stale credentials | Atlas/Vercel project owner | Pending external action |
-| Open the serving gate | Project owner after all zero-match and continuity evidence passes | Pending external approval |
-| Destroy backup artifacts | Storage owner | Pending external action |
+| Tạo app dump | Backup user read-only do Atlas owner tạo và MongoDB Database Tools | Chờ external action |
+| Export và sign governance sidecar | Atlas read-only access cùng owner-only offline checkpoint HMAC key | Chờ; signer/exporter chưa implement |
+| Restore vào database isolated | Atlas owner/operator và target mới đã xác nhận | Chờ external action |
+| Verify checkpoint, manifest và suppression chain | Offline verification key inventory cùng verifier | Chờ; integrity verifier chưa implement |
+| Reconcile privacy/governance state đã restore | Restore-only mutation credential và runner được phê duyệt | Chờ; reconciliation runner chưa implement |
+| Rotate secret và revoke credential cũ | Atlas/Vercel project owner | Chờ external action |
+| Mở serving gate | Project owner sau khi toàn bộ zero-match và continuity evidence pass | Chờ owner approval |
+| Hủy backup artifact | Storage owner | Chờ external action |
 
-Runtime and maintenance credentials are not substitutes for these authorities. `MONGODB_MAINTENANCE_URI_ENV` only owns the fixed audit IP-HMAC cleanup task. Runtime credentials must not perform owner-only backup, restore or checkpoint operations.
+Runtime và maintenance credential không thay thế các authority này.
+`MONGODB_MAINTENANCE_URI_ENV` chỉ sở hữu audit IP-HMAC cleanup task cố định. Runtime
+credential không được thực hiện backup, restore hoặc checkpoint operation chỉ dành cho owner.
 
-## 1. Prepare a local restore plan
+## 1. Chuẩn bị restore plan local
 
-Create the plan in private temporary storage outside the repository. Use opaque references, not credentials or local secret paths.
+Tạo plan trong private temporary storage bên ngoài repository. Dùng opaque reference,
+không dùng credential hoặc local secret path.
 
-Each storage reference must use the exact grammar `external-private:<backupId>/app` or `external-private:<backupId>/governance`. The preflight rejects filesystem paths, HTTP URLs, traversal segments, extra path segments and references bound to another backup ID.
+Mỗi storage reference phải đúng grammar `external-private:<backupId>/app` hoặc
+`external-private:<backupId>/governance`. Preflight từ chối filesystem path, HTTP URL,
+traversal segment, path dư và reference bind với backup ID khác.
 
 ```json
 {
@@ -74,79 +88,104 @@ Each storage reference must use the exact grammar `external-private:<backupId>/a
 }
 ```
 
-Run the non-network preflight:
+Chạy preflight không network:
 
 ```powershell
 node scripts/verify-restore-plan.js D:\private\restore-plan.json
 ```
 
-`planValid: true` proves only the local inventory shape and safety flags. The output always keeps `restoreRehearsalVerified: false` and `serveGate: "closed"` because the script does not contact Atlas or verify an offline signature.
+`planValid: true` chỉ chứng minh inventory shape và safety flag local. Output luôn
+giữ `restoreRehearsalVerified: false` và `serveGate: "closed"` vì script không gọi
+Atlas hoặc verify offline signature.
 
-## 2. Create the external inventory
+## 2. Tạo inventory bên ngoài
 
-The project owner must complete these steps outside the application runtime:
+Project owner phải hoàn tất các bước sau bên ngoài application runtime:
 
-1. Create a dedicated read-only Atlas backup identity scoped to `techpulse_app`.
-2. Record the Atlas project/cluster, MongoDB Database Tools version, backup time and access owner without recording the URI or password.
-3. Create a manual `mongodump` of `techpulse_app` in owner-only encrypted storage.
-4. Compute the encrypted artifact SHA-256 digest and record it in the private inventory.
-5. Export `governanceSuppressions`, `governanceCheckpoints` and `auditRetentionManifests` read-only.
-6. Bind the sidecar inventory to the current checkpoint and offline signing key ID, then sign it with the owner-only offline key.
-7. Verify the signature with the approved verify-only key before restore.
+1. Tạo Atlas backup identity read-only riêng, chỉ scope vào `techpulse_app`.
+2. Ghi Atlas project/cluster, MongoDB Database Tools version, thời điểm backup và
+   access owner nhưng không ghi URI hoặc password.
+3. Tạo `mongodump` thủ công của `techpulse_app` trong owner-only encrypted storage.
+4. Tính digest SHA-256 của artifact đã mã hóa và ghi vào private inventory.
+5. Export read-only `governanceSuppressions`, `governanceCheckpoints` và
+   `auditRetentionManifests`.
+6. Bind sidecar inventory với checkpoint hiện tại và offline signing key ID, sau đó
+   sign bằng owner-only offline key.
+7. Verify signature bằng verify-only key đã được phê duyệt trước restore.
 
-Step 6 cannot be claimed complete until a reviewed sidecar signer and audit-integrity verifier exist. The current Mongo validators prove document shape, not ordered audit continuity or signature authenticity.
+Không được claim bước 6 hoàn tất cho tới khi có sidecar signer và audit-integrity
+verifier đã review. Mongo validator hiện chỉ chứng minh document shape, không chứng
+minh audit continuity theo thứ tự hoặc signature authenticity.
 
-## 3. Restore to an isolated target
+## 3. Restore vào target isolated
 
-Before any restore command:
+Trước mọi restore command:
 
-1. Resolve the exact target database name.
-2. Confirm it matches `techpulse_app_restore_*`.
-3. Confirm the target does not exist or contains no data owned by another rehearsal.
-4. Confirm no Vercel or local serving environment references the target.
-5. Confirm the operation will not target `techpulse_app` or `techpulse_governance`.
+1. Resolve chính xác target database name.
+2. Xác nhận tên khớp `techpulse_app_restore_*`.
+3. Xác nhận target chưa tồn tại hoặc không chứa data thuộc rehearsal khác.
+4. Xác nhận không có Vercel hoặc local serving environment nào tham chiếu target.
+5. Xác nhận operation không target `techpulse_app` hoặc `techpulse_governance`.
 
-Restore the app archive into the isolated target with owner-approved MongoDB Database Tools. Do not use a broad namespace mapping or destructive option until the resolved target has been checked. For whole-Atlas loss simulation, restore the governance sidecar first to the approved governance recovery target, then verify its signature and chain before app reconciliation.
+Restore app archive vào target isolated bằng MongoDB Database Tools đã được owner
+phê duyệt. Không dùng broad namespace mapping hoặc destructive option cho tới khi
+đã kiểm tra target được resolve. Trong whole-Atlas loss simulation, restore
+governance sidecar trước vào governance recovery target được phê duyệt, sau đó verify
+signature và chain trước app reconciliation.
 
-No restore command was executed while preparing this runbook.
+Không có restore command nào được thực thi khi chuẩn bị runbook này.
 
-## 4. Required reconciliation before serving
+## 4. Reconciliation bắt buộc trước khi serving
 
-An approved restore runner must complete all items below against the isolated target:
+Restore runner được phê duyệt phải hoàn tất toàn bộ mục dưới đây trên target isolated:
 
-1. Delete all restored `sessions`.
-2. Delete restored `rateLimitBuckets`, including quota state.
-3. Delete restored `answerAttempts`.
-4. Clear active reservations in `providerAdmissionStates`.
-5. Reconcile `providerFailureDomainStates` against the current provider configuration version; do not trust old circuit state.
-6. Remove audit IP-HMAC fields when key continuity cannot be proven.
-7. Replay every current account-deletion suppression. Remove restored saved articles and chat data, and re-apply the closed user tombstone.
-8. Replay every current takedown suppression. Remove or hide restored artifacts and redact available citations.
-9. Verify target-specific zero matches for deleted-user PII, sessions, answer attempts, user quota data and available suppressed citations.
-10. Verify that the signed checkpoint covers the latest terminal governance event and that every retention gap has a valid signed manifest.
+1. Xóa toàn bộ `sessions` đã restore.
+2. Xóa `rateLimitBuckets` đã restore, gồm quota state.
+3. Xóa `answerAttempts` đã restore.
+4. Clear active reservation trong `providerAdmissionStates`.
+5. Reconcile `providerFailureDomainStates` với provider configuration version hiện
+   tại; không tin circuit state cũ.
+6. Loại audit IP-HMAC field khi không thể chứng minh key continuity.
+7. Replay mọi account-deletion suppression hiện tại. Xóa saved article và chat data
+   đã restore, rồi apply lại closed user tombstone.
+8. Replay mọi takedown suppression hiện tại. Xóa hoặc hide artifact đã restore và
+   redact citation còn khả dụng.
+9. Verify target-specific zero match cho deleted-user PII, session, answer attempt,
+   user quota data và citation bị suppress còn khả dụng.
+10. Verify signed checkpoint bao phủ governance event terminal mới nhất và mọi
+    retention gap đều có signed manifest hợp lệ.
 
-The repository does not yet contain `scripts/verify-audit-integrity.*` or `scripts/reconcile-restored-governance.*`. Until both tools and their restore tests exist, the post-MVP recovery tasks remain pending. They do not block the MVP release gate.
+Repository hiện chưa có `scripts/verify-audit-integrity.*` hoặc
+`scripts/reconcile-restored-governance.*`. Cho tới khi cả hai tool và restore test
+của chúng tồn tại, post-MVP recovery task vẫn pending. Chúng không block MVP release gate.
 
-## 5. Rotate authority before traffic
+## 5. Rotate authority trước traffic
 
-For a real production recovery, the owner must rotate session, CSRF, quota/IP HMAC, governance signing and runtime Mongo material as required by the approved recovery plan. Revoke stale Mongo credentials before any traffic can reach the target. Rehearse HMAC rotation and retirement against durable `hmacKeyLifecycleSnapshots`; do not remove a predecessor until the 30-day successor and zero-dependent-record gates pass.
+Trong production recovery thực tế, owner phải rotate session, CSRF, quota/IP HMAC,
+governance signing và runtime Mongo material theo recovery plan đã phê duyệt. Revoke
+Mongo credential cũ trước khi traffic có thể tới target. Rehearse HMAC rotation và
+retirement với `hmacKeyLifecycleSnapshots` durable; không remove predecessor cho tới
+khi successor 30 ngày và zero-dependent-record gate pass.
 
-The offline checkpoint key never enters `.env`, Vercel, MongoDB, command output or this inventory. Retiring offline verification keys remain available until all retained checkpoints, manifests and sidecars are expired or re-anchored.
+Offline checkpoint key không bao giờ vào `.env`, Vercel, MongoDB, command output hoặc
+inventory này. Offline verification key đang retiring vẫn phải khả dụng cho tới khi
+mọi checkpoint, manifest và sidecar được giữ lại đã expire hoặc re-anchor.
 
-## 6. Record evidence and destroy artifacts
+## 6. Ghi evidence và hủy artifact
 
-Record these facts in private release evidence:
+Ghi các thông tin sau vào private release evidence:
 
-- backup ID, creation time and destruction deadline;
-- source cluster/database and isolated target database;
+- backup ID, thời điểm tạo và destruction deadline;
+- source cluster/database và isolated target database;
 - Database Tools version;
-- encrypted artifact digests and private storage references;
-- app checkpoint and governance sidecar checkpoint/key IDs;
-- signature verification result;
-- restore start/end time and operator;
-- reconciliation and zero-match command results;
-- secret rotation and stale-credential revocation evidence;
-- owner serving decision;
-- final destruction time and storage-owner confirmation.
+- encrypted artifact digest và private storage reference;
+- app checkpoint và governance sidecar checkpoint/key ID;
+- kết quả signature verification;
+- restore start/end time và operator;
+- kết quả reconciliation và zero-match command;
+- bằng chứng secret rotation và stale-credential revocation;
+- serving decision của owner;
+- thời điểm hủy cuối cùng và xác nhận của storage owner.
 
-Do not attach dumps, sidecars, signatures, secrets or raw customer data to Git, CI logs or issue comments.
+Không đính kèm dump, sidecar, signature, secret hoặc raw customer data vào Git, CI log
+hoặc issue comment.

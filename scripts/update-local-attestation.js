@@ -91,11 +91,12 @@ export async function runLocalAttestation({
   cwd = process.cwd(),
   envPath = join(cwd, '.env'),
   generateRegistry = generateAttestationRegistry,
+  generatedRegistry,
   readFileImpl = readFile,
   writeFileImpl = writeFile,
 } = {}) {
   const normalizedCommit = assertCommit(commit)
-  const generated = await generateRegistry({ commit: normalizedCommit, environment })
+  const generated = generatedRegistry ?? (await generateRegistry({ commit: normalizedCommit, environment }))
   const value = generated?.value
   const source = await readFileImpl(envPath, 'utf8')
   const next = updateDotEnvText(source, { commit: normalizedCommit, value })

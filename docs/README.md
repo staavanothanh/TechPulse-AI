@@ -1,6 +1,6 @@
 # TechPulse AI — Documentation Index
 
-> Trạng thái: Plan-of-Record v1.8 — Steps 1–11 đã implement; ADR-0013 remediation và Step 12 release evidence đang chờ
+> Trạng thái: Plan-of-Record v1.8 — Steps 1–11 đã implement; ADR-0013 remediation đã hoàn tất; Step 12 release evidence đang chờ
 > Cập nhật: 15/08/2026
 > Phạm vi: MVP solo-owner + coding-agent, React (JavaScript/JSX) + Node.js/Express (JavaScript) + MongoDB + AI; bốn tuần là planning horizon
 
@@ -50,7 +50,7 @@ docs/
 ├── adr/
 │   ├── README.md
 │   ├── template.md
-│   └── 0001..0014
+│   └── 0001..0018
 └── plans/
     └── techpulse-ai-mvp.md
 ```
@@ -101,7 +101,7 @@ docs/
 
 ## 6. Trạng thái implementation và bước tiếp theo
 
-Steps 1–11 đã có implementation commits và focused verification. Canonical OpenAPI hiện có 55 operations. Step 12 MVP release evidence gồm contract/integration/E2E/security, Atlas role/capability và deployment evidence; backup/restore không thuộc MVP gate và được theo dõi ở recovery track hậu MVP.
+Steps 1–11 đã có implementation commits và focused verification. Canonical OpenAPI hiện có 56 operations. Step 12 MVP release evidence gồm contract/integration/E2E/security, Atlas role/capability và deployment evidence; backup/restore không thuộc MVP gate và được theo dõi ở recovery track hậu MVP.
 
 ADR-0013 đã được implement trước Step 12 bằng provider graph, protocol adapter, workload router, route/provider-domain circuit và migration `provider-routing-v2`. Provider/model selection không còn nằm trong application/bootstrap routing; deployment phải áp migration v2, cập nhật graph environment và verify runtime role trước khi bật provider workloads. Thay đổi này không đổi HTTP contract và không tạo client/admin model picker.
 

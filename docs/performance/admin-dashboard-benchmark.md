@@ -1,12 +1,17 @@
-# Admin dashboard benchmark
+# Benchmark admin dashboard
 
-Use `scripts/benchmarks/admin-dashboard-benchmark.js` to measure authenticated, read-only admin dashboard reads.
+Dùng `scripts/benchmarks/admin-dashboard-benchmark.js` để đo các lượt đọc chỉ
+đọc, có authentication, của admin dashboard.
 
-The command does not load `.env` files. It requires explicit environment input from the runner. It does not print the target URL, credentials, cookies, request headers, response headers, or response bodies. It only sends one login request and `GET` requests after login. Do not enable mutation E2E flags for this benchmark.
+Command không load file `.env` và yêu cầu runner truyền environment rõ ràng. Nó
+không in target URL, credential, cookie, request header, response header hoặc
+response body. Command chỉ gửi một login request và các request `GET` sau login.
+Không bật mutation E2E flag cho benchmark này.
 
-## Local run
+## Chạy local
 
-Start the local host and provide a dedicated active admin account through the shell or CI secret store. Do not put values in the command history.
+Khởi động local host và cung cấp một admin account đang active dành riêng cho
+benchmark qua shell hoặc CI secret store. Không đặt value trong command history.
 
 ```powershell
 $env:ADMIN_BENCHMARK_ENABLED = 'true'
@@ -18,11 +23,16 @@ $env:ADMIN_BENCHMARK_PASSWORD = '<dedicated-admin-password>'
 node scripts/benchmarks/admin-dashboard-benchmark.js
 ```
 
-The target must be `http://localhost[:port]` for `local`. The command rejects embedded URL credentials and mismatched origins.
+Target phải là `http://localhost[:port]` khi `local`. Command từ chối URL có
+credential nhúng và origin không khớp.
 
-## Preview run
+## Chạy preview
 
-Use only an HTTPS Preview URL and a dedicated test admin. If deployment protection is enabled, pass only provider-issued protection headers through `ADMIN_BENCHMARK_PROTECTION_HEADERS_JSON`. The runner accepts `Authorization`, `X-Vercel-Protection-Bypass`, and `X-Vercel-Set-Bypass-Cookie`; it rejects Cookie, Origin, Host, and unrecognized headers.
+Chỉ dùng HTTPS Preview URL và một admin test riêng. Nếu deployment protection được
+bật, chỉ truyền protection header do provider cấp qua
+`ADMIN_BENCHMARK_PROTECTION_HEADERS_JSON`. Runner chấp nhận `Authorization`,
+`X-Vercel-Protection-Bypass` và `X-Vercel-Set-Bypass-Cookie`; runner từ chối
+`Cookie`, `Origin`, `Host` và header không nằm trong allowlist.
 
 ```text
 ADMIN_BENCHMARK_ENABLED=true
@@ -34,25 +44,33 @@ ADMIN_BENCHMARK_PASSWORD=<dedicated-admin-password>
 ADMIN_BENCHMARK_PROTECTION_HEADERS_JSON=<provider-issued-json>
 ```
 
-## Measurements
+## Phép đo
 
-Each endpoint receives a cold probe and sequential warm requests. The report contains p50/p95, status counts, response byte totals, errors, and timeouts for these authenticated endpoints:
+Mỗi endpoint nhận một cold probe và các warm request tuần tự. Report chứa p50/p95,
+status count, tổng byte response, error và timeout cho các authenticated endpoint:
 
 - Overview: `GET /api/v1/admin/overview`
-- Jobs/Ingestion: `GET /api/v1/admin/ingestion-jobs` and `GET /api/v1/admin/sources`
+- Jobs/Ingestion: `GET /api/v1/admin/ingestion-jobs` và `GET /api/v1/admin/sources`
 - Jobs/Indexing: `GET /api/v1/admin/indexing-jobs`
 - Articles: `GET /api/v1/admin/articles`
 - Audit: `GET /api/v1/admin/audit-logs`
 
-The waterfall represents the expected dashboard reads after user navigation: overview (1 request), Jobs/Ingestion (2 concurrent reads), Jobs/Indexing (1 read after tab switch), Articles (1 read), and Audit (1 read). It measures API behavior. It does not prove browser rendering.
+Waterfall đại diện cho các dashboard read dự kiến sau khi user chuyển trang:
+overview (1 request), Jobs/Ingestion (2 read đồng thời), Jobs/Indexing (1 read sau
+khi đổi tab), Articles (1 read) và Audit (1 read). Nó đo hành vi API, không chứng
+minh browser rendering.
 
-`cold` sends `Cache-Control: no-cache` and `Connection: close`. It is a client-side cold probe. It cannot force or prove a Vercel/serverless cold start.
+`cold` gửi `Cache-Control: no-cache` và `Connection: close`. Đây là cold probe phía
+client, không thể ép hoặc chứng minh cold start của Vercel/serverless.
 
-Tune bounds through `ADMIN_BENCHMARK_ITERATIONS` (1–1000), `ADMIN_BENCHMARK_COLD_ITERATIONS` (1–100), and `ADMIN_BENCHMARK_TIMEOUT_MS` (1–120000).
+Điều chỉnh giới hạn qua `ADMIN_BENCHMARK_ITERATIONS` (1–1000),
+`ADMIN_BENCHMARK_COLD_ITERATIONS` (1–100) và `ADMIN_BENCHMARK_TIMEOUT_MS`
+(1–120000).
 
-## Mongo explain diagnostics
+## Chẩn đoán Mongo explain
 
-Add `--with-mongo-explain` only where the runner already provides Mongo access through the normal indirection:
+Chỉ thêm `--with-mongo-explain` khi runner đã có quyền Mongo thông qua indirection
+chuẩn:
 
 ```text
 MONGODB_URI_ENV=ADMIN_BENCHMARK_MONGO_URI
@@ -60,11 +78,20 @@ ADMIN_BENCHMARK_MONGO_URI=<runtime-read-uri>
 MONGODB_DATABASE=<database-name>
 ```
 
-The probe opens a Mongo client, runs only `find({}).sort(...).limit(21).explain('executionStats')` for articles, ingestion jobs, indexing jobs, sources, and audit logs, then closes the client. It reports stage names and aggregate execution statistics without URI, database name, query values, or document content. `COLLSCAN` or `SORT` marks a plan `requiresAttention`; it does not silently pass. If the runtime credential does not permit `explain`, the output is `unavailable` and the rest of the HTTP report remains valid.
+Probe mở Mongo client, chỉ chạy
+`find({}).sort(...).limit(21).explain('executionStats')` cho articles, ingestion
+jobs, indexing jobs, sources và audit logs, sau đó đóng client. Probe báo stage name
+và execution statistic tổng hợp mà không in URI, database name, query value hoặc
+document content. `COLLSCAN` hoặc `SORT` đánh dấu plan là `requiresAttention`,
+không âm thầm pass. Nếu runtime credential không cho phép `explain`, output là
+`unavailable` và phần HTTP report còn lại vẫn hợp lệ.
 
-## E2E regression gate
+## Gate hồi quy E2E
 
-`test/e2e/admin-dashboard-regression.test.js` uses the existing authenticated local-host client and skips by default. It verifies the authenticated API sequence for admin overview/jobs/articles/audit and contract filters. It does not drive browser UI controls or prove UI polling behavior. Run it only against a prepared local target:
+`test/e2e/admin-dashboard-regression.test.js` dùng authenticated local-host client
+hiện có và mặc định skip. Test xác minh API sequence cho admin overview/jobs/articles/
+audit và contract filter. Test không điều khiển browser UI và không chứng minh UI
+polling. Chỉ chạy khi local target đã được chuẩn bị:
 
 ```text
 ADMIN_E2E_ENABLED=true
@@ -76,4 +103,6 @@ E2E_ADMIN_PASSWORD=<dedicated-admin-password>
 npm test -- --run test/e2e/admin-dashboard-regression.test.js
 ```
 
-The regression has no mutation steps. The active indexing screen has a separate adaptive poll policy. Browser-level validation of controls and polling needs an installed browser test runner and a prepared target.
+Regression không có mutation step. Indexing screen đang active có poll policy thích
+ứng riêng. Kiểm chứng ở cấp browser cho control và polling cần browser test runner
+đã cài cùng một target đã chuẩn bị.

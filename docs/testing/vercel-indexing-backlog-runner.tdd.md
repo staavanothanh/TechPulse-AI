@@ -1,44 +1,41 @@
-# Vercel indexing backlog runner - TDD evidence
+# Bằng chứng TDD: Vercel indexing backlog runner
 
-## Problem
+## Vấn đề
 
-The shared due-work coordinator gives each registered queue one fair turn and is
-configured with only three total job attempts. A single ingestion batch can
-materialize far more summary and embedding jobs than that, so a daily Vercel
-cron invocation cannot drain the indexing backlog.
+Due-work coordinator dùng chung cấp cho mỗi queue đã đăng ký một lượt công bằng
+và chỉ được cấu hình ba job attempt tổng cộng. Một ingestion batch có thể tạo ra
+nhiều summary và embedding job hơn mức đó, nên một lần Vercel cron mỗi ngày không
+thể drain hết indexing backlog.
 
-## Acceptance criteria
+## Tiêu chí chấp nhận
 
-- Keep the existing fair queue turn for account deletion, indexing, and
-  ingestion.
-- After the fair turn, drain additional indexing jobs within server-owned
-  limits; HTTP callers cannot select limits, concurrency, or queues.
-- Never process two indexing jobs for the same article concurrently.
-- Cap concurrent summary and embedding work independently.
-- Stop starting work when the claim cap or execution deadline is reached.
-- A lease conflict for one article must not block unrelated articles.
-- A provider admission denial before any outbound request must defer the same
-  job and restore the article artifact to `pending` rather than terminal
-  `failed`.
-- Preserve the existing due-work response and OpenAPI contract.
-- Keep the production cron schedule daily and set an explicit bounded Vercel
-  function duration.
+- Giữ lượt queue công bằng hiện có cho account deletion, indexing và ingestion.
+- Sau lượt công bằng, drain thêm indexing job trong giới hạn do server sở hữu;
+  HTTP caller không thể chọn limit, concurrency hoặc queue.
+- Không bao giờ xử lý đồng thời hai indexing job cho cùng một article.
+- Giới hạn độc lập concurrency của summary và embedding work.
+- Dừng bắt đầu work khi chạm claim cap hoặc execution deadline.
+- Lease conflict của một article không được chặn các article không liên quan.
+- Provider admission denial trước mọi outbound request phải defer cùng job và
+  đưa artifact của article về `pending` thay vì terminal `failed`.
+- Bảo toàn due-work response và OpenAPI contract hiện có.
+- Giữ production cron schedule hằng ngày và đặt Vercel function duration có giới hạn rõ ràng.
 
-## TDD matrix
+## Ma trận TDD
 
-| Layer | Evidence |
+| Layer | Bằng chứng |
 | --- | --- |
 | Unit | bounded indexing drain, task concurrency, article serialization, deadline, claim cap |
-| Unit | provider pre-outbound denial metadata and safe job defer |
-| Unit | artifact pending reset for zero external attempts |
-| Integration | cron materialization precedes the fair turn and bounded drain |
-| Contract/security | existing admin authorization, CSRF, rate limiting, and response shape remain unchanged |
-| Deployment | daily cron remains registered; API function duration is explicit |
+| Unit | provider pre-outbound denial metadata và safe job defer |
+| Unit | artifact pending reset khi không có external attempt |
+| Integration | cron materialization xảy ra trước fair turn và bounded drain |
+| Contract/security | admin authorization, CSRF, rate limiting và response shape hiện có vẫn không đổi |
+| Deployment | cron hằng ngày vẫn được đăng ký; API function duration được đặt rõ ràng |
 
-## Verification log
+## Nhật ký kiểm chứng
 
-Commands and actual results are recorded here as the RED, GREEN, and review
-checkpoints are executed.
+Các command và kết quả thực tế được ghi lại tại đây khi thực hiện các checkpoint
+RED, GREEN và review.
 
 ### RED
 
@@ -46,17 +43,16 @@ checkpoints are executed.
 npm test -- --run test/unit/jobs/indexing-drain.test.js test/unit/indexing/queue.test.js test/unit/jobs/bootstrap.test.js test/unit/indexing/artifact-processor.test.js test/unit/ai/provider-router.test.js test/vercel/deployment-config.test.js
 ```
 
-Result: expected failure. The new drain module does not exist yet and five
-behavior tests fail for provider metadata, safe defer, artifact pending reset,
-cron composition, and Vercel duration. Existing assertions in the focused set
-remain green (`53 passed`).
+Kết quả: failure được kỳ vọng. Module drain mới chưa tồn tại và năm behavior test
+fail vì provider metadata, safe defer, artifact pending reset, cron composition và
+Vercel duration. Assertion hiện có trong focused set vẫn green (`53 passed`).
 
 ```text
 npm test -- --run test/unit/jobs/service.test.js
 ```
 
-Result: expected failure (`15 passed`, `1 failed`) because create/retry auto-kick
-and explicit admin draining still share one runner.
+Kết quả: failure được kỳ vọng (`15 passed`, `1 failed`) vì create/retry auto-kick
+và explicit admin drain vẫn dùng chung một runner.
 
 ### GREEN
 
@@ -64,21 +60,21 @@ and explicit admin draining still share one runner.
 npm test -- --run test/unit/jobs/indexing-drain.test.js test/unit/indexing/queue.test.js test/unit/jobs/bootstrap.test.js test/unit/jobs/service.test.js test/unit/indexing/artifact-processor.test.js test/unit/ai/provider-router.test.js test/vercel/deployment-config.test.js
 ```
 
-Result: PASS (`7 files`, `80 tests`).
+Kết quả: PASS (`7 files`, `80 tests`).
 
 ```text
 npm test -- --run test/unit/jobs/coordinator.test.js test/unit/indexing/repository.test.js test/unit/indexing/bootstrap.test.js test/unit/indexing/service.test.js test/unit/jobs/service.test.js test/security/jobs-http.test.js test/ui/admin/admin-due-work.test.js
 ```
 
-Result: PASS (`7 files`, `51 tests`). The repository selector regression was
-then added and passed separately (`1 file`, `5 tests`).
+Kết quả: PASS (`7 files`, `51 tests`). Regression của repository selector sau đó
+được thêm và pass riêng (`1 file`, `5 tests`).
 
 ```text
 npm test -- --run test/integration/jobs-leases.mongo.test.js
 ```
 
-Result: Mongo integration suite was discovered but skipped because
-`MONGODB_TEST_URI` was not present in the test process (`14 skipped`).
+Kết quả: Mongo integration suite được phát hiện nhưng skip vì `MONGODB_TEST_URI`
+không có trong test process (`14 skipped`).
 
 ```text
 npm run lint
@@ -86,60 +82,57 @@ npm run build
 git diff --check
 ```
 
-Result: PASS.
+Kết quả: PASS.
 
 ```text
 npm test -- --run --coverage test/unit/jobs/indexing-drain.test.js test/unit/indexing/queue.test.js test/unit/jobs/bootstrap.test.js test/unit/jobs/service.test.js test/unit/indexing/artifact-processor.test.js test/unit/ai/provider-router.test.js test/unit/indexing/repository.test.js test/vercel/deployment-config.test.js
 ```
 
-Result: all focused tests passed (`8 files`, `86 tests`). The command still
-exited non-zero because the repository-wide coverage threshold was evaluated
-against only this focused subset (`34.32%` lines globally). Changed focused
-modules reported, among others, `91.01%` lines for the new drain, `79.68%` for
-the indexing queue, `94.64%` for provider routing, `96.70%` for artifact
-processing, `97.40%` for the jobs service, and `97.05%` for jobs bootstrap.
-The global coverage gate remains for the final verification phase; it is not
-reported as passing here.
+Kết quả: toàn bộ focused test pass (`8 files`, `86 tests`). Command vẫn exit
+non-zero vì repository-wide coverage threshold được tính trên riêng focused subset
+(`34.32%` lines globally). Các module focused đã đổi báo cáo lần lượt, trong đó có
+`91.01%` lines cho drain mới, `79.68%` cho indexing queue, `94.64%` cho provider
+routing, `96.70%` cho artifact processing, `97.40%` cho jobs service và `97.05%`
+cho jobs bootstrap. Global coverage gate vẫn dành cho giai đoạn kiểm chứng cuối; ở
+đây không báo cáo gate là pass.
 
-Final focused GREEN rerun, including HTTP security and admin UI regression:
-`10 files`, `101 tests`, PASS.
+GREEN focused cuối cùng, gồm HTTP security và admin UI regression: PASS (`10 files`,
+`101 tests`).
 
-### Independent review remediation
+### Khắc phục sau review độc lập
 
-Independent code and security review found three concurrency/error-path defects
-and one Atlas query-plan defect. Each was reproduced with a failing regression
-test before implementation:
+Review độc lập về code và security tìm thấy ba defect concurrency/error-path và một
+defect Atlas query plan. Mỗi defect đều được tái hiện bằng regression test fail trước
+implementation:
 
-- a fast wave rejection could become an unhandled rejection before settlement;
-- a claim conflict after lease acquisition could stop the complete drain;
-- an availability query could mask the first infrastructure failure;
-- heartbeat loss did not cancel the provider request;
-- task-aware selectors still forced the task-unaware due indexes;
-- in-flight cancellation could publish output across a check/commit race;
-- final-attempt lease loss could leave an artifact `processing` forever.
+- wave rejection xảy ra sớm có thể trở thành unhandled rejection trước settlement;
+- claim conflict sau lease acquisition có thể dừng toàn bộ drain;
+- availability query có thể che infrastructure failure đầu tiên;
+- heartbeat mất không hủy provider request;
+- task-aware selector vẫn buộc dùng due index không xét task;
+- cancellation đang in-flight có thể publish output qua race giữa check và commit;
+- lease mất ở final attempt có thể để artifact `processing` vĩnh viễn.
 
-The GREEN remediation propagates lease cancellation into provider adapters,
-prevents stale artifact transitions, releases claim-race leases, observes wave
-rejections immediately, preserves the original infrastructure error, and adds
-an idempotent task-aware index migration. Artifact commits now fence the
-cancellation state atomically, and expired-lease recovery repairs the matching
-artifact state.
+GREEN remediation truyền lease cancellation vào provider adapter, ngăn artifact
+transition từ stale worker, release lease khi claim race, quan sát wave rejection
+ngay lập tức, giữ infrastructure error gốc và thêm migration idempotent cho task-aware
+index. Artifact commit hiện fence cancellation state atomically, còn expired-lease
+recovery sửa artifact state tương ứng.
 
 ```text
 npm test -- --run test/unit/jobs/indexing-drain.test.js test/unit/indexing/queue.test.js test/unit/indexing/artifact-processor.test.js test/unit/ai/deepseek-v4-flash-provider.test.js test/unit/indexing/repository.test.js test/migrations/indexing-drain-performance.test.js test/unit/indexing/bootstrap.test.js test/unit/performance/schema-readiness.test.js
 ```
 
-Result: PASS (`8 files`, `81 tests`).
+Kết quả: PASS (`8 files`, `81 tests`).
 
-Final focused regression expansion: PASS (`16 files`, `168 tests`). Security
+Focused regression expansion cuối: PASS (`16 files`, `168 tests`). Security
 regression: PASS (`12 files`, `77 tests`). `contract:validate`, `contract:test`,
-`npm run lint`, `npm run build`, and `git diff --check` all pass.
+`npm run lint`, `npm run build` và `git diff --check` đều pass.
 
 ```text
 npm run db:migrate:dry-run -- --to indexing-drain-performance
 ```
 
-Result: PASS with two non-destructive `createIndex` operations. The migration
-was not applied to the shared Atlas database. The Mongo lease integration suite
-was discovered again but remained skipped because `MONGODB_TEST_URI` was not
-available in the test process (`14 skipped`).
+Kết quả: PASS với hai thao tác `createIndex` không destructive. Migration chưa
+được apply vào shared Atlas database. Mongo lease integration suite được phát hiện
+lại nhưng vẫn skip vì `MONGODB_TEST_URI` chưa có trong test process (`14 skipped`).

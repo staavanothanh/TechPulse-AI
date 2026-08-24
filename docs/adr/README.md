@@ -1,8 +1,8 @@
-# Architecture Decision Records
+# Hồ sơ quyết định kiến trúc
 
 ADR-0001..0009 backfill những quyết định đã được project owner chốt trong [TechPulse-AI.md](../TechPulse-AI.md); ADR mới hơn được ghi khi decision draft được phê duyệt. Mỗi ADR ghi lý do và trade-off; contract triển khai nằm ở [TECHNICAL-DESIGN.md](../TECHNICAL-DESIGN.md), [DATA-MODEL.md](../DATA-MODEL.md) và [contracts/openapi.json](../contracts/openapi.json).
 
-| ADR | Title | Status | Date |
+| ADR | Tiêu đề | Trạng thái | Ngày |
 |---|---|---|---|
 | [0001](0001-deploy-react-and-express-on-vercel.md) | Deploy React and Express together on Vercel | accepted | 2026-08-08 |
 | [0002](0002-use-mongodb-as-system-of-record.md) | Use MongoDB as the MVP system of record | accepted | 2026-08-08 |
@@ -18,10 +18,10 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0012](0012-separate-privacy-cleanup-and-retention-boundaries.md) | Separate privacy cleanup and retention boundaries | accepted | 2026-08-08 |
 | [0013](0013-use-config-driven-provider-routing.md) | Use configuration-driven provider routing and bounded failover | accepted | 2026-08-15 |
 | [0014](0014-use-inline-leases-for-stable-deletion-workflows.md) | Use inline leases for stable account-deletion workflows | accepted | 2026-08-15 |
-| [0015](0015-adopt-gemini-for-llm-workloads.md) | Chuyen summary va Q&A sang Gemini, giu BGE-M3 embedding | superseded by ADR-0016 | 2026-08-21 |
-| [0016](0016-adopt-deepseek-v4-flash-for-llm-workloads.md) | Chuyen summary va Q&A sang DeepSeek V4 Flash, giu BGE-M3 embedding | accepted | 2026-08-23 |
-| [0017](0017-add-bounded-indexing-drain-after-fair-queue-turn.md) | Add a bounded indexing drain after the fair queue turn | accepted | 2026-08-23 |
-| [0018](0018-harden-indexing-drain-ownership-and-query-plans.md) | Harden indexing drain ownership and query plans | accepted | 2026-08-23 |
+| [0015](0015-adopt-gemini-for-llm-workloads.md) | Chuyển summary và Q&A sang Gemini, giữ embedding BGE-M3 | superseded by ADR-0016 | 2026-08-21 |
+| [0016](0016-adopt-deepseek-v4-flash-for-llm-workloads.md) | Chuyển summary và Q&A sang DeepSeek V4 Flash, giữ embedding BGE-M3 | accepted | 2026-08-23 |
+| [0017](0017-add-bounded-indexing-drain-after-fair-queue-turn.md) | Thêm drain indexing có giới hạn sau lượt queue công bằng | accepted | 2026-08-23 |
+| [0018](0018-harden-indexing-drain-ownership-and-query-plans.md) | Gia cố quyền sở hữu drain indexing và query plan | accepted | 2026-08-23 |
 
 ## Lifecycle
 
