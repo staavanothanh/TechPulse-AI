@@ -230,6 +230,16 @@ describe('public feature presentation contract', () => {
     expect(reader).not.toMatch(/tiếp tục như khách|user@techpulse|password123/i)
   })
 
+  it('routes an authenticated reader to the donation view', () => {
+    const html = render(PublicApp, {
+      session: { status: 'ready', user: { id: 'u-1', role: 'user' } },
+      route: 'donate',
+    })
+    expect(html).toContain('Ủng hộ TechPulse-AI')
+    expect(html).toContain('Mã QR VietQR để ủng hộ TechPulse-AI')
+    expect(html).toContain('MB Bank')
+  })
+
   it('renders an allowed lead image in the artifact-compatible media frame', () => {
     const html = render(FeedView, {
       state: 'ready',

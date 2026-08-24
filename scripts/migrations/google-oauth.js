@@ -71,7 +71,9 @@ function migrationOperations() {
 
 async function assertPredecessor(db) {
   if (typeof db.listCollections !== 'function') throw new Error('Google OAuth migration predecessor check is unavailable')
-  const collections = await db.listCollections({ name: { $in: ['users', 'adminAuditLogs'] } }, { nameOnly: false }).toArray()
+  // MongoDB's listCollections command accepts a string/regex name filter;
+  // using a query-style $in here is rejected by Atlas before any mutation.
+  const collections = await db.listCollections({ name: /^(users|adminAuditLogs)$/ }, { nameOnly: false }).toArray()
   const byName = new Map(collections.map((collection) => [collection.name, collection]))
   const users = byName.get('users')
   const audit = byName.get('adminAuditLogs')
