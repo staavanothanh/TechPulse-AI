@@ -1,5 +1,5 @@
 export const PUBLIC_ROUTES = Object.freeze(
-  new Set(['feed', 'search', 'saved', 'article', 'qa', 'account']),
+  new Set(['feed', 'search', 'saved', 'article', 'qa', 'account', 'donate']),
 )
 export const ADMIN_ROUTES = Object.freeze(
   new Set([

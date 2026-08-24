@@ -3,6 +3,7 @@ export const READER_NAV = Object.freeze([
   { id: 'search', label: 'Tìm kiếm', mobileLabel: 'Tìm' },
   { id: 'saved', label: 'Đã lưu', mobileLabel: 'Đã lưu' },
   { id: 'qa', label: 'Hỏi đáp', mobileLabel: 'Hỏi đáp' },
+  { id: 'donate', label: 'Donate', mobileLabel: 'Donate' },
   { id: 'account', label: 'Tài khoản', mobileLabel: 'Tài khoản' },
 ])
 
