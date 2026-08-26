@@ -10,6 +10,10 @@ import {
   AdminUsersView,
 } from '../../../client/features/admin/ui/AdminViews.jsx'
 import {
+  AddSourcePanel,
+  SourceCreateForm,
+} from '../../../client/features/admin/sources/SourceRegistry.jsx'
+import {
   artifactJobRequest,
   createIdempotencyKey,
   createIdempotencyKeyStore,
@@ -259,6 +263,45 @@ describe('admin feature views', () => {
     expect(html).toContain('Nguồn kiểm thử')
     expect(html).toContain('LLM scope')
     expect(html).not.toMatch(/password|secret|api[_-]?key|token|credential/i)
+  })
+
+  it('keeps source creation behind an explicit Add source action', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AdminSourcesView, {
+        api: {},
+        session,
+        initialData: { data: [], meta: { hasNext: false } },
+      }),
+    )
+
+    expect(html).toMatch(/>\+ Thêm nguồn<|aria-label="Thêm nguồn"/)
+    expect(html).not.toContain('Tạo draft source')
+  })
+
+  it('renders the extracted source form with all supported connectors and safe error affordance', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AddSourcePanel, {
+        onSubmit: vi.fn(),
+        busy: false,
+        error: null,
+      }),
+    )
+    expect(html).toContain('Thêm nguồn')
+    expect(html).not.toContain('Tạo nguồn draft')
+
+    const formHtml = renderToStaticMarkup(
+      React.createElement(SourceCreateForm, {
+        onSubmit: vi.fn(),
+        busy: false,
+        error: 'Dữ liệu nguồn chưa hợp lệ.',
+        onClose: vi.fn(),
+      }),
+    )
+    expect(formHtml).toContain('RSS / Atom')
+    expect(formHtml).toContain('arXiv API')
+    expect(formHtml).toContain('Hacker News API')
+    expect(formHtml).toContain('Dữ liệu nguồn chưa hợp lệ.')
+    expect(formHtml).not.toMatch(/password|secret|api[_-]?key|token|credential/i)
   })
 
   it('keeps users and audit views PII-minimized and audit read-only', () => {
