@@ -68,7 +68,7 @@ describe('admin performance follow-on migration', () => {
   it('wires the follow-on migration and plan verification into the governance target', () => {
     const migrate = readFileSync(new URL('../../scripts/db-migrate.js', import.meta.url), 'utf8')
     const verify = readFileSync(new URL('../../scripts/db-verify.js', import.meta.url), 'utf8')
-    expect(migrate).toContain('runAdminPerformanceIndexesMigration({ db: context.db })')
+    expect(migrate).toContain('runAdminPerformanceIndexesMigration({ db: appDb })')
     expect(migrate).toContain('buildAdminPerformanceIndexesMigration({ dryRun: true })')
     for (const index of Object.values(ADMIN_PERFORMANCE_INDEXES).flat()) expect(verify).toContain(index.name)
     expect(verify).toContain("['account_deletion_expired_lease', 'accountDeletionRequests', { status: 'running', leaseExpiresAt: { $type: 'date', $lte: new Date() } }, { leaseExpiresAt: 1, _id: 1 }, undefined]")

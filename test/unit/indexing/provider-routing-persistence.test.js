@@ -376,7 +376,7 @@ describe('ADR-0013 provider-routing persistence migration', () => {
     expect(migrateSource).toContain('runProviderRoutingV2Migration')
     expect(migrateSource).toContain('assertMigrationTargetDoesNotDowngradeProviderRoutingV2')
     expect(migrateSource).toMatch(/buildArticleGovernanceHardeningMigration\(\{ dryRun: true \}\)[\s\S]*buildProviderRoutingV2Migration\(\{ dryRun: true \}\)[\s\S]*buildGovernanceCapabilityProbeMigration/)
-    expect(migrateSource).toMatch(/runArticleGovernanceHardeningMigration\(\{ db: context\.db \}\)[\s\S]*runProviderRoutingV2Migration\(\{ db: context\.db \}\)[\s\S]*runGovernanceCapabilityProbeMigration/)
+    expect(migrateSource).toMatch(/runArticleGovernanceHardeningMigration\(\{ db: appDb \}\)[\s\S]*runProviderRoutingV2Migration\(\{ db: appDb \}\)[\s\S]*runGovernanceCapabilityProbeMigration/)
     expect(verifySource).toContain("./migrations/provider-routing-v2.js")
     expect(verifySource).toContain("'provider-routing-v2'")
     expect(verifySource).toContain('provider_failure_domain_cooldown')

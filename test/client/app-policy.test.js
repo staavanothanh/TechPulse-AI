@@ -18,7 +18,7 @@ import {
 
 describe('application role and route policy', () => {
   it('keeps the complete public and admin route sets at the integration boundary', () => {
-    expect([...PUBLIC_ROUTES]).toEqual(['feed', 'search', 'saved', 'article', 'qa', 'account'])
+    expect([...PUBLIC_ROUTES]).toEqual(['feed', 'search', 'saved', 'article', 'qa', 'account', 'donate'])
     expect([...ADMIN_ROUTES]).toEqual([
       'overview',
       'jobs',

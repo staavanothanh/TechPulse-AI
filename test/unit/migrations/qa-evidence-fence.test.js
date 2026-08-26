@@ -150,7 +150,7 @@ describe('QA evidence fence migration contract', () => {
     const migrate = readFileSync(new URL('../../../scripts/db-migrate.js', import.meta.url), 'utf8')
 
     expect(migrate).toMatch(/target === 'provider-routing-v2'[\s\S]*buildMigration\(\{ dryRun: true \}\)[\s\S]*buildQaEvidenceFenceMigration\(\{ dryRun: true \}\)/)
-    expect(migrate).toMatch(/runProviderRoutingV2Migration\(\{ db: context\.db \}\)[\s\S]*runQaEvidenceFenceMigration\(\{ db: context\.db \}\)/)
+    expect(migrate).toMatch(/runProviderRoutingV2Migration\(\{ db: appDb \}\)[\s\S]*runQaEvidenceFenceMigration\(\{ db: appDb \}\)/)
     expect(migrate).toMatch(/target === 'provider-routing-v2'[\s\S]*runQaEvidenceFenceMigration\(\{ db: context\.db \}\)/)
   })
 })
