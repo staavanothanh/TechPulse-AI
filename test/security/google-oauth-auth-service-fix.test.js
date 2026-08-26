@@ -106,6 +106,15 @@ describe('Google OAuth auth service integration boundary', () => {
     expect(repo.reserveRateLimit).not.toHaveBeenCalled()
   })
 
+  it('validates a denied OAuth callback without spending quota or calling Google', async () => {
+    const repo = repository()
+    const service = createAuthService({ repository: repo, runtime: RUNTIME, environment: ENVIRONMENT, quotaKeyring: quotaKeyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp } })
+    const { state } = service.generateGoogleAuthUrl()
+
+    await expect(service.verifyGoogleState({ state, stateCookie: state })).resolves.toBeUndefined()
+    expect(repo.reserveRateLimit).not.toHaveBeenCalled()
+  })
+
   it('persists a dummy scrypt password and the Google subject for a new account', async () => {
     const repo = repository()
     const service = createAuthService({ repository: repo, runtime: RUNTIME, environment: ENVIRONMENT, quotaKeyring: quotaKeyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp } })

@@ -67,7 +67,7 @@ function asyncRoute(handler) {
 export function createAuthRouter({ authService } = {}) {
   const router = Router()
   const unavailable = () => { throw new AuthError(503, 'service_unavailable', 'Authentication service is not configured') }
-  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable, googleLogin: unavailable, generateGoogleAuthUrl: unavailable }
+  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable, googleLogin: unavailable, verifyGoogleState: unavailable, generateGoogleAuthUrl: unavailable }
 
   router.post('/api/v1/auth/register', asyncRoute(async (req, res) => {
     validateBody('RegisterRequest', req.body)
@@ -140,10 +140,20 @@ export function createAuthRouter({ authService } = {}) {
     // Mark the response private before any validation or provider/database I/O,
     // including error responses handled by the shared error middleware.
     noStore(res)
-    const { code, state } = req.query ?? {}
-    if (typeof code !== 'string' || code.length === 0) throw new AuthError(422, 'validation_error', 'Authorization code is required')
+    const { code, state, error } = req.query ?? {}
     if (typeof state !== 'string' || state.length === 0) throw new AuthError(422, 'validation_error', 'OAuth state is required')
     const stateCookie = parseOAuthStateCookie(req.get('Cookie'))
+    const hasErrorMetadata = typeof req.query?.error_description === 'string' || typeof req.query?.error_uri === 'string'
+    if (hasErrorMetadata && typeof error !== 'string') throw new AuthError(400, 'bad_request', 'OAuth error metadata requires an error code')
+    if (typeof error === 'string') {
+      await service.verifyGoogleState({ state, stateCookie, request: req })
+      res.set('Set-Cookie', serializeClearOAuthStateCookie())
+      if (typeof code === 'string') throw new AuthError(400, 'bad_request', 'OAuth response contains both code and error')
+      if (error === 'access_denied') throw new AuthError(403, 'forbidden', 'Google OAuth authorization was denied')
+      throw new AuthError(502, 'oauth_provider_error', 'Google OAuth provider returned an authorization error')
+    }
+    if (typeof code !== 'string' || code.length === 0) throw new AuthError(422, 'validation_error', 'Authorization code is required')
+    await service.verifyGoogleState({ state, stateCookie, request: req })
     res.set('Set-Cookie', serializeClearOAuthStateCookie())
     const result = await service.googleLogin({ code, state, stateCookie, request: req })
     setAuthCookie(res, result)

@@ -105,6 +105,9 @@ function validateQuery(req, operationRecord, res) {
     if (parameterSchema.type === 'integer' && parameterSchema.maximum !== undefined && Number(value) > parameterSchema.maximum) return reject(res, 400, 'bad_request', 'Query parameter is above maximum')
     if (Array.isArray(parameterSchema.enum) && !parameterSchema.enum.includes(value)) return reject(res, 400, 'bad_request', 'Query parameter enum is invalid')
     if (parameterSchema.format === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return reject(res, 400, 'bad_request', 'Query parameter email is invalid')
+    if (parameterSchema.format === 'uri') {
+      try { new URL(value) } catch { return reject(res, 400, 'bad_request', 'Query parameter URI is invalid') }
+    }
     if (typeof parameterSchema.pattern === 'string' && !new RegExp(parameterSchema.pattern).test(value)) return reject(res, 400, 'bad_request', 'Query parameter pattern is invalid')
   }
 }
@@ -174,9 +177,10 @@ export function normalizeRequestTarget(target) {
 export function createIngressMiddleware(options = {}) {
   return (req, res, next) => {
     const requestTarget = req.originalUrl || req.url
+    const requestPath = requestPathname(requestTarget)
+    if (req.method === 'GET' && requestPath === '/api/v1/auth/google/callback') res.set('Cache-Control', 'no-store, private')
     if (!validateRequestTarget(requestTarget)) return reject(res, 413, 'payload_too_large', 'Request target is too large')
     const operation = findOperationForRequest(OPENAPI, req.method, requestTarget)
-    const requestPath = requestPathname(requestTarget)
     const isApi = requestPath.startsWith('/api/')
     const isInternal = requestPath.startsWith('/api/internal/')
     const isMutation = MUTATING_METHODS.has(req.method)

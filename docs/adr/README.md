@@ -25,6 +25,7 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0019](0019-rich-summary-trusted-connector-payload-media.md) | Tóm tắt chi tiết, payload connector tin cậy có fence và media an toàn | proposed | 2026-08-24 |
 | [0020](0020-add-google-oauth-login.md) | Thêm đăng nhập Google OAuth theo redirect có state được ký | accepted | 2026-08-24 |
 | [0021](0021-add-vietqr-donation-page.md) | Thêm trang ủng hộ công khai bằng VietQR không cố định số tiền | accepted | 2026-08-24 |
+| [0022](0022-defer-email-verification-and-google-account-linking.md) | Hoãn xác minh quyền sở hữu email và liên kết tài khoản Google | accepted | 2026-08-26 |
 
 ## Lifecycle
 

@@ -301,7 +301,7 @@ export function createAuthService({ repository, runtime, environment = process.e
     return { authUrl: googleOAuth.generateAuthUrl({ state }), state }
   }
 
-  async function googleLogin({ code, state, stateCookie, request } = {}) {
+  function verifyGoogleState({ state, stateCookie } = {}) {
     const googleOAuth = googleOAuthService()
     try {
       googleOAuth.verifyState(state)
@@ -312,6 +312,11 @@ export function createAuthService({ repository, runtime, environment = process.e
       if (mapped) throw mapped
       throw error
     }
+  }
+
+  async function googleLogin({ code, state, stateCookie, request } = {}) {
+    const googleOAuth = googleOAuthService()
+    verifyGoogleState({ state, stateCookie })
     // Do not spend the shared login quota on cross-site callbacks that fail
     // the browser-bound state check before this point.
     await reserve('login', request)
@@ -360,7 +365,7 @@ export function createAuthService({ repository, runtime, environment = process.e
   return Object.freeze({
     register: expose(register), login: expose(login), authenticate: expose(authenticate), currentUser: expose(currentUser),
     verifyCsrf: expose(verifyCsrf), logout: expose(logout), updatePreferences: expose(updatePreferences), listAdminUsers: expose(listAdminUsers),
-    getAdminUser: expose(getAdminUser), updateUserStatus: expose(updateUserStatus), googleLogin: expose(googleLogin), generateGoogleAuthUrl,
+    getAdminUser: expose(getAdminUser), updateUserStatus: expose(updateUserStatus), googleLogin: expose(googleLogin), verifyGoogleState: expose(verifyGoogleState), generateGoogleAuthUrl,
   })
 }
 

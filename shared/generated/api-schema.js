@@ -309,6 +309,30 @@ export const openApiDocument = {
           },
           {
             "$ref": "#/components/parameters/GoogleOAuthState"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthScope"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthAuthUser"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthHostedDomain"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthPrompt"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthError"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthErrorDescription"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthErrorUri"
+          },
+          {
+            "$ref": "#/components/parameters/GoogleOAuthIssuer"
           }
         ],
         "responses": {
@@ -3750,7 +3774,7 @@ export const openApiDocument = {
       "GoogleOAuthCode": {
         "name": "code",
         "in": "query",
-        "required": true,
+        "required": false,
         "schema": {
           "type": "string",
           "minLength": 1,
@@ -3766,6 +3790,88 @@ export const openApiDocument = {
           "minLength": 32,
           "maxLength": 512,
           "pattern": "^[0-9]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+        }
+      },
+      "GoogleOAuthScope": {
+        "name": "scope",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "GoogleOAuthAuthUser": {
+        "name": "authuser",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "GoogleOAuthHostedDomain": {
+        "name": "hd",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      },
+      "GoogleOAuthPrompt": {
+        "name": "prompt",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "GoogleOAuthError": {
+        "name": "error",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_]+$"
+        }
+      },
+      "GoogleOAuthErrorDescription": {
+        "name": "error_description",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "GoogleOAuthErrorUri": {
+        "name": "error_uri",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "format": "uri"
+        }
+      },
+      "GoogleOAuthIssuer": {
+        "name": "iss",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "https://accounts.google.com"
+          ]
         }
       }
     },
