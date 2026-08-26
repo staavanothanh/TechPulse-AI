@@ -30,10 +30,11 @@ function hasExactFields(value, fields) {
 function validateDetailParagraphs(value) {
   if (!Array.isArray(value) || value.length < MIN_DETAIL_PARAGRAPHS || value.length > MAX_DETAIL_PARAGRAPHS) throw new Error('Vietnamese summary paragraphs count is invalid')
   const paragraphs = value.map((paragraph) => {
-    const safe = boundedVietnamese(paragraph, 'Vietnamese summary paragraph', MAX_DETAIL_PARAGRAPH_CHARS)
+    const safe = boundedPlainText(paragraph, 'Vietnamese summary paragraph', MAX_DETAIL_PARAGRAPH_CHARS)
     if (Array.from(safe).length < MIN_DETAIL_PARAGRAPH_CHARS) throw new Error('Vietnamese summary paragraph length is invalid')
     return safe
   })
+  if (!VIETNAMESE_SIGNAL.test(paragraphs.join(' '))) throw new Error('Vietnamese summary paragraphs must contain Vietnamese text')
   if (paragraphs.reduce((total, paragraph) => total + Array.from(paragraph).length, 0) > MAX_DETAIL_TOTAL_CHARS) throw new Error('Vietnamese summary paragraphs total length is invalid')
   return Object.freeze(paragraphs)
 }
