@@ -96,7 +96,7 @@ describe('admin shell', () => {
     )
   })
 
-  it('mounts the Source Registry add-source action from the live admin route', () => {
+  it('mounts the Source Registry refresh action and add-source tab from the live admin route', () => {
     const html = renderToStaticMarkup(
       React.createElement(AdminRedesign, {
         api: {},
@@ -106,9 +106,19 @@ describe('admin shell', () => {
         onNavigate: vi.fn(),
       }),
     )
+    const headerStart = html.indexOf('<header')
+    const headerEnd = html.indexOf('</header>', headerStart)
+    const pageHeader = html.slice(headerStart, headerEnd)
 
-    expect(html).toMatch(/>\+ Thêm nguồn<|aria-label="Thêm nguồn"/)
-    expect(html).not.toContain('Tạo draft source')
+    expect(pageHeader).toContain('>Làm mới<')
+    expect(pageHeader).not.toContain('+ Thêm nguồn')
+    expect(html.match(/>\+ Thêm nguồn</g)).toHaveLength(1)
+    expect(html).not.toContain('M5 12h13')
+    expect(html).toContain('role="tablist"')
+    expect(html).toContain('id="admin-source-create-tab"')
+    expect(html).toContain('aria-controls="admin-source-registry-panel"')
+    expect(html).not.toContain('aria-controls="admin-source-create-panel"')
+    expect(html).not.toContain('Tạo nguồn draft')
   })
 
   it('keeps the admin account surface session-bound and exposes logout through props', () => {

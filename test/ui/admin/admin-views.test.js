@@ -267,7 +267,7 @@ describe('admin feature views', () => {
     expect(html).not.toMatch(/password|secret|api[_-]?key|token|credential/i)
   })
 
-  it('keeps source creation behind an explicit Add source action', () => {
+  it('keeps the single add-source control in the source tab and refresh in the header', () => {
     const html = renderToStaticMarkup(
       React.createElement(AdminSourcesView, {
         api: {},
@@ -275,9 +275,24 @@ describe('admin feature views', () => {
         initialData: { data: [], meta: { hasNext: false } },
       }),
     )
+    const headerStart = html.indexOf('<header')
+    const headerEnd = html.indexOf('</header>', headerStart)
+    const pageHeader = html.slice(headerStart, headerEnd)
 
-    expect(html).toMatch(/>\+ Thêm nguồn<|aria-label="Thêm nguồn"/)
-    expect(html).not.toContain('Tạo draft source')
+    expect(pageHeader).toContain('>Làm mới<')
+    expect(pageHeader).not.toContain('+ Thêm nguồn')
+    expect(html.match(/>\+ Thêm nguồn</g)).toHaveLength(1)
+    expect(html).not.toContain('M5 12h13')
+    expect(html).toContain('role="tablist"')
+    expect(html).toContain('id="admin-source-create-tab"')
+    expect(html).toContain('id="admin-source-registry-panel"')
+    expect(html).toContain('aria-labelledby="admin-source-registry-tab"')
+    expect(html).toContain('aria-controls="admin-source-registry-panel"')
+    expect(html).not.toContain('aria-controls="admin-source-create-panel"')
+    expect(html).toContain('role="tabpanel"')
+    expect(html).toContain('tabindex="0"')
+    expect(html).toContain('tabindex="-1"')
+    expect(html).not.toContain('Tạo nguồn draft')
   })
 
   it('renders the extracted source form as a disclosure with all supported connectors', () => {
@@ -320,6 +335,7 @@ describe('admin feature views', () => {
     expect(formHtml).toMatch(/maxlength="160"/i)
     expect(formHtml).toMatch(/maxlength="253"/i)
     expect(formHtml).not.toMatch(/password|secret|api[_-]?key|token|credential/i)
+    expect(formHtml).not.toContain('M5 12h13')
     expect(LegacySourceForms.SourceCreateForm).toBeUndefined()
   })
 

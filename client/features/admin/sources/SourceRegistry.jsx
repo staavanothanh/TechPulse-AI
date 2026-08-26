@@ -68,7 +68,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
       <div className="admin-form-heading">
         <div>
           <p className="admin-eyebrow">Draft source</p>
-          <h3 id="source-create-title">Tạo nguồn draft</h3>
+          <h2 id="source-create-title">Tạo nguồn draft</h2>
         </div>
         <span className="admin-chip">fail closed</span>
       </div>
@@ -176,7 +176,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
         </p>
       ) : null}
       <div className="admin-row-actions admin-add-source-actions">
-        <AdminButton type="submit" variant="primary" icon="arrow" disabled={busy}>
+        <AdminButton type="submit" variant="primary" disabled={busy}>
           {busy ? 'Đang tạo…' : 'Tạo draft'}
         </AdminButton>
         {onClose ? (
@@ -196,7 +196,6 @@ export function AddSourcePanel({ onSubmit, busy = false, error = null, initialOp
     <div className="source-add-panel">
       <AdminButton
         variant="primary"
-        icon="arrow"
         type="button"
         aria-expanded={open}
         aria-controls={open ? SOURCE_PANEL_ID : undefined}
