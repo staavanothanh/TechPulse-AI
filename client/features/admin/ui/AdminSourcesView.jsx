@@ -9,7 +9,8 @@ import {
   ResourceFrame,
   StatusBadge,
 } from './AdminShared.jsx'
-import { SourceCreateForm, SourcePolicy, SourcePolicyReviewForm } from './AdminSourceForms.jsx'
+import { SourcePolicy, SourcePolicyReviewForm } from './AdminSourceForms.jsx'
+import { AddSourcePanel } from '../sources/SourceRegistry.jsx'
 
 export function AdminSourcesView({ api, session, initialData, onSessionExpired, cacheScope }) {
   const resource = useAdminResource(api, 'listSources', {
@@ -163,7 +164,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
             ) : (
               <EmptyState
                 title="Chưa có source."
-                description="Tạo draft đầu tiên trong biểu mẫu bên phải."
+                description="Bấm Thêm nguồn để mở biểu mẫu tạo draft đầu tiên."
               />
             )}
           </aside>
@@ -255,7 +256,11 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                 busy={mutation.busy}
               />
             ) : null}
-            <SourceCreateForm onSubmit={createSource} busy={mutation.busy} />
+            <AddSourcePanel
+              onSubmit={createSource}
+              busy={mutation.busy}
+              error={mutation.error}
+            />
             <AdminConfirmDialog
               open={Boolean(confirmation)}
               title={

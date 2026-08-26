@@ -13,6 +13,7 @@ import {
   AddSourcePanel,
   SourceCreateForm,
 } from '../../../client/features/admin/sources/SourceRegistry.jsx'
+import { submitSourceCreate } from '../../../client/features/admin/sources/source-create.js'
 import {
   artifactJobRequest,
   createIdempotencyKey,
@@ -289,6 +290,18 @@ describe('admin feature views', () => {
     expect(html).toContain('Thêm nguồn')
     expect(html).not.toContain('Tạo nguồn draft')
 
+    const openHtml = renderToStaticMarkup(
+      React.createElement(AddSourcePanel, {
+        initialOpen: true,
+        onSubmit: vi.fn(),
+        busy: false,
+        error: null,
+      }),
+    )
+    expect(openHtml).toContain('role="dialog"')
+    expect(openHtml).toContain('Tạo nguồn draft')
+    expect(openHtml).toContain('aria-expanded="true"')
+
     const formHtml = renderToStaticMarkup(
       React.createElement(SourceCreateForm, {
         onSubmit: vi.fn(),
@@ -302,6 +315,41 @@ describe('admin feature views', () => {
     expect(formHtml).toContain('Hacker News API')
     expect(formHtml).toContain('Dữ liệu nguồn chưa hợp lệ.')
     expect(formHtml).not.toMatch(/password|secret|api[_-]?key|token|credential/i)
+  })
+
+  it('closes the extracted form only after a successful create response', async () => {
+    const form = {
+      name: 'Hacker News',
+      sourceKey: 'hacker-news',
+      publisherName: 'Hacker News',
+      domain: 'news.ycombinator.com',
+      connectorType: 'hacker-news',
+      accessMethod: 'api',
+      endpoint: 'topstories',
+      batchSize: '20',
+    }
+    const onClose = vi.fn()
+    const onError = vi.fn()
+    const onSubmit = vi.fn().mockResolvedValue(null)
+
+    await submitSourceCreate({ form, onSubmit, onClose, onError })
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectorType: 'hacker-news',
+        connectorConfig: { kind: 'hacker-news', hackerNewsStream: 'topstories', batchSize: 20 },
+      }),
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+
+    onSubmit.mockResolvedValueOnce({ data: { sourceId: 'source-opaque' } })
+    await submitSourceCreate({ form, onSubmit, onClose, onError })
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    onSubmit.mockRejectedValueOnce(new Error('network interrupted'))
+    await submitSourceCreate({ form, onSubmit, onClose, onError })
+    expect(onError).toHaveBeenCalledWith('Không thể tạo source. Hãy kiểm tra dữ liệu và thử lại.')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('keeps users and audit views PII-minimized and audit read-only', () => {

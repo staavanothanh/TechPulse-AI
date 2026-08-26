@@ -96,6 +96,21 @@ describe('admin shell', () => {
     )
   })
 
+  it('mounts the Source Registry add-source action from the live admin route', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AdminRedesign, {
+        api: {},
+        session,
+        route: 'sources',
+        initialData: { sources: { data: [], meta: { hasNext: false } } },
+        onNavigate: vi.fn(),
+      }),
+    )
+
+    expect(html).toMatch(/>\+ Thêm nguồn<|aria-label="Thêm nguồn"/)
+    expect(html).not.toContain('Tạo draft source')
+  })
+
   it('keeps the admin account surface session-bound and exposes logout through props', () => {
     const html = renderToStaticMarkup(
       React.createElement(AdminRedesign, {

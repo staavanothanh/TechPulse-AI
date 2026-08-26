@@ -305,6 +305,23 @@
 .redesign-admin .admin-source-editor {
   min-width: 0;
 }
+.redesign-admin .source-add-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.redesign-admin .source-modal-overlay {
+  padding: 1px;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius);
+  background: var(--admin-surface);
+}
+.redesign-admin .admin-add-source-form {
+  margin-top: 0;
+}
+.redesign-admin .admin-add-source-actions {
+  justify-content: flex-start;
+}
 .redesign-admin .admin-source-title {
   display: flex;
   align-items: center;
