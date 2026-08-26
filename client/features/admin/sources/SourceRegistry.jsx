@@ -54,7 +54,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
     setForm((current) => ({
       ...current,
       connectorType,
-      accessMethod: connectorType === 'rss' ? current.accessMethod : 'api',
+      accessMethod: connectorType === 'rss' ? 'rss' : 'api',
       endpoint: connectorType === 'hacker-news' ? 'topstories' : '',
     }))
   }
@@ -78,13 +78,20 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
       <div className="admin-form-grid">
         <label htmlFor="source-name">
           Tên nguồn
-          <input id="source-name" required value={form.name} onChange={set('name')} />
+          <input
+            id="source-name"
+            required
+            maxLength="120"
+            value={form.name}
+            onChange={set('name')}
+          />
         </label>
         <label htmlFor="source-key">
           Source key
           <input
             id="source-key"
             required
+            maxLength="120"
             pattern="[a-z0-9][a-z0-9:-]{2,119}"
             value={form.sourceKey}
             onChange={set('sourceKey')}
@@ -95,13 +102,20 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
           <input
             id="source-publisher"
             required
+            maxLength="160"
             value={form.publisherName}
             onChange={set('publisherName')}
           />
         </label>
         <label htmlFor="source-domain">
           Hostname công khai
-          <input id="source-domain" required value={form.domain} onChange={set('domain')} />
+          <input
+            id="source-domain"
+            required
+            maxLength="253"
+            value={form.domain}
+            onChange={set('domain')}
+          />
         </label>
         <label htmlFor="source-connector">
           Connector
@@ -136,6 +150,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
             <input
               id="source-endpoint"
               required
+              maxLength={form.connectorType === 'rss' ? 2048 : 200}
               type={form.connectorType === 'rss' ? 'url' : 'text'}
               value={form.endpoint}
               onChange={set('endpoint')}
@@ -190,11 +205,10 @@ export function AddSourcePanel({ onSubmit, busy = false, error = null, initialOp
         {open ? 'Đóng thêm nguồn' : '+ Thêm nguồn'}
       </AdminButton>
       {open ? (
-        <div
+        <section
           id={SOURCE_PANEL_ID}
-          className="source-modal-overlay"
-          role="dialog"
-          aria-modal="true"
+          className="source-add-panel-content"
+          role="region"
           aria-labelledby="source-create-title"
         >
           <SourceCreateForm
@@ -203,7 +217,7 @@ export function AddSourcePanel({ onSubmit, busy = false, error = null, initialOp
             error={error}
             onClose={() => setOpen(false)}
           />
-        </div>
+        </section>
       ) : null}
     </div>
   )
