@@ -47,6 +47,40 @@ describe('Step 9 controlled provider adapters', () => {
     expect(JSON.stringify(body)).not.toMatch(/leadMedia|providerPayload|secret-value/)
   })
 
+  it('projects allowlisted summary fields before validation when the provider adds metadata', async () => {
+    const providerValue = {
+      titleVi: 'Tiêu đề tiếng Việt',
+      summaryVi: 'Nội dung tiếng Việt có nguồn.',
+      summaryParagraphsVi: [
+        'Đoạn chi tiết đầu tiên giữ thuật ngữ inference và chỉ dùng dữ liệu trong nguồn.',
+        'Đoạn chi tiết thứ hai giải thích benchmark bằng tiếng Việt mà không thêm dữ kiện.',
+      ],
+      finishReason: 'stop',
+      usage: { outputTokens: 120 },
+    }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(providerValue) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl, resolveCredential: () => 'secret-value' })
+
+    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: '<external-source-data>{}</external-source-data>', locale: 'vi', tools: [] }))
+      .resolves.toEqual({ titleVi: providerValue.titleVi, summaryVi: providerValue.summaryVi, summaryParagraphsVi: providerValue.summaryParagraphsVi, model: 'summary/model' })
+  })
+
+  it('accepts a technical-only detail paragraph when the complete detail remains Vietnamese', async () => {
+    const providerValue = {
+      titleVi: 'Tiêu đề tiếng Việt',
+      summaryVi: 'Nội dung tiếng Việt có nguồn.',
+      summaryParagraphsVi: [
+        'The benchmark reports latency and throughput for the API under load.',
+        'Đoạn thứ hai giải thích kết quả bằng tiếng Việt và nêu rõ giới hạn của nguồn.',
+      ],
+    }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(providerValue) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl, resolveCredential: () => 'secret-value' })
+
+    await expect(adapters.llmProvider.summarize({ route: registry.routes[0], input: '<external-source-data>{}</external-source-data>', locale: 'vi', tools: [] }))
+      .resolves.toMatchObject({ titleVi: providerValue.titleVi, summaryVi: providerValue.summaryVi, summaryParagraphsVi: providerValue.summaryParagraphsVi, model: 'summary/model' })
+  })
+
   it('fails closed when summary output violates the exact schema', async () => {
     const invalidValue = {
       titleVi: 'Tiêu đề tiếng Việt',

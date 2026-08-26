@@ -44,4 +44,4 @@ Tính năng bổ sung thao tác tạo source trong trang quản trị Source Reg
 - `npm run test:ui`: đạt, 14 file/75 kiểm thử.
 - `npm run test:e2e`: đạt, 5 kiểm thử pass; 11 kiểm thử skip theo cấu hình E2E.
 - `npm test -- --run --coverage`: các kiểm thử pass nhưng command dừng ở ngưỡng coverage global hiện có của repository (statements 74,06%, branches 69,24%, functions 79,2%).
-- `npm run format:check`: command hiện báo 523 file chưa theo format chuẩn hiện hành của repository; không thuộc thay đổi Source Registry. Các file liên quan đã được kiểm tra riêng, không phát sinh lỗi cú pháp hoặc lint.
+- `npm run format:check`: command hiện báo 525 file chưa theo format chuẩn hiện hành của repository; không thuộc thay đổi Source Registry. Các file liên quan đã được kiểm tra riêng, không phát sinh lỗi cú pháp hoặc lint.

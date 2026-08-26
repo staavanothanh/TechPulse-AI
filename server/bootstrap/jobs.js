@@ -58,8 +58,18 @@ export function createCoordinatorRunner({ queueRegistry, now = () => new Date() 
   return async () => runDueWork({ registry: queueRegistry, maxJobs: 3, maxRecoveries: 3, budgetMs: 8000, now })
 }
 
-export const ADMIN_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 24, budgetMs: 45_000 })
-export const CRON_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 200, budgetMs: 240_000 })
+const ADMIN_TASK_PROFILES = Object.freeze([
+  Object.freeze({ task: 'summary', maxClaims: 12, budgetMs: 150_000 }),
+  Object.freeze({ task: 'embedding', maxClaims: 8, budgetMs: 150_000 }),
+  Object.freeze({ task: 'visibility-reconcile', maxClaims: 4, budgetMs: 30_000 }),
+])
+const CRON_TASK_PROFILES = Object.freeze([
+  Object.freeze({ task: 'summary', maxClaims: 100, budgetMs: 240_000 }),
+  Object.freeze({ task: 'embedding', maxClaims: 80, budgetMs: 240_000 }),
+  Object.freeze({ task: 'visibility-reconcile', maxClaims: 20, budgetMs: 60_000 }),
+])
+export const ADMIN_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 24, budgetMs: 150_000, taskProfiles: ADMIN_TASK_PROFILES })
+export const CRON_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 200, budgetMs: 240_000, taskProfiles: CRON_TASK_PROFILES })
 
 function queueAttempts(queues = {}) {
   return Object.values(queues).reduce((total, counters = {}) => total
@@ -71,6 +81,28 @@ function mergeCounters(left = {}, right = {}) {
     .map((key) => [key, Math.max(0, Number(left[key] ?? 0)) + Math.max(0, Number(right[key] ?? 0))]))
 }
 
+function emptyTaskCounters() {
+  return Object.fromEntries(['summary', 'embedding', 'visibility-reconcile'].map((task) => [task, mergeCounters()]))
+}
+
+function validTaskProfiles(profile) {
+  const taskProfiles = profile?.taskProfiles
+  if (taskProfiles === undefined) return true
+  if (!Array.isArray(taskProfiles) || taskProfiles.length === 0 || new Set(taskProfiles.map(({ task }) => task)).size !== taskProfiles.length) return false
+  return taskProfiles.every(({ task, maxClaims, budgetMs }) => ['summary', 'embedding', 'visibility-reconcile'].includes(task)
+    && Number.isInteger(maxClaims) && maxClaims >= 0
+    && Number.isFinite(budgetMs) && budgetMs > 0 && budgetMs <= profile.budgetMs)
+}
+
+function allocateTaskClaims(taskProfiles, remainingClaims) {
+  let available = remainingClaims
+  return taskProfiles.map((taskProfile) => {
+    const maxClaims = Math.min(taskProfile.maxClaims, available)
+    available -= maxClaims
+    return { ...taskProfile, maxClaims }
+  })
+}
+
 async function nextAvailableAt(queueRegistry, now) {
   const values = await Promise.all(queueRegistry.registered().map((adapter) => adapter.nextAvailableAt({ now })))
   const dates = values.filter(Boolean).map((value) => value instanceof Date ? value : new Date(value)).filter((value) => !Number.isNaN(value.getTime()))
@@ -78,26 +110,39 @@ async function nextAvailableAt(queueRegistry, now) {
 }
 
 export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now = () => new Date() } = {}) {
-  if (!queueRegistry || !profile || !Number.isInteger(profile.maxJobs) || profile.maxJobs < 3 || !Number.isFinite(profile.budgetMs) || profile.budgetMs <= 0) throw new Error('Indexing drain profile is invalid')
+  if (!queueRegistry || !profile || !Number.isInteger(profile.maxJobs) || profile.maxJobs < 3 || !Number.isFinite(profile.budgetMs) || profile.budgetMs <= 0 || !validTaskProfiles(profile)) throw new Error('Indexing drain profile is invalid')
   return async (baseResult) => {
     if (!baseResult?.startedAt || !baseResult?.queues) throw new Error('Due-work base result is required')
     const queue = queueRegistry.get('indexing')
     const remainingClaims = Math.max(0, profile.maxJobs - queueAttempts(baseResult.queues))
-    if (!queue || remainingClaims === 0) return { ...baseResult, finishedAt: now(), nextAvailableAt: await nextAvailableAt(queueRegistry, now()) }
-    const startedAt = baseResult.startedAt instanceof Date ? baseResult.startedAt : new Date(baseResult.startedAt)
-    if (Number.isNaN(startedAt.getTime())) throw new Error('Due-work base clock is invalid')
-    const drain = await createIndexingDrainRunner({
+    const taskCounters = emptyTaskCounters()
+    if (!queue || remainingClaims === 0) return { ...baseResult, taskCounters, finishedAt: now(), nextAvailableAt: await nextAvailableAt(queueRegistry, now()) }
+    const drainStartedAt = now()
+    if (!(drainStartedAt instanceof Date) || Number.isNaN(drainStartedAt.getTime())) throw new Error('Due-work drain clock is invalid')
+    const allocations = profile.taskProfiles
+      ? allocateTaskClaims(profile.taskProfiles, remainingClaims).filter(({ maxClaims }) => maxClaims > 0)
+      : [{ maxClaims: remainingClaims, budgetMs: profile.budgetMs }]
+    const settled = await Promise.allSettled(allocations.map(({ task, maxClaims, budgetMs }) => createIndexingDrainRunner({
       queue,
-      maxClaims: remainingClaims,
-      deadline: new Date(startedAt.getTime() + profile.budgetMs),
+      ...(task ? { tasks: [task] } : {}),
+      maxClaims,
+      deadline: new Date(drainStartedAt.getTime() + budgetMs),
       now,
-    })()
+    })()))
+    const firstFailure = settled.find(({ status }) => status === 'rejected')
+    if (firstFailure) throw firstFailure.reason
+    const drains = settled.map(({ value }) => value)
+    for (const drain of drains) {
+      for (const [task, counters] of Object.entries(drain.taskCounters)) taskCounters[task] = mergeCounters(taskCounters[task], counters)
+    }
+    const drainCounters = drains.reduce((counters, drain) => mergeCounters(counters, drain.counters), mergeCounters())
     return {
       ...baseResult,
       finishedAt: now(),
+      taskCounters,
       queues: {
         ...baseResult.queues,
-        indexing: mergeCounters(baseResult.queues.indexing, drain.counters),
+        indexing: mergeCounters(baseResult.queues.indexing, drainCounters),
       },
       nextAvailableAt: await nextAvailableAt(queueRegistry, now()),
     }

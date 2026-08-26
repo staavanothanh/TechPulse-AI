@@ -21,6 +21,22 @@ thể drain hết indexing backlog.
 - Bảo toàn due-work response và OpenAPI contract hiện có.
 - Giữ production cron schedule hằng ngày và đặt Vercel function duration có giới hạn rõ ràng.
 
+## Cập nhật bounded scheduling và recovery cục bộ
+
+- Admin due-work dùng budget 150 giây. Cron giữ budget indexing 240 giây, thấp
+  hơn giới hạn function 300 giây của deployment hiện tại.
+- Sau fair turn của coordinator, indexing được chia thành các slice độc lập:
+  `summary`, `embedding` và `visibility-reconcile`. Mỗi slice có claim cap,
+  concurrency và deadline riêng. Claim vẫn đi qua persistent job state và
+  article lease/fencing hiện có.
+- Một invocation sau có thể tiếp tục phần còn lại của queue. `taskCounters` chỉ
+  là chẩn đoán nội bộ; HTTP cron tiếp tục trả allowlist aggregate theo OpenAPI.
+- `scripts/force-drain-overdue.js` là tool recovery local. Dry-run dùng bootstrap
+  read-only, chỉ đọc due candidates. Execution bắt buộc `--confirm` và
+  `--confirm-database=NAME`; chỉ xử lý `summary`/`embedding`, giữ job failed ở
+  trạng thái terminal để retry sau. `.tmp/force-drain-overdue.js` chỉ là entry
+  point tiện dụng bị ignore, còn implementation nằm trong `scripts/`.
+
 ## Ma trận TDD
 
 | Layer | Bằng chứng |
@@ -98,6 +114,22 @@ cho jobs bootstrap. Global coverage gate vẫn dành cho giai đoạn kiểm ch�
 
 GREEN focused cuối cùng, gồm HTTP security và admin UI regression: PASS (`10 files`,
 `101 tests`).
+
+### Scheduling/recovery update
+
+```text
+npm test -- --run test/scripts/force-drain-overdue.test.js test/unit/jobs/worker-scheduling.test.js
+npm run lint
+npm run build
+npm run contract:test
+git diff --check
+```
+
+Kết quả: PASS (`2 files`, `13 tests`); lint, build, contract và diff check đều
+pass. Local dry-run trên `techpulse_app` không ghi snapshot lifecycle và trả về
+0 due candidate sau lượt recovery. Lượt execution đã xử lý `73` claim: `58`
+success và `15` failed; sau đó không còn job `queued` hoặc `running` trong
+`indexingJobs`. Failed job vẫn được giữ để retry.
 
 ### Khắc phục sau review độc lập
 

@@ -8,13 +8,17 @@ function validDate(value, label) {
   return value
 }
 
-function recordOutcome(result, counters, blockedArticleIds) {
+function recordOutcome(result, counters, taskCounters, task, blockedArticleIds) {
   if (result?.claimed === false) {
     const articleId = result?.articleId
     if (articleId !== undefined && articleId !== null && String(articleId)) blockedArticleIds.add(String(articleId))
-  } else counters.claimed += 1
+  } else {
+    counters.claimed += 1
+    taskCounters[task].claimed += 1
+  }
   const status = ['succeeded', 'partial', 'failed', 'deferred'].includes(result?.status) ? result.status : 'failed'
   counters[status] += 1
+  taskCounters[task][status] += 1
 }
 
 function candidateArticleId(candidate) {
@@ -33,7 +37,7 @@ function isDueStartAllowed(task, now, deadline) {
   return remaining >= (TASK_START_GUARD_MS[task] ?? 5_000)
 }
 
-function scheduleCandidate({ candidate, task, queue, wave, waveArticleIds, blockedArticleIds, counters, now, deadline, onInfrastructureError }) {
+function scheduleCandidate({ candidate, task, queue, wave, waveArticleIds, blockedArticleIds, counters, taskCounters, now, deadline, onInfrastructureError }) {
   const articleId = candidateArticleId(taskCandidate(candidate, task))
   if (blockedArticleIds.has(articleId) || waveArticleIds.has(articleId)) return false
   waveArticleIds.add(articleId)
@@ -45,7 +49,7 @@ function scheduleCandidate({ candidate, task, queue, wave, waveArticleIds, block
   }
   const guardedRun = taskRun
     .then((result) => {
-      recordOutcome({ ...result, articleId: result?.articleId ?? candidate.articleId }, counters, blockedArticleIds)
+      recordOutcome({ ...result, articleId: result?.articleId ?? candidate.articleId }, counters, taskCounters, task, blockedArticleIds)
       return result
     })
     .catch((error) => {
@@ -57,9 +61,11 @@ function scheduleCandidate({ candidate, task, queue, wave, waveArticleIds, block
   return true
 }
 
-export function createIndexingDrainRunner({ queue, maxClaims, deadline, now = () => new Date() } = {}) {
+export function createIndexingDrainRunner({ queue, maxClaims, deadline, tasks = TASK_ORDER, now = () => new Date() } = {}) {
   if (!queue || typeof queue.selectDue !== 'function' || typeof queue.claimAndExecute !== 'function' || typeof queue.nextAvailableAt !== 'function') throw new Error('Indexing drain queue is required')
   if (!Number.isInteger(maxClaims) || maxClaims < 0) throw new Error('Indexing drain max claims is invalid')
+  if (!Array.isArray(tasks) || tasks.length === 0 || new Set(tasks).size !== tasks.length || tasks.some((task) => !TASK_ORDER.includes(task))) throw new Error('Indexing drain tasks are invalid')
+  const configuredTasks = Object.freeze([...tasks])
   const configuredDeadline = deadline === undefined ? new Date(8640000000000000) : deadline
   validDate(configuredDeadline, 'Indexing drain deadline')
   if (typeof now !== 'function') throw new Error('Indexing drain clock is invalid')
@@ -67,8 +73,9 @@ export function createIndexingDrainRunner({ queue, maxClaims, deadline, now = ()
   return async () => {
     const startedAt = validDate(now(), 'Indexing drain start time')
     const counters = { ...EMPTY_COUNTERS }
+    const taskCounters = Object.fromEntries(TASK_ORDER.map((task) => [task, { ...EMPTY_COUNTERS }]))
     const blockedArticleIds = new Set()
-    const heldCandidates = new Map(TASK_ORDER.map((task) => [task, []]))
+    const heldCandidates = new Map(configuredTasks.map((task) => [task, []]))
     let scheduled = 0
     let cursor = 0
     let firstInfrastructureError
@@ -78,7 +85,7 @@ export function createIndexingDrainRunner({ queue, maxClaims, deadline, now = ()
     while (scheduled < maxClaims && currentTime().getTime() < configuredDeadline.getTime()) {
       const wave = []
       const waveArticleIds = new Set()
-      const waveTasks = TASK_ORDER.map((_, index) => TASK_ORDER[(cursor + index) % TASK_ORDER.length])
+      const waveTasks = configuredTasks.map((_, index) => configuredTasks[(cursor + index) % configuredTasks.length])
 
       for (const task of waveTasks) {
         const cap = TASK_CONCURRENCY[task] ?? 1
@@ -95,7 +102,7 @@ export function createIndexingDrainRunner({ queue, maxClaims, deadline, now = ()
               heldCandidates.get(task).unshift(held)
               break
             }
-            if (scheduleCandidate({ candidate: held, task, queue, wave, waveArticleIds, blockedArticleIds, counters, now: currentTime, deadline: configuredDeadline, onInfrastructureError: noteInfrastructureError })) scheduled += 1
+            if (scheduleCandidate({ candidate: held, task, queue, wave, waveArticleIds, blockedArticleIds, counters, taskCounters, now: currentTime, deadline: configuredDeadline, onInfrastructureError: noteInfrastructureError })) scheduled += 1
             continue
           }
 
@@ -118,11 +125,11 @@ export function createIndexingDrainRunner({ queue, maxClaims, deadline, now = ()
             if (!pending.some((item) => String(item.id) === candidateId)) pending.push(candidate)
             break
           }
-          if (scheduleCandidate({ candidate, task, queue, wave, waveArticleIds, blockedArticleIds, counters, now: currentTime, deadline: configuredDeadline, onInfrastructureError: noteInfrastructureError })) scheduled += 1
+          if (scheduleCandidate({ candidate, task, queue, wave, waveArticleIds, blockedArticleIds, counters, taskCounters, now: currentTime, deadline: configuredDeadline, onInfrastructureError: noteInfrastructureError })) scheduled += 1
         }
       }
 
-      cursor = (cursor + 1) % TASK_ORDER.length
+      cursor = (cursor + 1) % configuredTasks.length
       if (wave.length === 0) break
       await Promise.allSettled(wave.map(({ promise }) => promise))
       if (firstInfrastructureError) break
@@ -130,7 +137,7 @@ export function createIndexingDrainRunner({ queue, maxClaims, deadline, now = ()
 
     if (firstInfrastructureError) throw firstInfrastructureError
     const nextAvailableAt = await queue.nextAvailableAt({ now: currentTime() })
-    return { startedAt, finishedAt: currentTime(), counters, nextAvailableAt }
+    return { startedAt, finishedAt: currentTime(), counters, taskCounters, nextAvailableAt }
   }
 }
 
