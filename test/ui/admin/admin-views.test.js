@@ -14,6 +14,7 @@ import {
   SourceCreateForm,
 } from '../../../client/features/admin/sources/SourceRegistry.jsx'
 import { submitSourceCreate } from '../../../client/features/admin/sources/source-create.js'
+import * as LegacySourceForms from '../../../client/features/admin/ui/AdminSourceForms.jsx'
 import {
   artifactJobRequest,
   createIdempotencyKey,
@@ -279,7 +280,7 @@ describe('admin feature views', () => {
     expect(html).not.toContain('Tạo draft source')
   })
 
-  it('renders the extracted source form with all supported connectors and safe error affordance', () => {
+  it('renders the extracted source form as a disclosure with all supported connectors', () => {
     const html = renderToStaticMarkup(
       React.createElement(AddSourcePanel, {
         onSubmit: vi.fn(),
@@ -298,7 +299,8 @@ describe('admin feature views', () => {
         error: null,
       }),
     )
-    expect(openHtml).toContain('role="dialog"')
+    expect(openHtml).toContain('role="region"')
+    expect(openHtml).not.toContain('aria-modal="true"')
     expect(openHtml).toContain('Tạo nguồn draft')
     expect(openHtml).toContain('aria-expanded="true"')
 
@@ -314,7 +316,11 @@ describe('admin feature views', () => {
     expect(formHtml).toContain('arXiv API')
     expect(formHtml).toContain('Hacker News API')
     expect(formHtml).toContain('Dữ liệu nguồn chưa hợp lệ.')
+    expect(formHtml).toContain('maxlength="120"')
+    expect(formHtml).toContain('maxlength="160"')
+    expect(formHtml).toContain('maxlength="253"')
     expect(formHtml).not.toMatch(/password|secret|api[_-]?key|token|credential/i)
+    expect(LegacySourceForms.SourceCreateForm).toBeUndefined()
   })
 
   it('closes the extracted form only after a successful create response', async () => {
