@@ -268,8 +268,10 @@ Connector returns candidate media metadata only
 ```text
 Question + article/topic/time scope
 → strict validate + privacy admission
+→ `sensitive-input` refuses before any embedding/provider call
 → capture userId + opaque sessionId + expectedSessionVersion
 → atomically create/reuse 24h answer attempt + reserve one quota unit
+→ optionally create at most one query embedding from the admitted question through the configured `embedding` workload when its capability is equal to or stronger than `qa-generation.requiredCapability`
 → retrieve only visible primary/editorial candidates
 → build evidence blocks with stable citation IDs + internal block IDs
 → system instruction separates evidence as untrusted data
@@ -281,7 +283,7 @@ Question + article/topic/time scope
 → persist/return answer without copied full text, or discard provider result on CAS miss
 ```
 
-Provider không được cấp tool. Model không được tự tạo URL; serializer lấy citation metadata từ MongoDB bằng evidence ID đã kiểm tra. Privacy gate từ chối obvious credential/high-risk identifier bằng `sensitive-input`, không silently redact rồi giả vờ giữ nguyên nghĩa. Current graph gửi raw question và evidence đã admit tới DeepSeek `deepseek-v4-flash` trên capability `nonconfidential`; route này không có bằng chứng ZDR và phải được coi là nonconfidential. Graph hiện tại không có model/provider fallback; route không phù hợp trả `provider-unavailable`, còn candidate tương lai không được bypass capability.
+Provider không được cấp tool. Model không được tự tạo URL; serializer lấy citation metadata từ MongoDB bằng evidence ID đã kiểm tra. Privacy gate từ chối obvious credential/high-risk identifier bằng `sensitive-input`, không silently redact rồi giả vờ giữ nguyên nghĩa. Current graph gửi raw question và evidence đã admit tới DeepSeek `deepseek-v4-flash` trên capability `nonconfidential`; route này không có bằng chứng ZDR và phải được coi là nonconfidential. Query embedding là một bước retriever riêng: service chỉ truyền admitted question tới embedding workload khi capability của route bằng hoặc mạnh hơn capability Q&A; current OpenRouter/BGE-M3 route là `nonconfidential` nên được phép sau privacy admission. Vector và embedding metadata không đi vào answer prompt hoặc answer-attempt state; embedding unavailable/incompatible thì dùng lexical/taxonomy fallback. Graph hiện tại không có model/provider fallback; route không phù hợp trả `provider-unavailable`, còn candidate tương lai không được bypass capability.
 
 Generation và support đều coi question, paragraph và evidence JSON là untrusted data. Support verifier nhận system instruction riêng yêu cầu bỏ qua mọi instruction, prompt, role hoặc yêu cầu đổi verdict nằm trong user JSON; model chỉ được áp dụng system instruction và trả schema support cố định. Evidence content không thể tự nâng vai trò hoặc thay đổi policy gate.
 
@@ -422,6 +424,13 @@ LLM/embedding adapter phải phân loại lỗi. `model-retryable` chỉ cho ph�
 - Query và document chỉ được so cosine khi metadata vector tương thích.
 - Backend giới hạn candidate set theo visibility/topic/time trước khi tính cosine.
 - Với 250–400 article, tính trong Node.js là chấp nhận được; đây không phải lựa chọn scale dài hạn.
+
+### 8.3. Q&A embedding-assisted candidate acquisition
+
+- Q&A tạo tối đa một query embedding từ câu hỏi đã qua privacy admission bằng configured `embedding` workload. Bootstrap chỉ truyền function khi capability của embedding route bằng hoặc mạnh hơn `qa-generation.requiredCapability`.
+- Repository nhận query vector kèm `model`, `dimensions`, `version` và `artifactCompatibilityId`; chỉ candidate có metadata tương thích tuyệt đối mới được tính cosine. Vector không được đưa vào prompt và không persist trong chat/answer-attempt.
+- Khi query embedding unavailable hoặc incompatible, Q&A degrade về lexical + bounded topic-alias retrieval; nếu evidence vẫn không đủ thì trả deterministic `insufficient-evidence`. `sensitive-input` vẫn refuse trước mọi embedding/provider call.
+- Current OpenRouter/BGE-M3 embedding route là `nonconfidential`, tương thích với current DeepSeek Q&A `nonconfidential`; route vẫn chịu provider admission, evidence expiry và capability checks.
 
 Ranking MVP ưu tiên dễ giải thích:
 
@@ -600,7 +609,7 @@ MongoDB hỗ trợ transaction qua nhiều database khi chúng nằm trong cùng
 | Provider domain lỗi retryable | Có thể thử provider fallback | Route fallback phải thuộc failure domain khác và pass privacy/admission |
 | Không còn candidate hợp lệ | Summary/Q&A unavailable rõ ràng | Feed/detail/citation nguồn vẫn dùng được; không hạ policy |
 | Provider privacy/admission/circuit không phù hợp | Q&A refused/unavailable + retry hint | Không gửi raw question, không reserve thêm quota/provider call trùng |
-| Embedding | Search fallback text | Vector cũ chỉ dùng nếu version/input còn hợp lệ |
+| Embedding unavailable/incompatible | Q&A fallback về lexical + taxonomy; search fallback về text | Vector chỉ dùng khi version/input/compatibility còn hợp lệ; `sensitive-input` refuse trước embedding |
 | Ảnh remote lỗi/bị chặn | Visual fallback, link bài gốc vẫn hoạt động | Không backend-proxy hoặc lưu bản sao để che lỗi |
 | Cron due-work không chạy | Admin overview cảnh báo stale queues/ingestion | Manual trigger dùng cùng service; durable queued/running state không mất |
 | Maintenance credential thiếu | Audit IP-HMAC retention báo unavailable | Chỉ `purge-audit-ip-hmac` bị disable và maintenance-retention release gate fail; core runtime/fixed task khác không dùng runtime credential để thay thế |

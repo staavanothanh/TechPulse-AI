@@ -24,7 +24,7 @@ DeepSeek không cung cấp bằng chứng Zero Data Retention (ZDR) phù hợp v
 - Q&A route khai báo capability `nonconfidential`. Privacy gate vẫn từ chối credential và high-risk identifier bằng `sensitive-input`; sau gate, raw question và evidence có thể được gửi tới DeepSeek.
 - Không ghi raw question vào provider/admission/answer-attempt state hoặc log. User-owned chat vẫn lưu question theo chat contract và account-deletion lifecycle hiện tại. Không persist raw evidence, prompt, provider payload, secret hoặc key. Input vẫn bị giới hạn theo Source Registry và được làm sạch/delimit trước request.
 - Article embedding giữ OpenRouter `baai/bge-m3`, 1024 dimensions, version 1 và compatibility identity `bge-m3-v1-1024`. Thay đổi này không tự động yêu cầu re-index vector space.
-- Query embedding của raw question vẫn chỉ được bật khi embedding route có capability `zdr-verified`. OpenRouter/BGE-M3 hiện là `nonconfidential`, vì vậy Q&A dùng keyword retrieval thay vì gửi raw question tới OpenRouter.
+- Query embedding của raw question được bật sau privacy admission khi embedding route có capability bằng hoặc mạnh hơn `qa-generation.requiredCapability`. OpenRouter/BGE-M3 hiện là `nonconfidential`, tương thích với Q&A `nonconfidential`, nên semantic retrieval được dùng; nếu embedding unavailable/incompatible thì fallback về lexical + taxonomy retrieval. Không được dùng route khác capability hoặc vector space khác compatibility.
 
 ## Hệ quả
 
@@ -56,4 +56,4 @@ DeepSeek không cung cấp bằng chứng Zero Data Retention (ZDR) phù hợp v
 - Sensitive-input, Source Registry, support/citation, idempotency, admission/circuit và no-raw-input tests pass.
 - Synthetic smoke pass summary, answer và support khi DeepSeek credential có quyền; test không ghi dữ liệu MongoDB.
 - Live smoke ghi nhận model/provider/status an toàn, không ghi secret/raw provider payload. Kết quả chưa chạy không được coi là pass.
-- Article embedding vẫn bảo toàn `bge-m3-v1-1024`; không trộn vector version và không re-index ngoài kế hoạch. Query embedding non-ZDR không nhận raw question.
+- Article embedding vẫn bảo toàn `bge-m3-v1-1024`; không trộn vector version và không re-index ngoài kế hoạch. Query embedding chỉ dùng admitted question sau privacy admission và route có capability tương thích; không persist vector/provider payload và luôn có lexical + taxonomy fallback khi embedding không khả dụng.

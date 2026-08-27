@@ -82,4 +82,4 @@ Tài liệu DeepSeek hiện công bố concurrency limit 2500 cho `deepseek-v4-f
 
 DeepSeek không công bố Zero Data Retention cho API. Cutover này khai báo Q&A là `nonconfidential` theo owner approval. Sensitive-input detector, source-policy fence, citation validation và support validation vẫn chạy trước khi persist kết quả. Không gửi dữ liệu confidential qua route này nếu chưa có evidence `zdr-verified`.
 
-Query embedding vẫn yêu cầu capability `zdr-verified`. Route OpenRouter/BGE-M3 hiện tại là `nonconfidential`, vì vậy raw question không được gửi tới OpenRouter và Q&A retrieval dùng keyword fallback. Article embedding vẫn dùng BGE-M3 với compatibility identity cũ.
+Query embedding được gọi sau privacy admission khi embedding route có capability bằng hoặc mạnh hơn Q&A workload. Route OpenRouter/BGE-M3 hiện là `nonconfidential`, tương thích với current Q&A `nonconfidential`, nên raw admitted question có thể được gửi tới embedding provider để semantic retrieval; sensitive-input vẫn chặn trước provider call, còn unavailable/incompatible thì fallback về lexical + taxonomy. Article embedding vẫn dùng BGE-M3 với compatibility identity cũ.

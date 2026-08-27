@@ -96,13 +96,14 @@ capacity/billing, không phải bằng chứng privacy-retention; Q&A vẫn fail
 | Contract fixture | `npm run contract:test` | PASS, 56 operations và toàn bộ runtime fixture group |
 | Lint/build | `npm run lint`; `npm run build` | PASS |
 | Live DeepSeek summary, answer và support với synthetic input | `Remove-Item Env:DEEPSEEK_API_KEY -ErrorAction SilentlyContinue; node --env-file-if-exists=.env scripts/deepseek-v4-flash-smoke.js full` | PASS, 3 outbound request; tất cả dùng provider `deepseek`, model `deepseek-v4-flash`, một external attempt và không fallback; answer/support policy eligible |
+| Policy-compatible Q&A query embedding và fallback regression | `npm test -- --run test/unit/qa/bootstrap.test.js test/unit/qa/service.test.js test/unit/ai/retrieval.test.js test/integration/indexing/text-fallback.test.js` | PASS, 4 files/68 tests |
+| Global coverage diagnostic (2026-08-27; excludes two migration immutability files that failed four stored-hash assertions in the full run) | `npm test -- --run --coverage --exclude test/migrations/committed-migrations.test.js --exclude test/migrations/auth-core.test.js` | PASS, 250 files; 1,484 passed/70 skipped; statements 81.79%, branches 76.36%, functions 85.33%, lines 87.92% |
 
-ADR-0016 thay thế quyết định Gemini deployment cho LLM traffic hiện tại. Q&A dùng
-capability `nonconfidential` được owner phê duyệt; sensitive-input, Source Registry,
-citation/support, idempotency và lifecycle gate vẫn hoạt động. Query embedding vẫn
-chỉ `zdr-verified`, vì vậy OpenRouter/BGE-M3 hiện tại không nhận raw question và Q&A
-retrieval dùng keyword fallback. Article embedding vẫn dùng OpenRouter/BGE-M3 với
-compatibility identity `bge-m3-v1-1024`.
+ADR-0016 thay thế quyết định Gemini deployment cho LLM traffic hiện tại. Q&A dùng capability `nonconfidential` được owner phê duyệt; sensitive-input, Source Registry, citation/support, idempotency và lifecycle gate vẫn hoạt động.
+Query embedding được bật sau privacy admission khi embedding route capability không thấp hơn Q&A policy. Current OpenRouter/BGE-M3 route `nonconfidential` tương thích với DeepSeek Q&A `nonconfidential`; vector chỉ dùng để chọn candidate, không đi vào answer prompt hoặc answer-attempt state.
+`sensitive-input` chặn trước embedding; query embedding unavailable/incompatible fallback về lexical + taxonomy retrieval. Article embedding vẫn dùng OpenRouter/BGE-M3 với compatibility identity `bge-m3-v1-1024`.
+
+Unfiltered global run remains non-green: 232 files passed, 18 skipped, and four assertions failed in `test/migrations/committed-migrations.test.js` and `test/migrations/auth-core.test.js` because stored migration blob hashes differ from the current files. This is a separate release-gate blocker from the Q&A retrieval and CSS changes above.
 
 ## Bằng chứng recovery hậu MVP
 

@@ -223,7 +223,7 @@ Không lưu toàn bộ nội dung bài viết trong MVP, kể cả khi được 
 - Tìm kiếm từ khóa trên `titleOriginal`, `titleVi`, `summaryVi`, `topics` và trường `searchTextNormalized` đã viết thường/bỏ dấu.
 - Dùng MongoDB text index với `default_language: "none"` cùng index thông thường cho status, source, topic và thời gian.
 - Semantic retrieval dùng embedding của `titleOriginal + titleVi + summaryVi + topics`; với quy mô vài trăm bài, backend tính cosine similarity trong Node.js.
-- Nếu embedding provider lỗi hoặc bài chưa có embedding, hệ thống phải fallback về text search thay vì làm hỏng feed hoặc AI Q&A.
+- Nếu embedding provider lỗi hoặc bài chưa có embedding, hệ thống phải fallback về text search thay vì làm hỏng feed hoặc AI Q&A. Q&A tạo tối đa một query embedding từ câu hỏi đã qua privacy admission bằng embedding workload có capability tương thích; nếu query embedding unavailable/incompatible thì fallback về lexical + taxonomy retrieval.
 - Phân trang hoặc infinite scroll có kiểm soát.
 - Mỗi card phải hiển thị tên nguồn, tác giả nếu có, ngày xuất bản và liên kết bài gốc.
 - Card có thể hiển thị ảnh đại diện đã qua media policy; nếu không có/quá trình tải lỗi thì dùng visual fallback của TechPulse, không proxy hoặc lưu bản sao nguồn.
@@ -432,7 +432,7 @@ MVP không cần `superadmin`, phân quyền chi tiết cho từng admin, SSO ho
 - **Keyword search:** MongoDB text index với `default_language: "none"`, trường `searchTextNormalized` và index cho status/source/topic/time.
 - **Embedding:** workload route cấu hình server-side với pinned `artifactCompatibilityId`; MVP tiếp tục dùng OpenRouter/BGE-M3 (1024 chiều). Input gồm title, `summaryVi` và topics; đổi model/version phải tăng compatibility identity và re-index.
 - **Semantic retrieval:** lưu vector trong MongoDB và tính cosine similarity trong Node.js cho tập dữ liệu khoảng 250–400 bài; MongoDB Atlas Vector Search chưa phải dependency của MVP.
-- **LLM:** workload router theo ADR-0013 chọn route từ adapter/provider/admission-domain config. Deployment hiện tại dùng DeepSeek `deepseek-v4-flash` cho `summary`, `qa-generation` và `qa-support`, với credential reference `DEEPSEEK_API_KEY`. Graph hiện tại không có model/provider fallback. Q&A route dùng capability `nonconfidential` sau sensitive-input và Source Registry admission; raw question/evidence có thể được gửi tới DeepSeek và có rủi ro retention vì chưa có bằng chứng ZDR. Query embedding vẫn cần `zdr-verified`, nên OpenRouter/BGE-M3 không nhận raw question và Q&A retrieval dùng keyword fallback. OpenCode Zen/Gemini là lịch sử cấu hình và rollback graph, không phải route hiện tại.
+- **LLM:** workload router theo ADR-0013 chọn route từ adapter/provider/admission-domain config. Deployment hiện tại dùng DeepSeek `deepseek-v4-flash` cho `summary`, `qa-generation` và `qa-support`, với credential reference `DEEPSEEK_API_KEY`. Graph hiện tại không có model/provider fallback. Q&A route dùng capability `nonconfidential` sau sensitive-input và Source Registry admission; raw question/evidence có thể được gửi tới DeepSeek và có rủi ro retention vì chưa có bằng chứng ZDR. Query embedding chạy riêng qua embedding workload sau privacy admission khi capability route bằng hoặc mạnh hơn Q&A policy; current OpenRouter/BGE-M3 `nonconfidential` được phép, và unavailable/incompatible thì dùng lexical + taxonomy fallback. OpenCode Zen/Gemini là lịch sử cấu hình và rollback graph, không phải route hiện tại.
 - **Scheduler:** Vercel Cron một lần mỗi ngày và endpoint chạy thủ công có bảo vệ cho admin.
 - **MVP connectors:** RSS/Atom, arXiv API và Hacker News API.
 
@@ -734,7 +734,7 @@ Trước khi mở công khai cho mọi người hoặc thêm quảng cáo, affil
 |---|---|
 | Vi phạm bản quyền hoặc điều khoản nguồn | Source allowlist, lưu bằng chứng Terms/License, thực thi `llmInputScope`, không lưu full text |
 | Điều khoản publisher thay đổi sau khi duyệt | Lưu `reviewedAt`, URL bằng chứng; chuyển `review-needed` và tạm ingest khi phát hiện thay đổi quan trọng |
-| Gửi dữ liệu vượt phạm vi tới LLM/embedding provider | Policy check phía backend trước mọi request, sensitive-input detector, redact/limit dữ liệu và audit model/scope; Q&A nonconfidential cần owner-approved risk |
+| Gửi dữ liệu vượt phạm vi tới LLM/embedding provider | Policy check phía backend trước mọi request, sensitive-input detector, redact/limit dữ liệu và audit model/scope; Q&A nonconfidential cần owner-approved risk; query embedding chỉ dùng admitted question với capability route tương thích |
 | AI hallucination | RAG, citation, từ chối khi thiếu bằng chứng, bộ kiểm thử groundedness |
 | Prompt injection từ bài viết | Coi nội dung nguồn là dữ liệu, tách system instruction, lọc và giới hạn tool |
 | Tin trùng | Canonical URL, hash và semantic similarity |
@@ -778,7 +778,7 @@ Không còn câu hỏi sản phẩm nào chặn việc chuyển sang PRD và thi
 - Implementation dùng JavaScript/JSX (`.js`, `.jsx`), không dùng TypeScript/TSX trong MVP; contract được bảo vệ bằng OpenAPI/runtime validation/JSDoc và test.
 - Ingestion chạy một lần mỗi ngày bằng protected Vercel Cron GET adapter và có admin POST trigger; job có actor/key/request-hash idempotency, due-time coordinator, lease-generation fencing và batch giới hạn.
 - Keyword search dùng MongoDB text index và trường bỏ dấu; không phụ thuộc MongoDB Atlas Search/Vector Search trong MVP.
-- Semantic retrieval dùng configured embedding workload route với pinned compatibility identity và cosine similarity trong Node.js. BGE-M3/1024 là baseline deployment hiện có; vector space khác phải tăng version/re-index, còn text search là degradation fallback.
+- Semantic retrieval dùng configured embedding workload route với pinned compatibility identity và cosine similarity trong Node.js. BGE-M3/1024 là baseline deployment hiện có; Q&A tạo query embedding sau privacy admission khi route capability không thấp hơn Q&A policy; vector space khác phải tăng version/re-index, còn query embedding unavailable/incompatible và text search đều có degradation fallback.
 - LLM route cụ thể là deployment config. Current deployment chọn DeepSeek `deepseek-v4-flash` cho summary và toàn bộ Q&A qua provider graph, dùng `DEEPSEEK_API_KEY`. Graph hiện tại không có model/provider fallback. Q&A dùng `nonconfidential` sau các gate; nếu DeepSeek unavailable thì trả unavailable/retry, không tự gửi cùng input sang route khác. Gemini/OpenCode Zen là rollback graph và lịch sử cấu hình.
 - UI, summary và AI Q&A dùng tiếng Việt; giữ nguyên title, ngôn ngữ và URL nguồn; chỉ dịch/tạo summary, không dịch toàn văn.
 - Citation cấp bài được dùng ở trang chi tiết/summary; citation cấp đoạn được dùng trong AI Q&A; citation cấp từng claim là hậu MVP.

@@ -744,6 +744,12 @@
   display: grid;
   gap: 14px;
 }
+.public-qa-scope > * {
+  min-width: 0;
+}
+.public-qa-scope .public-input {
+  min-width: 0;
+}
 .public-qa-scope > p {
   margin-bottom: 0;
 }
