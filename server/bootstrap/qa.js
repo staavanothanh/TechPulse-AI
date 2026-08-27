@@ -20,6 +20,9 @@ function stableJson(value) {
 }
 
 const QA_CAPABILITIES = new Set(['zdr-verified', 'nonconfidential'])
+function capabilityAllows(actual, required) {
+  return actual === required || actual === 'zdr-verified' && required === 'nonconfidential'
+}
 
 function requireQaWorkloadPolicies(providerRegistry) {
   const policies = providerRegistry?.workloadPolicies
@@ -77,7 +80,7 @@ export async function createConfiguredQaService({ context, providerRegistry = { 
   if (typeof admission?.run !== 'function') throw new Error('Q&A provider admission is not ready')
   const { policies: workloadPolicies, generation: generationPolicy } = requireQaWorkloadPolicies(providerRegistry)
   const configuredRouter = providerRouter ?? createProviderRouter({ workloadPolicies, admission, now })
-  const safeQueryEmbedding = queryEmbedding?.capability === 'zdr-verified' ? queryEmbedding : undefined
+  const safeQueryEmbedding = typeof queryEmbedding === 'function' && QA_CAPABILITIES.has(queryEmbedding.capability) && capabilityAllows(queryEmbedding.capability, generationPolicy.requiredCapability) ? queryEmbedding : undefined
   const supportVerifier = providerAdapters.llmProvider.verifySupport
     ? ({ route, question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }) => providerAdapters.llmProvider.verifySupport({ route, input: JSON.stringify({ question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }), locale: 'vi', tools: [] })
     : undefined

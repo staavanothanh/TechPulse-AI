@@ -52,7 +52,8 @@ describe('Step 10 Q&A bootstrap', () => {
   it('binds Q&A to workload policies without vendor, model, or embedding literals', async () => {
     const source = readFileSync(new URL('../../../server/bootstrap/qa.js', import.meta.url), 'utf8')
     expect(source).not.toMatch(/opencode-zen|openrouter|deepseek|bge-m3|baai\/bge-m3/i)
-    expect(source).toMatch(/queryEmbedding\?\.capability === 'zdr-verified'/)
+    expect(source).toMatch(/capabilityAllows\(queryEmbedding\.capability, generationPolicy\.requiredCapability\)/)
+    expect(source).not.toMatch(/queryEmbedding\?\.capability === 'zdr-verified'/)
 
     const providerRouter = { execute: vi.fn() }
     const providerRegistry = {
