@@ -156,5 +156,6 @@ describe('public feature contract boundaries', () => {
       'utf8',
     )
     expect(css).toMatch(/\.public-qa-scope\s*>\s*\*\s*\{[^}]*min-width:\s*0\s*;/s)
+    expect(css).toMatch(/\.public-qa-scope\s+\.public-input\s*\{[^}]*min-width:\s*0\s*;/s)
   })
 })
