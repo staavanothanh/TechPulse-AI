@@ -150,4 +150,11 @@ describe('public feature contract boundaries', () => {
     expect(source).toContain('onSubmit')
     expect(source).toContain('api')
   })
+  it('keeps Q&A scope children inside the panel padding', () => {
+    const css = readFileSync(
+      join(process.cwd(), 'client', 'features', 'public', 'public-components.css'),
+      'utf8',
+    )
+    expect(css).toMatch(/\.public-qa-scope\s*>\s*\*\s*\{[^}]*min-width:\s*0\s*;/s)
+  })
 })
