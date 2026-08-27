@@ -8,6 +8,7 @@ import {
 } from '../components/reader-primitives.jsx'
 import { formatDate, TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
+import { hasQaScope } from '../../qa/qa-validation.js'
 
 export default function QaView({
   state = 'empty',
@@ -22,13 +23,16 @@ export default function QaView({
   const [question, setQuestion] = useState('')
   const [selectedCitation, setSelectedCitation] = useState(null)
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
-  const scopeTopics = Array.isArray(scope.topics) ? scope.topics : []
+  const safeScope = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope : {}
+  const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
+  const hasScope = hasQaScope(safeScope)
   function submit(event) {
     event.preventDefault()
     const value = question.trim()
-    if (!value || value.length > 1000) return
-    onAsk?.({ ...scope, question: value, topics: scopeTopics })
+    if (!value || value.length > 1000 || !hasScope) return
+    const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, value]) => key !== 'topics' || value.length > 0))
+    onAsk?.({ ...askScope, question: value })
     setQuestion('')
   }
   return (
@@ -58,7 +62,7 @@ export default function QaView({
               {sessions.map((session) => (
                 <button
                   key={session.id}
-                  className={session.id === scope.sessionId ? 'active' : ''}
+                  className={session.id === safeScope.sessionId ? 'active' : ''}
                   type="button"
                   onClick={() => handlers.onSelectSession?.(session.id)}
                 >
@@ -119,7 +123,8 @@ export default function QaView({
                 <button
                   className="public-btn public-btn-primary"
                   type="submit"
-                  disabled={!question.trim() || state === 'loading'}
+                  aria-describedby={!hasScope ? 'public-qa-scope-hint' : undefined}
+                  disabled={!question.trim() || state === 'loading' || !hasScope}
                 >
                   Hỏi với nguồn
                 </button>
@@ -130,6 +135,11 @@ export default function QaView({
         <aside className="public-qa-scope" aria-labelledby="public-qa-scope-title">
           <h2 id="public-qa-scope-title">Phạm vi nguồn</h2>
           <p className="public-form-note">Giới hạn nguồn truy xuất cho câu trả lời.</p>
+          {hasScope ? null : (
+            <p id="public-qa-scope-hint" className="public-form-note">
+              Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.
+            </p>
+          )}
           <div className="public-topic-row public-scope-topics">
             {activeTopics.map((topic) => (
               <button
@@ -146,10 +156,24 @@ export default function QaView({
           <FilterField
             id="public-qa-article"
             label="Giới hạn theo bài"
-            value={scope.articleId || ''}
+            value={safeScope.articleId || ''}
             onChange={(value) => handlers.onScopeChange?.('articleId', value)}
             maxLength={128}
             placeholder="ID bài tùy chọn"
+          />
+          <FilterField
+            id="public-qa-after"
+            label="Từ ngày"
+            value={safeScope.publishedAfter || ''}
+            onChange={(value) => handlers.onScopeChange?.('publishedAfter', value)}
+            type="datetime-local"
+          />
+          <FilterField
+            id="public-qa-before"
+            label="Đến ngày"
+            value={safeScope.publishedBefore || ''}
+            onChange={(value) => handlers.onScopeChange?.('publishedBefore', value)}
+            type="datetime-local"
           />
         </aside>
       </div>

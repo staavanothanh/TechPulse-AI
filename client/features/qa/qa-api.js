@@ -6,6 +6,32 @@ function retryAfterValue(response) {
 function queryPairs(query = {}) {
   return Object.entries(query).filter(([, value]) => value !== undefined && value !== null && value !== '').flatMap(([key, value]) => [[key, Array.isArray(value) ? value.join(',') : String(value)]])
 }
+function normalizeDateTime(value) {
+  if (typeof value !== 'string' || value.trim() === '') return value
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toISOString()
+}
+
+function normalizeAnswerBody(body) {
+  const scope = body?.scope
+  if (!body || typeof body !== 'object' || !scope || typeof scope !== 'object' || Array.isArray(scope)) return body
+  const scopeWithoutEmptyFields = Object.fromEntries(
+    Object.entries(scope).filter(([key, value]) => {
+      if (key === 'topics') return Array.isArray(value) && value.length > 0
+      if (['articleId', 'publishedAfter', 'publishedBefore'].includes(key)) return value !== undefined && value !== null && value !== ''
+      return true
+    }),
+  )
+  return {
+    ...body,
+    scope: {
+      ...scopeWithoutEmptyFields,
+      ...(scope.publishedAfter ? { publishedAfter: normalizeDateTime(scope.publishedAfter) } : {}),
+      ...(scope.publishedBefore ? { publishedBefore: normalizeDateTime(scope.publishedBefore) } : {}),
+    },
+  }
+}
+
 
 const FIELD_COPY = Object.freeze({
   question: 'Câu hỏi chưa hợp lệ.',
@@ -62,7 +88,7 @@ export function createQaApi(generatedApi, fetchImpl = globalThis.fetch) {
   return Object.freeze({
     listSessions: (query) => invoke(generatedApi?.listChatSessions, { query }),
     getSession: (chatSessionId) => invoke(generatedApi?.getChatSession, { pathParams: { chatSessionId } }),
-    createAnswer: (body, { csrfToken, idempotencyKey, chatSessionId } = {}) => invoke(generatedApi?.createGroundedAnswer, { body: JSON.stringify({ ...body, ...(chatSessionId ? { chatSessionId } : {}) }), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': idempotencyKey } }),
+    createAnswer: (body, { csrfToken, idempotencyKey, chatSessionId } = {}) => invoke(generatedApi?.createGroundedAnswer, { body: JSON.stringify({ ...normalizeAnswerBody(body), ...(chatSessionId ? { chatSessionId } : {}) }), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': idempotencyKey } }),
     deleteSession: (chatSessionId, csrfToken) => invoke(generatedApi?.deleteChatSession, { pathParams: { chatSessionId }, headers: { 'X-CSRF-Token': csrfToken } }),
     clearSessions: (csrfToken) => invoke(generatedApi?.clearChatSessions, { headers: { 'X-CSRF-Token': csrfToken } }),
   })

@@ -430,6 +430,7 @@ describe('public coverage states', () => {
       handlers,
     })
     const empty = render(QaView, { state: 'empty', sessions: [], handlers })
+    const nullScope = render(QaView, { state: 'empty', scope: null, sessions: [], handlers })
     const loading = render(QaView, { state: 'loading', handlers })
     const error = render(QaView, {
       state: 'error',
@@ -445,6 +446,10 @@ describe('public coverage states', () => {
     expect(ready).toContain('Câu hỏi bị từ chối an toàn.')
     expect(empty).toContain('Bắt đầu một câu hỏi')
     expect(empty).toContain('Chưa có phiên hỏi đáp.')
+    expect(empty).toContain('Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.')
+    expect(empty).toContain('Từ ngày')
+    expect(empty).toContain('Đến ngày')
+    expect(nullScope).toContain('Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.')
     expect(loading).toContain('Đang truy xuất nguồn')
     expect(error).toContain('Q&amp;A failed')
   })

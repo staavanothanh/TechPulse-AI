@@ -551,11 +551,11 @@ function useQa({ csrfToken, enabled, expire, qaApi, user }) {
         {
           question: payload.question,
           scope: {
-            articleId: payload.articleId,
-            topics: payload.topics,
-            publishedAfter: payload.publishedAfter,
-            publishedBefore: payload.publishedBefore,
-          },
+            ...(typeof payload.articleId === 'string' && payload.articleId.trim().length > 0 ? { articleId: payload.articleId } : {}),
+            ...(Array.isArray(payload.topics) && payload.topics.length > 0 ? { topics: payload.topics } : {}),
+            ...(payload.publishedAfter ? { publishedAfter: payload.publishedAfter } : {}),
+            ...(payload.publishedBefore ? { publishedBefore: payload.publishedBefore } : {}),
+          }
         },
         {
           csrfToken,

@@ -28,6 +28,36 @@ describe('Step 10 Q&A API adapter', () => {
     expect(answerInit.body).toContain('Câu hỏi hợp lệ')
   })
 
+  it('normalizes article-only and datetime-local scopes before transport', async () => {
+    const fetchImpl = vi.fn(async () => response({ data: { status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence' } }))
+    const generated = {
+      createGroundedAnswer: ({ fetchImpl: managedFetch, body, headers }) => managedFetch('/api/v1/answers', { body, headers }),
+    }
+    const api = createQaApi(generated, fetchImpl)
+    await api.createAnswer({
+      question: 'Câu hỏi article scope',
+      scope: { articleId: '507f1f77bcf86cd799439011', topics: [] },
+    })
+    await api.createAnswer({
+      question: 'Câu hỏi date scope',
+      scope: { topics: [], publishedAfter: '2026-08-01T00:00', publishedBefore: '2026-08-02T00:00' },
+    })
+    await api.createAnswer({
+      question: 'Câu hỏi topic scope',
+      scope: { articleId: '', topics: ['AI'], publishedAfter: '', publishedBefore: '' },
+    })
+    const topicBody = JSON.parse(fetchImpl.mock.calls[2][1].body)
+    expect(topicBody.scope).toEqual({ topics: ['AI'] })
+
+    const articleBody = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(articleBody.scope).toEqual({ articleId: '507f1f77bcf86cd799439011' })
+    const dateBody = JSON.parse(fetchImpl.mock.calls[1][1].body)
+    expect(dateBody.scope).toEqual({
+      publishedAfter: new Date('2026-08-01T00:00').toISOString(),
+      publishedBefore: new Date('2026-08-02T00:00').toISOString(),
+    })
+  })
+
   it('preserves bounded Retry-After and canonical API error metadata', async () => {
     const fetchImpl = vi.fn(async () => response({ error: { code: 'rate_limit_exceeded', message: 'Rate limited', requestId: 'req-1' } }, 429, { 'Retry-After': '17' }))
     const generated = { listChatSessions: (init) => init.fetchImpl('/api/v1/chat-sessions', init) }
