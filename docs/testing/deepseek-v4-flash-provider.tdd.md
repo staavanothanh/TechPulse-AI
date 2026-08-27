@@ -44,17 +44,17 @@ Kết quả: PASS, 141 tests. Statements 86.27%, branches 84.41%, functions 93.2
 
 ## Đặc tả kiểm thử
 
-| Bảo đảm | Loại kiểm thử | Kết quả |
-|---|---|---|
-| Endpoint chỉ tới `https://api.deepseek.com/chat/completions` và không theo redirect | Unit | PASS |
-| Adapter dùng Bearer credential, JSON output và `thinking.type=disabled` | Unit | PASS |
-| Summary, answer và support đều yêu cầu model `deepseek-v4-flash` | Unit | PASS |
-| Summary chạy qua provider router với capability `nonconfidential` | Integration | PASS |
-| Q&A generation và support chạy qua provider router với capability `nonconfidential` đã được owner phê duyệt | Integration | PASS |
-| Grounded answer thiếu citation bị từ chối | Unit | PASS |
-| Credential thiếu làm smoke dừng trước network dispatch | Unit | PASS |
-| HTTP 429 được phân loại retryable mà không đọc provider error body | Unit | PASS |
-| Response bị từ chối nếu `payload.model` khác `deepseek-v4-flash` | Unit | PASS |
+| Bảo đảm                                                                                                     | Loại kiểm thử | Kết quả |
+| ----------------------------------------------------------------------------------------------------------- | ------------- | ------- |
+| Endpoint chỉ tới `https://api.deepseek.com/chat/completions` và không theo redirect                         | Unit          | PASS    |
+| Adapter dùng Bearer credential, JSON output và `thinking.type=disabled`                                     | Unit          | PASS    |
+| Summary, answer và support đều yêu cầu model `deepseek-v4-flash`                                            | Unit          | PASS    |
+| Summary chạy qua provider router với capability `nonconfidential`                                           | Integration   | PASS    |
+| Q&A generation và support chạy qua provider router với capability `nonconfidential` đã được owner phê duyệt | Integration   | PASS    |
+| Grounded answer thiếu citation bị từ chối                                                                   | Unit          | PASS    |
+| Credential thiếu làm smoke dừng trước network dispatch                                                      | Unit          | PASS    |
+| HTTP 429 được phân loại retryable mà không đọc provider error body                                          | Unit          | PASS    |
+| Response bị từ chối nếu `payload.model` khác `deepseek-v4-flash`                                            | Unit          | PASS    |
 
 ## Live smoke
 

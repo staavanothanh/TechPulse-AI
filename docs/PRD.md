@@ -26,35 +26,35 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 
 ### 2.1. Fixed product policy
 
-| Policy | Quyết định cố định cho MVP |
-|---|---|
-| Thời gian/nguồn lực | 4 tuần, scope đủ để một người hoàn thành |
-| Connector | RSS/Atom, arXiv, Hacker News |
-| Dataset | Khoảng 250–400 article |
-| Ngôn ngữ output | Tiếng Việt |
-| Citation | Cấp bài ở detail/summary; cấp đoạn ở AI Q&A |
-| Full text | Không lưu; chỉ xử lý tạm nếu `fulltext-temporary` |
-| Implementation language | JavaScript/JSX (`.js`, `.jsx`); không dùng TypeScript/TSX trong MVP |
-| Media | Ảnh remote-preview theo Source Registry; video link-only; không rehost hoặc AI-analyze binary media |
-| External content | Luôn là untrusted data |
-| Source approval | Technical check tự động, policy approval thủ công |
-| Human role | `user`, `admin` |
-| Internal actor | `system-worker` |
-| Deployment | Vercel Hobby, public URL tạm thời phục vụ chấm đồ án |
+| Policy                  | Quyết định cố định cho MVP                                                                          |
+| ----------------------- | --------------------------------------------------------------------------------------------------- |
+| Thời gian/nguồn lực     | 4 tuần, scope đủ để một người hoàn thành                                                            |
+| Connector               | RSS/Atom, arXiv, Hacker News                                                                        |
+| Dataset                 | Khoảng 250–400 article                                                                              |
+| Ngôn ngữ output         | Tiếng Việt                                                                                          |
+| Citation                | Cấp bài ở detail/summary; cấp đoạn ở AI Q&A                                                         |
+| Full text               | Không lưu; chỉ xử lý tạm nếu `fulltext-temporary`                                                   |
+| Implementation language | JavaScript/JSX (`.js`, `.jsx`); không dùng TypeScript/TSX trong MVP                                 |
+| Media                   | Ảnh remote-preview theo Source Registry; video link-only; không rehost hoặc AI-analyze binary media |
+| External content        | Luôn là untrusted data                                                                              |
+| Source approval         | Technical check tự động, policy approval thủ công                                                   |
+| Human role              | `user`, `admin`                                                                                     |
+| Internal actor          | `system-worker`                                                                                     |
+| Deployment              | Vercel Hobby, public URL tạm thời phục vụ chấm đồ án                                                |
 
 ### 2.2. Reversible architecture preferences
 
-| Area | Lựa chọn MVP | Điều kiện thay đổi |
-|---|---|---|
-| Database | MongoDB Atlas | Chỉ đổi sau MVP |
-| Keyword search | MongoDB text index | Có thể chuyển Atlas Search khi scale tăng |
-| Embedding | Route cấu hình theo workload, với pinned compatibility identity | Đổi vector space phải tăng version và re-index toàn corpus |
-| Semantic search | Cosine similarity trong Node.js | Chuyển Vector Search khi dataset lớn |
-| LLM primary | Server chọn route từ workload policy; route chứa provider, model, operation và capability evidence | Provider/model cụ thể là deployment config, không là business invariant |
-| Model fallback | Model khác trong cùng provider failure domain | Chỉ lỗi `model-retryable`; không được hạ privacy capability |
-| Provider fallback | Route thuộc provider failure domain khác | Chỉ lỗi `provider-retryable` hoặc domain unavailable; vẫn pass admission/support gate |
+| Area               | Lựa chọn MVP                                                                                        | Điều kiện thay đổi                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Database           | MongoDB Atlas                                                                                       | Chỉ đổi sau MVP                                                                                              |
+| Keyword search     | MongoDB text index                                                                                  | Có thể chuyển Atlas Search khi scale tăng                                                                    |
+| Embedding          | Route cấu hình theo workload, với pinned compatibility identity                                     | Đổi vector space phải tăng version và re-index toàn corpus                                                   |
+| Semantic search    | Cosine similarity trong Node.js                                                                     | Chuyển Vector Search khi dataset lớn                                                                         |
+| LLM primary        | Server chọn route từ workload policy; route chứa provider, model, operation và capability evidence  | Provider/model cụ thể là deployment config, không là business invariant                                      |
+| Model fallback     | Model khác trong cùng provider failure domain                                                       | Chỉ lỗi `model-retryable`; không được hạ privacy capability                                                  |
+| Provider fallback  | Route thuộc provider failure domain khác                                                            | Chỉ lỗi `provider-retryable` hoặc domain unavailable; vẫn pass admission/support gate                        |
 | Q&A provider route | Current route được owner chấp thuận ở capability `nonconfidential` cho DeepSeek `deepseek-v4-flash` | Sensitive input vẫn refuse; route unavailable thì refuse/unavailable, không có fallback trong graph hiện tại |
-| Scheduler | Vercel Cron + admin trigger | Có thể chuyển durable worker hậu MVP |
+| Scheduler          | Vercel Cron + admin trigger                                                                         | Có thể chuyển durable worker hậu MVP                                                                         |
 
 ### 2.3. Trust boundaries
 
@@ -70,16 +70,16 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 
 ### 3.1. Actors
 
-| Actor | Mục tiêu | Quyền chính |
-|---|---|---|
-| Guest | Truy cập entry/auth surface | Đăng ký, đăng nhập |
-| User | Theo dõi và hỏi về tin công nghệ | Feed, search, detail, save, AI Q&A |
-| Admin | Vận hành và xử lý ngoại lệ | Sources, jobs, articles/index, users, takedowns, audit |
-| System worker | Thực thi bounded job | Ingest, normalize, summarize, embed, index |
-| Cron caller | Kích hoạt lịch | Gọi protected ingestion endpoint |
-| Maintenance caller | Chạy retention task cố định | Machine bearer + fixed task name; không có caller filter/cutoff |
-| Publisher/source | Cung cấp dữ liệu ngoài | Không có quyền trong hệ thống; bị giới hạn bởi Source Registry |
-| AI provider | Tạo summary/answer/vector | Chỉ nhận input đã được policy gate cho phép |
+| Actor              | Mục tiêu                         | Quyền chính                                                     |
+| ------------------ | -------------------------------- | --------------------------------------------------------------- |
+| Guest              | Truy cập entry/auth surface      | Đăng ký, đăng nhập                                              |
+| User               | Theo dõi và hỏi về tin công nghệ | Feed, search, detail, save, AI Q&A                              |
+| Admin              | Vận hành và xử lý ngoại lệ       | Sources, jobs, articles/index, users, takedowns, audit          |
+| System worker      | Thực thi bounded job             | Ingest, normalize, summarize, embed, index                      |
+| Cron caller        | Kích hoạt lịch                   | Gọi protected ingestion endpoint                                |
+| Maintenance caller | Chạy retention task cố định      | Machine bearer + fixed task name; không có caller filter/cutoff |
+| Publisher/source   | Cung cấp dữ liệu ngoài           | Không có quyền trong hệ thống; bị giới hạn bởi Source Registry  |
+| AI provider        | Tạo summary/answer/vector        | Chỉ nhận input đã được policy gate cho phép                     |
 
 ### 3.2. User-facing surfaces
 
@@ -106,134 +106,134 @@ TechPulse AI cung cấp cho sinh viên CNTT và developer Việt Nam một feed 
 
 ### 4.1. Authentication và account
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| AUTH-001 | Guest có thể đăng ký account `user` | Client không thể đặt role khác |
-| AUTH-002 | User/admin có thể login/logout | Session lưu server-side; cookie HttpOnly/SameSite/Secure |
-| AUTH-003 | Backend phân biệt unauthenticated và unauthorized | Trả `401` và `403` đúng trường hợp |
-| AUTH-004 | Admin đầu tiên được tạo bằng seed/deployment operation | Không có public admin registration |
-| AUTH-005 | Khóa user làm mất hiệu lực mọi session hiện có | Request tiếp theo bị từ chối |
+| ID       | Requirement                                                     | Acceptance summary                                                                                                                                                                                                        |
+| -------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AUTH-001 | Guest có thể đăng ký account `user`                             | Client không thể đặt role khác                                                                                                                                                                                            |
+| AUTH-002 | User/admin có thể login/logout                                  | Session lưu server-side; cookie HttpOnly/SameSite/Secure                                                                                                                                                                  |
+| AUTH-003 | Backend phân biệt unauthenticated và unauthorized               | Trả `401` và `403` đúng trường hợp                                                                                                                                                                                        |
+| AUTH-004 | Admin đầu tiên được tạo bằng seed/deployment operation          | Không có public admin registration                                                                                                                                                                                        |
+| AUTH-005 | Khóa user làm mất hiệu lực mọi session hiện có                  | Request tiếp theo bị từ chối                                                                                                                                                                                              |
 | AUTH-006 | User có thể yêu cầu xóa account bằng durable automatic workflow | Session bị revoke rồi direct-delete/verify; chat/saved/answer-attempt và mọi user Q&A quota bucket theo key version còn hiệu lực bị xóa, shared IP security bucket giữ riêng; mọi cleanup có completion evidence và audit |
-| AUTH-007 | Browser auth/API là same-origin với cookie contract đóng | `__Host-techpulse_session`, Secure/HttpOnly/Path=/SameSite=Lax/no Domain; exact Origin, no credentialed CORS, no-store auth responses |
-| AUTH-008 | Login/register chống abuse bằng trusted client-IP bucket | Fixed atomic limits chạy trước password hash/write; arbitrary forwarding header không tạo bucket mới |
+| AUTH-007 | Browser auth/API là same-origin với cookie contract đóng        | `__Host-techpulse_session`, Secure/HttpOnly/Path=/SameSite=Lax/no Domain; exact Origin, no credentialed CORS, no-store auth responses                                                                                     |
+| AUTH-008 | Login/register chống abuse bằng trusted client-IP bucket        | Fixed atomic limits chạy trước password hash/write; arbitrary forwarding header không tạo bucket mới                                                                                                                      |
 
 ### 4.2. User preferences và saved articles
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| USER-001 | User chọn topic quan tâm | Preferences tồn tại qua session |
-| USER-002 | User lưu/bỏ lưu article | Operation idempotent, không tạo duplicate |
-| USER-003 | User xem danh sách saved articles | Chỉ thấy dữ liệu của chính mình |
+| ID       | Requirement                         | Acceptance summary                                  |
+| -------- | ----------------------------------- | --------------------------------------------------- |
+| USER-001 | User chọn topic quan tâm            | Preferences tồn tại qua session                     |
+| USER-002 | User lưu/bỏ lưu article             | Operation idempotent, không tạo duplicate           |
+| USER-003 | User xem danh sách saved articles   | Chỉ thấy dữ liệu của chính mình                     |
 | USER-004 | User xóa saved history/chat history | Dữ liệu liên quan bị xóa hoặc anonymize theo policy |
 
 ### 4.3. Source Registry
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| SRC-001 | Admin tạo/sửa source definition | Validate connector-specific config |
-| SRC-002 | System chạy technical check | HTTPS/no-credential URL; validate mọi A/AAAA, pin actual connection và kiểm tra từng redirect/content type/parse |
-| SRC-003 | Admin ghi nhận publisher, Terms/License và evidence | Có reviewedBy/reviewedAt |
-| SRC-004 | Source có rights status độc lập operational status | Không trộn `paused` với `metadata-only` |
-| SRC-005 | Không rõ quyền thì mặc định `metadata-only` | Không có implicit `permitted` |
-| SRC-006 | Backend enforce `llmInputScope` và `storageScope` | Request vượt scope bị chặn/log |
-| SRC-007 | Source `blocked`/`review-needed` không chạy production ingest | Technical sample là ngoại lệ có giới hạn |
-| SRC-008 | Admin pause/archive source | Không tự xóa historical article |
-| SRC-009 | Source có `mediaPolicy` độc lập với quyền dùng text | Ảnh/video chỉ hiển thị theo mode và host đã duyệt |
-| SRC-010 | Policy fields tuân theo compatibility matrix | Contract-valid payload không thể nâng quyền xử lý |
-| SRC-011 | Terms change đưa source về re-review fail-closed | Source tự pause, tăng policyVersion và atomically persist pending reconciliation marker |
-| SRC-012 | Reconciliation worker không được ghi đè policy marker mới | Mọi marker mutation CAS exact policy version/status/cursor; completed version bằng required version |
+| ID      | Requirement                                                   | Acceptance summary                                                                                               |
+| ------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| SRC-001 | Admin tạo/sửa source definition                               | Validate connector-specific config                                                                               |
+| SRC-002 | System chạy technical check                                   | HTTPS/no-credential URL; validate mọi A/AAAA, pin actual connection và kiểm tra từng redirect/content type/parse |
+| SRC-003 | Admin ghi nhận publisher, Terms/License và evidence           | Có reviewedBy/reviewedAt                                                                                         |
+| SRC-004 | Source có rights status độc lập operational status            | Không trộn `paused` với `metadata-only`                                                                          |
+| SRC-005 | Không rõ quyền thì mặc định `metadata-only`                   | Không có implicit `permitted`                                                                                    |
+| SRC-006 | Backend enforce `llmInputScope` và `storageScope`             | Request vượt scope bị chặn/log                                                                                   |
+| SRC-007 | Source `blocked`/`review-needed` không chạy production ingest | Technical sample là ngoại lệ có giới hạn                                                                         |
+| SRC-008 | Admin pause/archive source                                    | Không tự xóa historical article                                                                                  |
+| SRC-009 | Source có `mediaPolicy` độc lập với quyền dùng text           | Ảnh/video chỉ hiển thị theo mode và host đã duyệt                                                                |
+| SRC-010 | Policy fields tuân theo compatibility matrix                  | Contract-valid payload không thể nâng quyền xử lý                                                                |
+| SRC-011 | Terms change đưa source về re-review fail-closed              | Source tự pause, tăng policyVersion và atomically persist pending reconciliation marker                          |
+| SRC-012 | Reconciliation worker không được ghi đè policy marker mới     | Mọi marker mutation CAS exact policy version/status/cursor; completed version bằng required version              |
 
 ### 4.4. Ingestion và normalization
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| ING-001 | Ba connector hoạt động qua common interface | Output normalize về common article schema |
-| ING-002 | Protected cron chạy bounded cross-queue due work | Materialize daily ingestion intent idempotently; trả recovery + per-queue aggregate, không trả heterogeneous jobs |
-| ING-003 | Admin có thể trigger cùng job service | Không bypass policy/lock |
-| ING-004 | Job có idempotency key và distributed lock | Duplicate invocation không duplicate article |
-| ING-005 | Job ghi new/duplicate/skipped/error counts | Admin xem được lỗi đã redact |
-| ING-006 | Retry chỉ áp dụng lỗi retryable và có giới hạn | Không retry vô hạn |
-| ING-007 | Canonicalize URL/time/language/topic | Output nhất quán giữa connector |
-| ING-008 | Deduplicate bằng URL, external ID, normalized title/hash | Ambiguous merge vào review queue |
-| ING-009 | Raw HTML không đi thẳng vào AI | Main content được extract/sanitize/chunk |
-| ING-010 | Lease fencing high-water tồn tại qua expire/release | Lease không TTL; crash-after-claim recovery parent trước linked retry và stale worker không commit |
-| ING-011 | Ingestion candidate/checkpoint commit theo current source policy/config | Capture version trước fetch; state/version/config đổi thì discard candidate và không advance checkpoint |
-| ING-012 | Cross-queue due work có bounded fairness | Canonical resource keys; mỗi registered due queue có reserved progress trước spill capacity |
-| ING-013 | RSS/Atom parse fail closed dưới hostile XML/compression | No DOCTYPE/entity/XInclude/network resolver; wire/decoded/depth/node/field/time bounds và typed redacted error |
+| ID      | Requirement                                                             | Acceptance summary                                                                                                |
+| ------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| ING-001 | Ba connector hoạt động qua common interface                             | Output normalize về common article schema                                                                         |
+| ING-002 | Protected cron chạy bounded cross-queue due work                        | Materialize daily ingestion intent idempotently; trả recovery + per-queue aggregate, không trả heterogeneous jobs |
+| ING-003 | Admin có thể trigger cùng job service                                   | Không bypass policy/lock                                                                                          |
+| ING-004 | Job có idempotency key và distributed lock                              | Duplicate invocation không duplicate article                                                                      |
+| ING-005 | Job ghi new/duplicate/skipped/error counts                              | Admin xem được lỗi đã redact                                                                                      |
+| ING-006 | Retry chỉ áp dụng lỗi retryable và có giới hạn                          | Không retry vô hạn                                                                                                |
+| ING-007 | Canonicalize URL/time/language/topic                                    | Output nhất quán giữa connector                                                                                   |
+| ING-008 | Deduplicate bằng URL, external ID, normalized title/hash                | Ambiguous merge vào review queue                                                                                  |
+| ING-009 | Raw HTML không đi thẳng vào AI                                          | Main content được extract/sanitize/chunk                                                                          |
+| ING-010 | Lease fencing high-water tồn tại qua expire/release                     | Lease không TTL; crash-after-claim recovery parent trước linked retry và stale worker không commit                |
+| ING-011 | Ingestion candidate/checkpoint commit theo current source policy/config | Capture version trước fetch; state/version/config đổi thì discard candidate và không advance checkpoint           |
+| ING-012 | Cross-queue due work có bounded fairness                                | Canonical resource keys; mỗi registered due queue có reserved progress trước spill capacity                       |
+| ING-013 | RSS/Atom parse fail closed dưới hostile XML/compression                 | No DOCTYPE/entity/XInclude/network resolver; wire/decoded/depth/node/field/time bounds và typed redacted error    |
 
 ### 4.5. Article lifecycle, feed và detail
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| ART-001 | Article có provenance và rights snapshot | sourceId, originalUrl, publishedAt luôn có |
-| ART-002 | Chỉ `published` xuất hiện ở user surfaces | Hidden/review/removed bị loại ở mọi query |
-| ART-003 | Feed filter theo topic/source/time | Pagination ổn định |
-| ART-004 | Detail hiển thị original metadata, summary basis và CTA nguồn | Không hiển thị full article/image trái scope |
-| ART-005 | Admin hide/restore article theo invariant | Index được đồng bộ |
-| ART-006 | Admin merge duplicate nhưng giữ mọi source link | Provenance không mất |
-| ART-007 | Article có thể có `leadMedia` đã qua policy | Ảnh được preview hoặc fallback; video chỉ là link và ghi `not-analyzed` |
+| ID      | Requirement                                                                 | Acceptance summary                                                                      |
+| ------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| ART-001 | Article có provenance và rights snapshot                                    | sourceId, originalUrl, publishedAt luôn có                                              |
+| ART-002 | Chỉ `published` xuất hiện ở user surfaces                                   | Hidden/review/removed bị loại ở mọi query                                               |
+| ART-003 | Feed filter theo topic/source/time                                          | Pagination ổn định                                                                      |
+| ART-004 | Detail hiển thị original metadata, summary basis và CTA nguồn               | Không hiển thị full article/image trái scope                                            |
+| ART-005 | Admin hide/restore article theo invariant                                   | Index được đồng bộ                                                                      |
+| ART-006 | Admin merge duplicate nhưng giữ mọi source link                             | Provenance không mất                                                                    |
+| ART-007 | Article có thể có `leadMedia` đã qua policy                                 | Ảnh được preview hoặc fallback; video chỉ là link và ghi `not-analyzed`                 |
 | ART-008 | Mọi external link render cho user/admin là canonical HTTPS không credential | `javascript:`, `data:`, `file:` và credential-bearing URL bị reject trước serialization |
 
 ### 4.6. Keyword và semantic search
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| SEARCH-001 | Search keyword trên original/VI title, VI summary, topics | Hỗ trợ query bỏ dấu |
-| SEARCH-002 | Filter kết hợp status/source/topic/time | Không leak non-published article |
-| SEARCH-003 | Published article có thể được embed từ allowed fields | Lưu model/dimension/version/hash |
-| SEARCH-004 | Query/document dùng cùng embedding model/version | Mismatch bị từ chối hoặc re-index |
-| SEARCH-005 | Backend xếp hạng cosine trên dataset MVP | Trả top candidates có score |
-| SEARCH-006 | Embedding outage fallback text search | User vẫn nhận kết quả có nguồn |
+| ID         | Requirement                                               | Acceptance summary                |
+| ---------- | --------------------------------------------------------- | --------------------------------- |
+| SEARCH-001 | Search keyword trên original/VI title, VI summary, topics | Hỗ trợ query bỏ dấu               |
+| SEARCH-002 | Filter kết hợp status/source/topic/time                   | Không leak non-published article  |
+| SEARCH-003 | Published article có thể được embed từ allowed fields     | Lưu model/dimension/version/hash  |
+| SEARCH-004 | Query/document dùng cùng embedding model/version          | Mismatch bị từ chối hoặc re-index |
+| SEARCH-005 | Backend xếp hạng cosine trên dataset MVP                  | Trả top candidates có score       |
+| SEARCH-006 | Embedding outage fallback text search                     | User vẫn nhận kết quả có nguồn    |
 
 ### 4.7. Summary và ngôn ngữ
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| AI-001 | System tạo `summaryVi` ngắn và `summaryParagraphsVi` chi tiết từ allowed input | Feed dùng summary ngắn; detail dùng 2–5 đoạn khi detail status `ready` |
-| AI-002 | Summary lưu `summaryBasis`, model và status độc lập cho short/detail | Biết được tạo từ metadata/excerpt/fulltext-temp/official-payload và không hiển thị artifact chưa sẵn sàng |
-| AI-003 | Giữ title/excerpt/language/URL gốc | Không overwrite source data |
-| AI-004 | Không lưu full text sau xử lý tạm | Không có field/collection chứa article body lâu dài |
-| AI-005 | Summary lỗi có retry/review flow | Không publish summary hỏng như thành công |
-| AI-006 | UI gắn nhãn AI dịch/tổng hợp | Người dùng biết giới hạn |
-| AI-007 | AI không dùng chi tiết chỉ tồn tại trong media chưa xử lý | Không claim từ ảnh/video có `mediaEvidenceStatus=not-analyzed` |
-| AI-008 | AI artifact commit match current Source Policy version | Policy đổi trong lúc provider chạy làm output cũ bị discard, không persist |
-| AI-009 | Provider route có capability evidence và expiry | Q&A raw question/evidence đã admit chỉ đi DeepSeek `deepseek-v4-flash` trên `nonconfidential`; sensitive-input/source-policy gate không được bypass |
-| AI-010 | Admission và route/provider circuits bảo vệ cost và availability | Routes dùng cùng credential tranh chung Mongo admission-domain concurrency/budget; route circuit tách provider-domain circuit; một logical operation tối đa hai external attempts |
-| AI-011 | Ba connector seed được phép dùng payload đã normalize cho summary với prompt-injection fence | Exact `sourceKey` được duyệt; nội dung vẫn là untrusted data trong delimiter, không gọi tool và không lưu raw HTML/provider payload |
+| ID     | Requirement                                                                                  | Acceptance summary                                                                                                                                                                |
+| ------ | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AI-001 | System tạo `summaryVi` ngắn và `summaryParagraphsVi` chi tiết từ allowed input               | Feed dùng summary ngắn; detail dùng 2–5 đoạn khi detail status `ready`                                                                                                            |
+| AI-002 | Summary lưu `summaryBasis`, model và status độc lập cho short/detail                         | Biết được tạo từ metadata/excerpt/fulltext-temp/official-payload và không hiển thị artifact chưa sẵn sàng                                                                         |
+| AI-003 | Giữ title/excerpt/language/URL gốc                                                           | Không overwrite source data                                                                                                                                                       |
+| AI-004 | Không lưu full text sau xử lý tạm                                                            | Không có field/collection chứa article body lâu dài                                                                                                                               |
+| AI-005 | Summary lỗi có retry/review flow                                                             | Không publish summary hỏng như thành công                                                                                                                                         |
+| AI-006 | UI gắn nhãn AI dịch/tổng hợp                                                                 | Người dùng biết giới hạn                                                                                                                                                          |
+| AI-007 | AI không dùng chi tiết chỉ tồn tại trong media chưa xử lý                                    | Không claim từ ảnh/video có `mediaEvidenceStatus=not-analyzed`                                                                                                                    |
+| AI-008 | AI artifact commit match current Source Policy version                                       | Policy đổi trong lúc provider chạy làm output cũ bị discard, không persist                                                                                                        |
+| AI-009 | Provider route có capability evidence và expiry                                              | Q&A raw question/evidence đã admit chỉ đi DeepSeek `deepseek-v4-flash` trên `nonconfidential`; sensitive-input/source-policy gate không được bypass                               |
+| AI-010 | Admission và route/provider circuits bảo vệ cost và availability                             | Routes dùng cùng credential tranh chung Mongo admission-domain concurrency/budget; route circuit tách provider-domain circuit; một logical operation tối đa hai external attempts |
+| AI-011 | Ba connector seed được phép dùng payload đã normalize cho summary với prompt-injection fence | Exact `sourceKey` được duyệt; nội dung vẫn là untrusted data trong delimiter, không gọi tool và không lưu raw HTML/provider payload                                               |
 
 ### 4.8. AI Q&A và citation
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| QA-001 | User hỏi theo article/topic/time range | Input được validate và rate-limit |
-| QA-002 | Backend retrieve evidence trước LLM call | Không answer trực tiếp từ model memory |
-| QA-003 | Mỗi answer paragraph có citations[] | Citation mở đúng original URL |
-| QA-004 | Citation chỉ trỏ published/allowed article | Hidden/removed không được dùng |
-| QA-005 | Conflicting sources được trình bày riêng | Không tự che giấu mâu thuẫn |
-| QA-006 | Thiếu evidence dẫn tới refusal | Không bịa câu trả lời |
-| QA-007 | Prompt injection trong evidence không thay đổi instruction/tool use | External text chỉ là quoted data |
-| QA-008 | Current DeepSeek graph không có model/provider fallback; lỗi retryable dùng unavailable hoặc bounded job retry | Không gửi cùng admitted input sang route khác; policy/privacy/validation/schema/support hoặc ambiguous outcome luôn terminal |
-| QA-009 | Delayed Q&A không tái tạo dữ liệu sau deletion/takedown | Final write match active user + exact sessionVersion + current article lifecycle; CAS miss discard output |
-| QA-010 | Grounded answer có actor/session-scoped idempotency | Same key/hash chỉ reserve một quota/provider/chat result; khác hash trả `409` |
-| QA-011 | Community signal chỉ dùng discovery | HN vẫn ở feed/search nhưng không eligible cho Q&A evidence/citation |
-| QA-012 | Citation runtime kiểm tra support trên exact evidence blocks | Paragraph trả internal block IDs; unsupported/uncertain deterministic refuse trong MVP |
-| QA-013 | User question qua privacy admission trước provider routing | Credential/high-risk identifier trả `sensitive-input`; admitted input chỉ tới DeepSeek `deepseek-v4-flash` nonconfidential route và metadata-only log |
+| ID     | Requirement                                                                                                    | Acceptance summary                                                                                                                                    |
+| ------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| QA-001 | User hỏi theo article/topic/time range                                                                         | Input được validate và rate-limit                                                                                                                     |
+| QA-002 | Backend retrieve evidence trước LLM call                                                                       | Không answer trực tiếp từ model memory                                                                                                                |
+| QA-003 | Mỗi answer paragraph có citations[]                                                                            | Citation mở đúng original URL                                                                                                                         |
+| QA-004 | Citation chỉ trỏ published/allowed article                                                                     | Hidden/removed không được dùng                                                                                                                        |
+| QA-005 | Conflicting sources được trình bày riêng                                                                       | Không tự che giấu mâu thuẫn                                                                                                                           |
+| QA-006 | Thiếu evidence dẫn tới refusal                                                                                 | Không bịa câu trả lời                                                                                                                                 |
+| QA-007 | Prompt injection trong evidence không thay đổi instruction/tool use                                            | External text chỉ là quoted data                                                                                                                      |
+| QA-008 | Current DeepSeek graph không có model/provider fallback; lỗi retryable dùng unavailable hoặc bounded job retry | Không gửi cùng admitted input sang route khác; policy/privacy/validation/schema/support hoặc ambiguous outcome luôn terminal                          |
+| QA-009 | Delayed Q&A không tái tạo dữ liệu sau deletion/takedown                                                        | Final write match active user + exact sessionVersion + current article lifecycle; CAS miss discard output                                             |
+| QA-010 | Grounded answer có actor/session-scoped idempotency                                                            | Same key/hash chỉ reserve một quota/provider/chat result; khác hash trả `409`                                                                         |
+| QA-011 | Community signal chỉ dùng discovery                                                                            | HN vẫn ở feed/search nhưng không eligible cho Q&A evidence/citation                                                                                   |
+| QA-012 | Citation runtime kiểm tra support trên exact evidence blocks                                                   | Paragraph trả internal block IDs; unsupported/uncertain deterministic refuse trong MVP                                                                |
+| QA-013 | User question qua privacy admission trước provider routing                                                     | Credential/high-risk identifier trả `sensitive-input`; admitted input chỉ tới DeepSeek `deepseek-v4-flash` nonconfidential route và metadata-only log |
 
 ### 4.9. Admin operations và governance
 
-| ID | Requirement | Acceptance summary |
-|---|---|---|
-| ADMIN-001 | Overview hiển thị exceptions cần xử lý | Counts phản ánh source/job/article/index/takedown/account deletion |
-| ADMIN-002 | Admin xem/retry/cancel mọi bounded job qua một operational view | Ingestion/indexing/reconciliation/deletion đều poll và recovery được |
-| ADMIN-003 | Admin regenerate summary/re-index article | Respect source policy và version |
-| ADMIN-004 | Admin xử lý takedown end-to-end | Metadata/media reference/summary/vector bị loại đúng scope |
-| ADMIN-005 | Admin suspend/restore user | Session revocation hoạt động |
-| ADMIN-006 | Mọi state-changing admin action có safe structured audit | Actor/target/changedFields/safe transition/action-specific reasonCode/result/time; không snapshot hoặc free-form case text |
-| ADMIN-007 | Dashboard không hiển thị secret/private chat/password hash | Redaction được kiểm thử |
-| ADMIN-008 | Admin review/đổi media policy và ẩn media độc lập | Thay đổi có allowlisted reasonCode, policyVersion và audit |
-| ADMIN-009 | Admin xem safe article provenance/artifact diagnostics | Không expose excerpt/full text/vector/provider payload/private data |
-| ADMIN-010 | Takedown redacts historical chat citations trước completion | Citation unavailable cấm URL/title; completion có machine-readable chat cleanup evidence |
-| ADMIN-011 | Retention cleanup dùng fixed authorized indexed task | Machine-only enum, batch<=100, caller không chọn collection/filter/cutoff; deadline query có stable `_id` |
+| ID                   | Requirement                                                             | Acceptance summary                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ADMIN-001            | Overview hiển thị exceptions cần xử lý                                  | Counts phản ánh source/job/article/index/takedown/account deletion                                                                                    |
+| ADMIN-002            | Admin xem/retry/cancel mọi bounded job qua một operational view         | Ingestion/indexing/reconciliation/deletion đều poll và recovery được                                                                                  |
+| ADMIN-003            | Admin regenerate summary/re-index article                               | Respect source policy và version                                                                                                                      |
+| ADMIN-004            | Admin xử lý takedown end-to-end                                         | Metadata/media reference/summary/vector bị loại đúng scope                                                                                            |
+| ADMIN-005            | Admin suspend/restore user                                              | Session revocation hoạt động                                                                                                                          |
+| ADMIN-006            | Mọi state-changing admin action có safe structured audit                | Actor/target/changedFields/safe transition/action-specific reasonCode/result/time; không snapshot hoặc free-form case text                            |
+| ADMIN-007            | Dashboard không hiển thị secret/private chat/password hash              | Redaction được kiểm thử                                                                                                                               |
+| ADMIN-008            | Admin review/đổi media policy và ẩn media độc lập                       | Thay đổi có allowlisted reasonCode, policyVersion và audit                                                                                            |
+| ADMIN-009            | Admin xem safe article provenance/artifact diagnostics                  | Không expose excerpt/full text/vector/provider payload/private data                                                                                   |
+| ADMIN-010            | Takedown redacts historical chat citations trước completion             | Citation unavailable cấm URL/title; completion có machine-readable chat cleanup evidence                                                              |
+| ADMIN-011            | Retention cleanup dùng fixed authorized indexed task                    | Machine-only enum, batch<=100, caller không chọn collection/filter/cutoff; deadline query có stable `_id`                                             |
 | ADMIN-012 (post-MVP) | Governance/audit survives app restore without resurrecting deleted data | Separate `techpulse_governance` Mongo DB + signed sidecar; terminal suppression insert atomic với workflow, isolated app restore replay trước serving |
 
 ## 5. States và transitions
@@ -254,12 +254,12 @@ Rules:
 
 #### 5.1.1. Source Policy compatibility matrix
 
-| `licenseStatus` | `llmInputScope` hợp lệ | Ràng buộc `storageScope` | Media/user visibility |
-|---|---|---|---|
-| `review-needed` | `none` | Không tạo artifact mới; dữ liệu hiện hữu fail-closed và chờ reconciliation | Source không active; media không serialize |
-| `blocked` | `none` | `metadata/excerpt/summary/embedding=false` cho processing mới | Source không active; media mode `none` |
-| `metadata-only` | `none` hoặc `metadata` | `metadata=true`, `excerpt=false`; `summary/embedding` chỉ được true khi input là metadata | Chỉ field metadata đã duyệt; media theo policy độc lập |
-| `permitted` | `none`, `metadata`, `excerpt` hoặc `fulltext-temporary` | Không có full-text storage; `summary/embedding=true` yêu cầu input scope khác `none` | Media vẫn phải qua policy/host riêng |
+| `licenseStatus` | `llmInputScope` hợp lệ                                  | Ràng buộc `storageScope`                                                                  | Media/user visibility                                  |
+| --------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `review-needed` | `none`                                                  | Không tạo artifact mới; dữ liệu hiện hữu fail-closed và chờ reconciliation                | Source không active; media không serialize             |
+| `blocked`       | `none`                                                  | `metadata/excerpt/summary/embedding=false` cho processing mới                             | Source không active; media mode `none`                 |
+| `metadata-only` | `none` hoặc `metadata`                                  | `metadata=true`, `excerpt=false`; `summary/embedding` chỉ được true khi input là metadata | Chỉ field metadata đã duyệt; media theo policy độc lập |
+| `permitted`     | `none`, `metadata`, `excerpt` hoặc `fulltext-temporary` | Không có full-text storage; `summary/embedding=true` yêu cầu input scope khác `none`      | Media vẫn phải qua policy/host riêng                   |
 
 Các ràng buộc bổ sung:
 
@@ -375,23 +375,23 @@ Các invariant sau không thuộc MVP release gate: restored app database không
 
 ## 7. Data ownership và implications
 
-| Data | Owner/system of record | Retention rule |
-|---|---|---|
-| Account/session | TechPulse AI / MongoDB | Idle 24h, absolute 7d; direct delete/verify khi account deletion |
-| Source policy/evidence | TechPulse AI / MongoDB | Giữ audit history |
-| Article metadata | Publisher-originated, TechPulse stores record | Gỡ theo policy/takedown |
-| Media metadata/remote URL | Publisher-originated, TechPulse stores reference | Không lưu binary; ẩn/xóa theo media policy hoặc takedown |
-| Full text temporary | Publisher-originated, memory only | Discard sau request/job |
-| SummaryVi | TechPulse AI generated artifact | Gắn source/model/basis; xóa cùng article nếu cần |
-| Embedding | TechPulse AI derived index | Rebuildable; xóa cùng article |
-| Chat history | User/TechPulse AI | User xóa trực tiếp; tự hết hạn 30 ngày sau hoạt động cuối |
-| User Q&A quota | TechPulse AI / MongoDB | TTL theo window; direct delete khi account deletion |
-| Q&A answer-attempt receipt | TechPulse AI / MongoDB | Không raw question; 24 giờ; direct delete khi account deletion |
-| Provider admission/circuit | TechPulse AI / `techpulse_app` MongoDB | Per credential admission domain + route/provider-domain circuits; no raw input; project lifetime |
-| Shared IP anti-abuse state | TechPulse AI / MongoDB | TTL 24h; không bị xóa theo user |
-| Audit log | TechPulse AI / `techpulse_app` MongoDB | Minimized event 180 ngày; IP HMAC unset sau 30 ngày; digest anchored vào signed governance checkpoint |
-| Suppression/checkpoint/manifest | TechPulse AI / `techpulse_governance` MongoDB | Signed actionable opaque targets + continuity; app dump/restore không overwrite; không case text/PII trực tiếp |
-| Backup copy (post-MVP) | Project owner private encrypted storage | App dump + signed read-only governance sidecar tối đa 7 ngày; copy phục hồi, không là live SoR |
+| Data                            | Owner/system of record                           | Retention rule                                                                                                 |
+| ------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Account/session                 | TechPulse AI / MongoDB                           | Idle 24h, absolute 7d; direct delete/verify khi account deletion                                               |
+| Source policy/evidence          | TechPulse AI / MongoDB                           | Giữ audit history                                                                                              |
+| Article metadata                | Publisher-originated, TechPulse stores record    | Gỡ theo policy/takedown                                                                                        |
+| Media metadata/remote URL       | Publisher-originated, TechPulse stores reference | Không lưu binary; ẩn/xóa theo media policy hoặc takedown                                                       |
+| Full text temporary             | Publisher-originated, memory only                | Discard sau request/job                                                                                        |
+| SummaryVi                       | TechPulse AI generated artifact                  | Gắn source/model/basis; xóa cùng article nếu cần                                                               |
+| Embedding                       | TechPulse AI derived index                       | Rebuildable; xóa cùng article                                                                                  |
+| Chat history                    | User/TechPulse AI                                | User xóa trực tiếp; tự hết hạn 30 ngày sau hoạt động cuối                                                      |
+| User Q&A quota                  | TechPulse AI / MongoDB                           | TTL theo window; direct delete khi account deletion                                                            |
+| Q&A answer-attempt receipt      | TechPulse AI / MongoDB                           | Không raw question; 24 giờ; direct delete khi account deletion                                                 |
+| Provider admission/circuit      | TechPulse AI / `techpulse_app` MongoDB           | Per credential admission domain + route/provider-domain circuits; no raw input; project lifetime               |
+| Shared IP anti-abuse state      | TechPulse AI / MongoDB                           | TTL 24h; không bị xóa theo user                                                                                |
+| Audit log                       | TechPulse AI / `techpulse_app` MongoDB           | Minimized event 180 ngày; IP HMAC unset sau 30 ngày; digest anchored vào signed governance checkpoint          |
+| Suppression/checkpoint/manifest | TechPulse AI / `techpulse_governance` MongoDB    | Signed actionable opaque targets + continuity; app dump/restore không overwrite; không case text/PII trực tiếp |
+| Backup copy (post-MVP)          | Project owner private encrypted storage          | App dump + signed read-only governance sidecar tối đa 7 ngày; copy phục hồi, không là live SoR                 |
 
 ## 8. Security, privacy và policy requirements
 
@@ -417,25 +417,25 @@ Các invariant sau không thuộc MVP release gate: restored app database không
 
 ## 9. Non-functional requirements
 
-| ID | Category | Requirement |
-|---|---|---|
-| NFR-001 | Reliability | Job idempotent và recover được sau timeout/cold start |
-| NFR-002 | Performance | Feed/text search mục tiêu p95 dưới 2 giây, không tính Vercel cold start |
-| NFR-003 | AI latency | Q&A phải hiển thị loading/stream state; timeout có retry/fallback rõ ràng |
-| NFR-004 | Scale | Hoạt động ổn định với 250–400 article và tối thiểu 10 concurrent demo users |
-| NFR-005 | Cost | Có daily/user quota; tránh gọi lại summary/embedding khi input hash không đổi |
-| NFR-006 | Observability | Structured logs có request/job/source IDs, không chứa secret/full text |
-| NFR-007 | Accessibility | Core flow dùng được bằng keyboard, có label/focus/error state cơ bản |
-| NFR-008 | Portability | Provider/model/config đổi bằng environment/config, không hard-code business logic |
-| NFR-009 | Testability | Connector, policy gate, retrieval và provider adapter có dependency injection |
-| NFR-010 | Legal safety | Từng source có evidence và review date trước khi active |
-| NFR-011 | Media safety | Preview có attribution/alt/fallback; host không được duyệt hoặc media lỗi không làm hỏng core flow |
-| NFR-012 | Durable fencing | Lease generation high-water không bị TTL/reset; stale worker không commit sau recovery/reacquire |
-| NFR-013 | Audit minimization | Audit chỉ lưu allowlisted reasonCode; requester/account case text có access/retention riêng và không được copy |
-| NFR-014 | Privacy retention | Retention duration được khóa trước migration của collection owner; TTL chỉ cleanup best-effort, không thay correctness check |
-| NFR-015 | Secure ingress | Cookie/CORS/Origin/cache, target/body/query parser và 413/415 được test như common boundary trước business route |
-| NFR-016 | Provider safety | Privacy capability, credential admission domain, route/provider failure-domain circuit, idempotency và evidence-block support fail closed trên mọi candidate route |
-| NFR-017 | Live governance integrity | Indexed cleanup, HMAC rotation và tamper-evident audit không resurrect deleted/taken-down data |
+| ID      | Category                  | Requirement                                                                                                                                                        |
+| ------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| NFR-001 | Reliability               | Job idempotent và recover được sau timeout/cold start                                                                                                              |
+| NFR-002 | Performance               | Feed/text search mục tiêu p95 dưới 2 giây, không tính Vercel cold start                                                                                            |
+| NFR-003 | AI latency                | Q&A phải hiển thị loading/stream state; timeout có retry/fallback rõ ràng                                                                                          |
+| NFR-004 | Scale                     | Hoạt động ổn định với 250–400 article và tối thiểu 10 concurrent demo users                                                                                        |
+| NFR-005 | Cost                      | Có daily/user quota; tránh gọi lại summary/embedding khi input hash không đổi                                                                                      |
+| NFR-006 | Observability             | Structured logs có request/job/source IDs, không chứa secret/full text                                                                                             |
+| NFR-007 | Accessibility             | Core flow dùng được bằng keyboard, có label/focus/error state cơ bản                                                                                               |
+| NFR-008 | Portability               | Provider/model/config đổi bằng environment/config, không hard-code business logic                                                                                  |
+| NFR-009 | Testability               | Connector, policy gate, retrieval và provider adapter có dependency injection                                                                                      |
+| NFR-010 | Legal safety              | Từng source có evidence và review date trước khi active                                                                                                            |
+| NFR-011 | Media safety              | Preview có attribution/alt/fallback; host không được duyệt hoặc media lỗi không làm hỏng core flow                                                                 |
+| NFR-012 | Durable fencing           | Lease generation high-water không bị TTL/reset; stale worker không commit sau recovery/reacquire                                                                   |
+| NFR-013 | Audit minimization        | Audit chỉ lưu allowlisted reasonCode; requester/account case text có access/retention riêng và không được copy                                                     |
+| NFR-014 | Privacy retention         | Retention duration được khóa trước migration của collection owner; TTL chỉ cleanup best-effort, không thay correctness check                                       |
+| NFR-015 | Secure ingress            | Cookie/CORS/Origin/cache, target/body/query parser và 413/415 được test như common boundary trước business route                                                   |
+| NFR-016 | Provider safety           | Privacy capability, credential admission domain, route/provider failure-domain circuit, idempotency và evidence-block support fail closed trên mọi candidate route |
+| NFR-017 | Live governance integrity | Indexed cleanup, HMAC rotation và tamper-evident audit không resurrect deleted/taken-down data                                                                     |
 
 Canonical media attribution do server resolve theo thứ tự media credit → source `attributionText` → source name và luôn trả non-empty `leadMedia.attribution`; frontend không tự dựng attribution từ field nullable.
 

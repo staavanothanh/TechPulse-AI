@@ -38,15 +38,15 @@ Execution order: blueprint này
 
 ## 3. Pre-flight evidence
 
-| Check | Kết quả 09/08/2026 | Hệ quả |
-|---|---|---|
-| Git repository | Có, branch `main` | Có thể review diff/commit cục bộ |
-| Git remote | Có `origin` fetch/push | Chỉ dùng làm checkout evidence; không suy ra quyền push/PR/deploy |
-| GitHub CLI | Không cài | Direct mode; không dùng `gh` |
-| Existing code/package | Chưa có | Step 1 sở hữu toàn bộ scaffold |
-| Existing plan/memory | Không có | File này là execution index đầu tiên |
-| ECC plugin marker | Có | Orchestration guide chỉ giữ reference chain `ecc:*`, không ghi custom command không tồn tại |
-| Language marker | Đã chốt | JavaScript/JSX theo ADR-0008; Step 1 tạo `.js`/`.jsx` và `jsconfig.json` |
+| Check                 | Kết quả 09/08/2026     | Hệ quả                                                                                      |
+| --------------------- | ---------------------- | ------------------------------------------------------------------------------------------- |
+| Git repository        | Có, branch `main`      | Có thể review diff/commit cục bộ                                                            |
+| Git remote            | Có `origin` fetch/push | Chỉ dùng làm checkout evidence; không suy ra quyền push/PR/deploy                           |
+| GitHub CLI            | Không cài              | Direct mode; không dùng `gh`                                                                |
+| Existing code/package | Chưa có                | Step 1 sở hữu toàn bộ scaffold                                                              |
+| Existing plan/memory  | Không có               | File này là execution index đầu tiên                                                        |
+| ECC plugin marker     | Có                     | Orchestration guide chỉ giữ reference chain `ecc:*`, không ghi custom command không tồn tại |
+| Language marker       | Đã chốt                | JavaScript/JSX theo ADR-0008; Step 1 tạo `.js`/`.jsx` và `jsconfig.json`                    |
 
 JavaScript/JSX là quyết định đã duyệt, không còn là assumption. Đổi sang TypeScript/TSX sau này phải tạo ADR/plan mutation và migration plan riêng; không trộn hai baseline âm thầm.
 
@@ -137,12 +137,12 @@ Critical path dự kiến: `1 → 2 → 3 → 4 → 5/6 → 7 → 8 → 9 → 10
 
 Đây là planning horizon cho solo owner làm cùng coding agent, không phải phép tính person-day cứng. Giữ đúng non-goals, dùng generated contract/fixtures và chạy verification cùng development. Chỉ kích hoạt mutation review khi milestone thực tế trượt; không dùng estimate ban đầu để cắt scope trước khi build.
 
-| Tuần | Build timebox | Verification/deploy lane chạy cùng tuần | Gate cuối tuần |
-|---|---|---|---|
-| 1 | Steps 1–3 | Contract/runtime fixtures từ operation đầu tiên; auth/security integration | Login/RBAC + source draft/policy hoạt động |
-| 2 | Step 4, Steps 5–6, bắt đầu Step 7 | Staging/local production build; duplicate/lease/SSRF suite; E2E skeleton | Ba connector chạy qua durable runner; common pipeline đã ingest fixture |
-| 3 | Hoàn tất 7, Steps 8–9, bắt đầu backend Step 11 | Deploy staging sớm; retrieval eval seed; user-flow browser smoke | User content vertical slice + summary/embedding/text fallback |
-| 4 | Step 10, hoàn tất 11, Step 12 final gate | Citation/refusal eval, security matrix, public deploy và runbook | Q&A + admin minimum + evidence; giữ một ngày contingency |
+| Tuần | Build timebox                                  | Verification/deploy lane chạy cùng tuần                                    | Gate cuối tuần                                                          |
+| ---- | ---------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 1    | Steps 1–3                                      | Contract/runtime fixtures từ operation đầu tiên; auth/security integration | Login/RBAC + source draft/policy hoạt động                              |
+| 2    | Step 4, Steps 5–6, bắt đầu Step 7              | Staging/local production build; duplicate/lease/SSRF suite; E2E skeleton   | Ba connector chạy qua durable runner; common pipeline đã ingest fixture |
+| 3    | Hoàn tất 7, Steps 8–9, bắt đầu backend Step 11 | Deploy staging sớm; retrieval eval seed; user-flow browser smoke           | User content vertical slice + summary/embedding/text fallback           |
+| 4    | Step 10, hoàn tất 11, Step 12 final gate       | Citation/refusal eval, security matrix, public deploy và runbook           | Q&A + admin minimum + evidence; giữ một ngày contingency                |
 
 Step 12 không đợi đến Week 4 mới bắt đầu: contract evidence có từ Week 1, staging/E2E từ Week 2 và retrieval eval từ Week 3. Step 12 chỉ hợp nhất release evidence, chạy full matrix và quyết định go/no-go.
 
@@ -159,6 +159,7 @@ Nếu Day 15 chưa đạt, project owner phải chọn một PRD mutation có gh
 ---
 
 <a id="step-1"></a>
+
 ## Step 1 — Scaffold application and contract toolchain
 
 **Intent:** Tạo một JavaScript/JSX modular-monolith skeleton có React/Vite, Express, test/lint/build và OpenAPI validation/JavaScript client generation. Đây là foundation duy nhất mà mọi step sau phụ thuộc.
@@ -225,6 +226,7 @@ Revert toàn bộ scaffold như một change set; docs/contract không bị xóa
 ---
 
 <a id="step-2"></a>
+
 ## Step 2 — Build MongoDB core, authentication and session authorization
 
 **Intent:** Thiết lập persistence/index migration, account lifecycle, opaque server-side session, CSRF và RBAC để user/admin surface có security boundary thật.
@@ -298,6 +300,7 @@ Revert auth routes/repositories và drop chỉ indexes/seed data do migration st
 ---
 
 <a id="step-3"></a>
+
 ## Step 3 — Implement Source Registry and executable rights policy
 
 **Intent:** Cho admin khai báo nguồn/publisher/evidence/scope, review quyền và activate/pause theo state machine; tạo policy gate dùng chung trước mọi AI/storage action.
@@ -365,6 +368,7 @@ Pause mọi source được tạo bởi step, revert route/UI, giữ evidence ex
 ---
 
 <a id="step-4"></a>
+
 ## Step 4 — Add durable jobs, Mongo leases and SSRF-safe source fetching
 
 **Intent:** Xây execution substrate dùng chung cho cron/admin: job idempotent, lease/checkpoint/retry và bounded network fetch; hoàn tất source technical check.
@@ -437,6 +441,7 @@ Disable cron route/config trước, pause sources, chờ/recover running leases,
 ---
 
 <a id="step-5"></a>
+
 ## Step 5 — Implement the RSS/Atom connector
 
 **Intent:** Parse nhiều RSS/Atom feed allowlisted qua common connector interface, giữ provenance và trả normalized candidates mà không tự fetch linked full article.
@@ -493,6 +498,7 @@ Unregister RSS connector và pause RSS sources; không sửa/xóa article đã i
 ---
 
 <a id="step-6"></a>
+
 ## Step 6 — Implement arXiv and Hacker News connectors
 
 **Intent:** Dùng API chính thức để ingest arXiv query và ba Hacker News stream qua cùng candidate contract; gắn đúng authority/provenance semantics.
@@ -548,6 +554,7 @@ Unregister failing connector và pause source definitions tương ứng; connect
 ---
 
 <a id="step-7"></a>
+
 ## Step 7 — Integrate normalization, deduplication and article lifecycle
 
 **Intent:** Nối ba connector vào pipeline article idempotent, canonicalize/dedupe/provenance và publish/review state đúng policy.
@@ -609,6 +616,7 @@ Pause production source và disable runner trước. Revert mapper/repository; d
 ---
 
 <a id="step-8"></a>
+
 ## Step 8 — Deliver feed, detail, saved articles and keyword search
 
 **Intent:** Hoàn thành user content vertical slice dùng được khi mọi AI provider tắt: feed/filter/detail/original source/saved/text search.
@@ -671,6 +679,7 @@ Revert user routes/UI theo module; article data/pipeline giữ nguyên. Nếu cu
 ---
 
 <a id="step-9"></a>
+
 ## Step 9 — Add Vietnamese summaries, embeddings and hybrid retrieval
 
 **Intent:** Tạo generated summary/title tiếng Việt và compatibility-pinned vectors từ allowed fields, có model/version/hash, fallback text và admin retry/index state.
@@ -748,6 +757,7 @@ Disable provider config và hybrid mode; text search/UI content tiếp tục ho�
 ---
 
 <a id="step-10"></a>
+
 ## Step 10 — Implement grounded Q&A, paragraph citations and refusal
 
 **Intent:** Trả lời tiếng Việt chỉ từ retrieved evidence, gắn citation cấp đoạn, biểu diễn mâu thuẫn và từ chối khi thiếu bằng chứng.
@@ -819,6 +829,7 @@ Feature-flag Q&A off và giữ feed/search/citations bài gốc. Xóa/anonymize 
 ---
 
 <a id="step-11"></a>
+
 ## Step 11 — Complete admin operations, governance and audit UI
 
 **Intent:** Ghép các backend capability thành dashboard vận hành tối thiểu: overview, jobs, articles/index, takedown, users và immutable audit view.
@@ -896,6 +907,7 @@ Disable admin mutation routes/UI ngoài source pause emergency, giữ read-only 
 ---
 
 <a id="step-12"></a>
+
 ## Step 12 — Run adversarial verification, deploy and prepare the demo
 
 **Intent:** Chứng minh toàn bộ acceptance gates bằng contract/integration/E2E/eval/security evidence, deploy Vercel và tạo runbook/demo fallback có thể lặp lại.
@@ -1057,21 +1069,21 @@ Không cắt source policy, admin backend authorization, idempotency/lease, text
 
 ## 12. Plan change log
 
-| Version | Date | Change | Reason/approval |
-|---|---|---|---|
-| 1.0 | 2026-08-08 | Bản kế hoạch 12 bước ban đầu | Được suy ra từ tài liệu sản phẩm/kiến trúc đã được chấp thuận; đang chờ đánh giá đối kháng |
-| 1.1 | 2026-08-08 | Giải quyết các phát hiện từ đánh giá đối kháng | Người đánh giá không thấy rào cản nghiêm trọng; chủ dự án yêu cầu phê duyệt để hoàn thành kế hoạch |
-| 1.2 | 2026-08-08 | Khóa JavaScript/JSX và media ngoài được kiểm soát bởi policy | Chủ dự án phê duyệt rõ ràng cả hai quyết định; ADR-0008/0009 |
-| 1.3 | 2026-08-08 | Sửa chữa contract, privacy, audit và ngữ nghĩa durable-job trước Bước 1 | Chủ dự án phê duyệt KHẮC PHỤC CÓ ĐIỀU KIỆN sau kiểm toán Claude/Codex |
-| 1.4 | 2026-08-08 | Bảo toàn high-water sinh, phục hồi có giới hạn và hàng rào bảo mật provider/source | Chủ dự án phê duyệt sửa chữa durable-fencing/security; ADR-0010 |
-| 1.5 | 2026-08-08 | Đóng các race ingestion/reconciliation, điều phối chính tắc, công bằng và ghi lifecycle trì hoãn | Chủ dự án phê duyệt sửa chữa từ đánh giá độc lập; ADR-0011 |
-| 1.6 | 2026-08-08 | Áp dụng các cổng contract/privacy từ đánh giá Claude Code độc lập với điều kiện | Chủ dự án yêu cầu sửa chữa tài liệu; ADR-0012 |
-| 1.7 | 2026-08-09 | Đóng các khoảng trống ranh giới bảo mật trước Bước 1 trên browser/API/XML/provider/Mongo dọn dẹp/khôi phục | Chủ dự án yêu cầu sửa chữa kiểm toán bảo mật CC; không có lựa chọn kiến trúc/ADR mới |
-| 1.8 | 2026-08-15 | Thay thế định tuyến provider/model cố định bằng cơ chế dự phòng model/provider theo cấu hình; ghi lại lease xóa nội tuyến và đồng bộ hóa sai lệch tài liệu Bước 9–11 | Chủ dự án phê duyệt thay đổi kiến trúc; ADR-0013 và ADR-0014 |
-| 1.9 | 2026-08-17 | Giới hạn MVP không bao gồm diễn tập backup/restore, sidecar quản trị và lưu giữ checkpoint ngoại tuyến; chuyển toàn bộ bằng chứng phục hồi sang post-MVP | Chủ dự án phê duyệt giảm phạm vi; ký runtime governance, tính nguyên tử audit và quy tắc fail-closed trực tiếp vẫn nằm trong MVP |
-| 1.10 | 2026-08-21 | Chuyển summary, qa-generation và qa-support sang Gemini AI Studio; giữ OpenRouter/BGE-M3 embedding và bổ sung smoke gate | Chủ dự án phê duyệt di chuyển provider; ADR-0015 |
-| 1.11 | 2026-08-23 | Chuyển cả summary, qa-generation và qa-support sang DeepSeek `deepseek-v4-flash`; Q&A dùng capability `nonconfidential`, không fallback; giữ OpenRouter/BGE-M3 embedding | Chủ dự án phê duyệt di chuyển theo hạn ngạch; ADR-0016 thay thế ADR-0015 |
-| 1.12 | 2026-08-24 | Bổ sung summary chi tiết theo đoạn, trusted connector payload có prompt-injection fence, media remote-preview/link-only an toàn và migration `summary-detail-v1` | Chủ dự án phê duyệt chi tiết phong phú hơn, độ tin cậy connector có điều kiện và policy media; ADR-0019 |
+| Version | Date       | Change                                                                                                                                                                   | Reason/approval                                                                                                                  |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-08-08 | Bản kế hoạch 12 bước ban đầu                                                                                                                                             | Được suy ra từ tài liệu sản phẩm/kiến trúc đã được chấp thuận; đang chờ đánh giá đối kháng                                       |
+| 1.1     | 2026-08-08 | Giải quyết các phát hiện từ đánh giá đối kháng                                                                                                                           | Người đánh giá không thấy rào cản nghiêm trọng; chủ dự án yêu cầu phê duyệt để hoàn thành kế hoạch                               |
+| 1.2     | 2026-08-08 | Khóa JavaScript/JSX và media ngoài được kiểm soát bởi policy                                                                                                             | Chủ dự án phê duyệt rõ ràng cả hai quyết định; ADR-0008/0009                                                                     |
+| 1.3     | 2026-08-08 | Sửa chữa contract, privacy, audit và ngữ nghĩa durable-job trước Bước 1                                                                                                  | Chủ dự án phê duyệt KHẮC PHỤC CÓ ĐIỀU KIỆN sau kiểm toán Claude/Codex                                                            |
+| 1.4     | 2026-08-08 | Bảo toàn high-water sinh, phục hồi có giới hạn và hàng rào bảo mật provider/source                                                                                       | Chủ dự án phê duyệt sửa chữa durable-fencing/security; ADR-0010                                                                  |
+| 1.5     | 2026-08-08 | Đóng các race ingestion/reconciliation, điều phối chính tắc, công bằng và ghi lifecycle trì hoãn                                                                         | Chủ dự án phê duyệt sửa chữa từ đánh giá độc lập; ADR-0011                                                                       |
+| 1.6     | 2026-08-08 | Áp dụng các cổng contract/privacy từ đánh giá Claude Code độc lập với điều kiện                                                                                          | Chủ dự án yêu cầu sửa chữa tài liệu; ADR-0012                                                                                    |
+| 1.7     | 2026-08-09 | Đóng các khoảng trống ranh giới bảo mật trước Bước 1 trên browser/API/XML/provider/Mongo dọn dẹp/khôi phục                                                               | Chủ dự án yêu cầu sửa chữa kiểm toán bảo mật CC; không có lựa chọn kiến trúc/ADR mới                                             |
+| 1.8     | 2026-08-15 | Thay thế định tuyến provider/model cố định bằng cơ chế dự phòng model/provider theo cấu hình; ghi lại lease xóa nội tuyến và đồng bộ hóa sai lệch tài liệu Bước 9–11     | Chủ dự án phê duyệt thay đổi kiến trúc; ADR-0013 và ADR-0014                                                                     |
+| 1.9     | 2026-08-17 | Giới hạn MVP không bao gồm diễn tập backup/restore, sidecar quản trị và lưu giữ checkpoint ngoại tuyến; chuyển toàn bộ bằng chứng phục hồi sang post-MVP                 | Chủ dự án phê duyệt giảm phạm vi; ký runtime governance, tính nguyên tử audit và quy tắc fail-closed trực tiếp vẫn nằm trong MVP |
+| 1.10    | 2026-08-21 | Chuyển summary, qa-generation và qa-support sang Gemini AI Studio; giữ OpenRouter/BGE-M3 embedding và bổ sung smoke gate                                                 | Chủ dự án phê duyệt di chuyển provider; ADR-0015                                                                                 |
+| 1.11    | 2026-08-23 | Chuyển cả summary, qa-generation và qa-support sang DeepSeek `deepseek-v4-flash`; Q&A dùng capability `nonconfidential`, không fallback; giữ OpenRouter/BGE-M3 embedding | Chủ dự án phê duyệt di chuyển theo hạn ngạch; ADR-0016 thay thế ADR-0015                                                         |
+| 1.12    | 2026-08-24 | Bổ sung summary chi tiết theo đoạn, trusted connector payload có prompt-injection fence, media remote-preview/link-only an toàn và migration `summary-detail-v1`         | Chủ dự án phê duyệt chi tiết phong phú hơn, độ tin cậy connector có điều kiện và policy media; ADR-0019                          |
 
 ### v1.8 Pre-Step-12 architecture amendment
 
@@ -1095,29 +1107,29 @@ Article embedding vẫn dùng OpenRouter `baai/bge-m3`, 1024 chiều, version 1 
 
 Reviewer độc lập: `blueprint_adversarial_review` (read-only), 08/08/2026.
 
-| Severity | Finding | Resolution in v1.1 (historical) |
-|---|---|---|
-| Critical | Không có blocker nghiêm trọng | Blueprint có thể chuyển `Ready` sau các sửa bên dưới |
-| High | Lịch solo dồn Step 4–7 vào Week 2 và Step 10–12 vào Week 4 | Chuyển sang vertical-slice timebox, progressive verification/deploy, hard cutline Day 5/10/15 và Day 20 contingency |
-| High | Step 9 thiếu dependency search module của Step 8 | Thêm `8 → 9` trong DAG, dependency và critical path |
-| High | Runtime contract validation bị dồn đến Step 12 | Thêm vào global DoD, tạo `contract:test` từ Step 1 và bắt buộc fixtures ở mọi HTTP-owning step |
-| Medium | Ownership `indexingJobs` trùng Step 4/9 | Step 4 chỉ sở hữu generic runner + `ingestionJobs`; Step 9 sở hữu `indexingJobs` schema/migration |
-| Medium | Rate-limit không có shared persistence rõ | Thêm atomic Mongo-backed `rateLimitBuckets`; Step 2 tạo nền, Step 4/10 áp scope |
-| Medium | Step 12 vừa verify vừa sửa critical/high | Step 12 trở thành go/no-go gate; finding quay về module owner hoặc mutation step |
-| Low | “Deployment gate” chưa trace rõ | Đổi thành PRD §10 MVP Deployment gate |
+| Severity | Finding                                                    | Resolution in v1.1 (historical)                                                                                     |
+| -------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Critical | Không có blocker nghiêm trọng                              | Blueprint có thể chuyển `Ready` sau các sửa bên dưới                                                                |
+| High     | Lịch solo dồn Step 4–7 vào Week 2 và Step 10–12 vào Week 4 | Chuyển sang vertical-slice timebox, progressive verification/deploy, hard cutline Day 5/10/15 và Day 20 contingency |
+| High     | Step 9 thiếu dependency search module của Step 8           | Thêm `8 → 9` trong DAG, dependency và critical path                                                                 |
+| High     | Runtime contract validation bị dồn đến Step 12             | Thêm vào global DoD, tạo `contract:test` từ Step 1 và bắt buộc fixtures ở mọi HTTP-owning step                      |
+| Medium   | Ownership `indexingJobs` trùng Step 4/9                    | Step 4 chỉ sở hữu generic runner + `ingestionJobs`; Step 9 sở hữu `indexingJobs` schema/migration                   |
+| Medium   | Rate-limit không có shared persistence rõ                  | Thêm atomic Mongo-backed `rateLimitBuckets`; Step 2 tạo nền, Step 4/10 áp scope                                     |
+| Medium   | Step 12 vừa verify vừa sửa critical/high                   | Step 12 trở thành go/no-go gate; finding quay về module owner hoặc mutation step                                    |
+| Low      | “Deployment gate” chưa trace rõ                            | Đổi thành PRD §10 MVP Deployment gate                                                                               |
 
 ### v1.3 Plan-of-Record repair disposition
 
-| Finding group | Resolution/owner |
-|---|---|
-| Cron POST không tương thích Vercel | OpenAPI protected GET adapter; Step 4, admin manual POST giữ trust boundary riêng |
-| Account deletion/takedown completion | Tách automatic `accountDeletionRequests` khỏi all-or-nothing content takedown; Step 11 |
-| Arbitrary audit snapshot | Safe structured audit + direct-mutation transaction; Steps 2/3/11 |
-| Grounded answer chỉ có prose invariant | OpenAPI answered/refused `oneOf` + invalid fixtures/runtime citation resolution; Steps 1/10 |
-| Source Policy/connector/technical evidence | Conditional compatibility + server-owned review evidence + re-review operation; Steps 3/4 |
-| CSRF reload bootstrap | `/me` trả session-bound CSRF token; Step 2 |
-| Due work và stale worker | `availableAt` coordinator + lease generation fencing; Step 4, reused Steps 9/11 |
-| Indexing job không observable | List/detail/retry/cancel contract; một task/job; Step 9 |
+| Finding group                               | Resolution/owner                                                                                          |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Cron POST không tương thích Vercel          | OpenAPI protected GET adapter; Step 4, admin manual POST giữ trust boundary riêng                         |
+| Account deletion/takedown completion        | Tách automatic `accountDeletionRequests` khỏi all-or-nothing content takedown; Step 11                    |
+| Arbitrary audit snapshot                    | Safe structured audit + direct-mutation transaction; Steps 2/3/11                                         |
+| Grounded answer chỉ có prose invariant      | OpenAPI answered/refused `oneOf` + invalid fixtures/runtime citation resolution; Steps 1/10               |
+| Source Policy/connector/technical evidence  | Conditional compatibility + server-owned review evidence + re-review operation; Steps 3/4                 |
+| CSRF reload bootstrap                       | `/me` trả session-bound CSRF token; Step 2                                                                |
+| Due work và stale worker                    | `availableAt` coordinator + lease generation fencing; Step 4, reused Steps 9/11                           |
+| Indexing job không observable               | List/detail/retry/cancel contract; một task/job; Step 9                                                   |
 | Schedule/product validation over-calibrated | Theo dõi Medium; không pre-cut do agent-assisted execution; product sessions là Step 12 learning evidence |
 
 Reviewer bổ sung cho v1.2: `blueprint_v12_adversarial_review`, 08/08/2026. Reviewer không báo critical/high blocker mới đối với baseline JavaScript/JSX hoặc policy-controlled media. Root revalidation xác nhận OpenAPI parse được, `LeadMedia`/`MediaPolicy` có required fields, không còn TypeScript-specific reviewer/build artifact như execution dependency, orchestration có 24 command, chain dài nhất là 4 và mọi prompt nằm trong giới hạn 200–600 ký tự. Quyết định media được trace qua PRD, Technical Design, Data Model, ADR-0009, blueprint Steps 3/5/7/8/9/10/11/12 và Orchestration Guide.
@@ -1126,50 +1138,50 @@ Plan-of-Record repair v1.3: Claude Code audit phát hiện cron POST/GET mismatc
 
 ### v1.4 Durable-fencing/security repair disposition
 
-| Finding | Resolution/owner |
-|---|---|
-| Critical: TTL có thể xóa lease generation high-water | ADR-0010 + persistent `jobLeases` không TTL; Step 4 migration/repository/tests |
-| Expired `running` job không nằm trong queued selector | Two-phase bounded recovery trước due work, terminal parent + linked retry; Step 4 |
-| Generic coordinator trả riêng `IngestionJob[]` | Canonical `GET /api/internal/cron/due-work` trả recovery/per-queue aggregate; Step 1 contract fixtures, Step 4 runtime |
-| DNS validation-to-connect race | Validate all A/AAAA + reject mixed/mapped/private + pin socket + manual redirects; Step 4 security suite |
-| Rendered URL chỉ `format: uri` | Reusable `HttpsUrl`, runtime canonicalization/no credentials và safe anchor; Steps 1/4/8/10/11 |
-| Audit free-form reason có thể chứa PII/secret | `AdminReasonCode` + operation-specific allowlist; Step 3/11, requester case text giữ riêng |
-| Policy đổi trong lúc AI provider chạy | `expectedSourcePolicyVersion` + transactional fence/current-policy commit; Step 9 |
-| Step 3 enqueue trước Step 9 migration owner | Source-owned durable reconciliation marker ở Step 3; Step 9 materialize/checkpoint jobs |
-| Semantic retrieval P1/mandatory ambiguity | Đổi label thành mandatory `MVP-P1`; Step 9 vẫn là predecessor/release gate, text search là fallback |
-| Attribution patch `true + null` | OpenAPI conditional + merged-state domain validation; Steps 1/3 |
+| Finding                                               | Resolution/owner                                                                                                       |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Critical: TTL có thể xóa lease generation high-water  | ADR-0010 + persistent `jobLeases` không TTL; Step 4 migration/repository/tests                                         |
+| Expired `running` job không nằm trong queued selector | Two-phase bounded recovery trước due work, terminal parent + linked retry; Step 4                                      |
+| Generic coordinator trả riêng `IngestionJob[]`        | Canonical `GET /api/internal/cron/due-work` trả recovery/per-queue aggregate; Step 1 contract fixtures, Step 4 runtime |
+| DNS validation-to-connect race                        | Validate all A/AAAA + reject mixed/mapped/private + pin socket + manual redirects; Step 4 security suite               |
+| Rendered URL chỉ `format: uri`                        | Reusable `HttpsUrl`, runtime canonicalization/no credentials và safe anchor; Steps 1/4/8/10/11                         |
+| Audit free-form reason có thể chứa PII/secret         | `AdminReasonCode` + operation-specific allowlist; Step 3/11, requester case text giữ riêng                             |
+| Policy đổi trong lúc AI provider chạy                 | `expectedSourcePolicyVersion` + transactional fence/current-policy commit; Step 9                                      |
+| Step 3 enqueue trước Step 9 migration owner           | Source-owned durable reconciliation marker ở Step 3; Step 9 materialize/checkpoint jobs                                |
+| Semantic retrieval P1/mandatory ambiguity             | Đổi label thành mandatory `MVP-P1`; Step 9 vẫn là predecessor/release gate, text search là fallback                    |
+| Attribution patch `true + null`                       | OpenAPI conditional + merged-state domain validation; Steps 1/3                                                        |
 
 Residual risk: scope vẫn tham vọng, nhưng solo owner làm cùng coding agent có thể tăng tốc đáng kể. `Ready v1.4` nghĩa contract/safety/job semantics đã có owner và failure test; milestone thực tế mới kích hoạt product-owner mutation, không làm chất lượng/security suy giảm âm thầm.
 
 ### v1.5 Coordination/lifecycle repair disposition
 
-| Finding | Resolution/owner |
-|---|---|
-| Late ingestion write vượt policy/config change | `expectedSourcePolicyVersion` + exact source state/config CAS; Steps 4/7 |
-| Reconciliation worker N ghi đè marker N+1 | Exact version/status/cursor CAS + versioned fan-out identity; Steps 3/9 |
-| Lease key không canonical | ADR-0011 namespace/grammar và cron/manual contention tests; Step 4 |
-| Generic recovery không phù hợp account deletion | Linked retry cho ingestion/indexing, same-request recovery giữ flags cho deletion; Steps 4/11 |
-| Global priority gây starvation | Queue-local sort, per-queue reserved progress, spill/aging và sustained-backlog tests; Steps 4/9/11 |
-| Takedown còn URL/title trong historical chat | Available/unavailable citation union + required chat-redaction completion evidence; Steps 10/11 |
-| Delayed Q&A tái tạo dữ liệu sau deletion | Final active-user/sessionVersion + article/takedown transaction fence; Steps 10/11 |
-| Contract/media/audit medium gaps | Source/reconciliation conditionals, operation-specific reason schemas, user audit actor, canonical media hostname/CSP boundary; Steps 1/3/8/11 |
+| Finding                                         | Resolution/owner                                                                                                                               |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Late ingestion write vượt policy/config change  | `expectedSourcePolicyVersion` + exact source state/config CAS; Steps 4/7                                                                       |
+| Reconciliation worker N ghi đè marker N+1       | Exact version/status/cursor CAS + versioned fan-out identity; Steps 3/9                                                                        |
+| Lease key không canonical                       | ADR-0011 namespace/grammar và cron/manual contention tests; Step 4                                                                             |
+| Generic recovery không phù hợp account deletion | Linked retry cho ingestion/indexing, same-request recovery giữ flags cho deletion; Steps 4/11                                                  |
+| Global priority gây starvation                  | Queue-local sort, per-queue reserved progress, spill/aging và sustained-backlog tests; Steps 4/9/11                                            |
+| Takedown còn URL/title trong historical chat    | Available/unavailable citation union + required chat-redaction completion evidence; Steps 10/11                                                |
+| Delayed Q&A tái tạo dữ liệu sau deletion        | Final active-user/sessionVersion + article/takedown transaction fence; Steps 10/11                                                             |
+| Contract/media/audit medium gaps                | Source/reconciliation conditionals, operation-specific reason schemas, user audit actor, canonical media hostname/CSP boundary; Steps 1/3/8/11 |
 
 `Ready v1.5` là document/contract baseline, không phải implementation release. Step 1 vẫn phải đóng TP-M01 và tạo contract toolchain trước business code.
 
 ### v1.6 GO WITH CONDITIONS disposition
 
-| Finding | Resolution/owner |
-|---|---|
-| Mongo-backed `503` lint không có authority | Step 1 thêm closed `x-persistence` cho mọi operation, RED audit/negative fixture rồi repair `400/503` về zero trước generate/Step 2 |
-| Session revoke khác physical delete | OpenAPI/Data Model có `sessionsDeleted`; Step 2 tạo direct delete/zero-match primitive, Step 11 orchestration/test |
-| User quota lẫn shared IP bucket | `subjectType` + scope mapping, `userQuotaDataDeleted`; Steps 2/10/11, shared IP không bị deletion cleanup |
-| Takedown `decisionReason` drift | OpenAPI dùng nullable `decisionReasonCode`; Step 11 serializer/runtime fixture |
-| Retention mở đến quá muộn | ADR-0012/Data Model khóa duration + owner migration theo Steps 2/4/9/10/11 |
-| Step 11 E2E ownership thiếu | `tests/e2e/governance/**` + focused `test:e2e -- governance-lifecycle`; Step 12 chỉ rerun full suite |
-| Fairness proof có thể vacuous | Step 4 fake three-adapter, Step 9 actual two-queue, Step 11 actual three-queue/fail-safe proof |
-| Connector config invalidation chưa explicit | Step 3 exact version/marker/audit test; Step 7 consumes late-candidate fence |
-| “Atomic” citation cleanup quá rộng | Bounded per-chat-document atomic update + zero-match completion, Step 11 |
-| Free-form account-deletion reason mơ hồ | Bỏ request field; server derive `user-request`, không persistence/audit |
+| Finding                                     | Resolution/owner                                                                                                                    |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Mongo-backed `503` lint không có authority  | Step 1 thêm closed `x-persistence` cho mọi operation, RED audit/negative fixture rồi repair `400/503` về zero trước generate/Step 2 |
+| Session revoke khác physical delete         | OpenAPI/Data Model có `sessionsDeleted`; Step 2 tạo direct delete/zero-match primitive, Step 11 orchestration/test                  |
+| User quota lẫn shared IP bucket             | `subjectType` + scope mapping, `userQuotaDataDeleted`; Steps 2/10/11, shared IP không bị deletion cleanup                           |
+| Takedown `decisionReason` drift             | OpenAPI dùng nullable `decisionReasonCode`; Step 11 serializer/runtime fixture                                                      |
+| Retention mở đến quá muộn                   | ADR-0012/Data Model khóa duration + owner migration theo Steps 2/4/9/10/11                                                          |
+| Step 11 E2E ownership thiếu                 | `tests/e2e/governance/**` + focused `test:e2e -- governance-lifecycle`; Step 12 chỉ rerun full suite                                |
+| Fairness proof có thể vacuous               | Step 4 fake three-adapter, Step 9 actual two-queue, Step 11 actual three-queue/fail-safe proof                                      |
+| Connector config invalidation chưa explicit | Step 3 exact version/marker/audit test; Step 7 consumes late-candidate fence                                                        |
+| “Atomic” citation cleanup quá rộng          | Bounded per-chat-document atomic update + zero-match completion, Step 11                                                            |
+| Free-form account-deletion reason mơ hồ     | Bỏ request field; server derive `user-request`, không persistence/audit                                                             |
 
 Step 1 được phép bắt đầu nhưng không được handoff Step 2 cho tới khi TP-M01 classification/lint/response repair, account-deletion completion schema, quota subject boundary, decision-reason contract và generated contract fixtures đều pass.
 
@@ -1177,36 +1189,36 @@ Step 1 được phép bắt đầu nhưng không được handoff Step 2 cho t�
 
 Tất cả finding trong `.claude/discuss.md` được accept sau khi đối chiếu checkout; đây là authority/owner/test repair, không phải runtime vulnerability đã quan sát và không thay rationale ADR accepted.
 
-| Finding | Resolution/owner |
-|---|---|
-| H-01 Browser session/CORS/cache | Same-origin, exact Origin, closed `__Host-` tuple/no-store contract; Steps 1/2 |
-| H-02 Register/trusted IP | `register→ip`, fixed pre-hash limits, Vercel-overwritten IP adapter; Step 2 |
-| H-03 Ingress/parser | 8 KiB target, 64 KiB JSON, identity encoding, strict flat query, reusable 413/415 on 22 body ops; Step 1 |
-| H-04 Q&A privacy | Static capability evidence/expiry + sensitive-input gate; Steps 9/10/12 |
-| H-05 Q&A idempotency/admission | `/answers` Idempotency-Key/409, 24h receipt, one quota, credential admission domain + route/provider-domain circuits; Steps 1/9/10 |
-| H-06 XML/decompression | Wire/decoded limits + no-network DOCTYPE/entity/XInclude parser bounds; Steps 4/5 |
-| H-07 Community evidence | HN remains discovery but excluded from Q&A evidence; Steps 6/9/10 |
-| H-08 Semantic support | Internal block IDs + one conservative support verifier, public paragraph citations unchanged; Steps 10/12 |
-| H-09 Retention indexes | Collection-specific deadline+`_id` indexes and explain gates; Steps 2/4/9/11 |
-| H-10 HMAC lifecycle | Current+retiring keyring, all-version migrate/delete, 30-day+zero retirement; Steps 1/2/10/11/12 |
-| H-11 Deleted tombstone | Closed raw allowlist, null admin DTO role/email, seven deletion flags; Steps 2/11 |
-| H-12 Source takedown citation path | Direct chat sourceId+`_id` index and source zero-match; Steps 10/11 |
-| H-13 Backup restore (post-MVP) | App/governance logical Mongo DB boundary, encrypted app dump + signed governance sidecar, isolated replay, session/secret rotation serving gate; post-MVP recovery track |
-| M-01 Audit tamper evidence | Same transaction identity with audit insert/find-only privilege, deterministic eventId, governance DB checkpoint/offline verifier; Steps 2/11/12 |
-| M-02 Due-work index/order | Explicit aged/normal lanes + stable `_id` and explain; Steps 4/9/11 |
-| M-03 Cleanup authorization | Machine-only fixed enum task table, no caller predicate, batch<=100; Steps 4/9/10/11 |
-| M-04 Idempotency retention | Answer 24h; job/governance >=14d and no purge before guarantee; Steps 1/4/9/10/11 |
+| Finding                            | Resolution/owner                                                                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| H-01 Browser session/CORS/cache    | Same-origin, exact Origin, closed `__Host-` tuple/no-store contract; Steps 1/2                                                                                           |
+| H-02 Register/trusted IP           | `register→ip`, fixed pre-hash limits, Vercel-overwritten IP adapter; Step 2                                                                                              |
+| H-03 Ingress/parser                | 8 KiB target, 64 KiB JSON, identity encoding, strict flat query, reusable 413/415 on 22 body ops; Step 1                                                                 |
+| H-04 Q&A privacy                   | Static capability evidence/expiry + sensitive-input gate; Steps 9/10/12                                                                                                  |
+| H-05 Q&A idempotency/admission     | `/answers` Idempotency-Key/409, 24h receipt, one quota, credential admission domain + route/provider-domain circuits; Steps 1/9/10                                       |
+| H-06 XML/decompression             | Wire/decoded limits + no-network DOCTYPE/entity/XInclude parser bounds; Steps 4/5                                                                                        |
+| H-07 Community evidence            | HN remains discovery but excluded from Q&A evidence; Steps 6/9/10                                                                                                        |
+| H-08 Semantic support              | Internal block IDs + one conservative support verifier, public paragraph citations unchanged; Steps 10/12                                                                |
+| H-09 Retention indexes             | Collection-specific deadline+`_id` indexes and explain gates; Steps 2/4/9/11                                                                                             |
+| H-10 HMAC lifecycle                | Current+retiring keyring, all-version migrate/delete, 30-day+zero retirement; Steps 1/2/10/11/12                                                                         |
+| H-11 Deleted tombstone             | Closed raw allowlist, null admin DTO role/email, seven deletion flags; Steps 2/11                                                                                        |
+| H-12 Source takedown citation path | Direct chat sourceId+`_id` index and source zero-match; Steps 10/11                                                                                                      |
+| H-13 Backup restore (post-MVP)     | App/governance logical Mongo DB boundary, encrypted app dump + signed governance sidecar, isolated replay, session/secret rotation serving gate; post-MVP recovery track |
+| M-01 Audit tamper evidence         | Same transaction identity with audit insert/find-only privilege, deterministic eventId, governance DB checkpoint/offline verifier; Steps 2/11/12                         |
+| M-02 Due-work index/order          | Explicit aged/normal lanes + stable `_id` and explain; Steps 4/9/11                                                                                                      |
+| M-03 Cleanup authorization         | Machine-only fixed enum task table, no caller predicate, batch<=100; Steps 4/9/10/11                                                                                     |
+| M-04 Idempotency retention         | Answer 24h; job/governance >=14d and no purge before guarantee; Steps 1/4/9/10/11                                                                                        |
 
 Tại thời điểm v1.7, Step 2 bị chặn tới khi generated/runtime evidence của Step 1 pass. Gate lịch sử này đã đóng trong implementation; current v1.8 blocker là ADR-0013 remediation và Step-12 release evidence.
 
 ### Independent v1.7 re-audit repair
 
-| Finding | Resolution/owner |
-|---|---|
-| External ledger mâu thuẫn ADR-0002 | Giữ MongoDB Atlas là SoR duy nhất: `techpulse_app` runtime DB + `techpulse_governance` signed boundary DB trong cùng deployment; file sidecar chỉ là hậu MVP backup copy. App-only restore không overwrite governance; runtime boundary Steps 2/11 |
-| Separate audit client không thể chung transaction | Một transaction-capable runtime client/credential/session với per-collection privileges: domain mutation cần thiết, audit/suppression insert/find only; maintenance/offline identity tách riêng. Credential integration gate; Steps 2/3/11/12 |
-| Admission mới chỉ per-route | Historical v1.7 resolution: `admissionDomainId` aggregate concurrency/budget và circuit per-route. ADR-0013/v1.8 bổ sung provider failure-domain circuit; Step 9/10/12 |
-| Pre-flight remote stale | Ghi nhận `origin` tồn tại nhưng không suy ra quyền push/PR/deploy; direct mode vẫn local-only nếu user chưa yêu cầu |
+| Finding                                           | Resolution/owner                                                                                                                                                                                                                                   |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| External ledger mâu thuẫn ADR-0002                | Giữ MongoDB Atlas là SoR duy nhất: `techpulse_app` runtime DB + `techpulse_governance` signed boundary DB trong cùng deployment; file sidecar chỉ là hậu MVP backup copy. App-only restore không overwrite governance; runtime boundary Steps 2/11 |
+| Separate audit client không thể chung transaction | Một transaction-capable runtime client/credential/session với per-collection privileges: domain mutation cần thiết, audit/suppression insert/find only; maintenance/offline identity tách riêng. Credential integration gate; Steps 2/3/11/12      |
+| Admission mới chỉ per-route                       | Historical v1.7 resolution: `admissionDomainId` aggregate concurrency/budget và circuit per-route. ADR-0013/v1.8 bổ sung provider failure-domain circuit; Step 9/10/12                                                                             |
+| Pre-flight remote stale                           | Ghi nhận `origin` tồn tại nhưng không suy ra quyền push/PR/deploy; direct mode vẫn local-only nếu user chưa yêu cầu                                                                                                                                |
 
 Hai logical Mongo database không thêm persistence technology hoặc system of record thứ hai nên không supersede ADR-0002. Cross-database terminal transaction chỉ dùng pre-created collections trong cùng Atlas deployment/client/session; nếu governance insert/availability hoặc actual deployment capability probe fail thì handoff/mutation fail closed, không có eventual/best-effort fallback.
 

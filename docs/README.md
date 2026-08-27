@@ -35,16 +35,16 @@ Không đưa client secret, state secret hoặc authorization code vào frontend
 
 ## 2. Authority map
 
-| Câu hỏi | Tài liệu authority |
-|---|---|
-| Sản phẩm giải quyết gì, cho ai? | Product Brief |
-| Feature/invariant nào bắt buộc? | PRD |
-| Component phụ thuộc nhau thế nào? | Technical Design |
-| Field/index/retention nào tồn tại? | Data Model |
-| Request/response/error chính xác ra sao? | OpenAPI JSON |
-| Vì sao chọn Vercel/Mongo/session/search/provider policy? | ADR log |
-| Thứ tự build và exit criteria? | Construction Blueprint |
-| Chain ECC nào dùng cho một step? | Orchestration Guide |
+| Câu hỏi                                                  | Tài liệu authority     |
+| -------------------------------------------------------- | ---------------------- |
+| Sản phẩm giải quyết gì, cho ai?                          | Product Brief          |
+| Feature/invariant nào bắt buộc?                          | PRD                    |
+| Component phụ thuộc nhau thế nào?                        | Technical Design       |
+| Field/index/retention nào tồn tại?                       | Data Model             |
+| Request/response/error chính xác ra sao?                 | OpenAPI JSON           |
+| Vì sao chọn Vercel/Mongo/session/search/provider policy? | ADR log                |
+| Thứ tự build và exit criteria?                           | Construction Blueprint |
+| Chain ECC nào dùng cho một step?                         | Orchestration Guide    |
 
 Không duy trì payload shape ở nhiều nơi. Nếu prose/example mâu thuẫn OpenAPI thì sửa contract-first; không sửa frontend/backend interface riêng lẻ.
 
@@ -106,14 +106,14 @@ docs/
 
 ## 5. Change routing
 
-| Loại thay đổi | Cập nhật trước | Sau đó |
-|---|---|---|
-| Product scope/acceptance | PRD | Product Brief/idea log nếu rationale đổi; blueprint |
-| Architecture choice | ADR draft + project-owner approval | Technical Design/Data Model/blueprint |
-| HTTP field/status/operation | OpenAPI | Generated JavaScript client/JSDoc artifact, provider/consumer, runtime contract tests |
-| Persistence/index | Data Model | Idempotent migration, repository/tests |
-| Step dependency/scope | Blueprint mutation record | Orchestration Guide |
-| Provider/source policy | Source Registry contract/ADR nếu architectural | Tests, runbook và affected artifacts |
+| Loại thay đổi               | Cập nhật trước                                 | Sau đó                                                                                |
+| --------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Product scope/acceptance    | PRD                                            | Product Brief/idea log nếu rationale đổi; blueprint                                   |
+| Architecture choice         | ADR draft + project-owner approval             | Technical Design/Data Model/blueprint                                                 |
+| HTTP field/status/operation | OpenAPI                                        | Generated JavaScript client/JSDoc artifact, provider/consumer, runtime contract tests |
+| Persistence/index           | Data Model                                     | Idempotent migration, repository/tests                                                |
+| Step dependency/scope       | Blueprint mutation record                      | Orchestration Guide                                                                   |
+| Provider/source policy      | Source Registry contract/ADR nếu architectural | Tests, runbook và affected artifacts                                                  |
 
 ## 6. Trạng thái implementation và bước tiếp theo
 

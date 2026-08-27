@@ -105,24 +105,24 @@ docs/contracts/openapi.json   # canonical HTTP contract
 
 ## 5. Component boundaries
 
-| Component | Trách nhiệm | Không được làm |
-|---|---|---|
-| React client | Render feed/admin, giữ UI state, gọi generated JavaScript client | Tự suy role, gọi source/provider trực tiếp |
-| HTTP ingress/layer | Same-origin/CORS-cookie policy, strict target/body/query parser, auth, CSRF, rate-limit, serialize contract | Chứa business rule, tin caller forwarding header hoặc Mongo query rải rác |
-| Application services | Điều phối use case và transaction boundary | Phụ thuộc Express object |
-| Domain policy | State transition, visibility, rights scope, dedupe decision | Network hoặc database I/O |
-| Repositories | Truy cập MongoDB và enforce query predicate chung | Trả document thô ra HTTP |
-| Connectors | Fetch nguồn allowlisted và trả normalized candidate | Gọi LLM, tự nâng license scope |
-| Content policy gate | Tạo allowed provider input từ source/article policy | Dùng text ngoài scope hoặc bỏ qua blocked state |
-| Media policy gate | Kiểm tra mode/host/current policy, tạo `leadMedia` DTO hoặc null | Fetch binary, proxy URL tùy ý hoặc biến media chưa xử lý thành evidence |
-| Provider adapter catalog | Chuẩn hóa protocol auth/request/response/error cho adapter đã cài | Chứa business route choice hoặc nhận arbitrary endpoint |
-| Workload provider router | Chọn primary/model/provider fallback theo failure class và bounded attempts | Hạ capability, đổi admitted input hoặc log raw input |
-| Provider admission | Atomic credential-domain concurrency/budget và route/provider-domain circuits | Tách cùng credential thành nhiều budget domain |
-| Answer support verifier | Kiểm tra paragraph với exact internal evidence blocks | Tự tạo citation URL hoặc biến community content thành evidence |
-| Embedding adapter | Vector theo pinned model/version/dimensions | Trộn vector khác version |
-| Job runner | Lease, checkpoint, bounded work, counter, retry classification | Queue trong memory hoặc chạy vô hạn |
-| Audit service | Ghi admin mutation append-only | Lưu secret/full text/private chat |
-| Maintenance runner | Chạy fixed task table bằng machine auth, bounded indexed batch | Nhận caller collection/filter/cutoff/batch |
+| Component                | Trách nhiệm                                                                                                 | Không được làm                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| React client             | Render feed/admin, giữ UI state, gọi generated JavaScript client                                            | Tự suy role, gọi source/provider trực tiếp                                |
+| HTTP ingress/layer       | Same-origin/CORS-cookie policy, strict target/body/query parser, auth, CSRF, rate-limit, serialize contract | Chứa business rule, tin caller forwarding header hoặc Mongo query rải rác |
+| Application services     | Điều phối use case và transaction boundary                                                                  | Phụ thuộc Express object                                                  |
+| Domain policy            | State transition, visibility, rights scope, dedupe decision                                                 | Network hoặc database I/O                                                 |
+| Repositories             | Truy cập MongoDB và enforce query predicate chung                                                           | Trả document thô ra HTTP                                                  |
+| Connectors               | Fetch nguồn allowlisted và trả normalized candidate                                                         | Gọi LLM, tự nâng license scope                                            |
+| Content policy gate      | Tạo allowed provider input từ source/article policy                                                         | Dùng text ngoài scope hoặc bỏ qua blocked state                           |
+| Media policy gate        | Kiểm tra mode/host/current policy, tạo `leadMedia` DTO hoặc null                                            | Fetch binary, proxy URL tùy ý hoặc biến media chưa xử lý thành evidence   |
+| Provider adapter catalog | Chuẩn hóa protocol auth/request/response/error cho adapter đã cài                                           | Chứa business route choice hoặc nhận arbitrary endpoint                   |
+| Workload provider router | Chọn primary/model/provider fallback theo failure class và bounded attempts                                 | Hạ capability, đổi admitted input hoặc log raw input                      |
+| Provider admission       | Atomic credential-domain concurrency/budget và route/provider-domain circuits                               | Tách cùng credential thành nhiều budget domain                            |
+| Answer support verifier  | Kiểm tra paragraph với exact internal evidence blocks                                                       | Tự tạo citation URL hoặc biến community content thành evidence            |
+| Embedding adapter        | Vector theo pinned model/version/dimensions                                                                 | Trộn vector khác version                                                  |
+| Job runner               | Lease, checkpoint, bounded work, counter, retry classification                                              | Queue trong memory hoặc chạy vô hạn                                       |
+| Audit service            | Ghi admin mutation append-only                                                                              | Lưu secret/full text/private chat                                         |
+| Maintenance runner       | Chạy fixed task table bằng machine auth, bounded indexed batch                                              | Nhận caller collection/filter/cutoff/batch                                |
 
 ### 5.1. Dependency direction
 
@@ -368,11 +368,11 @@ Mỗi bounded logical resource key có persistent lease record gồm `generation
 
 Lease key chỉ do server derive; raw caller key bị reject. Canonical table là:
 
-| Namespace | Key | Operations dùng chung key |
-|---|---|---|
-| Ingestion | `ingestion:source:<sourceId>` | cron, admin trigger, retry cùng source |
-| Indexing | `indexing:article:<articleId>` | summary, embedding, visibility reconcile cùng article |
-| Source reconciliation | `reconciliation:source:<sourceId>` | marker claim/cursor/fan-out/retry cùng source |
+| Namespace             | Key                                | Operations dùng chung key                             |
+| --------------------- | ---------------------------------- | ----------------------------------------------------- |
+| Ingestion             | `ingestion:source:<sourceId>`      | cron, admin trigger, retry cùng source                |
+| Indexing              | `indexing:article:<articleId>`     | summary, embedding, visibility reconcile cùng article |
+| Source reconciliation | `reconciliation:source:<sourceId>` | marker claim/cursor/fan-out/retry cùng source         |
 
 Suffix là lowercase opaque ID 1–128 ký tự chỉ gồm `[a-z0-9_-]`; cấm email, actor, invocation, random job ID và namespace tùy ý. Job/checkpoint/article/artifact commit chạy trong transaction ngắn và phải conditionally touch lease record với exact active owner + generation + unexpired authoritative timestamp trước target write. Reacquire tạo write conflict/conditional miss nên stale worker abort. Ingestion commit còn match exact source ID + current policy/config version + active/eligible state + connector config/discriminant; AI artifact commit match `sources.policyVersion == job.expectedSourcePolicyVersion`. Output/candidate bị bỏ nếu conditional touch thất bại.
 
@@ -395,16 +395,16 @@ Mỗi lane có exact compound index kết thúc bằng `_id`; `db:verify` dùng 
 
 ### 7.4. Retry policy
 
-| Error class | Ví dụ | Hành vi |
-|---|---|---|
-| Validation/policy | blocked source, scope violation | Không retry; đưa review/audit |
-| Permanent upstream | 404 feed, invalid payload lặp lại | Không auto-retry; pause/review source |
-| Retryable upstream | 429, timeout, 5xx | Exponential backoff có jitter, tối đa cấu hình nhỏ |
-| Model route unavailable | Model-scoped 429/timeout/5xx | Chỉ `model-retryable` mới chọn same-provider model fallback |
-| Provider domain unavailable | Shared transport/control-plane outage | Chỉ `provider-retryable` mới chọn cross-provider-domain fallback |
+| Error class                 | Ví dụ                                              | Hành vi                                                                                 |
+| --------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Validation/policy           | blocked source, scope violation                    | Không retry; đưa review/audit                                                           |
+| Permanent upstream          | 404 feed, invalid payload lặp lại                  | Không auto-retry; pause/review source                                                   |
+| Retryable upstream          | 429, timeout, 5xx                                  | Exponential backoff có jitter, tối đa cấu hình nhỏ                                      |
+| Model route unavailable     | Model-scoped 429/timeout/5xx                       | Chỉ `model-retryable` mới chọn same-provider model fallback                             |
+| Provider domain unavailable | Shared transport/control-plane outage              | Chỉ `provider-retryable` mới chọn cross-provider-domain fallback                        |
 | Embedding route unavailable | Compatible route thiếu hoặc compatibility mismatch | Chỉ fallback cùng `artifactCompatibilityId`; nếu không thì pending/failed + text search |
-| Function deadline | Còn items khi gần deadline | Checkpoint và `partial`, không coi là crash |
-| Unknown | exception ngoài dự kiến | `failed`, log request/job ID, cần admin review |
+| Function deadline           | Còn items khi gần deadline                         | Checkpoint và `partial`, không coi là crash                                             |
+| Unknown                     | exception ngoài dự kiến                            | `failed`, log request/job ID, cần admin review                                          |
 
 LLM/embedding adapter phải phân loại lỗi. `model-retryable` chỉ cho phép same-provider model fallback; `provider-retryable` chỉ cho phép cross-provider-domain fallback. Policy/privacy/validation/schema/support hoặc ambiguous outcome không được fallback.
 
@@ -447,15 +447,21 @@ Hai JavaScript port độc lập, mô tả bằng JSDoc và kiểm tra output ru
 ```js
 export class LlmProvider {
   /** @param {object} input @returns {Promise<object>} */
-  async summarize(input) { throw new Error('Not implemented'); }
+  async summarize(input) {
+    throw new Error('Not implemented')
+  }
 
   /** @param {object} input @returns {Promise<object>} */
-  async answer(input) { throw new Error('Not implemented'); }
+  async answer(input) {
+    throw new Error('Not implemented')
+  }
 }
 
 export class EmbeddingProvider {
   /** @param {object} input @returns {Promise<object>} */
-  async embed(input) { throw new Error('Not implemented'); }
+  async embed(input) {
+    throw new Error('Not implemented')
+  }
 }
 ```
 
@@ -521,17 +527,17 @@ OpenAPI là authority cho payload/nullability/enum/error. Prose trong file này 
 
 ## 11. Security controls
 
-| Boundary | Control bắt buộc |
-|---|---|
-| Browser → API | same-origin only, exact Origin, strict 8 KiB target/64 KiB identity-encoded JSON, flat query parser, `__Host-` cookie, session, CSRF, trusted-IP rate limit |
-| Admin route | session + role + transition validation + atomic safe audit |
-| Cron → API | GET + Bearer `CRON_SECRET`, no cookie/CSRF, idempotency |
-| API → source URL | canonical HTTPS không credential; normalize mapped address, validate mọi A/AAAA, reject answer set có bất kỳ private/loopback/link-local/unspecified/multicast/reserved IP, pin connection vào validated public IP, manual redirect validation, timeout/size/content-type limit |
-| Browser → media host | current media policy, HTTPS host allowlist, CSP `img-src`, referrer policy, no arbitrary backend proxy |
-| Source payload/text → parser/AI | safe fetch + decoded limits, no-network XML parser, policy gate, sanitize/extract, delimit untrusted evidence, no tools |
-| API → provider | privacy capability + sensitive-input gate, idempotent attempt, concurrency/budget/circuit, scoped input, timeout, metadata-only log |
-| API → MongoDB | least-privilege connection, indexed queries, no raw secret/full text |
-| Machine → maintenance | cron bearer, fixed task table, indexed deadline + `_id`, batch<=100, safe aggregate only |
+| Boundary                        | Control bắt buộc                                                                                                                                                                                                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser → API                   | same-origin only, exact Origin, strict 8 KiB target/64 KiB identity-encoded JSON, flat query parser, `__Host-` cookie, session, CSRF, trusted-IP rate limit                                                                                                                     |
+| Admin route                     | session + role + transition validation + atomic safe audit                                                                                                                                                                                                                      |
+| Cron → API                      | GET + Bearer `CRON_SECRET`, no cookie/CSRF, idempotency                                                                                                                                                                                                                         |
+| API → source URL                | canonical HTTPS không credential; normalize mapped address, validate mọi A/AAAA, reject answer set có bất kỳ private/loopback/link-local/unspecified/multicast/reserved IP, pin connection vào validated public IP, manual redirect validation, timeout/size/content-type limit |
+| Browser → media host            | current media policy, HTTPS host allowlist, CSP `img-src`, referrer policy, no arbitrary backend proxy                                                                                                                                                                          |
+| Source payload/text → parser/AI | safe fetch + decoded limits, no-network XML parser, policy gate, sanitize/extract, delimit untrusted evidence, no tools                                                                                                                                                         |
+| API → provider                  | privacy capability + sensitive-input gate, idempotent attempt, concurrency/budget/circuit, scoped input, timeout, metadata-only log                                                                                                                                             |
+| API → MongoDB                   | least-privilege connection, indexed queries, no raw secret/full text                                                                                                                                                                                                            |
+| Machine → maintenance           | cron bearer, fixed task table, indexed deadline + `_id`, batch<=100, safe aggregate only                                                                                                                                                                                        |
 
 Safe-fetch không được validate hostname rồi để HTTP client tự resolve lại. IPv4-mapped IPv6 phải normalize về IPv4 trước CIDR classification; nếu một answer không public thì reject toàn bộ mixed answer set. Adapter chọn một IP từ tập A/AAAA đã validate và pin actual connection tới IP đó trong khi giữ original hostname cho HTTP Host/TLS SNI/certificate verification. Redirect dùng `redirect=manual`, tối đa cấu hình nhỏ; mỗi `Location` được resolve/canonicalize/validate/pin lại. URL rendered ra browser cũng phải qua canonical `HttpsUrl`, cấm username/password; external anchor dùng `rel="noopener noreferrer external"`.
 
@@ -580,16 +586,16 @@ Runner replay ledger bằng fixed reconciliation. Restore luôn direct-delete to
 
 ## 13. Testing strategy
 
-| Layer | Mục tiêu | Requirement tiêu biểu |
-|---|---|---|
-| Unit | state transition, scope gate, HTTPS canonicalization, dedupe, score | SRC-004..007, ING-007..009, SEARCH-004 |
-| Contract | request/response, cookie/cache/ingress/idempotency và invalid conditional fixtures validate cùng OpenAPI | AUTH/USER/ART/ADMIN endpoints |
-| Integration | Mongo indexes/explain, repository predicates, fencing/idempotency, HMAC rotation, session/deletion | AUTH-002..006, ING-004, ART-002 |
-| Connector | fixture RSS/arXiv/HN, XXE/XInclude/entity/nesting/decompression → bounded candidate/error | ING-001, ING-007 |
-| Provider adapter/router | graph validation, privacy admission, credential budget, route/provider circuits, failure-class fallback; không network thật mặc định | AI-001..010, QA-008 |
-| Media policy/UI | mode/host/attribution, null/fallback, broken remote image, video link-only | SRC-009, ART-007, ADMIN-008, NFR-011 |
-| Retrieval eval | top-5 relevance, refusal, hidden-content exclusion, citation precision | SEARCH-005..006, QA-002..007 |
-| E2E | login → feed → detail → source; admin source → job → audit | MVP gates |
+| Layer                   | Mục tiêu                                                                                                                             | Requirement tiêu biểu                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| Unit                    | state transition, scope gate, HTTPS canonicalization, dedupe, score                                                                  | SRC-004..007, ING-007..009, SEARCH-004 |
+| Contract                | request/response, cookie/cache/ingress/idempotency và invalid conditional fixtures validate cùng OpenAPI                             | AUTH/USER/ART/ADMIN endpoints          |
+| Integration             | Mongo indexes/explain, repository predicates, fencing/idempotency, HMAC rotation, session/deletion                                   | AUTH-002..006, ING-004, ART-002        |
+| Connector               | fixture RSS/arXiv/HN, XXE/XInclude/entity/nesting/decompression → bounded candidate/error                                            | ING-001, ING-007                       |
+| Provider adapter/router | graph validation, privacy admission, credential budget, route/provider circuits, failure-class fallback; không network thật mặc định | AI-001..010, QA-008                    |
+| Media policy/UI         | mode/host/attribution, null/fallback, broken remote image, video link-only                                                           | SRC-009, ART-007, ADMIN-008, NFR-011   |
+| Retrieval eval          | top-5 relevance, refusal, hidden-content exclusion, citation precision                                                               | SEARCH-005..006, QA-002..007           |
+| E2E                     | login → feed → detail → source; admin source → job → audit                                                                           | MVP gates                              |
 
 Test quan trọng nhất là negative invariant: một article hidden/removed/review-needed hoặc source bị blocked tuyệt đối không xuất hiện trong feed, search hay evidence context; `community-signal` không xuất hiện trong Q&A evidence nhưng vẫn có ở feed/search. Tương tự, media từ host/mode không được duyệt không được serialize và media `not-analyzed` không hỗ trợ factual claim. Contract test còn phải reject cookie/header/Origin/CORS sai, oversized/compressed/non-JSON ingress, unknown/duplicate/operator query, `/answers` thiếu idempotency, answered rỗng/không citation, refused có factual paragraph, policy/connector mismatch, unavailable citation còn URL/title, deleted user còn role/email và operation-specific reason code sai.
 
@@ -601,21 +607,21 @@ MongoDB hỗ trợ transaction qua nhiều database khi chúng nằm trong cùng
 
 ## 14. Failure/degradation behavior
 
-| Dependency lỗi | User/admin thấy gì | Dữ liệu/hành vi |
-|---|---|---|
-| MongoDB | `503` có request ID | Không fake success; mutation không được ghi nhận |
-| RSS/arXiv/HN | Job partial/failed | Existing articles vẫn phục vụ; retry bounded |
-| Model route lỗi retryable | Có thể thử model fallback | Chỉ route cùng provider domain; tối đa hai external attempts |
-| Provider domain lỗi retryable | Có thể thử provider fallback | Route fallback phải thuộc failure domain khác và pass privacy/admission |
-| Không còn candidate hợp lệ | Summary/Q&A unavailable rõ ràng | Feed/detail/citation nguồn vẫn dùng được; không hạ policy |
-| Provider privacy/admission/circuit không phù hợp | Q&A refused/unavailable + retry hint | Không gửi raw question, không reserve thêm quota/provider call trùng |
-| Embedding unavailable/incompatible | Q&A fallback về lexical + taxonomy; search fallback về text | Vector chỉ dùng khi version/input/compatibility còn hợp lệ; `sensitive-input` refuse trước embedding |
-| Ảnh remote lỗi/bị chặn | Visual fallback, link bài gốc vẫn hoạt động | Không backend-proxy hoặc lưu bản sao để che lỗi |
-| Cron due-work không chạy | Admin overview cảnh báo stale queues/ingestion | Manual trigger dùng cùng service; durable queued/running state không mất |
-| Maintenance credential thiếu | Audit IP-HMAC retention báo unavailable | Chỉ `purge-audit-ip-hmac` bị disable và maintenance-retention release gate fail; core runtime/fixed task khác không dùng runtime credential để thay thế |
-| Audit write lỗi trong direct admin mutation | Mutation thất bại với request ID | Mongo transaction abort; không có state change không audit |
-| Account deletion cleanup lỗi | Admin thấy failed item an toàn | Session vẫn revoked; retry chỉ item chưa hoàn tất, không restore identity |
-| Live governance evidence thiếu | Mutation/serving fail closed | Không ghi terminal suppression khi governance unavailable hoặc signature invalid |
+| Dependency lỗi                                   | User/admin thấy gì                                          | Dữ liệu/hành vi                                                                                                                                         |
+| ------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MongoDB                                          | `503` có request ID                                         | Không fake success; mutation không được ghi nhận                                                                                                        |
+| RSS/arXiv/HN                                     | Job partial/failed                                          | Existing articles vẫn phục vụ; retry bounded                                                                                                            |
+| Model route lỗi retryable                        | Có thể thử model fallback                                   | Chỉ route cùng provider domain; tối đa hai external attempts                                                                                            |
+| Provider domain lỗi retryable                    | Có thể thử provider fallback                                | Route fallback phải thuộc failure domain khác và pass privacy/admission                                                                                 |
+| Không còn candidate hợp lệ                       | Summary/Q&A unavailable rõ ràng                             | Feed/detail/citation nguồn vẫn dùng được; không hạ policy                                                                                               |
+| Provider privacy/admission/circuit không phù hợp | Q&A refused/unavailable + retry hint                        | Không gửi raw question, không reserve thêm quota/provider call trùng                                                                                    |
+| Embedding unavailable/incompatible               | Q&A fallback về lexical + taxonomy; search fallback về text | Vector chỉ dùng khi version/input/compatibility còn hợp lệ; `sensitive-input` refuse trước embedding                                                    |
+| Ảnh remote lỗi/bị chặn                           | Visual fallback, link bài gốc vẫn hoạt động                 | Không backend-proxy hoặc lưu bản sao để che lỗi                                                                                                         |
+| Cron due-work không chạy                         | Admin overview cảnh báo stale queues/ingestion              | Manual trigger dùng cùng service; durable queued/running state không mất                                                                                |
+| Maintenance credential thiếu                     | Audit IP-HMAC retention báo unavailable                     | Chỉ `purge-audit-ip-hmac` bị disable và maintenance-retention release gate fail; core runtime/fixed task khác không dùng runtime credential để thay thế |
+| Audit write lỗi trong direct admin mutation      | Mutation thất bại với request ID                            | Mongo transaction abort; không có state change không audit                                                                                              |
+| Account deletion cleanup lỗi                     | Admin thấy failed item an toàn                              | Session vẫn revoked; retry chỉ item chưa hoàn tất, không restore identity                                                                               |
+| Live governance evidence thiếu                   | Mutation/serving fail closed                                | Không ghi terminal suppression khi governance unavailable hoặc signature invalid                                                                        |
 
 ## 15. Architecture acceptance checklist
 
@@ -659,15 +665,15 @@ MongoDB hỗ trợ transaction qua nhiều database khi chúng nằm trong cùng
 
 ## 16. Traceability
 
-| Architecture area | PRD requirements |
-|---|---|
-| Session/RBAC | AUTH-001..006, ADMIN-005..007 |
-| Source Registry/policy gate | SRC-001..009, AI-001..004/007, QA-004/007 |
-| Durable jobs/connectors | ING-001..009, NFR-001/005/006 |
-| Article repository/visibility/media | ART-001..007, SEARCH-002, QA-004, NFR-011 |
-| Search/retrieval | SEARCH-001..006, QA-002/006 |
-| Provider adapters/citations | AI-001..006, QA-001..008 |
-| Takedown/audit | ADMIN-004/006/007 |
-| Contract/testing | NFR-007..010 và toàn bộ MVP acceptance gates |
+| Architecture area                   | PRD requirements                             |
+| ----------------------------------- | -------------------------------------------- |
+| Session/RBAC                        | AUTH-001..006, ADMIN-005..007                |
+| Source Registry/policy gate         | SRC-001..009, AI-001..004/007, QA-004/007    |
+| Durable jobs/connectors             | ING-001..009, NFR-001/005/006                |
+| Article repository/visibility/media | ART-001..007, SEARCH-002, QA-004, NFR-011    |
+| Search/retrieval                    | SEARCH-001..006, QA-002/006                  |
+| Provider adapters/citations         | AI-001..006, QA-001..008                     |
+| Takedown/audit                      | ADMIN-004/006/007                            |
+| Contract/testing                    | NFR-007..010 và toàn bộ MVP acceptance gates |
 
 Mọi thay đổi boundary phải bắt đầu từ PRD/ADR nếu thay đổi ý định, hoặc OpenAPI/data contract nếu chỉ thay đổi interface triển khai.

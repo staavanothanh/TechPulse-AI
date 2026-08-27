@@ -16,13 +16,13 @@ Codebase dùng JavaScript/JSX. Không copy schema bằng tay sang frontend; sau 
 
 ## 2. Boundary owners
 
-| Boundary | Consumer/owner | Provider/owner | Artifact |
-|---|---|---|---|
-| User API | React user UI | Express API | `contracts/openapi.json` |
-| Admin API | React admin UI | Express API | `contracts/openapi.json` |
-| Cron/maintenance trigger | Vercel Cron/operator machine | Express internal routes | `contracts/openapi.json` |
-| Source connector | Job runner | RSS/arXiv/HN adapters | JavaScript port + JSDoc/connector fixtures; không phải public HTTP |
-| LLM/embedding | AI services | Provider adapters | JavaScript port + JSDoc/provider fixtures; không expose provider payload cho client |
+| Boundary                 | Consumer/owner               | Provider/owner          | Artifact                                                                            |
+| ------------------------ | ---------------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
+| User API                 | React user UI                | Express API             | `contracts/openapi.json`                                                            |
+| Admin API                | React admin UI               | Express API             | `contracts/openapi.json`                                                            |
+| Cron/maintenance trigger | Vercel Cron/operator machine | Express internal routes | `contracts/openapi.json`                                                            |
+| Source connector         | Job runner                   | RSS/arXiv/HN adapters   | JavaScript port + JSDoc/connector fixtures; không phải public HTTP                  |
+| LLM/embedding            | AI services                  | Provider adapters       | JavaScript port + JSDoc/provider fixtures; không expose provider payload cho client |
 
 Project owner phê duyệt breaking contract change. Frontend và backend đều phải review contract diff vì cùng phụ thuộc artifact.
 
@@ -85,18 +85,18 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 
 ### 4.1. Admin reason-code matrix
 
-| Operation intent | Allowed `reasonCode` |
-|---|---|
-| Source config/status update | `source_configuration_changed`, `source_status_changed` |
-| Source technical check | `source_technical_check_requested` |
-| Source policy review/re-review | `source_policy_reviewed`, `source_policy_re_review_requested` theo operation |
-| Job retry/cancel | `job_retry_requested`, `job_cancel_requested` theo operation |
-| Summary/index request | `artifact_regeneration_requested` |
+| Operation intent                  | Allowed `reasonCode`                                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source config/status update       | `source_configuration_changed`, `source_status_changed`                                                                                                            |
+| Source technical check            | `source_technical_check_requested`                                                                                                                                 |
+| Source policy review/re-review    | `source_policy_reviewed`, `source_policy_re_review_requested` theo operation                                                                                       |
+| Job retry/cancel                  | `job_retry_requested`, `job_cancel_requested` theo operation                                                                                                       |
+| Summary/index request             | `artifact_regeneration_requested`                                                                                                                                  |
 | Article status/topics/media patch | Code tương ứng `article_status_changed`, `article_topics_changed`, `article_media_visibility_changed`; payload nhiều field phải match ít nhất một changed category |
-| Duplicate merge | `duplicate_merge_confirmed` |
-| Takedown workflow | `takedown_review_started`, `takedown_approved`, `takedown_rejected`, `takedown_completed` khớp target status |
-| Account-deletion retry | `account_deletion_retry_requested` |
-| User suspend/restore | `user_suspended`, `user_restored` khớp target status |
+| Duplicate merge                   | `duplicate_merge_confirmed`                                                                                                                                        |
+| Takedown workflow                 | `takedown_review_started`, `takedown_approved`, `takedown_rejected`, `takedown_completed` khớp target status                                                       |
+| Account-deletion retry            | `account_deletion_retry_requested`                                                                                                                                 |
+| User suspend/restore              | `user_suspended`, `user_restored` khớp target status                                                                                                               |
 
 Code ngoài subset của operation trả `422`; OpenAPI const/conditional schema reject phần lớn mismatch trước domain layer, còn multi-field patch được domain validator đối chiếu changed-field set. Free-form `reason` chỉ còn ở restricted takedown requester case; field này không được copy sang audit.
 
@@ -104,16 +104,16 @@ Audit event dùng `AuditReasonCode`: union của admin code ở trên và system
 
 ## 5. Endpoint inventory
 
-| Surface | Operations |
-|---|---|
-| Auth/account | register, login, logout, current user, preferences, account deletion |
-| Saved/chat | list/save/unsave saved article; list/read-own/delete chat session |
-| Content | article list/detail, search results, grounded answers |
-| Sources | list/create/read/update, technical check, policy review |
-| Jobs | create/list/read/retry/cancel ingestion và indexing jobs; account-deletion progress/retry |
-| Admin articles | list/update, summary job, indexing job, duplicate merge |
-| Governance | content takedown list/create/update; account-deletion list/detail/retry; user list/update; audit list |
-| Internal | protected `GET /api/internal/cron/due-work`; protected fixed-scope `GET /api/internal/maintenance/{taskName}` |
+| Surface        | Operations                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------- |
+| Auth/account   | register, login, logout, current user, preferences, account deletion                                          |
+| Saved/chat     | list/save/unsave saved article; list/read-own/delete chat session                                             |
+| Content        | article list/detail, search results, grounded answers                                                         |
+| Sources        | list/create/read/update, technical check, policy review                                                       |
+| Jobs           | create/list/read/retry/cancel ingestion và indexing jobs; account-deletion progress/retry                     |
+| Admin articles | list/update, summary job, indexing job, duplicate merge                                                       |
+| Governance     | content takedown list/create/update; account-deletion list/detail/retry; user list/update; audit list         |
+| Internal       | protected `GET /api/internal/cron/due-work`; protected fixed-scope `GET /api/internal/maintenance/{taskName}` |
 
 Exact method/path/status nằm trong OpenAPI, không lặp lại ở đây để tránh drift.
 

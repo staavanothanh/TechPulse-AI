@@ -150,12 +150,12 @@ active ↔ paused → archived
 
 #### 5.3.1. Chính sách xử lý nội dung
 
-| `llmInputScope` | Dữ liệu được gửi tới AI | Quy tắc |
-|---|---|---|
-| `metadata` | title, author, date, topic và URL | Không fetch toàn văn |
-| `excerpt` | metadata và excerpt chính thức | Không tự mở rộng sang nội dung trang |
+| `llmInputScope`      | Dữ liệu được gửi tới AI                     | Quy tắc                                              |
+| -------------------- | ------------------------------------------- | ---------------------------------------------------- |
+| `metadata`           | title, author, date, topic và URL           | Không fetch toàn văn                                 |
+| `excerpt`            | metadata và excerpt chính thức              | Không tự mở rộng sang nội dung trang                 |
 | `fulltext-temporary` | phần main content đã làm sạch và chia chunk | Chỉ dùng khi quyền xử lý rõ ràng; không lưu toàn văn |
-| `none` | Không có | Không gọi LLM/embedding với dữ liệu nguồn |
+| `none`               | Không có                                    | Không gọi LLM/embedding với dữ liệu nguồn            |
 
 - Không gửi raw HTML, menu, quảng cáo, comment hoặc phần không liên quan tới LLM.
 - Với `fulltext-temporary`, backend chỉ giữ nội dung trong thời gian xử lý, loại bỏ markup, chia chunk cần thiết rồi giải phóng sau khi tạo summary.
@@ -258,15 +258,15 @@ Trang quản trị là bề mặt vận hành nội bộ của TechPulse AI. Ph�
 
 #### 5.8.1. Actor và ranh giới quyền
 
-| Năng lực | `user` | `admin` | `system-worker` |
-|---|---:|---:|---:|
-| Xem feed, tìm kiếm, lưu bài và hỏi AI | Có | Có | Không |
-| Quản lý nguồn và chính sách sử dụng | Không | Có | Chỉ đọc cấu hình đã duyệt |
-| Yêu cầu chạy hoặc retry ingestion/indexing | Không | Có | Không |
-| Thực thi ingestion, summary, indexing và account-deletion job | Không | Không | Có |
-| Ẩn bài, sửa topic, hợp nhất bản trùng | Không | Có | Không |
-| Xử lý yêu cầu gỡ nội dung và khóa user | Không | Có | Không |
-| Ghi audit/operational log | Không | Tạo qua thao tác | Tạo qua quá trình chạy job |
+| Năng lực                                                      | `user` |          `admin` |            `system-worker` |
+| ------------------------------------------------------------- | -----: | ---------------: | -------------------------: |
+| Xem feed, tìm kiếm, lưu bài và hỏi AI                         |     Có |               Có |                      Không |
+| Quản lý nguồn và chính sách sử dụng                           |  Không |               Có |  Chỉ đọc cấu hình đã duyệt |
+| Yêu cầu chạy hoặc retry ingestion/indexing                    |  Không |               Có |                      Không |
+| Thực thi ingestion, summary, indexing và account-deletion job |  Không |            Không |                         Có |
+| Ẩn bài, sửa topic, hợp nhất bản trùng                         |  Không |               Có |                      Không |
+| Xử lý yêu cầu gỡ nội dung và khóa user                        |  Không |               Có |                      Không |
+| Ghi audit/operational log                                     |  Không | Tạo qua thao tác | Tạo qua quá trình chạy job |
 
 - `system-worker` là danh tính nội bộ của backend, không phải tài khoản có thể đăng nhập vào giao diện. Trong MVP, actor này là Vercel Function được gọi bởi cron hoặc trigger quản trị.
 - Frontend không fetch nguồn bên ngoài. Admin chỉ yêu cầu chạy job; function phía server xác thực yêu cầu, lấy distributed lock và xử lý một batch có giới hạn.
@@ -730,30 +730,30 @@ Trước khi mở công khai cho mọi người hoặc thêm quảng cáo, affil
 
 ## 11. Rủi ro chính
 
-| Rủi ro | Cách giảm thiểu ban đầu |
-|---|---|
-| Vi phạm bản quyền hoặc điều khoản nguồn | Source allowlist, lưu bằng chứng Terms/License, thực thi `llmInputScope`, không lưu full text |
-| Điều khoản publisher thay đổi sau khi duyệt | Lưu `reviewedAt`, URL bằng chứng; chuyển `review-needed` và tạm ingest khi phát hiện thay đổi quan trọng |
+| Rủi ro                                              | Cách giảm thiểu ban đầu                                                                                                                                                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Vi phạm bản quyền hoặc điều khoản nguồn             | Source allowlist, lưu bằng chứng Terms/License, thực thi `llmInputScope`, không lưu full text                                                                                                                                              |
+| Điều khoản publisher thay đổi sau khi duyệt         | Lưu `reviewedAt`, URL bằng chứng; chuyển `review-needed` và tạm ingest khi phát hiện thay đổi quan trọng                                                                                                                                   |
 | Gửi dữ liệu vượt phạm vi tới LLM/embedding provider | Policy check phía backend trước mọi request, sensitive-input detector, redact/limit dữ liệu và audit model/scope; Q&A nonconfidential cần owner-approved risk; query embedding chỉ dùng admitted question với capability route tương thích |
-| AI hallucination | RAG, citation, từ chối khi thiếu bằng chứng, bộ kiểm thử groundedness |
-| Prompt injection từ bài viết | Coi nội dung nguồn là dữ liệu, tách system instruction, lọc và giới hạn tool |
-| Tin trùng | Canonical URL, hash và semantic similarity |
-| Tin cũ hoặc sai thời điểm | Hiển thị `publishedAt`, `retrievedAt` và phạm vi thời gian truy vấn |
-| Chi phí LLM | Cache summary, giới hạn độ dài input, batch job và quota người dùng |
-| API thay đổi hoặc hết quota | Adapter riêng cho từng nguồn, retry giới hạn và khả năng tắt nguồn |
-| Vercel Cron chạy trùng, lỗi hoặc hết thời gian | Idempotency key, distributed lock, batch nhỏ, app-level retry và nút chạy thủ công |
-| Embedding provider lỗi | Fallback về MongoDB text search; đánh dấu `embeddingStatus: failed` để retry sau |
-| Đổi embedding model làm vector không tương thích | Pin model/dimension/version và re-index toàn bộ document khi thay đổi |
-| Nội dung cộng đồng bị nhầm là thông tin đã xác thực | Gắn Hacker News là `community-signal`, chỉ feed/search và loại khỏi Q&A evidence trong MVP |
-| Bản tóm tắt thay thế bài gốc | Tóm tắt ngắn, không dùng toàn văn/media làm evidence; nút đọc nguồn nổi bật |
-| Ảnh/video công khai bị dùng vượt quyền | Media policy độc lập, allowlisted HTTPS host, remote-preview/link-only, attribution và không rehost |
-| Ảnh hotlink hỏng hoặc publisher chặn | Lazy-load và TechPulse-owned fallback; không proxy tùy ý để che lỗi |
-| AI suy diễn từ media chưa xử lý | `mediaEvidenceStatus=not-analyzed`; loại media khỏi summary/embedding/Q&A input |
-| Dịch/tóm tắt sai nguồn ngoại ngữ | Giữ title/ngôn ngữ/URL gốc, gắn nhãn AI, đưa lỗi chất lượng vào `review-needed` |
-| User chiếm quyền hoặc gọi trực tiếp admin API | Kiểm tra role tại backend, session an toàn, CSRF protection, rate limiting và test `401/403` |
-| Source URL độc hại truy cập mạng nội bộ | Chỉ HTTPS/no credential; validate toàn bộ DNS answers, reject mixed/mapped/private, pin socket vào IP đã duyệt và tự xử lý redirect |
-| Bài chưa duyệt hoặc đã ẩn vẫn còn trong AI index | Chỉ index trạng thái `published`, đồng bộ article/index và kiểm thử các invariant trạng thái |
-| Admin thao tác nhầm hoặc khó truy vết | Ưu tiên soft delete, yêu cầu xác nhận/action-specific reasonCode và ghi audit log append-only không chứa free-form case text |
+| AI hallucination                                    | RAG, citation, từ chối khi thiếu bằng chứng, bộ kiểm thử groundedness                                                                                                                                                                      |
+| Prompt injection từ bài viết                        | Coi nội dung nguồn là dữ liệu, tách system instruction, lọc và giới hạn tool                                                                                                                                                               |
+| Tin trùng                                           | Canonical URL, hash và semantic similarity                                                                                                                                                                                                 |
+| Tin cũ hoặc sai thời điểm                           | Hiển thị `publishedAt`, `retrievedAt` và phạm vi thời gian truy vấn                                                                                                                                                                        |
+| Chi phí LLM                                         | Cache summary, giới hạn độ dài input, batch job và quota người dùng                                                                                                                                                                        |
+| API thay đổi hoặc hết quota                         | Adapter riêng cho từng nguồn, retry giới hạn và khả năng tắt nguồn                                                                                                                                                                         |
+| Vercel Cron chạy trùng, lỗi hoặc hết thời gian      | Idempotency key, distributed lock, batch nhỏ, app-level retry và nút chạy thủ công                                                                                                                                                         |
+| Embedding provider lỗi                              | Fallback về MongoDB text search; đánh dấu `embeddingStatus: failed` để retry sau                                                                                                                                                           |
+| Đổi embedding model làm vector không tương thích    | Pin model/dimension/version và re-index toàn bộ document khi thay đổi                                                                                                                                                                      |
+| Nội dung cộng đồng bị nhầm là thông tin đã xác thực | Gắn Hacker News là `community-signal`, chỉ feed/search và loại khỏi Q&A evidence trong MVP                                                                                                                                                 |
+| Bản tóm tắt thay thế bài gốc                        | Tóm tắt ngắn, không dùng toàn văn/media làm evidence; nút đọc nguồn nổi bật                                                                                                                                                                |
+| Ảnh/video công khai bị dùng vượt quyền              | Media policy độc lập, allowlisted HTTPS host, remote-preview/link-only, attribution và không rehost                                                                                                                                        |
+| Ảnh hotlink hỏng hoặc publisher chặn                | Lazy-load và TechPulse-owned fallback; không proxy tùy ý để che lỗi                                                                                                                                                                        |
+| AI suy diễn từ media chưa xử lý                     | `mediaEvidenceStatus=not-analyzed`; loại media khỏi summary/embedding/Q&A input                                                                                                                                                            |
+| Dịch/tóm tắt sai nguồn ngoại ngữ                    | Giữ title/ngôn ngữ/URL gốc, gắn nhãn AI, đưa lỗi chất lượng vào `review-needed`                                                                                                                                                            |
+| User chiếm quyền hoặc gọi trực tiếp admin API       | Kiểm tra role tại backend, session an toàn, CSRF protection, rate limiting và test `401/403`                                                                                                                                               |
+| Source URL độc hại truy cập mạng nội bộ             | Chỉ HTTPS/no credential; validate toàn bộ DNS answers, reject mixed/mapped/private, pin socket vào IP đã duyệt và tự xử lý redirect                                                                                                        |
+| Bài chưa duyệt hoặc đã ẩn vẫn còn trong AI index    | Chỉ index trạng thái `published`, đồng bộ article/index và kiểm thử các invariant trạng thái                                                                                                                                               |
+| Admin thao tác nhầm hoặc khó truy vết               | Ưu tiên soft delete, yêu cầu xác nhận/action-specific reasonCode và ghi audit log append-only không chứa free-form case text                                                                                                               |
 
 ## 12. Việc cần xác nhận khi triển khai
 
