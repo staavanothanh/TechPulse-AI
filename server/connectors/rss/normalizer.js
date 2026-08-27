@@ -152,6 +152,55 @@ function mediaType(node) {
   return undefined
 }
 
+function embeddedAttribute(tag, name) {
+  const match = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i').exec(tag)
+  if (!match) return undefined
+  return decodeEntities(match[1] ?? match[2] ?? '')
+}
+
+function embeddedImageNodeCandidate(node, feedUrl, limits) {
+  const localName = String(node?.localName ?? '').toLowerCase()
+  if (localName === 'script' || localName === 'style') return undefined
+  if (localName === 'img') {
+    const src = attribute(node, ['src'])
+    const mediaUrl = safeHttpsUrl(src.present ? src.value : undefined, feedUrl)
+    if (mediaUrl) {
+      const candidate = { type: 'image', url: mediaUrl }
+      const alt = attribute(node, ['alt'])
+      if (alt.present) candidate.alt = normalizedText(alt.value, limits)
+      return candidate
+    }
+  }
+  for (const child of node?.children ?? []) {
+    const candidate = embeddedImageNodeCandidate(child, feedUrl, limits)
+    if (candidate) return candidate
+  }
+  return undefined
+}
+
+function embeddedImageCandidateFor(item, feedUrl, feedType, limits) {
+  const fieldNames = feedType === 'atom' ? ['summary', 'content'] : ['description']
+  for (const fieldName of fieldNames) {
+    const fieldNode = children(item, [fieldName])[0]
+    if (!fieldNode) continue
+    const nodeCandidate = embeddedImageNodeCandidate(fieldNode, feedUrl, limits)
+    if (nodeCandidate) return nodeCandidate
+    const markup = nodeText(fieldNode).replace(/<\s*(?:script|style)\b[^>]*>[\s\S]*?<\s*\/\s*(?:script|style)\s*>/gi, '')
+    if (Array.from(markup).length > limits.maxFieldChars) throw sourcePayloadRejected()
+    const imageTags = markup.match(/<\s*img\b[^>]*>/gi) ?? []
+    for (const tag of imageTags) {
+      const url = embeddedAttribute(tag, 'src')
+      const mediaUrl = safeHttpsUrl(url, feedUrl)
+      if (!mediaUrl) continue
+      const candidate = { type: 'image', url: mediaUrl }
+      const alt = embeddedAttribute(tag, 'alt')
+      if (alt !== undefined) candidate.alt = normalizedText(alt, limits)
+      return candidate
+    }
+  }
+  return undefined
+}
+
 function mediaCandidateFor(item, feedUrl, feedType, limits) {
   const mediaNodes = (item?.children ?? []).filter((node) => {
     const name = node.name.toLowerCase()
@@ -183,6 +232,7 @@ function mediaCandidateFor(item, feedUrl, feedType, limits) {
     candidates.push({ candidate, priority: sourcePriority * 10 + typePriority })
   }
   return candidates.sort((left, right) => right.priority - left.priority)[0]?.candidate
+    ?? embeddedImageCandidateFor(item, feedUrl, feedType, limits)
 }
 
 function externalIdFor(item, feedType, limits) {

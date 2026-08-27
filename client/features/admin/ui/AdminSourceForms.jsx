@@ -36,6 +36,7 @@ export function SourcePolicy({ source }) {
 }
 
 export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
+  const reviewBlockedByLifecycle = source.operationalStatus === 'active'
   const mediaPolicy = {
     imageMode: source.mediaPolicy?.imageMode ?? 'none',
     videoMode: source.mediaPolicy?.videoMode ?? 'none',
@@ -72,6 +73,7 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
     }))
   function submit(event) {
     event.preventDefault()
+    if (reviewBlockedByLifecycle) return
     const blocked = form.licenseStatus === 'blocked'
     void onSubmit(buildPolicyReview({ ...form, blocked }))
   }
@@ -87,6 +89,11 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
       <p className="admin-form-hint">
         Ghi bằng chứng review trước khi lưu. Server vẫn kiểm tra policy và trạng thái nguồn. Sau khi đổi host preview, cần reload/restart runtime để cập nhật CSP; trước khi reload, preview mới sẽ fail closed.
       </p>
+      {reviewBlockedByLifecycle ? (
+        <p className="admin-form-hint" role="note">
+          Source đang active nên chưa thể gửi policy review trực tiếp. Hãy bấm “Yêu cầu duyệt lại” ở phần lifecycle, chờ reload source về trạng thái tạm dừng rồi gửi quyết định mới.
+        </p>
+      ) : null}
       <div className="admin-form-grid">
         <label>
           Quyền sử dụng
@@ -211,7 +218,12 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
           />
         </label>
       </div>
-      <AdminButton type="submit" variant="primary" icon="shield" disabled={busy}>
+      <AdminButton
+        type="submit"
+        variant="primary"
+        icon="shield"
+        disabled={busy || reviewBlockedByLifecycle}
+      >
         Lưu quyết định review
       </AdminButton>
     </form>

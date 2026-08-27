@@ -33,6 +33,12 @@ function dateValue(value, label = 'Article date') {
   return date
 }
 
+function nextDate(value, previous, label = 'Article date') {
+  const candidate = dateValue(value, label)
+  const baseline = dateValue(previous, label)
+  return candidate.getTime() > baseline.getTime() ? candidate : new Date(baseline.getTime() + 1)
+}
+
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
@@ -132,6 +138,37 @@ function safeCandidate(candidate) {
   if (Object.prototype.hasOwnProperty.call(value, 'licenseMetadata')) value.licenseMetadata = safeMetadata(value.licenseMetadata, ['status', 'url', 'text'])
   if (Object.prototype.hasOwnProperty.call(value, 'sourceMetadata')) value.sourceMetadata = safeMetadata(value.sourceMetadata, ['doi', 'journalRef', 'comment'])
   return value
+}
+
+function mediaBackfillLimit(value) {
+  const limit = value === undefined ? 100 : Number(value)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ArticleError('article_query_invalid', 'Media backfill limit is invalid', { status: 400 })
+  return limit
+}
+
+function mediaBackfillCounters() {
+  return { inspected: 0, updated: 0, wouldUpdate: 0, skipped: 0, failed: 0, skippedReasons: {}, failedReasons: {} }
+}
+
+function recordMediaBackfillReason(report, category, reason) {
+  report[category] += 1
+  const key = typeof reason === 'string' && /^[a-z0-9_:-]{1,128}$/.test(reason) ? reason : category === 'failed' ? 'media_backfill_failed' : 'media_backfill_skipped'
+  const target = category === 'failed' ? report.failedReasons : report.skippedReasons
+  target[key] = (target[key] ?? 0) + 1
+}
+
+function mediaBackfillPolicyEnabled(source) {
+  const policy = source?.mediaPolicy
+  return Boolean(policy && Array.isArray(policy.allowedHosts) && policy.allowedHosts.length > 0 && (policy.imageMode === 'remote-preview' || policy.videoMode === 'link-only'))
+}
+
+function mediaBackfillSourceMatches(source, expectedSourcePolicyVersion, expectedConnectorConfig) {
+  return source?.operationalStatus === 'active'
+    && ['permitted', 'metadata-only'].includes(source.licenseStatus)
+    && source.technicalCheck?.status === 'passed'
+    && source.connectorType === 'rss'
+    && source.policyVersion === expectedSourcePolicyVersion
+    && stableJson(source.connectorConfig) === stableJson(expectedConnectorConfig)
 }
 
 function serializeVisibleArticle(document, source) {
@@ -499,6 +536,121 @@ export class MongoArticleRepository {
     const result = await this.articles().updateOne({ _id: existing._id }, { $set: mergedFields }, { session })
     if (result.matchedCount !== 1) throw articleConflict()
     return { article: serializeArticle(merged), created: 0, updated: 1, duplicate: 1 }
+  }
+
+  async backfillLeadMediaCandidates({ source, expectedSourcePolicyVersion, expectedConnectorConfig, candidates = [], dryRun = false, limit } = {}) {
+    const sourceId = idValue(source?.id ?? source?._id ?? source?.sourceId)
+    const boundedLimit = mediaBackfillLimit(limit)
+    if (!Number.isInteger(expectedSourcePolicyVersion) || !expectedConnectorConfig) throw policyVersionMismatch()
+    if (!Array.isArray(candidates)) throw new ArticleError('candidate_invalid', 'Media backfill candidates are invalid', { status: 422 })
+    const input = candidates.slice(0, boundedLimit).map(safeCandidate)
+    return this.withTransaction(async (session) => {
+      const report = mediaBackfillCounters()
+      const currentSource = await this.sources().findOne({
+        _id: sourceId,
+        policyVersion: expectedSourcePolicyVersion,
+        operationalStatus: 'active',
+        licenseStatus: { $in: ['permitted', 'metadata-only'] },
+        connectorType: 'rss',
+        'technicalCheck.status': 'passed',
+      }, { session })
+      if (!mediaBackfillSourceMatches(currentSource, expectedSourcePolicyVersion, expectedConnectorConfig)) {
+        recordMediaBackfillReason(report, 'skipped', 'source_policy_changed')
+        return Object.freeze(report)
+      }
+      if (!mediaBackfillPolicyEnabled(currentSource)) {
+        recordMediaBackfillReason(report, 'skipped', 'media_policy_disabled')
+        return Object.freeze(report)
+      }
+      if (input.length === 0) return Object.freeze(report)
+      const eligible = []
+      for (const candidate of input) {
+        let normalized
+        try {
+          normalized = normalizeCandidateToArticle(candidate, {
+            source: { ...currentSource, id: currentSource._id.toHexString(), policyVersion: currentSource.policyVersion },
+            now: dateValue(this.clock(), 'Media backfill clock'),
+          })
+        } catch (error) {
+          recordMediaBackfillReason(report, 'skipped', error?.code === 'source_policy_blocked' ? 'source_policy_changed' : 'candidate_invalid')
+          continue
+        }
+        if (normalized.leadMediaStatus !== 'available' || !normalized.leadMedia) {
+          const policy = evaluateMediaPolicy(
+            currentSource,
+            candidate?.mediaCandidate
+              ? { ...candidate.mediaCandidate, sourcePageUrl: candidate.mediaCandidate.sourcePageUrl ?? candidate.originalUrl }
+              : null,
+          )
+          recordMediaBackfillReason(report, 'skipped', policy?.code ?? 'media_unavailable')
+          continue
+        }
+        eligible.push({ normalized })
+      }
+      if (eligible.length === 0) return Object.freeze(report)
+      if (!dryRun) {
+        const sourceFence = await this.sources().updateOne(
+          {
+            _id: sourceId,
+            policyVersion: expectedSourcePolicyVersion,
+            updatedAt: currentSource.updatedAt,
+            operationalStatus: 'active',
+            licenseStatus: { $in: ['permitted', 'metadata-only'] },
+            connectorType: 'rss',
+            'technicalCheck.status': 'passed',
+            connectorConfig: currentSource.connectorConfig,
+          },
+          { $set: { updatedAt: nextDate(this.clock(), currentSource.updatedAt, 'Media backfill clock') } },
+          { session },
+        )
+        if (sourceFence.matchedCount !== 1) {
+          recordMediaBackfillReason(report, 'skipped', 'source_policy_changed')
+          return Object.freeze(report)
+        }
+      }
+      for (const { normalized } of eligible) {
+        report.inspected += 1
+        let existing
+        if (normalized.externalId) {
+          existing = await this.articles().findOne({ sourceId, externalId: normalized.externalId }, { session })
+        } else {
+          const matches = await this.articles().find({ sourceId, canonicalUrlHash: normalized.canonicalUrlHash }, { session }).limit(2).toArray()
+          existing = matches.length === 1 ? matches[0] : null
+        }
+        if (!existing || !sameIdentifier(existing.sourceId, sourceId) || existing.canonicalUrlHash !== normalized.canonicalUrlHash || existing.duplicateOfId !== undefined || existing.status !== 'published' || existing.leadMedia !== null || existing.leadMediaStatus !== 'none') {
+          recordMediaBackfillReason(report, 'skipped', 'no_matching_article')
+          continue
+        }
+        if (dryRun) {
+          report.wouldUpdate += 1
+          continue
+        }
+        const update = await this.articles().updateOne(
+          {
+            _id: existing._id,
+            sourceId,
+            canonicalUrlHash: normalized.canonicalUrlHash,
+            duplicateOfId: { $exists: false },
+            status: 'published',
+            leadMedia: null,
+            leadMediaStatus: 'none',
+            updatedAt: existing.updatedAt,
+          },
+          {
+            $set: {
+              leadMedia: normalized.leadMedia,
+              leadMediaStatus: 'available',
+              updatedAt: nextDate(this.clock(), existing.updatedAt, 'Media backfill clock'),
+            },
+            $unset: { leadMediaHiddenReason: '' },
+          },
+          { session },
+        )
+        if (update.matchedCount === 1) report.updated += 1
+        else recordMediaBackfillReason(report, 'skipped', 'article_changed')
+      }
+      return Object.freeze(report)
+    })
   }
 
   async commitIngestionBatch({ job, fence, source, expectedSourcePolicyVersion, expectedConnectorConfig, candidates = [], articles, checkpoint, counters, retrievedAt } = {}) {

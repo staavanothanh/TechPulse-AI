@@ -123,6 +123,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
             body: review,
           }),
         'Đã gửi policy review.',
+        { operation: 'reviewSourcePolicy' },
       )
       .then((response) => {
         if (response) reload()

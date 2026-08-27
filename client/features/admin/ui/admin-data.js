@@ -226,6 +226,14 @@ const ERROR_MESSAGES = Object.freeze({
   503: 'Dịch vụ tạm thời không sẵn sàng.',
 })
 
+const CANONICAL_ERROR_CODE = /^[a-z0-9_:-]{1,128}$/
+const OPERATION_ERROR_MESSAGES = Object.freeze({
+  reviewSourcePolicy: Object.freeze({
+    invalid_state_transition:
+      'Không thể lưu policy review vì source đang active. Hãy yêu cầu duyệt lại source rồi tải lại.',
+  }),
+})
+
 export const OVERVIEW_METRICS = Object.freeze([
   ['failedJobs', 'Job lỗi', 'danger'],
   ['failedIndexes', 'Index lỗi', 'danger'],
@@ -376,9 +384,16 @@ export function statusTone(value) {
   return 'muted'
 }
 
-export function safeAdminError(error) {
+export function safeAdminError(error, context = {}) {
   const status = Number(error?.status)
-  return ERROR_MESSAGES[status] ?? 'Không thể hoàn tất thao tác.'
+  const operation = context?.operation
+  const code = typeof error?.code === 'string' && CANONICAL_ERROR_CODE.test(error.code)
+    ? error.code
+    : null
+  const message = OPERATION_ERROR_MESSAGES[operation]?.[code]
+    ?? ERROR_MESSAGES[status]
+    ?? 'Không thể hoàn tất thao tác.'
+  return code ? `${message} Mã lỗi: ${code}.` : message
 }
 
 export function isSessionExpired(error) {
@@ -633,7 +648,7 @@ export function useAdminMutation({ onSessionExpired, cacheScope } = {}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState('')
-  async function run(action, successMessage) {
+  async function run(action, successMessage, errorContext = {}) {
     setBusy(true)
     setError(null)
     setNotice('')
@@ -645,7 +660,7 @@ export function useAdminMutation({ onSessionExpired, cacheScope } = {}) {
     } catch (requestError) {
       if (isSessionExpired(requestError))
         onSessionExpired?.('Phiên đăng nhập đã hết hạn khi thực hiện thao tác admin.')
-      setError(safeAdminError(requestError))
+      setError(safeAdminError(requestError, errorContext))
       return null
     } finally {
       setBusy(false)
