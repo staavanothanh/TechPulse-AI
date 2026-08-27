@@ -1,13 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { validateAnswerPayload, validateQuestionScope, refusalCopy } from '../../../client/features/qa/qa-validation.js'
+import { validateAnswerPayload, validateQuestionScope, refusalCopy, hasQaScope } from '../../../client/features/qa/qa-validation.js'
 
 describe('Step 10 Q&A validation', () => {
   it('requires a Vietnamese question and one complete scope branch', () => {
     expect(validateQuestionScope('', {})).toMatchObject({ valid: false, firstInvalid: 'question' })
     expect(validateQuestionScope('ab', { articleId: 'article-1' })).toMatchObject({ valid: false, firstInvalid: 'question' })
     expect(validateQuestionScope('Câu hỏi hợp lệ', {})).toMatchObject({ valid: false, firstInvalid: 'scope' })
+    expect(validateQuestionScope('Câu hỏi hợp lệ', null)).toMatchObject({ valid: false, firstInvalid: 'scope' })
     expect(validateQuestionScope('Câu hỏi hợp lệ', { publishedAfter: '2026-08-01T00:00:00.000Z' })).toMatchObject({ valid: false, firstInvalid: 'publishedBefore' })
     expect(validateQuestionScope('Câu hỏi hợp lệ', { topics: ['AI'] }).valid).toBe(true)
+  })
+
+  it('detects when the answer scope has no selectable source constraint', () => {
+    expect(hasQaScope({})).toBe(false)
+    expect(hasQaScope({ topics: [] })).toBe(false)
+    expect(hasQaScope({ topics: [''] })).toBe(false)
+    expect(hasQaScope({ articleId: '  ' })).toBe(false)
+    expect(hasQaScope({ topics: ['AI'], articleId: '  ' })).toBe(true)
+    expect(hasQaScope({ articleId: '', topics: ['AI'] })).toBe(true)
+    expect(validateQuestionScope('Câu hỏi hợp lệ', { articleId: '', topics: ['AI'] }).valid).toBe(true)
+    expect(hasQaScope({ publishedAfter: 'not-a-date', publishedBefore: '2026-08-02T00:00:00.000Z' })).toBe(false)
+    expect(hasQaScope({ articleId: 'article-1' })).toBe(false)
+    expect(hasQaScope({ articleId: '507f1f77bcf86cd799439011' })).toBe(true)
+    expect(hasQaScope({ publishedAfter: '2026-08-01T00:00:00.000Z', publishedBefore: '2026-08-02T00:00:00.000Z' })).toBe(true)
   })
 
   it('bounds topics, ids and time order without exposing transport details', () => {
