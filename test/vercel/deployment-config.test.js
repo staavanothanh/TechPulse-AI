@@ -31,7 +31,7 @@ describe('Vercel deployment contract', () => {
     const cron = vercelConfig.crons?.find((entry) => entry.path === '/api/internal/cron/due-work')
     expect(cron).toEqual(expect.objectContaining({ path: '/api/internal/cron/due-work' }))
     expect(isCronExpression(cron.schedule)).toBe(true)
-    expect(cron.schedule).toBe('0 5 * * *')
+    expect(cron.schedule).toBe('0 21 * * *')
   })
 
   it('allows the due-work function to run for the bounded five-minute drain window', () => {
