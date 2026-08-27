@@ -887,7 +887,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ]
               : target === 'topic-taxonomy-v1'
                 ? [
-                    ['articles_topic_ids_published_at', 'articles', { status: 'published', topicIds: 'ai-ml' }, { topicIds: 1, publishedAt: -1, _id: -1 }, 'articles_status_topic_ids_published_at'],
+                    ['articles_topic_ids_published_at', 'articles', { status: 'published', topicIds: 'ai-ml' }, { publishedAt: -1, _id: -1 }, 'articles_status_topic_ids_published_at'],
                   ]
               : target === 'governance'
                 ? [

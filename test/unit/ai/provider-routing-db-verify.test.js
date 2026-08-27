@@ -27,4 +27,11 @@ describe('provider-routing-v2 database role readiness', () => {
       /'provider_failure_domain_cooldown',[\s\S]*\{ state: 'open', cooldownUntil: \{ \$lte: new Date\(\) \} \},[\s\S]*\{ cooldownUntil: 1, _id: 1 \},[\s\S]*'provider_failure_domain_cooldown'/,
     )
   })
+
+  it('probes topic taxonomy with the equality-leading compound index without sorting on multikey topicIds', () => {
+    const source = readFileSync(new URL('../../../scripts/db-verify.js', import.meta.url), 'utf8')
+    expect(source).toMatch(
+      /'articles_topic_ids_published_at',[\s\S]*\{ status: 'published', topicIds: 'ai-ml' \},[\s\S]*\{ publishedAt: -1, _id: -1 \},[\s\S]*'articles_status_topic_ids_published_at'/,
+    )
+  })
 })
