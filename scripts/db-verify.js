@@ -407,11 +407,11 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
               : (target === 'summary-detail-v1' || target === 'topic-taxonomy-v1') && name === 'articles'
                 ? [SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
               : target === 'provider-routing-v2' && name === 'articles'
-                ? [PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR]
+                ? [PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
               : target === 'sources' && name === 'sources'
                 ? [SOURCE_COLLECTIONS.sources.validator, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR]
               : target === 'qa-evidence-fence'
-                  ? name === 'articles' ? [expectedCollections[name].validator, SUMMARY_DETAIL_ARTICLE_VALIDATOR] : [expectedCollections[name].validator]
+                  ? name === 'articles' ? [expectedCollections[name].validator, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR] : [expectedCollections[name].validator]
               : ['indexing-jobs', 'indexing-drain-performance'].includes(target) && name === 'providerAdmissionStates'
                 ? [INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator, PROVIDER_ROUTING_V2_COLLECTIONS.providerAdmissionStates.validator]
                 : ['indexing-jobs', 'indexing-drain-performance'].includes(target) && name === 'indexingJobs'
@@ -452,7 +452,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       verificationStage = 'schema-governance'
       const articleCollection = collectionMap.get('articles')
       if (!articleCollection) missing.push('articles:collection:governance-tombstone')
-      else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || ![ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR].some((validator) => stableJson(articleCollection.options?.validator) === stableJson(validator))) validatorProblems.push('articles:validator-definition:governance-tombstone')
+      else if (articleCollection.options?.validationLevel !== 'strict' || articleCollection.options?.validationAction !== 'error' || ![ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR].some((validator) => stableJson(articleCollection.options?.validator) === stableJson(validator))) validatorProblems.push('articles:validator-definition:governance-tombstone')
       if (governanceMetadataUnavailable) validatorProblems.push('techpulse_governance:metadata-unavailable')
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')

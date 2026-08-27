@@ -34,4 +34,23 @@ describe('provider-routing-v2 database role readiness', () => {
       /'articles_topic_ids_published_at',[\s\S]*\{ status: 'published', topicIds: 'ai-ml' \},[\s\S]*\{ publishedAt: -1, _id: -1 \},[\s\S]*'articles_status_topic_ids_published_at'/,
     )
   })
+
+  it('accepts topic taxonomy as a successor validator for provider, evidence and governance scopes', () => {
+    const source = readFileSync(new URL('../../../scripts/db-verify.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+    const providerBranchStart = source.indexOf("target === 'provider-routing-v2' && name === 'articles'")
+    const providerBranchEnd = source.indexOf("target === 'sources' && name === 'sources'")
+    const evidenceBranchStart = source.indexOf("target === 'qa-evidence-fence'\n                  ? name === 'articles'")
+    const evidenceBranchEnd = source.indexOf("['indexing-jobs', 'indexing-drain-performance']")
+    expect(providerBranchStart).toBeGreaterThanOrEqual(0)
+    expect(evidenceBranchStart).toBeGreaterThanOrEqual(0)
+    const providerBranch = source.slice(providerBranchStart, providerBranchEnd)
+    expect(providerBranch).toMatch(/\? \[PROVIDER_ROUTING_V2_COLLECTIONS\.articles\.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR\]/)
+    expect(evidenceBranchEnd).toBeGreaterThan(evidenceBranchStart)
+    const evidenceBranch = source.slice(evidenceBranchStart, evidenceBranchEnd)
+    expect(evidenceBranch).toMatch(/name === 'articles' \? \[expectedCollections\[name\]\.validator, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR\]/)
+    const governanceArticleCheck = source.split('\n').find((line) => line.includes('governance-tombstone') && line.includes('ARTICLE_GOVERNANCE_HARDENING_VALIDATOR'))
+    expect(governanceArticleCheck).toContain('[ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]')
+    expect(governanceArticleCheck).toContain("validationLevel !== 'strict'")
+    expect(governanceArticleCheck).toContain("validationAction !== 'error'")
+  })
 })
