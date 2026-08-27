@@ -449,6 +449,8 @@ describe('public coverage states', () => {
     expect(empty).toContain('Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.')
     expect(empty).toContain('Từ ngày')
     expect(empty).toContain('Đến ngày')
+    expect(empty).toContain('Nhấn Enter để gửi')
+    expect(empty).toContain('Shift+Enter để xuống dòng')
     expect(nullScope).toContain('Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.')
     expect(loading).toContain('Đang truy xuất nguồn')
     expect(error).toContain('Q&amp;A failed')

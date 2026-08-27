@@ -9,6 +9,7 @@ import {
 import { formatDate, TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
 import { hasQaScope } from '../../qa/qa-validation.js'
+import { handleQaQuestionKeyDown } from '../../qa/qa-keyboard.js'
 
 export default function QaView({
   state = 'empty',
@@ -28,9 +29,9 @@ export default function QaView({
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
   const hasScope = hasQaScope(safeScope)
   function submit(event) {
-    event.preventDefault()
+    if (!event.defaultPrevented) event.preventDefault()
     const value = question.trim()
-    if (!value || value.length > 1000 || !hasScope) return
+    if (!value || value.length > 1000 || !hasScope || state === 'loading') return
     const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, value]) => key !== 'topics' || value.length > 0))
     onAsk?.({ ...askScope, question: value })
     setQuestion('')
@@ -114,12 +115,16 @@ export default function QaView({
                   className="public-input public-textarea"
                   value={question}
                   onChange={(event) => setQuestion(event.target.value)}
+                  aria-describedby="public-qa-composer-hint"
+                  onKeyDown={(event) => handleQaQuestionKeyDown(event, submit)}
                   maxLength={1000}
                   placeholder="Nhập câu hỏi về công nghệ"
                 />
               </label>
               <div className="public-composer-foot">
-                <span>Tối đa 1.000 ký tự mỗi câu hỏi.</span>
+                <span id="public-qa-composer-hint">
+                  Tối đa 1.000 ký tự mỗi câu hỏi. Nhấn Enter để gửi · Shift+Enter để xuống dòng.
+                </span>
                 <button
                   className="public-btn public-btn-primary"
                   type="submit"
