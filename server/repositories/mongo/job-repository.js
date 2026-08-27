@@ -489,6 +489,78 @@ export class MongoJobRepository {
         summary.retriesCreated += outcome.retriesCreated
       } catch { summary.failed += 1 }
     }
+
+    // Recover orphaned running jobs whose lease was superseded or released
+    const remainingSlots = Math.max(0, limit - summary.inspected)
+    if (remainingSlots > 0) {
+      const runningCandidates = await this.jobs()
+        .find({ status: 'running' })
+        .sort({ updatedAt: 1, _id: 1 })
+        .limit(remainingSlots)
+        .toArray()
+
+      for (const runningJob of runningCandidates) {
+        try {
+          const outcome = await this.withTransaction(async (session) => {
+            const currentJob = await this.jobs().findOne(
+              { _id: runningJob._id, status: 'running', leaseGeneration: runningJob.leaseGeneration },
+              { session },
+            )
+            if (!currentJob) return { recovered: 0 }
+
+            const leaseKey = `ingestion:source:${currentJob.sourceId.toHexString?.() ?? currentJob.sourceId}`
+            const lease = await this.leases().findOne({ key: leaseKey }, { session })
+
+            const isOwned = lease?.activeOwner
+              && String(lease.activeOwner.jobId) === String(currentJob._id)
+              && Number(lease.activeOwner.leaseGeneration) === Number(currentJob.leaseGeneration)
+              && lease.activeOwner.expiresAt > now
+
+            if (isOwned) return { recovered: 0 }
+
+            const safe = {
+              code: 'lease_expired',
+              message: 'Job lease expired or was superseded before completion',
+              retryable: false,
+              occurredAt: now,
+            }
+            await this.jobs().updateOne(
+              { _id: currentJob._id, status: 'running', leaseGeneration: currentJob.leaseGeneration },
+              {
+                $set: {
+                  status: 'failed',
+                  error: safe,
+                  finishedAt: now,
+                  purgeAfter: purgeAfterFor('failed', now, currentJob.idempotencyExpiresAt),
+                  updatedAt: now,
+                },
+              },
+              { session },
+            )
+
+            const audit = createJobAuditEvent({
+              actor: { id: 'system:due-work', role: 'system-worker' },
+              action: 'ingestion_job_lease_recovered',
+              targetId: currentJob._id.toHexString(),
+              changedFields: ['status', 'error'],
+              reasonCode: 'lease_expired_recovered',
+              request: { serverRequestId: `orphan-recovery:${currentJob._id.toHexString()}:${currentJob.leaseGeneration}` },
+              createdAt: now,
+            })
+            await this.insertAudit(audit, session)
+            return { recovered: 1 }
+          })
+
+          if (outcome?.recovered) {
+            summary.recovered += 1
+            summary.inspected += 1
+          }
+        } catch {
+          summary.failed += 1
+        }
+      }
+    }
+
     return summary
   }
 }
