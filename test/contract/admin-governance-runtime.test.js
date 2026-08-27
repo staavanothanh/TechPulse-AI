@@ -35,11 +35,11 @@ describe('Step 11 admin governance OpenAPI runtime contract', () => {
     expect(result.cases).toBeGreaterThanOrEqual(28)
   })
 
-  it('accepts system-auth audit reasons but rejects an unknown reason', () => {
+  it('accepts system-auth and OAuth audit reasons but rejects an unknown reason', () => {
     const validate = schemaValidator('AuditLog')
     const validateAdminReason = schemaValidator('AdminReasonCode')
 
-    for (const reasonCode of ['user_registered', 'user_login', 'user_logout', 'preferences_updated']) {
+    for (const reasonCode of ['user_registered', 'user_login', 'user_logout', 'preferences_updated', 'google_oauth_registered', 'google_oauth_login']) {
       expect(validate({ ...AUTH_AUDIT, reasonCode })).toBe(true)
       expect(validateAdminReason(reasonCode)).toBe(false)
     }

@@ -4163,7 +4163,9 @@ export const openApiDocument = {
               "user_registered",
               "user_login",
               "user_logout",
-              "preferences_updated"
+              "preferences_updated",
+              "google_oauth_registered",
+              "google_oauth_login"
             ]
           }
         ],
