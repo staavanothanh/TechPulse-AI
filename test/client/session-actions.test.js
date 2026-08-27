@@ -42,6 +42,68 @@ describe('application session actions', () => {
     )
   })
 
+  it('ignores an authentication response after a newer session transition starts', async () => {
+    let epoch = 0
+    let resolveLogin
+    const api = { login: vi.fn(() => new Promise((resolve) => { resolveLogin = resolve })) }
+    const applySession = vi.fn()
+    const actions = createSessionActions({
+      api,
+      getCsrfToken: () => null,
+      applySession,
+      beginSessionTransition: () => { epoch += 1; return epoch },
+      isSessionTransitionCurrent: (value) => value === epoch,
+    })
+
+    const pending = actions.authenticate({ mode: 'login', email: 'a@example.test', password: 'password-123' })
+    epoch += 1
+    resolveLogin(response({ id: 'old-user' }, 'old-csrf'))
+    await pending
+
+    expect(applySession).not.toHaveBeenCalled()
+  })
+
+  it('ignores stale logout, preference and deletion completions', async () => {
+    let epoch = 0
+    const deferred = () => {
+      let resolve
+      const promise = new Promise((nextResolve) => { resolve = nextResolve })
+      return { promise, resolve }
+    }
+    const logout = deferred()
+    const preferences = deferred()
+    const deletion = deferred()
+    const api = {
+      logout: vi.fn(() => logout.promise),
+      updatePreferences: vi.fn(() => preferences.promise),
+      requestAccountDeletion: vi.fn(() => deletion.promise),
+    }
+    const applySession = vi.fn()
+    const actions = createSessionActions({
+      api,
+      getCsrfToken: () => 'csrf-current',
+      applySession,
+      createIdempotencyKey: () => 'delete-test',
+      beginSessionTransition: () => { epoch += 1; return epoch },
+      isSessionTransitionCurrent: (value) => value === epoch,
+    })
+
+    const pendingLogout = actions.logout()
+    epoch += 1
+    logout.resolve({ data: {} })
+    await pendingLogout
+    const pendingPreferences = actions.updatePreferences(['AI'])
+    epoch += 1
+    preferences.resolve(response({ id: 'old-user' }))
+    await pendingPreferences
+    const pendingDeletion = actions.requestDeletion()
+    epoch += 1
+    deletion.resolve({ data: {} })
+    await pendingDeletion
+
+    expect(applySession).not.toHaveBeenCalled()
+  })
+
   it('keeps CSRF in memory for account mutations and clears the session after logout', async () => {
     const api = {
       logout: vi.fn().mockResolvedValue({ data: {} }),
@@ -119,5 +181,30 @@ describe('application session actions', () => {
     await expect(api.getAdminOverview()).rejects.toBe(forbidden)
     await expect(api.getAdminOverview()).rejects.toBe(invalid)
     expect(onSessionExpired).toHaveBeenCalledOnce()
+  })
+
+  it('does not expire a newer admin session for a late 401', async () => {
+    let identity = 'admin:old:csrf-old'
+    let epoch = 4
+    let rejectRequest
+    const onSessionExpired = vi.fn()
+    const api = withSessionRecovery(
+      { getAdminOverview: vi.fn(() => new Promise((_, reject) => { rejectRequest = reject })) },
+      onSessionExpired,
+      {
+        getSessionIdentity: () => identity,
+        isSessionIdentityCurrent: (value) => value === identity,
+        getSessionEpoch: () => epoch,
+        isSessionEpochCurrent: (value) => value === epoch,
+      },
+    )
+
+    const pending = api.getAdminOverview()
+    identity = 'admin:new:csrf-new'
+    epoch = 5
+    rejectRequest(Object.assign(new Error('expired'), { status: 401 }))
+
+    await expect(pending).rejects.toMatchObject({ status: 401 })
+    expect(onSessionExpired).not.toHaveBeenCalled()
   })
 })

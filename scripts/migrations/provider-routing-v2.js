@@ -379,9 +379,12 @@ export async function invalidateLegacyReadyEmbeddings({ db, batchSize = 100 } = 
 }
 
 const UNSAFE_OLDER_TARGETS = new Set(['sources', 'articles', 'indexing-jobs', 'chat-sessions'])
+const UNSAFE_TAXONOMY_TARGETS = new Set(['articles', 'auth-core', 'google-oauth', 'qa-evidence-fence', 'summary-detail-v1', 'governance'])
+const UNSAFE_SUCCESSOR_TARGETS = new Set(['governance'])
+const UNSAFE_SUMMARY_TARGETS = new Set(['provider-routing-v2', 'qa-evidence-fence', 'governance'])
 
 export async function assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db, target } = {}) {
-  if (!db?.listCollections || !UNSAFE_OLDER_TARGETS.has(target)) return
+  if (!db?.listCollections || (!UNSAFE_OLDER_TARGETS.has(target) && !UNSAFE_TAXONOMY_TARGETS.has(target) && !UNSAFE_SUCCESSOR_TARGETS.has(target) && !UNSAFE_SUMMARY_TARGETS.has(target))) return
   const collections = await db.listCollections({}, { nameOnly: false }).toArray()
   const v2Installed = collections.some(({ name, options }) =>
     name === 'providerFailureDomainStates' ||
@@ -389,7 +392,22 @@ export async function assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ d
     stableJson(options?.validator) === stableJson(PROVIDER_ROUTING_ARTICLE_COMPATIBILITY_VALIDATOR) ||
     stableJson(options?.validator) === stableJson(PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR) ||
     stableJson(options?.validator) === stableJson(PROVIDER_ADMISSION_STATE_VALIDATOR_V2))
-  if (v2Installed) throw new Error(`Migration target ${target} would downgrade provider-routing-v2`)
+  if (v2Installed && UNSAFE_OLDER_TARGETS.has(target)) throw new Error(`Migration target ${target} would downgrade provider-routing-v2`)
+  const taxonomyInstalled = collections.some(({ name, options }) => {
+    const serialized = stableJson(options?.validator)
+    return name === 'articles' && serialized.includes('topicIds') && serialized.includes('topicTaxonomyVersion')
+      || name === 'users' && serialized.includes('topicPreferenceIds') && serialized.includes('topicPreferenceTaxonomyVersion')
+  })
+  if (taxonomyInstalled && UNSAFE_TAXONOMY_TARGETS.has(target)) throw new Error(`Migration target ${target} would downgrade topic-taxonomy-v1`)
+  const successorArticleInstalled = collections.some(({ name, options }) => {
+    const serialized = stableJson(options?.validator)
+    return name === 'articles' && (serialized.includes('qnaFenceToken') || serialized.includes('summaryDetailStatus') || serialized.includes('summaryParagraphsVi'))
+  })
+  const summaryArticleInstalled = collections.some(({ name, options }) => {
+    const serialized = stableJson(options?.validator)
+    return name === 'articles' && (serialized.includes('summaryDetailStatus') || serialized.includes('summaryParagraphsVi'))
+  })
+  if ((successorArticleInstalled && UNSAFE_SUCCESSOR_TARGETS.has(target)) || (summaryArticleInstalled && UNSAFE_SUMMARY_TARGETS.has(target))) throw new Error(`Migration target ${target} would downgrade successor article schema`)
 }
 
 export function upgradeProviderAdmissionDocument(document) {

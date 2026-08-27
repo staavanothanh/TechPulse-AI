@@ -28,6 +28,14 @@ describe('Step 9 application cosine retrieval', () => {
     expect(rankHybridCandidates({ queryVector: [1, 0], queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: 'embedding-compat-v1', candidates: [{ id: 'bad', textScore: 1, ...compatible, embeddingDimensions: 12, embedding: [1, 0] }] })).toEqual([])
     expect(rankHybridCandidates({ queryVector: [1, 0], queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: 'embedding-compat-other', candidates: [{ id: 'bad', textScore: 1, ...compatible, embedding: [1, 0] }] })).toEqual([])
   })
+
+  it('strictly requires non-empty artifactCompatibilityId on both query and candidate', () => {
+    const queryVector = [1, 0]
+    expect(rankHybridCandidates({ queryVector, queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: '', candidates: [{ id: 'c1', textScore: 0.5, ...compatible, embedding: [1, 0] }] })).toEqual([])
+    expect(rankHybridCandidates({ queryVector, queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: undefined, candidates: [{ id: 'c1', textScore: 0.5, ...compatible, embedding: [1, 0] }] })).toEqual([])
+    expect(rankHybridCandidates({ queryVector, queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: 'embedding-compat-v1', candidates: [{ id: 'c1', textScore: 0.5, ...compatible, embeddingArtifactCompatibilityId: '', embedding: [1, 0] }] })).toEqual([])
+    expect(rankHybridCandidates({ queryVector, queryModel: 'embedding-model-v1', queryDimensions: 2, queryVersion: 1, queryArtifactCompatibilityId: 'embedding-compat-v1', candidates: [{ id: 'c1', textScore: 0.5, ...compatible, embeddingArtifactCompatibilityId: undefined, embedding: [1, 0] }] })).toEqual([])
+  })
 })
 
 describe('Step 10 bounded Q&A relevance admission', () => {
@@ -70,5 +78,35 @@ describe('Step 10 bounded Q&A relevance admission', () => {
     })
 
     expect(result.map(({ article }) => article.id)).toEqual(['lexical-only'])
+  })
+
+  it('selects semantic-only candidate despite zero lexical term overlap for mixed-language or typo queries', () => {
+    const vector = [1, 0, 0]
+    const records = [
+      { article: { id: 'security-article', titleOriginal: 'An ninh mạng và phòng chống tấn công', excerptOriginal: 'Các giải pháp bảo vệ hệ thống thông tin.', topics: ['security'], embeddingStatus: 'ready', embeddingModel: 'embedding-model-v1', embeddingDimensions: 3, embeddingArtifactCompatibilityId: 'embedding-compat-v1', embeddingVersion: 1, embedding: vector } },
+      { article: { id: 'other-article', titleOriginal: 'Thị trường chứng khoán', excerptOriginal: 'Chỉ số biến động mạnh.', topics: ['finance'], embeddingStatus: 'ready', embeddingModel: 'embedding-model-v1', embeddingDimensions: 3, embeddingArtifactCompatibilityId: 'embedding-compat-v1', embeddingVersion: 1, embedding: [0, 1, 0] } },
+    ]
+    const result = rankQnaEvidence({
+      question: 'How to ensure cybersecurity and defense?',
+      queryEmbedding: { model: 'embedding-model-v1', dimensions: 3, version: 1, artifactCompatibilityId: 'embedding-compat-v1', embedding: vector },
+      records,
+      relevanceThreshold: 0.25,
+    })
+    expect(result.map(({ article }) => article.id)).toEqual(['security-article'])
+  })
+
+  it('allows exact-compatible semantic candidate to survive when query terms are entirely stop words', () => {
+    const vector = [1, 0, 0]
+    const records = [
+      { article: { id: 'semantic-match', titleOriginal: 'Thông tin công nghệ', embeddingStatus: 'ready', embeddingModel: 'embedding-model-v1', embeddingDimensions: 3, embeddingArtifactCompatibilityId: 'embedding-compat-v1', embeddingVersion: 1, embedding: vector } },
+    ]
+    const result = rankQnaEvidence({
+      question: 'có là gì thế nào',
+      queryEmbedding: { model: 'embedding-model-v1', dimensions: 3, version: 1, artifactCompatibilityId: 'embedding-compat-v1', embedding: vector },
+      records,
+      relevanceThreshold: 0.25,
+    })
+    expect(result.map(({ article }) => article.id)).toEqual(['semantic-match'])
+    expect(rankQnaEvidence({ question: 'có là gì thế nào', records })).toEqual([])
   })
 })

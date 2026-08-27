@@ -248,6 +248,27 @@ describe('article repository coverage contracts', () => {
     ).rejects.toMatchObject({ code: 'validation_error', status: 422 })
   })
 
+  it('dual-reads canonical topic IDs and legacy topic values for content and Q&A scopes', async () => {
+    const fixture = repositoryFixture()
+    fixture.collections.articles.aggregate.mockReturnValue(fluent([{ page: [], total: [] }]))
+    await fixture.repository.listVisibleArticles({ topic: 'Robotics', limit: 1 })
+    const listPipeline = fixture.collections.articles.aggregate.mock.calls.at(-1)[0]
+    const listTopicClause = listPipeline[0].$match.$and.find((clause) => clause.$or)
+    expect(listTopicClause.$or).toEqual(expect.arrayContaining([
+      { topicIds: { $in: expect.arrayContaining(['robotics']) } },
+      { topics: { $in: expect.arrayContaining(['robot', 'robotics']) } },
+    ]))
+
+    fixture.collections.articles.aggregate = undefined
+    fixture.collections.articles.find.mockReturnValue(fluent([]))
+    await fixture.repository.findQnaEvidence({ scope: { topics: ['AI Agent'] } })
+    const qnaQuery = fixture.collections.articles.find.mock.calls.at(-1)[0]
+    expect(qnaQuery.$or).toEqual(expect.arrayContaining([
+      { topicIds: { $in: expect.arrayContaining(['ai-agent', 'agentic-systems']) } },
+      { topics: { $in: ['ai'] } },
+    ]))
+  })
+
   it('searches text and hybrid results, including no-vector fallback and cursor validation', async () => {
     const source = sourceFixture()
     const article = articleFixture({ titleOriginal: 'Dien luc va AI' }, source)
@@ -1186,6 +1207,15 @@ describe('article repository coverage contracts', () => {
     await expect(
       fixture.repository.findQnaEvidence({ limit: 1, includeSource: true, question: 'AI safety' }),
     ).resolves.toHaveLength(1)
+    await expect(
+      fixture.repository.findQnaEvidence({ limit: 1, includeSource: true, scope: { articleIds: [ARTICLE_ID.toHexString()] } }),
+    ).resolves.toHaveLength(1)
+    await expect(
+      fixture.repository.findQnaEvidence({ scope: { articleIds: [] } }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 422 })
+    await expect(
+      fixture.repository.findQnaEvidence({ scope: { articleIds: [''] } }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 422 })
     await expect(fixture.repository.findQnaEvidence({ scope: [] })).rejects.toMatchObject({
       code: 'validation_error',
     })

@@ -5,9 +5,13 @@ import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from '../../../scripts/migration
 import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../../scripts/migrations/summary-detail-v1.js'
+import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../../scripts/migrations/topic-taxonomy-v1.js'
 
 function readyContext({ validator = ARTICLE_COLLECTIONS.articles.validator, indexes, sources = [] } = {}) {
-  const actualIndexes = indexes ?? ARTICLE_INDEXES.articles.map((index) => index.name === 'articles_search_text'
+  const indexDefinitions = validator === TOPIC_TAXONOMY_ARTICLE_VALIDATOR
+    ? [...ARTICLE_INDEXES.articles, ...TOPIC_TAXONOMY_ARTICLE_INDEXES]
+    : ARTICLE_INDEXES.articles
+  const actualIndexes = indexes ?? indexDefinitions.map((index) => index.name === 'articles_search_text'
     ? {
         name: index.name,
         key: { _fts: 'text', _ftsx: 1 },
@@ -55,6 +59,13 @@ describe('Step 8 content bootstrap readiness', () => {
 
   it('accepts the exact Q&A evidence-fence article validator', async () => {
     await expect(assertArticlesReady(readyContext({ validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR }))).resolves.toBeUndefined()
+  })
+  it('accepts the final taxonomy validator only with its additive canonical index', async () => {
+    await expect(assertArticlesReady(readyContext({ validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }))).resolves.toBeUndefined()
+    const indexes = ARTICLE_INDEXES.articles.map((index) => index.name === 'articles_search_text'
+      ? { name: index.name, key: { _fts: 'text', _ftsx: 1 }, weights: Object.fromEntries(Object.keys(index.key).map((name) => [name, 1])), default_language: 'none', language_override: 'language', textIndexVersion: 3 }
+      : { name: index.name, key: index.key, ...(index.options ?? {}) })
+    await expect(assertArticlesReady(readyContext({ validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR, indexes }))).rejects.toThrow(/article indexes/i)
   })
 
   it('requires the summary-detail-v1 article validator after rich detail is deployed', async () => {

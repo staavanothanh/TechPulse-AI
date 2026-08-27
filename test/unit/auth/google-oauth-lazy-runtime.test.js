@@ -21,7 +21,7 @@ describe('Google OAuth lazy runtime attestation', () => {
     const factories = createConfiguredRuntimeFactories({ environment: {} })
     await factories.common()
 
-    expect(requestedScopes).toEqual(['auth-core'])
+    expect(requestedScopes).toEqual(['auth-core', 'topic-taxonomy-v1'])
   })
 
   it('evaluates the OAuth attestation only after any Google env name enables the feature', async () => {
@@ -44,6 +44,6 @@ describe('Google OAuth lazy runtime attestation', () => {
     const factories = createConfiguredRuntimeFactories({ environment: { GOOGLE_OAUTH_CLIENT_ID_ENV: 'GOOGLE_CLIENT_ID' } })
     await factories.common()
 
-    expect(requestedScopes).toEqual(['auth-core', 'google-oauth'])
+    expect(requestedScopes).toEqual(['auth-core', 'topic-taxonomy-v1', 'google-oauth'])
   })
 })

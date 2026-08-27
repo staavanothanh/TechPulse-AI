@@ -37,7 +37,9 @@ export function publicSessionForRole(session) {
 }
 
 export function publicSessionKey(session) {
-  return session?.status === 'ready' && session?.user?.role === 'user'
-    ? `user:${session.user.id ?? 'unknown'}`
-    : 'guest'
+  if (session?.status === 'ready' && session?.user?.role === 'user') {
+    const userId = session.user.id ?? session.user._id ?? 'unknown'
+    return session.csrfToken ? `user:${userId}:${session.csrfToken}` : `user:${userId}`
+  }
+  return 'guest'
 }

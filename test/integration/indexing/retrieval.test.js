@@ -32,4 +32,13 @@ describe('Step 9 hybrid retrieval and text fallback service', () => {
     const result = await service.search({ auth, query: { q: 'chip AI tiết kiệm điện', mode: 'hybrid' } })
     expect(result.meta).toEqual(expect.objectContaining({ effectiveMode: 'text', fallbackUsed: true, fallbackReason: 'no-compatible-vectors' }))
   })
+  it('falls back to text without invoking embeddings for sensitive search input', async () => {
+    const repository = { searchVisibleArticles: vi.fn(async () => textResult) }
+    const queryEmbedding = vi.fn(async () => ({ model: 'embedding-model-v1', dimensions: 3, version: 7, artifactCompatibilityId: 'embedding-compat-v1', embedding: Array(3).fill(0.01) }))
+    const service = createSearchService({ repository, queryEmbedding })
+    const result = await service.search({ auth, query: { q: 'Liên hệ jane@example.com về tài khoản', mode: 'hybrid' } })
+    expect(queryEmbedding).not.toHaveBeenCalled()
+    expect(repository.searchVisibleArticles).toHaveBeenCalledWith(expect.objectContaining({ mode: 'text' }))
+    expect(result.meta).toEqual(expect.objectContaining({ effectiveMode: 'text', fallbackUsed: true, fallbackReason: 'embedding-unavailable' }))
+  })
 })

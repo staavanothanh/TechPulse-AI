@@ -255,15 +255,25 @@ describe('chat repository coverage contracts', () => {
 
   it('lists sessions with a stable cursor and enforces actor and limit gates', async () => {
     const rows = [
-      { _id: CHAT_SESSION_ID, title: 'One', updatedAt: NOW },
+      {
+        _id: CHAT_SESSION_ID,
+        title: 'One',
+        messageCount: 0,
+        messages: [],
+        updatedAt: NOW,
+      },
       {
         _id: new ObjectId('507f1f77bcf86cd799439206'),
         title: null,
+        messageCount: 0,
+        messages: [],
         updatedAt: new Date(NOW.getTime() - 1_000),
       },
       {
         _id: new ObjectId('507f1f77bcf86cd799439207'),
         title: 'Three',
+        messageCount: 0,
+        messages: [],
         updatedAt: new Date(NOW.getTime() - 2_000),
       },
     ]
@@ -288,6 +298,62 @@ describe('chat repository coverage contracts', () => {
       code: 'unauthorized',
       status: 401,
     })
+  })
+
+  it('includes persisted message counts in summaries without private fields', async () => {
+    const rows = [
+      {
+        _id: CHAT_SESSION_ID,
+        userId: USER_ID,
+        title: 'One',
+        messageCount: 6,
+        messages: [{}, {}, {}, {}, {}, {}],
+        scope: { articleId: ARTICLE_ID },
+        expiresAt: new Date(NOW.getTime() + 100_000),
+        updatedAt: NOW,
+      },
+      {
+        _id: new ObjectId('507f1f77bcf86cd799439206'),
+        userId: USER_ID,
+        title: null,
+        messageCount: 0,
+        messages: [],
+        expiresAt: new Date(NOW.getTime() + 100_000),
+        updatedAt: new Date(NOW.getTime() - 1_000),
+      },
+    ]
+    const { repository, collections } = makeDatabase()
+    collections.chatSessions.find.mockReturnValue(fluent(rows))
+
+    const result = await repository.listChatSessions({ actor: ACTOR, limit: 10, now: NOW })
+    expect(result.sessions).toEqual([
+      {
+        id: CHAT_SESSION_ID.toHexString(),
+        title: 'One',
+        messageCount: 6,
+        updatedAt: NOW.toISOString(),
+      },
+      {
+        id: '507f1f77bcf86cd799439206',
+        title: null,
+        messageCount: 0,
+        updatedAt: new Date(NOW.getTime() - 1_000).toISOString(),
+      },
+    ])
+    for (const session of result.sessions) {
+      expect(session).not.toHaveProperty('messages')
+      expect(session).not.toHaveProperty('scope')
+      expect(session).not.toHaveProperty('userId')
+      expect(session).not.toHaveProperty('expiresAt')
+      expect(session).not.toHaveProperty('_id')
+      expect(Number.isInteger(session.messageCount)).toBe(true)
+    }
+
+    const malformed = makeDatabase()
+    malformed.collections.chatSessions.find.mockReturnValue(fluent([
+      { _id: CHAT_SESSION_ID, title: 'Invalid', messageCount: 2, messages: [{}], updatedAt: NOW },
+    ]))
+    await expect(malformed.repository.listChatSessions({ actor: ACTOR, now: NOW })).rejects.toThrow(/message count/i)
   })
 
   it('gets, deletes and clears owned sessions, including missing documents', async () => {

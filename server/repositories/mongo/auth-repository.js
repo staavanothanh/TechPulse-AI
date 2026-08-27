@@ -1,6 +1,7 @@
 import { ObjectId } from 'mongodb'
 import { isScopeSubjectPairValid, rateLimitForScope } from '../../security/rate-limit-scope.js'
 import { AUDIT_RULES } from '../../audit/writer.js'
+import { canonicalPreferenceIds, TOPIC_TAXONOMY_VERSION } from '../../../shared/topic-catalog.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -67,6 +68,8 @@ export class MongoAuthRepository {
       role: input.role ?? 'user',
       status: input.status ?? 'active',
       topicPreferences: input.topicPreferences ?? [],
+      topicPreferenceIds: input.topicPreferenceIds ?? (input.topicPreferences ? canonicalPreferenceIds(input.topicPreferences, { max: 20 }) : []),
+      topicPreferenceTaxonomyVersion: input.topicPreferenceTaxonomyVersion ?? TOPIC_TAXONOMY_VERSION,
       sessionVersion: input.sessionVersion ?? 0,
       createdAt,
       updatedAt: nowDate(input.updatedAt ?? createdAt),
@@ -88,6 +91,8 @@ export class MongoAuthRepository {
       role: 'admin',
       status: 'active',
       topicPreferences: [],
+      topicPreferenceIds: [],
+      topicPreferenceTaxonomyVersion: TOPIC_TAXONOMY_VERSION,
       sessionVersion: 0,
       createdAt,
       updatedAt: nowDate(input.updatedAt ?? createdAt),
@@ -132,11 +137,13 @@ export class MongoAuthRepository {
   }
 
   async updatePreferences(userId, topicPreferences, options = {}) {
-    const { expectedSessionId, expectedSessionVersion, ...mongoOptions } = options
+    const { expectedSessionId, expectedSessionVersion, topicPreferenceIds, topicPreferenceTaxonomyVersion, ...mongoOptions } = options
     if (expectedSessionId !== undefined && !(await this.assertActiveSessionForUser({ sessionId: expectedSessionId, userId, sessionVersion: expectedSessionVersion }, mongoOptions))) return null
+    const derivedIds = topicPreferenceIds ?? canonicalPreferenceIds(topicPreferences, { max: 20 })
+    const version = topicPreferenceTaxonomyVersion ?? TOPIC_TAXONOMY_VERSION
     const result = await this.collection('users').findOneAndUpdate(
       { _id: idValue(userId), status: 'active', ...(expectedSessionVersion === undefined ? {} : { sessionVersion: expectedSessionVersion }) },
-      { $set: { topicPreferences, updatedAt: new Date() } },
+      { $set: { topicPreferences, topicPreferenceIds: derivedIds, topicPreferenceTaxonomyVersion: version, updatedAt: new Date() } },
       { ...mongoOptions, returnDocument: 'after' },
     )
     return result

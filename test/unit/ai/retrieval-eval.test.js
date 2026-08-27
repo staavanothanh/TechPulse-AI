@@ -11,7 +11,7 @@ function fixture() {
   const documents = queryIds.map((id, index) => ({ id: `doc-${id.slice(2)}`, inputHash: `${index + 11}`.padStart(64, '0'), embedding: vector(index) }))
   const value = {
     fixtureVersion: 'bge-m3-vi-real-v1',
-    provenance: { providerId: 'openrouter', endpointId: 'openrouter-embeddings', model: 'baai/bge-m3', dimensions: 1024, embeddingVersion: 1, generatedAt: '2026-08-11T00:00:00.000Z', inputIds: [...queries, ...documents].map(({ id, inputHash: hash }) => ({ id, hash })) },
+    provenance: { providerId: 'openrouter', endpointId: 'openrouter-embeddings', model: 'baai/bge-m3', dimensions: 1024, embeddingVersion: 1, artifactCompatibilityId: 'bge-m3-v1-1024', generatedAt: '2026-08-11T00:00:00.000Z', inputIds: [...queries, ...documents].map(({ id, inputHash: hash }) => ({ id, hash })) },
     queries,
     documents,
     cases: queryIds.map((id) => ({ queryId: id, targetId: `doc-${id.slice(2)}` })),

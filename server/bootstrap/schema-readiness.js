@@ -16,6 +16,7 @@ export const RUNTIME_SCHEMA_GENERATIONS = Object.freeze({
   'qa-evidence-fence': 'qa-evidence-fence-v1',
   'summary-detail-v1': 'summary-detail-v1',
   governance: 'governance-provider-routing-v2-v1',
+  'topic-taxonomy-v1': 'topic-taxonomy-v1',
 })
 
 const PAYLOAD_KEYS = Object.freeze([

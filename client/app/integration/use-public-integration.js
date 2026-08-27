@@ -8,6 +8,7 @@ import {
   validateQuestionScope,
   validateSessionDetail,
 } from '../../features/qa/qa-validation.js'
+import { topicsMatch } from '../../../shared/topic-catalog.js'
 
 const PAGE_SIZE = 10
 const MAX_DIRECT_PAGE = 10_000
@@ -25,6 +26,10 @@ const EMPTY_QUERY = Object.freeze({
   publishedAfter: '',
   publishedBefore: '',
 })
+function toggleTopicValue(current, topic) {
+  const selected = current.some((value) => topicsMatch(value, topic))
+  return selected ? current.filter((value) => !topicsMatch(value, topic)) : [...current, topic]
+}
 
 function queryValues(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== ''))
@@ -53,14 +58,24 @@ export function usePublicIntegration({
   const [savedOverrides, setSavedOverrides] = useState({})
   const [articleId, setArticleId] = useState(null)
   const [articleReturnRoute, setArticleReturnRoute] = useState('feed')
+  const integrationIdentityKey = user ? `user:${user.id ?? user._id ?? 'unknown'}${csrfToken ? `:${csrfToken}` : ''}` : 'guest'
+  const integrationIdentityRef = useRef(integrationIdentityKey)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    integrationIdentityRef.current = integrationIdentityKey
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [integrationIdentityKey])
 
   const expire = useCallback(
-    (error) => {
+    (error, requestIdentity = integrationIdentityKey) => {
       const expired = error?.status === 401
-      if (expired) onSessionExpired?.('Phiên đăng nhập không còn hợp lệ. Vui lòng đăng nhập lại.')
+      if (expired && mountedRef.current && requestIdentity === integrationIdentityKey && integrationIdentityRef.current === integrationIdentityKey) onSessionExpired?.('Phiên đăng nhập không còn hợp lệ. Vui lòng đăng nhập lại.', integrationIdentityKey)
       return expired
     },
-    [onSessionExpired],
+    [integrationIdentityKey, onSessionExpired],
   )
 
   const markSaved = useCallback((id, value) => {
@@ -119,8 +134,7 @@ export function usePublicIntegration({
     onBack: () => onNavigate?.(articleReturnRoute),
   })
   const qa = useQa({ csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
-  const account = useAccount({ accountActions, onSessionExpired, sessionNotice, user })
-
+  const account = useAccount({ accountActions, expire, sessionNotice, csrfToken, user })
   return { feed, search, saved, article, qa, account, onLogout: account.onLogout }
 }
 
@@ -493,7 +507,7 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack }) {
   return { state, article, error, onBack }
 }
 
-function useQa({ csrfToken, enabled, expire, qaApi, user }) {
+export function useQa({ csrfToken, enabled, expire, qaApi, user }) {
   const [state, setState] = useState('empty')
   const [sessions, setSessions] = useState([])
   const [messages, setMessages] = useState([])
@@ -501,12 +515,58 @@ function useQa({ csrfToken, enabled, expire, qaApi, user }) {
     topics: Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : [],
   }))
   const [error, setError] = useState(null)
+  const sessionIdRef = useRef(undefined)
+  const queueTailRef = useRef(null)
+  const epochRef = useRef(0)
+  const listEpochRef = useRef(0)
+  const identityKey = JSON.stringify([user?.id ?? user?._id ?? null, csrfToken ?? null])
+  const identityRef = useRef(identityKey)
+  const identityChanged = identityRef.current !== identityKey
+  if (identityChanged) {
+    identityRef.current = identityKey
+    epochRef.current += 1
+    listEpochRef.current += 1
+    sessionIdRef.current = undefined
+  }
+  useEffect(() => {
+    if (!identityChanged) return undefined
+    const nextTopics = Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : []
+    setSessions([])
+    setMessages([])
+    setScope({ topics: nextTopics })
+    setState('empty')
+    setError(null)
+    return undefined
+  }, [identityChanged, identityKey])
+
+  function trackQueue(taskPromise) {
+    let tail
+    tail = taskPromise.then(
+      () => {
+        if (queueTailRef.current === tail) queueTailRef.current = null
+      },
+      () => {
+        if (queueTailRef.current === tail) queueTailRef.current = null
+      },
+    )
+    queueTailRef.current = tail
+    return taskPromise
+  }
+
+  function enqueue(task) {
+    const prev = queueTailRef.current
+    if (!prev) return trackQueue(task())
+    return trackQueue(prev.catch(() => {}).then(task))
+  }
 
   const loadSessions = useCallback(async () => {
+    const listEpoch = ++listEpochRef.current
     try {
       const response = await qaApi.listSessions({ limit: 100 })
+      if (listEpoch !== listEpochRef.current) return
       setSessions(responseData(response, []))
     } catch (requestError) {
+      if (listEpoch !== listEpochRef.current) return
       expire(requestError)
       setError(requestError)
       setState('error')
@@ -520,10 +580,13 @@ function useQa({ csrfToken, enabled, expire, qaApi, user }) {
   }, [enabled, loadSessions])
 
   async function selectSession(id) {
+    const epoch = ++epochRef.current
+    sessionIdRef.current = id
     setState('loading')
     setError(null)
     try {
       const response = await qaApi.getSession(id)
+      if (epoch !== epochRef.current) return
       const checked = validateSessionDetail(responseData(response, {}))
       if (!checked.valid)
         throw Object.assign(new Error('Phiên hỏi đáp có định dạng không hợp lệ.'), { status: 502 })
@@ -531,6 +594,7 @@ function useQa({ csrfToken, enabled, expire, qaApi, user }) {
       setScope((current) => ({ ...current, sessionId: id }))
       setState('ready')
     } catch (requestError) {
+      if (epoch !== epochRef.current) return
       expire(requestError)
       setError(requestError)
       setState('error')
@@ -544,124 +608,176 @@ function useQa({ csrfToken, enabled, expire, qaApi, user }) {
       setState('error')
       return
     }
+    const epoch = epochRef.current
     setState('loading')
     setError(null)
-    try {
-      const response = await qaApi.createAnswer(
-        {
-          question: payload.question,
-          scope: {
-            ...(typeof payload.articleId === 'string' && payload.articleId.trim().length > 0 ? { articleId: payload.articleId } : {}),
-            ...(Array.isArray(payload.topics) && payload.topics.length > 0 ? { topics: payload.topics } : {}),
-            ...(payload.publishedAfter ? { publishedAfter: payload.publishedAfter } : {}),
-            ...(payload.publishedBefore ? { publishedBefore: payload.publishedBefore } : {}),
-          }
-        },
-        {
-          csrfToken,
-          idempotencyKey: globalThis.crypto?.randomUUID?.() ?? `qa-${Date.now()}`,
-          chatSessionId: payload.sessionId,
-        },
-      )
-      const checked = validateAnswerPayload(response)
-      if (!checked.valid) throw new Error('Câu trả lời không đáp ứng định dạng an toàn.')
-      setMessages((current) => [
-        ...current,
-        { id: `question-${Date.now()}`, role: 'user', text: payload.question },
-        checked.answer,
-      ])
-      setScope((current) => ({
-        ...current,
-        sessionId: checked.answer.chatSessionId ?? current.sessionId,
-      }))
-      setState('ready')
-      void loadSessions()
-    } catch (requestError) {
-      expire(requestError)
-      setError(requestError)
-      setState('error')
+
+    const runTask = async () => {
+      if (epoch !== epochRef.current) return
+      setState('loading')
+      setError(null)
+      const currentSessionId = sessionIdRef.current ?? payload.sessionId
+      try {
+        const response = await qaApi.createAnswer(
+          {
+            question: payload.question,
+            scope: {
+              ...(typeof payload.articleId === 'string' && payload.articleId.trim().length > 0 ? { articleId: payload.articleId } : {}),
+              ...(Array.isArray(payload.topics) && payload.topics.length > 0 ? { topics: payload.topics } : {}),
+              ...(payload.publishedAfter ? { publishedAfter: payload.publishedAfter } : {}),
+              ...(payload.publishedBefore ? { publishedBefore: payload.publishedBefore } : {}),
+            }
+          },
+          {
+            csrfToken,
+            idempotencyKey: globalThis.crypto?.randomUUID?.() ?? `qa-${Date.now()}`,
+            chatSessionId: currentSessionId,
+          },
+        )
+        const checked = validateAnswerPayload(response)
+        if (!checked.valid) throw new Error('Câu trả lời không đáp ứng định dạng an toàn.')
+        const returnedSessionId = checked.answer.chatSessionId ?? currentSessionId
+        if (epoch !== epochRef.current) return
+        if (returnedSessionId) sessionIdRef.current = returnedSessionId
+        setMessages((current) => [
+          ...current,
+          { id: `question-${Date.now()}`, role: 'user', text: payload.question },
+          checked.answer,
+        ])
+        setScope((current) => ({
+          ...current,
+          sessionId: returnedSessionId ?? current.sessionId,
+        }))
+        setState('ready')
+        void loadSessions()
+      } catch (requestError) {
+        if (epoch !== epochRef.current) return
+        expire(requestError)
+        setError(requestError)
+        setState('error')
+      }
     }
+
+    return enqueue(runTask)
   }
 
   async function clearSessions() {
     if (!csrfToken) return
-    try {
-      await qaApi.clearSessions(csrfToken)
-      setSessions([])
-      setMessages([])
-      setScope((current) => ({ ...current, sessionId: undefined }))
-      setState('empty')
-    } catch (requestError) {
-      expire(requestError)
-      setError(requestError)
-      setState('error')
-    }
-  }
+    const epoch = ++epochRef.current
+    listEpochRef.current += 1
+    sessionIdRef.current = undefined
 
-  return {
-    state,
-    sessions,
-    messages,
-    scope,
-    error,
-    onAsk: ask,
-    handlers: {
-      onNewSession: () => {
+    const runClear = async () => {
+      try {
+        await qaApi.clearSessions(csrfToken)
+        if (epoch !== epochRef.current) return
+        sessionIdRef.current = undefined
+        setSessions([])
         setMessages([])
         setScope((current) => ({ ...current, sessionId: undefined }))
         setState('empty')
+      } catch (requestError) {
+        if (epoch !== epochRef.current) return
+        expire(requestError)
+        setError(requestError)
+        setState('error')
+      }
+    }
+
+    return enqueue(runClear)
+  }
+
+  const displayState = identityChanged ? 'empty' : state
+  const displaySessions = identityChanged ? [] : sessions
+  const displayMessages = identityChanged ? [] : messages
+  const displayScope = identityChanged
+    ? { topics: Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : [] }
+    : scope
+  const displayError = identityChanged ? null : error
+  return {
+    state: displayState,
+    sessions: displaySessions,
+    messages: displayMessages,
+    scope: displayScope,
+    error: displayError,
+    onAsk: ask,
+    handlers: {
+      onNewSession: () => {
+        epochRef.current += 1
+        sessionIdRef.current = undefined
+        setMessages([])
+        setScope((current) => ({ ...current, sessionId: undefined }))
+        setState('empty')
+        setError(null)
       },
       onSelectSession: selectSession,
       onClearSessions: clearSessions,
-      onRetry: scope.sessionId ? () => selectSession(scope.sessionId) : loadSessions,
+      onRetry: () => (sessionIdRef.current ? selectSession(sessionIdRef.current) : loadSessions()),
       onToggleTopic: (topic) =>
         setScope((current) => ({
           ...current,
-          topics: current.topics.includes(topic)
-            ? current.topics.filter((item) => item !== topic)
-            : [...current.topics, topic],
+          topics: toggleTopicValue(current.topics, topic),
         })),
-      onScopeChange: (field, value) => setScope((current) => ({ ...current, [field]: value })),
+      onScopeChange: (field, value) => {
+        if (field === 'sessionId') sessionIdRef.current = value || undefined
+        setScope((current) => ({ ...current, [field]: value }))
+      },
     },
   }
 }
-
-function useAccount({ accountActions, onSessionExpired, sessionNotice, user }) {
-  const [draft, setDraft] = useState(() =>
-    Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : [],
-  )
+function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) {
+  const identityKey = user ? `user:${user.id ?? user._id ?? 'unknown'}${csrfToken ? `:${csrfToken}` : ''}` : 'guest'
+  const identityRef = useRef(identityKey)
+  const identityChanged = identityRef.current !== identityKey
+  if (identityChanged) identityRef.current = identityKey
+  const [draft, setDraft] = useState(() => (Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : []))
   const [busy, setBusy] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [notice, setNotice] = useState(sessionNotice)
   const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!identityChanged) return undefined
+    setDraft(Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : [])
+    setBusy(false)
+    setDeleting(false)
+    setNotice(sessionNotice)
+    setError(null)
+    return undefined
+  }, [identityChanged, identityKey, sessionNotice, user])
+
+  const displayDraft = identityChanged ? (Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : []) : draft
+  const displayNotice = identityChanged ? sessionNotice : notice
+  const displayError = identityChanged ? null : error
+  const displayBusy = identityChanged ? false : busy
+  const displayDeleting = identityChanged ? false : deleting
+
   async function run(action, setPending, successNotice) {
+    const requestIdentity = identityKey
     setPending(true)
     setError(null)
     setNotice(null)
     try {
       await action()
+      if (identityRef.current !== requestIdentity) return
       if (successNotice) setNotice(successNotice)
     } catch (requestError) {
-      if (requestError?.status === 401)
-        onSessionExpired?.('Phiên đăng nhập không còn hợp lệ. Vui lòng đăng nhập lại.')
+      if (identityRef.current !== requestIdentity) return
+      if (requestError?.status === 401) expire(requestError, requestIdentity)
       setError(requestError)
     } finally {
-      setPending(false)
+      if (identityRef.current === requestIdentity) setPending(false)
     }
   }
 
   return {
-    user: user ? { ...user, topicPreferences: draft } : null,
-    saving: busy,
-    deleting,
-    notice,
-    error,
-    onToggleTopic: (topic) =>
-      setDraft((current) =>
-        current.includes(topic) ? current.filter((item) => item !== topic) : [...current, topic],
-      ),
-    onSavePreferences: () =>
-      run(() => accountActions.updatePreferences(draft), setBusy, 'Đã lưu chủ đề quan tâm.'),
+    user: user ? { ...user, topicPreferences: displayDraft } : null,
+    saving: displayBusy,
+    deleting: displayDeleting,
+    notice: displayNotice,
+    error: displayError,
+    onToggleTopic: (topic) => setDraft((current) => toggleTopicValue(current, topic)),
+    onSavePreferences: () => run(() => accountActions.updatePreferences(displayDraft), setBusy, 'Đã lưu chủ đề quan tâm.'),
     onRequestDeletion: () => run(accountActions.requestDeletion, setDeleting),
     onLogout: () => run(accountActions.logout, setBusy),
   }

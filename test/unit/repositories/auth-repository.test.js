@@ -90,10 +90,11 @@ describe('MongoAuthRepository', () => {
     expect(() => new MongoAuthRepository()).toThrow(/MongoDB context/i)
     const fixture = createContext({ updateResults: { users: [{ upsertedCount: 1 }] }, findOne: { users: [{ _id: userId, role: 'admin', status: 'active' }, { _id: userId, googleSub: 'google-sub' }, { _id: userId }] } })
     const created = await fixture.repository.createUser({ _id: userId, emailNormalized: 'user@example.com', emailDisplay: 'User', passwordHash: 'hash', suspendedAt: now, suspensionReason: 'reason', googleSub: 'google-sub', createdAt: now, updatedAt: now })
-    expect(created).toEqual(expect.objectContaining({ _id: userId, role: 'user', status: 'active', topicPreferences: [], sessionVersion: 0 }))
+    expect(created).toEqual(expect.objectContaining({ _id: userId, role: 'user', status: 'active', topicPreferences: [], topicPreferenceIds: [], topicPreferenceTaxonomyVersion: 1, sessionVersion: 0 }))
     expect(fixture.collections.get('users').insertOne).toHaveBeenCalled()
 
-    await expect(fixture.repository.seedAdmin({ emailNormalized: 'admin@example.com', emailDisplay: 'Admin', passwordHash: 'hash', createdAt: now })).resolves.toEqual(expect.objectContaining({ seeded: true, existing: false }))
+    await expect(fixture.repository.seedAdmin({ emailNormalized: 'admin@example.com', emailDisplay: 'Admin', passwordHash: 'hash', createdAt: now })).resolves.toEqual(expect.objectContaining({ seeded: true, existing: false, user: expect.objectContaining({ updatedAt: now }) }))
+    expect(fixture.collections.get('users').updateOne).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ $setOnInsert: expect.objectContaining({ updatedAt: now }) }), expect.objectContaining({ upsert: true }))
     await expect(fixture.repository.findUserByEmail('admin@example.com')).resolves.toEqual(expect.objectContaining({ role: 'admin' }))
     await expect(fixture.repository.findUserByGoogleSub('google-sub')).resolves.toEqual(expect.objectContaining({ googleSub: 'google-sub' }))
     await expect(fixture.repository.findUserById(userId.toHexString())).resolves.toEqual(expect.objectContaining({ _id: userId }))
@@ -122,8 +123,8 @@ describe('MongoAuthRepository', () => {
   })
 
   it('updates preferences and user status with session fences and CAS conflicts', async () => {
-    const fenced = createContext({ updateResults: { sessions: [{ matchedCount: 1 }], users: [{ matchedCount: 1 }] }, findOneAndUpdateResults: { users: [{ _id: userId, topicPreferences: ['ai'] }] } })
-    await expect(fenced.repository.updatePreferences(userId, ['ai'], { expectedSessionId: sessionId, expectedSessionVersion: 2, session: { tx: true } })).resolves.toEqual(expect.objectContaining({ topicPreferences: ['ai'] }))
+    const fenced = createContext({ updateResults: { sessions: [{ matchedCount: 1 }], users: [{ matchedCount: 1 }] }, findOneAndUpdateResults: { users: [{ _id: userId, topicPreferences: ['AI', 'Robot'], topicPreferenceIds: ['ai-ml', 'robotics'], topicPreferenceTaxonomyVersion: 1 }] } })
+    await expect(fenced.repository.updatePreferences(userId, ['AI', 'Robot'], { expectedSessionId: sessionId, expectedSessionVersion: 2, session: { tx: true } })).resolves.toEqual(expect.objectContaining({ topicPreferences: ['AI', 'Robot'], topicPreferenceIds: ['ai-ml', 'robotics'], topicPreferenceTaxonomyVersion: 1 }))
     const blocked = createContext({ updateResults: { sessions: [{ matchedCount: 0 }] } })
     await expect(blocked.repository.updatePreferences(userId, ['ai'], { expectedSessionId: sessionId, expectedSessionVersion: 2 })).resolves.toBeNull()
 

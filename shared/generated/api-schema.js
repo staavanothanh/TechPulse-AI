@@ -5674,6 +5674,7 @@ export const openApiDocument = {
         "required": [
           "id",
           "title",
+          "messageCount",
           "updatedAt"
         ],
         "properties": {
@@ -5685,6 +5686,11 @@ export const openApiDocument = {
               "string",
               "null"
             ]
+          },
+          "messageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30
           },
           "updatedAt": {
             "type": "string",

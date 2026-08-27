@@ -4,7 +4,7 @@ import { canUseQnaEvidence } from '../../../server/domain/article/visibility.js'
 import { makeCandidate, makeSource, OTHER_SOURCE_ID, RETRIEVED_AT, SOURCE_ID } from './fixtures.js'
 
 describe('article normalization and policy gates', () => {
-  it('canonicalizes URL/time/language/topics and persists only policy-allowed excerpt/media metadata', () => {
+  it('canonicalizes URL/time/language/topics, derives topicIds and persists only policy-allowed excerpt/media metadata', () => {
     const article = normalizeCandidateToArticle(makeCandidate(), { source: makeSource(), now: RETRIEVED_AT })
 
     expect(article).toMatchObject({
@@ -15,6 +15,8 @@ describe('article normalization and policy gates', () => {
       canonicalUrl: 'https://example.com/articles/ai-systems?a=1&b=2',
       sourceLanguage: 'en-us',
       topics: ['ai', 'safety'],
+      topicIds: ['ai-ml'],
+      topicTaxonomyVersion: 1,
       excerptOriginal: 'Safe excerpt .',
       status: 'published',
       contentScope: 'excerpt',
@@ -51,7 +53,7 @@ describe('article normalization and policy gates', () => {
     expect(article.embeddingStatus).toBe('pending')
   })
 
-  it('classifies topics when a connector does not provide explicit categories', () => {
+  it('classifies topics and canonical topicIds when a connector does not provide explicit categories', () => {
     const article = normalizeCandidateToArticle(
       makeCandidate({
         titleOriginal: 'Cloud data infrastructure with Kubernetes',
@@ -62,6 +64,32 @@ describe('article normalization and policy gates', () => {
     )
 
     expect(article.topics).toEqual(['devops', 'dữ liệu'])
+    expect(article.topicIds).toContain('devops-cloud')
+    expect(article.topicIds).toContain('computer-science')
+    expect(article.topicTaxonomyVersion).toBe(1)
+  })
+
+  it('preserves arXiv per-entry category classification into legacy topics and canonical topicIds', () => {
+    const source = makeSource({
+      id: OTHER_SOURCE_ID,
+      sourceKey: 'arxiv:cs',
+      connectorType: 'arxiv',
+      authorityTier: 'primary',
+      connectorConfig: { kind: 'arxiv', arxivQuery: 'cat:cs.AI', batchSize: 20 },
+    })
+    const candidate = makeCandidate({
+      sourceId: OTHER_SOURCE_ID,
+      connectorType: 'arxiv',
+      authorityTier: 'primary',
+      topics: ['cs.AI', 'cs.LG'],
+      titleOriginal: 'Deep learning advances',
+      excerptOriginal: 'A paper on neural representations.',
+    })
+    const article = normalizeCandidateToArticle(candidate, { source, now: RETRIEVED_AT })
+
+    expect(article.topics).toContain('ai')
+    expect(article.topicIds).toContain('ai-ml')
+    expect(article.topicTaxonomyVersion).toBe(1)
   })
 
   it('marks Hacker News community signal as unavailable for Q&A evidence', () => {

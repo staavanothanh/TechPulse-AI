@@ -1,4 +1,5 @@
 import { ContentError, requireContentUser, searchQuery } from '../articles/query.js'
+import { containsSensitiveProviderInput } from '../../ai/policy-input.js'
 
 function unavailable() {
   throw new ContentError(503, 'service_unavailable', 'Search service is not configured')
@@ -25,11 +26,13 @@ export function createSearchService({ repository, embeddingAvailable = () => fal
       const requestedMode = input.mode
       let embedding = null
       let embeddingFailure = null
-      if (requestedMode === 'hybrid' && typeof queryEmbedding === 'function') {
+      if (requestedMode === 'hybrid' && typeof queryEmbedding === 'function' && !containsSensitiveProviderInput(input.q)) {
         try {
           const candidate = await queryEmbedding(input.q)
           embedding = validateQueryEmbedding(candidate)
         } catch (error) { embeddingFailure = error; embedding = null }
+      } else if (requestedMode === 'hybrid' && containsSensitiveProviderInput(input.q)) {
+        embeddingFailure = Object.assign(new Error('Sensitive search input is not eligible for external embedding'), { code: 'sensitive-input' })
       }
       const legacyReady = requestedMode === 'hybrid' && typeof queryEmbedding !== 'function' && Boolean(await embeddingAvailable())
       const embeddingsReady = Boolean(embedding) || legacyReady

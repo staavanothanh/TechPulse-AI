@@ -115,7 +115,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     let embedding
     if (typeof queryEmbedding === 'function') {
       try { embedding = await queryEmbedding(admitted.question) } catch { embedding = undefined }
-      if (embedding && (typeof embedding.model !== 'string' || !Number.isInteger(embedding.dimensions) || embedding.dimensions < 1 || !Number.isInteger(embedding.version) || embedding.version < 1 || !Array.isArray(embedding.embedding) || embedding.embedding.length !== embedding.dimensions || embedding.embedding.some((value) => typeof value !== 'number' || !Number.isFinite(value)))) embedding = undefined
+      if (embedding && (typeof embedding.model !== 'string' || !embedding.model || !Number.isInteger(embedding.dimensions) || embedding.dimensions < 1 || !Number.isInteger(embedding.version) || embedding.version < 1 || typeof embedding.artifactCompatibilityId !== 'string' || !embedding.artifactCompatibilityId || !Array.isArray(embedding.embedding) || embedding.embedding.length !== embedding.dimensions || embedding.embedding.some((value) => typeof value !== 'number' || !Number.isFinite(value)))) embedding = undefined
     }
     const records = await qaRepositoryCall('findQnaEvidence', () => articleRepo.findQnaEvidence({ question: admitted.question, queryEmbedding: embedding, scope, limit: 50, includeSource: true }))
     let evidence
@@ -139,20 +139,35 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
       error.discard = true
       throw error
     }
+    const routerPrompt = Object.freeze({
+      prompt: prompt.prompt,
+      citations: Object.freeze(prompt.citations.map(({ id, articleId, sourceId }) => Object.freeze({ id, articleId, sourceId }))),
+      blocks: Object.freeze(prompt.blocks.map(({ id, citationId, text }) => Object.freeze({ id, citationId, text }))),
+      evidenceMap: Object.freeze({ ...prompt.evidenceMap }),
+    })
+    const selectedArticleIds = Object.freeze(evidence.map(({ article }) => article?.id ?? (article?._id?.toHexString ? article._id.toHexString() : String(article?._id ?? ''))).filter(Boolean))
     return Object.freeze({
       admitted,
       evidence,
       fence: Object.freeze(fence),
       prompt,
-      routerInput: freezeDeep({ question: admitted.question, prompt }),
+      selectedArticleIds,
+      routerInput: freezeDeep({ question: admitted.question, prompt: routerPrompt }),
       embedding,
     })
   }
 
   async function assertCurrentEvidenceFence({ providerInput, scope }) {
-    const records = await qaRepositoryCall('recheckEvidence', () => articleRepo.findQnaEvidence({ question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope, limit: 50, includeSource: true }))
+    const selectedArticleIds = providerInput.selectedArticleIds ?? providerInput.evidence.map(({ article }) => article?.id ?? (article?._id?.toHexString ? article._id.toHexString() : String(article?._id ?? ''))).filter(Boolean)
+    const recheckScope = { ...scope, articleIds: [...selectedArticleIds] }
+    const records = await qaRepositoryCall('recheckEvidence', () => articleRepo.findQnaEvidence({ question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope: recheckScope, limit: 50, includeSource: true }))
+    const selectedIdsSet = new Set(selectedArticleIds.map((id) => String(id)))
+    const matchingRecords = (records ?? []).filter((record) => {
+      const id = String(record?.article?.id ?? record?.article?._id ?? record?.id ?? record?._id ?? '')
+      return selectedIdsSet.has(id)
+    })
     let currentEvidence
-    try { currentEvidence = filterQnaEvidence(records) } catch (error) {
+    try { currentEvidence = filterQnaEvidence(matchingRecords) } catch (error) {
       if (error instanceof EvidenceSelectionError) error.discard = true
       throw error
     }

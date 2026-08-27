@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { PageHeading } from '../components/reader-primitives.jsx'
 import { TOPICS } from '../components/reader-format.js'
+import { resolveTopic } from '../../../../shared/topic-catalog.js'
 
 export default function AccountView({
   user = null,
@@ -16,7 +17,23 @@ export default function AccountView({
 }) {
   const [deletionConfirmationOpen, setDeletionConfirmationOpen] = useState(false)
   const selected = Array.isArray(user?.topicPreferences) ? user.topicPreferences : []
-  const options = Array.isArray(topics) ? topics : TOPICS
+  const baseOptions = Array.isArray(topics) ? topics : TOPICS
+  const isTopicSelected = (topic) => {
+    const topicResolved = resolveTopic(topic)
+    return selected.some((item) => {
+      if (item === topic) return true
+      const itemResolved = resolveTopic(item)
+      return (
+        Boolean(topicResolved.canonicalId) &&
+        Boolean(itemResolved.canonicalId) &&
+        topicResolved.canonicalId === itemResolved.canonicalId
+      )
+    })
+  }
+  const unknownSelected = selected.filter(
+    (item) => !baseOptions.some((opt) => opt === item || (resolveTopic(opt).canonicalId && resolveTopic(opt).canonicalId === resolveTopic(item).canonicalId))
+  )
+  const options = [...baseOptions, ...unknownSelected]
   return (
     <section
       className="public-view public-account-view"
@@ -44,17 +61,20 @@ export default function AccountView({
           </div>
           <p>Feed có thể ưu tiên những chủ đề này.</p>
           <div className="public-topic-row public-preference-grid" aria-label="Chủ đề quan tâm">
-            {options.map((topic) => (
-              <button
-                key={topic}
-                type="button"
-                aria-pressed={selected.includes(topic)}
-                className={selected.includes(topic) ? 'active' : ''}
-                onClick={() => onToggleTopic?.(topic)}
-              >
-                {topic}
-              </button>
-            ))}
+            {options.map((topic) => {
+              const active = isTopicSelected(topic)
+              return (
+                <button
+                  key={topic}
+                  type="button"
+                  aria-pressed={active}
+                  className={active ? 'active' : ''}
+                  onClick={() => onToggleTopic?.(topic)}
+                >
+                  {topic}
+                </button>
+              )
+            })}
           </div>
           {notice ? (
             <p className="public-form-success" role="status">

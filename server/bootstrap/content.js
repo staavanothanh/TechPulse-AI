@@ -9,6 +9,7 @@ import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from '../../scripts/migrations/a
 import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../scripts/migrations/summary-detail-v1.js'
+import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -22,14 +23,19 @@ const ARTICLE_VALIDATOR_FINGERPRINTS = Object.freeze([
   PROVIDER_ROUTING_ARTICLE_VALIDATOR,
   QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR,
   SUMMARY_DETAIL_ARTICLE_VALIDATOR,
+  TOPIC_TAXONOMY_ARTICLE_VALIDATOR,
 ].map(stableJson))
 
 export async function assertArticlesReady(context) {
   if (!context?.db) throw new Error('Mongo context is required')
   const collection = (await context.db.listCollections({ name: 'articles' }, { nameOnly: false }).toArray())[0]
-  if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !ARTICLE_VALIDATOR_FINGERPRINTS.includes(stableJson(collection.options?.validator))) throw new Error('article validator is not ready')
+  const validatorFingerprint = stableJson(collection?.options?.validator)
+  if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !ARTICLE_VALIDATOR_FINGERPRINTS.includes(validatorFingerprint)) throw new Error('article validator is not ready')
   const actualByName = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
-  if (ARTICLE_INDEXES.articles.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('article indexes are not ready')
+  const expectedIndexes = validatorFingerprint === stableJson(TOPIC_TAXONOMY_ARTICLE_VALIDATOR)
+    ? [...ARTICLE_INDEXES.articles, ...TOPIC_TAXONOMY_ARTICLE_INDEXES]
+    : ARTICLE_INDEXES.articles
+  if (expectedIndexes.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('article indexes are not ready')
 }
 
 async function deployedImageCspHosts(context) {

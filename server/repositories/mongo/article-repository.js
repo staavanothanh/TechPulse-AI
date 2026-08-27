@@ -6,6 +6,7 @@ import { ArticleError, articleConflict, leaseFenceStale, policyVersionMismatch, 
 import { hideArticle as hideArticleRecord, removeArticle as removeArticleRecord, restoreArticle as restoreArticleRecord } from '../../domain/article/lifecycle.js'
 import { normalizeCandidateToArticle } from '../../domain/article/normalization.js'
 import { classifyTopics } from '../../domain/article/topic-classifier.js'
+import { expandTopicSelection } from '../../../shared/topic-catalog.js'
 import { evaluateMediaPolicy } from '../../domain/policy/media-policy.js'
 import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
 import { canUseQnaEvidence, currentArticleVisibilityFilter, isSourceProductionEligible, qnaEvidenceFilter } from '../../domain/article/visibility.js'
@@ -242,13 +243,26 @@ function embeddingQueryCompatible(value, { expectedCompatibilityId } = {}) {
 
 function embeddingArtifactCompatible(document, query) {
   return document?.embeddingStatus === 'ready'
+    && typeof query?.model === 'string'
+    && query.model.length > 0
     && document.embeddingModel === query.model
+    && Number.isInteger(query?.dimensions)
+    && query.dimensions > 0
     && document.embeddingDimensions === query.dimensions
+    && Number.isInteger(query?.version)
+    && query.version > 0
     && document.embeddingVersion === query.version
-    && (document.embeddingArtifactCompatibilityId === query.artifactCompatibilityId || document.embeddingArtifactCompatibilityId === undefined && query.artifactCompatibilityId === undefined)
+    && typeof query?.artifactCompatibilityId === 'string'
+    && query.artifactCompatibilityId.length > 0
+    && typeof document.embeddingArtifactCompatibilityId === 'string'
+    && document.embeddingArtifactCompatibilityId.length > 0
+    && document.embeddingArtifactCompatibilityId === query.artifactCompatibilityId
     && Array.isArray(document.embedding)
-    && document.embedding.length === query.embedding.length
+    && Array.isArray(query?.embedding)
+    && document.embedding.length === query.dimensions
+    && query.embedding.length === query.dimensions
     && document.embedding.every((item) => typeof item === 'number' && Number.isFinite(item))
+    && query.embedding.every((item) => typeof item === 'number' && Number.isFinite(item))
 }
 
 function contentQueryInvalid(message = 'Content cursor is invalid') {
@@ -400,10 +414,19 @@ function decodeContentCursor(value, kind, fingerprint) {
     throw contentQueryInvalid()
   }
 }
+function topicQueryFilter(values) {
+  const expanded = expandTopicSelection(values, { maxExpanded: 50 })
+  const clauses = []
+  if (expanded.canonicalIds.length > 0) clauses.push({ topicIds: { $in: [...expanded.canonicalIds] } })
+  if (expanded.legacyValues.length > 0) clauses.push({ topics: { $in: [...expanded.legacyValues] } })
+  if (clauses.length === 0) return { topics: { $in: [] } }
+  return clauses.length === 1 ? clauses[0] : { $or: clauses }
+}
+
 
 function contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore, cursorPosition } = {}) {
   const filters = [{ status: 'published' }]
-  if (topic) filters.push({ topics: topic })
+  if (topic) filters.push(topicQueryFilter([topic]))
   if (sourceId) filters.push({ sourceId: contentObjectId(sourceId) })
   if (publishedAfter || publishedBefore) filters.push({ publishedAt: { ...(publishedAfter ? { $gte: publishedAfter } : {}), ...(publishedBefore ? { $lte: publishedBefore } : {}) } })
   if (cursorPosition) {
@@ -419,9 +442,15 @@ function qnaScopeFilter(scope = {}) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw contentQueryInvalid('Q&A scope is invalid')
   const match = {}
   if (scope.articleId !== undefined && scope.articleId !== null) match._id = contentObjectId(scope.articleId)
+  if (scope.articleIds !== undefined && scope.articleIds !== null) {
+    if (!Array.isArray(scope.articleIds) || scope.articleIds.length < 1 || scope.articleIds.some((id) => !id || typeof id !== 'string' && !(id instanceof ObjectId))) {
+      throw contentQueryInvalid('Q&A articleIds are invalid')
+    }
+    match._id = { $in: scope.articleIds.map((id) => contentObjectId(id)) }
+  }
   if (scope.topics !== undefined) {
     if (!Array.isArray(scope.topics) || scope.topics.length < 1 || scope.topics.length > 10 || scope.topics.some((topic) => typeof topic !== 'string' || topic.length < 1 || topic.length > 100)) throw contentQueryInvalid('Q&A topics are invalid')
-    match.topics = { $in: scope.topics }
+    Object.assign(match, topicQueryFilter(scope.topics))
   }
   const publishedAfter = scope.publishedAfter === undefined ? null : dateValue(scope.publishedAfter, 'Q&A publishedAfter')
   const publishedBefore = scope.publishedBefore === undefined ? null : dateValue(scope.publishedBefore, 'Q&A publishedBefore')
@@ -1174,10 +1203,36 @@ export class MongoArticleRepository {
     const qnaFilter = qnaEvidenceFilter({ sourcePath: '_currentSource' })
     const scopeFilter = qnaScopeFilter(scope)
     const candidateLimit = typeof question === 'string' ? Math.min(400, Math.max(limit, 100)) : limit
+    const isHybrid = typeof question === 'string' && embeddingQueryCompatible(queryEmbedding, { expectedCompatibilityId: this.embeddingTarget.artifactCompatibilityId }) && typeof queryEmbedding?.artifactCompatibilityId === 'string' && queryEmbedding.artifactCompatibilityId.length > 0
+
     if (typeof collection.aggregate !== 'function') {
-      const documents = await collection.find({ status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter }).sort({ publishedAt: -1, _id: -1 }).limit(candidateLimit).toArray()
+      const candidates = new Map()
+      const baseFilter = { status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter }
+      if (isHybrid) {
+        const semanticFilter = {
+          embeddingStatus: 'ready',
+          embeddingModel: queryEmbedding.model,
+          embeddingDimensions: queryEmbedding.dimensions,
+          embeddingVersion: queryEmbedding.version,
+          embeddingArtifactCompatibilityId: queryEmbedding.artifactCompatibilityId,
+          embedding: { $type: 'array' },
+        }
+        const semanticDocs = await collection.find({ ...baseFilter, ...semanticFilter }).limit(candidateLimit).toArray()
+        for (const doc of semanticDocs) {
+          candidates.set(doc._id?.toHexString?.() ?? String(doc._id), doc)
+        }
+      }
+      if (candidates.size < candidateLimit) {
+        const recencyDocs = await collection.find(baseFilter).sort({ publishedAt: -1, _id: -1 }).limit(candidateLimit).toArray()
+        for (const doc of recencyDocs) {
+          const id = doc._id?.toHexString?.() ?? String(doc._id)
+          if (!candidates.has(id) && candidates.size < 400) {
+            candidates.set(id, doc)
+          }
+        }
+      }
       const evidence = []
-      for (const document of documents) {
+      for (const document of candidates.values()) {
         const source = await sourceForArticle(this.sources(), document)
         if (canUseQnaEvidence(document, source)) {
           const article = serializeVisibleArticle(document, source)
@@ -1186,15 +1241,46 @@ export class MongoArticleRepository {
       }
       return typeof question === 'string' ? rankQnaEvidence({ question, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, limit) }).slice(0, limit) : evidence
     }
-    const articles = await collection.aggregate([
-      { $match: { status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter } },
-      { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
-      { $unwind: '$_currentSource' },
-      { $match: sourceOnlyFilter(qnaFilter) },
-      { $sort: { publishedAt: -1, _id: -1 } },
-      { $limit: candidateLimit },
-    ]).toArray()
-    const evidence = articles.flatMap(({ _currentSource: source, ...document }) => {
+
+    const candidates = new Map()
+    const baseMatch = { status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter }
+    if (isHybrid) {
+      const semanticFilter = {
+        embeddingStatus: 'ready',
+        embeddingModel: queryEmbedding.model,
+        embeddingDimensions: queryEmbedding.dimensions,
+        embeddingVersion: queryEmbedding.version,
+        embeddingArtifactCompatibilityId: queryEmbedding.artifactCompatibilityId,
+        embedding: { $type: 'array' },
+      }
+      const semanticArticles = await collection.aggregate([
+        { $match: { ...baseMatch, ...semanticFilter } },
+        { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
+        { $unwind: '$_currentSource' },
+        { $match: sourceOnlyFilter(qnaFilter) },
+        { $limit: candidateLimit },
+      ]).toArray()
+      for (const item of semanticArticles) {
+        candidates.set(item._id?.toHexString?.() ?? String(item._id), item)
+      }
+    }
+    if (candidates.size < candidateLimit) {
+      const recencyArticles = await collection.aggregate([
+        { $match: baseMatch },
+        { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
+        { $unwind: '$_currentSource' },
+        { $match: sourceOnlyFilter(qnaFilter) },
+        { $sort: { publishedAt: -1, _id: -1 } },
+        { $limit: candidateLimit },
+      ]).toArray()
+      for (const item of recencyArticles) {
+        const id = item._id?.toHexString?.() ?? String(item._id)
+        if (!candidates.has(id) && candidates.size < 400) {
+          candidates.set(id, item)
+        }
+      }
+    }
+    const evidence = [...candidates.values()].flatMap(({ _currentSource: source, ...document }) => {
       if (!canUseQnaEvidence(document, source)) return []
       const article = serializeVisibleArticle(document, source)
       return [includeSource ? { article, source: serializeSourceForQna(source) } : article]

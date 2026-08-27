@@ -10,6 +10,7 @@ import { formatDate, TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
 import { hasQaScope } from '../../qa/qa-validation.js'
 import { handleQaQuestionKeyDown } from '../../qa/qa-keyboard.js'
+import { topicsMatch } from '../../../../shared/topic-catalog.js'
 
 export default function QaView({
   state = 'empty',
@@ -27,6 +28,7 @@ export default function QaView({
   const safeScope = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope : {}
   const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
+  const isTopicSelected = (topic) => scopeTopics.some((selectedTopic) => topicsMatch(selectedTopic, topic))
   const hasScope = hasQaScope(safeScope)
   function submit(event) {
     if (!event.defaultPrevented) event.preventDefault()
@@ -149,9 +151,9 @@ export default function QaView({
             {activeTopics.map((topic) => (
               <button
                 key={topic}
-                className={scopeTopics.includes(topic) ? 'active' : ''}
+                className={isTopicSelected(topic) ? 'active' : ''}
                 type="button"
-                aria-pressed={scopeTopics.includes(topic)}
+                aria-pressed={isTopicSelected(topic)}
                 onClick={() => handlers.onToggleTopic?.(topic)}
               >
                 {topic}

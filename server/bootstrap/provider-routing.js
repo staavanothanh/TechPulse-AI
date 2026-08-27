@@ -1,6 +1,7 @@
 import { PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../scripts/migrations/summary-detail-v1.js'
+import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
@@ -27,7 +28,7 @@ export async function assertProviderRoutingReady(context) {
   for (const [name, definition] of Object.entries(PROVIDER_ROUTING_V2_COLLECTIONS)) {
     const collection = collectionMap.get(name)
     const acceptedValidators = name === 'articles'
-      ? [definition.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR]
+      ? [definition.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
       : [definition.validator]
     const validatorMatches = acceptedValidators.some(
       (validator) => stableJson(collection?.options?.validator) === stableJson(validator),
@@ -35,7 +36,10 @@ export async function assertProviderRoutingReady(context) {
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !validatorMatches) {
       throw new Error(`provider-routing-v2 validator is not ready for ${name}`)
     }
-    const expectedIndexes = PROVIDER_ROUTING_V2_INDEXES[name] ?? []
+    const expectedIndexes = [
+      ...(PROVIDER_ROUTING_V2_INDEXES[name] ?? []),
+      ...(name === 'articles' && stableJson(collection.options?.validator) === stableJson(TOPIC_TAXONOMY_ARTICLE_VALIDATOR) ? TOPIC_TAXONOMY_ARTICLE_INDEXES : []),
+    ]
     if (expectedIndexes.length === 0) continue
     const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
     if (expectedIndexes.some((expected) => !exactProviderRoutingIndex(name, actualByName.get(expected.name), expected))) {

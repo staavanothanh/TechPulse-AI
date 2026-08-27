@@ -12,6 +12,7 @@ import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../scripts/migrations
 import { PROVIDER_ROUTING_ARTICLE_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../scripts/migrations/summary-detail-v1.js'
+import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
 function stableJson(value) {
@@ -56,9 +57,13 @@ export async function assertGovernanceReady(context, { governanceDb } = {}) {
   }, 'governance')
   const appCollections = await collectionMap(context.db)
   const articles = appCollections.get('articles')
-  const acceptedArticleValidators = [ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_ARTICLE_VALIDATOR, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR]
+  const acceptedArticleValidators = [ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_ARTICLE_VALIDATOR, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
   if (!articles || articles.options?.validationLevel !== 'strict' || articles.options?.validationAction !== 'error' || !acceptedArticleValidators.some((validator) => stableJson(articles.options?.validator) === stableJson(validator))) {
     throw new Error('governance article tombstone validator is not ready')
+  }
+  if (stableJson(articles.options?.validator) === stableJson(TOPIC_TAXONOMY_ARTICLE_VALIDATOR)) {
+    const articleIndexes = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
+    if (TOPIC_TAXONOMY_ARTICLE_INDEXES.some((expected) => !exactMongoIndex(articleIndexes.get(expected.name), expected))) throw new Error('governance taxonomy article indexes are not ready')
   }
   const auditCollections = await collectionMap(context.db)
   const audit = auditCollections.get('adminAuditLogs')

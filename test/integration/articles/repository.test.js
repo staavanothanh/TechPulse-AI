@@ -182,9 +182,15 @@ describe('article repository fence contract', () => {
       includeSource: true,
     })
 
-    expect(aggregate.mock.calls[0][0]).toEqual(expect.arrayContaining([
-      expect.objectContaining({ $match: expect.objectContaining({ _id: document._id, topics: { $in: ['ai'] }, publishedAt: { $gte: new Date('2026-08-01T00:00:00.000Z'), $lte: new Date('2026-08-11T00:00:00.000Z') } }) }),
-    ]))
+    const match = aggregate.mock.calls[0][0].find((stage) => stage.$match?._id?.equals?.(document._id))?.$match
+    expect(match).toEqual(expect.objectContaining({
+      _id: document._id,
+      publishedAt: { $gte: new Date('2026-08-01T00:00:00.000Z'), $lte: new Date('2026-08-11T00:00:00.000Z') },
+      $or: expect.arrayContaining([
+        expect.objectContaining({ topicIds: { $in: expect.arrayContaining(['ai-ml']) } }),
+        expect.objectContaining({ topics: { $in: ['ai'] } }),
+      ]),
+    }))
   })
 
   it('reranks before truncation so an older relevant article survives fifty newer unrelated rows', async () => {

@@ -1,4 +1,5 @@
 import { articleIdentityKeys } from './identity.js'
+import { canonicalTopicIds, TOPIC_TAXONOMY_VERSION } from '../../../shared/topic-catalog.js'
 
 function titleFingerprint(value) {
   return String(value ?? '').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
@@ -43,10 +44,17 @@ export function mergeArticleRecords(canonical, incoming) {
   const decision = assessDedupe(canonical, incoming)
   const provenance = mergeProvenance(canonical.provenance, incoming.provenance)
   const topics = Object.freeze([...new Set([...(canonical.topics ?? []), ...(incoming.topics ?? [])])].sort())
+  const combinedTopicIds = [...(canonical.topicIds ?? []), ...(incoming.topicIds ?? [])]
+  const topicIds = combinedTopicIds.length > 0
+    ? canonicalTopicIds([...combinedTopicIds, ...topics], { includeAncestors: true })
+    : canonicalTopicIds(topics, { includeAncestors: true })
+  const topicTaxonomyVersion = Math.max(canonical.topicTaxonomyVersion ?? TOPIC_TAXONOMY_VERSION, incoming.topicTaxonomyVersion ?? TOPIC_TAXONOMY_VERSION)
   const merged = {
     ...canonical,
     ...(decision.decision === 'review-needed' ? { status: 'review-needed' } : {}),
     topics,
+    topicIds,
+    topicTaxonomyVersion,
     provenance,
     ...(canonical.author ? {} : incoming.author ? { author: incoming.author } : {}),
     ...(canonical.excerptOriginal ? {} : incoming.excerptOriginal ? { excerptOriginal: incoming.excerptOriginal } : {}),

@@ -4,7 +4,7 @@ import { hashPassword, verifyPassword } from '../../security/password.js'
 import { createHmacKeyring } from '../../security/hmac-keyring.js'
 import { createAuditEvent } from '../../audit/writer.js'
 import { createGoogleOAuthService, GoogleOAuthError } from './google-oauth.js'
-
+import { canonicalPreferenceIds, TOPIC_TAXONOMY_VERSION } from '../../../shared/topic-catalog.js'
 const IDLE_MS = 24 * 60 * 60 * 1000
 const ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000
 const DUMMY_PASSWORD_HASH = hashPassword(`oauth-dummy:${randomBytes(32).toString('base64url')}`)
@@ -132,7 +132,7 @@ export function createAuthService({ repository, runtime, environment = process.e
     return inTransaction(async (session) => {
       let user
       try {
-        user = await repository.createUser({ emailNormalized, emailDisplay: email.trim(), passwordHash, role: 'user', status: 'active', topicPreferences: [], sessionVersion: 0 }, { session })
+        user = await repository.createUser({ emailNormalized, emailDisplay: email.trim(), passwordHash, role: 'user', status: 'active', topicPreferences: [], topicPreferenceIds: [], topicPreferenceTaxonomyVersion: TOPIC_TAXONOMY_VERSION, sessionVersion: 0 }, { session })
       } catch (error) {
         if (error?.code === 11000) throw new AuthError(409, 'conflict', 'Account already exists')
         throw error
@@ -200,8 +200,9 @@ export function createAuthService({ repository, runtime, environment = process.e
     if (!Array.isArray(topicPreferences) || new Set(topicPreferences).size !== topicPreferences.length || topicPreferences.length > 20 || topicPreferences.some((topic) => typeof topic !== 'string' || topic.length < 1 || topic.length > 64)) {
       throw new AuthError(422, 'validation_error', 'Topic preferences are invalid')
     }
+    const topicPreferenceIds = canonicalPreferenceIds(topicPreferences, { max: 20 })
     return inTransaction(async (session) => {
-      const updated = await repository.updatePreferences(auth.user._id, topicPreferences, { session, expectedSessionId: auth.session._id, expectedSessionVersion: auth.session.userSessionVersion })
+      const updated = await repository.updatePreferences(auth.user._id, topicPreferences, { session, expectedSessionId: auth.session._id, expectedSessionVersion: auth.session.userSessionVersion, topicPreferenceIds, topicPreferenceTaxonomyVersion: TOPIC_TAXONOMY_VERSION })
       if (!updated) throw new AuthError(401, 'unauthorized', 'Session is invalid or expired')
       await repository.insertAudit(createAuditEvent({ actor: auth.user, action: 'user_preferences_updated', targetId: auth.user._id, changedFields: ['topicPreferences'], reasonCode: 'preferences_updated', request }), { session })
       return serializeUser(updated)
@@ -342,7 +343,7 @@ export function createAuthService({ repository, runtime, environment = process.e
     if (!user) {
       return inTransaction(async (session) => {
         try {
-          user = await repository.createUser({ emailNormalized, emailDisplay: googleUser.email, passwordHash: await hashPassword(`oauth-dummy:${randomBytes(32).toString('base64url')}`), role: 'user', status: 'active', topicPreferences: [], sessionVersion: 0, googleSub: googleUser.sub }, { session })
+          user = await repository.createUser({ emailNormalized, emailDisplay: googleUser.email, passwordHash: await hashPassword(`oauth-dummy:${randomBytes(32).toString('base64url')}`), role: 'user', status: 'active', topicPreferences: [], topicPreferenceIds: [], topicPreferenceTaxonomyVersion: TOPIC_TAXONOMY_VERSION, sessionVersion: 0, googleSub: googleUser.sub }, { session })
         } catch (error) {
           if (error?.code === 11000) throw new AuthError(409, 'conflict', 'Account already exists')
           throw error

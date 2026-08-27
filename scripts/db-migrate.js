@@ -28,6 +28,7 @@ import {
 import { configureDns } from './configure-dns.js'
 import { migrationUriEnvName } from './migration-credential.js'
 import { buildGoogleOAuthMigration, runGoogleOAuthMigration, withGoogleOAuthAuditCompatibility } from './migrations/google-oauth.js'
+import { buildTopicTaxonomyMigration, runTopicTaxonomyMigration } from './migrations/topic-taxonomy-v1.js'
 
 configureDns()
 
@@ -37,9 +38,9 @@ const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 const summaryDetailWriterMode = args.has('--writers-paused') ? 'paused' : undefined
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1',
   )
   process.exitCode = 2
 } else {
@@ -76,6 +77,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? buildGovernanceMigration
               : target === 'google-oauth'
                 ? buildGoogleOAuthMigration
+              : target === 'topic-taxonomy-v1'
+                ? buildTopicTaxonomyMigration
                 : buildAuthCoreMigration
     const runMigration =
       target === 'sources'
@@ -100,6 +103,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? runGovernanceMigration
               : target === 'google-oauth'
                 ? runGoogleOAuthMigration
+              : target === 'topic-taxonomy-v1'
+                ? runTopicTaxonomyMigration
                 : runAuthCoreWithStep4Compatibility
     const plan = dryRun
       ? target === 'governance'
@@ -123,7 +128,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
           const context = await getMongoContext(runtime)
           await assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: context.db, target })
           const appDb = target === 'governance' ? withGoogleOAuthAuditCompatibility(context.db) : context.db
-          const plan = await runMigration({ db: appDb, ...(target === 'summary-detail-v1' ? { writerMode: summaryDetailWriterMode } : {}) })
+          const plan = await runMigration({ db: appDb, ...(['summary-detail-v1', 'topic-taxonomy-v1'].includes(target) ? { writerMode: summaryDetailWriterMode } : {}) })
           if (target === 'governance') {
             plan.push(...await runGovernanceHardeningMigration({ db: appDb }))
             plan.push(...await runGovernanceRetentionHardeningMigration({ db: appDb }))

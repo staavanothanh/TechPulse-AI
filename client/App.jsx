@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createApiClient } from '../shared/generated/api-client.js'
 import PublicApp from './features/public/index.js'
 import AdminRedesign from './features/admin/ui/AdminShell.jsx'
@@ -25,6 +25,12 @@ const EMPTY_SESSION = Object.freeze({
   error: null,
   notice: null,
 })
+
+function sessionIdentity(session) {
+  if (session?.status !== 'ready' || !session?.user) return 'guest'
+  const userId = session.user.id ?? session.user._id ?? 'unknown'
+  return `${session.user.role ?? 'user'}:${userId}${session.csrfToken ? `:${session.csrfToken}` : ''}`
+}
 
 function PublicSurface({
   api,
@@ -99,11 +105,23 @@ export default function App() {
     notice: null,
   })
 
+  const sessionEpochRef = useRef(0)
+  const sessionIdentityRef = useRef(sessionIdentity(session))
+  useLayoutEffect(() => {
+    sessionIdentityRef.current = sessionIdentity(session)
+  }, [session])
+  const beginSessionTransition = useCallback(() => {
+    sessionEpochRef.current += 1
+    return sessionEpochRef.current
+  }, [])
+  const isSessionTransitionCurrent = useCallback((epoch) => epoch === sessionEpochRef.current, [])
+
   const loadSession = useCallback((isActive = () => true) => {
+    const requestEpoch = sessionEpochRef.current
     void api
       .getCurrentUser({ credentials: 'same-origin' })
       .then((response) => {
-        if (isActive())
+        if (isActive() && requestEpoch === sessionEpochRef.current)
           setSession({
             status: 'ready',
             user: response.data.user,
@@ -113,7 +131,7 @@ export default function App() {
           })
       })
       .catch((error) => {
-        if (isActive()) setSession(recoverBootstrapSession(error))
+        if (isActive() && requestEpoch === sessionEpochRef.current) setSession(recoverBootstrapSession(error))
       })
   }, [])
 
@@ -125,7 +143,9 @@ export default function App() {
     }
   }, [loadSession])
 
-  const applySession = useCallback((nextUser, nextCsrfToken, nextNotice = null) => {
+  const applySession = useCallback((nextUser, nextCsrfToken, nextNotice = null, expectedTransition) => {
+    if (expectedTransition !== undefined && expectedTransition !== sessionEpochRef.current) return false
+    sessionEpochRef.current += 1
     setSession({
       status: 'ready',
       user: nextUser ?? null,
@@ -141,11 +161,14 @@ export default function App() {
       notice: nextNotice,
     }))
     if (!nextUser) setPublicRoute('feed')
+    return true
   }, [])
 
   const expireSession = useCallback(
-    (notice) => {
-      applySession(null, null, notice)
+    (notice, expectedIdentity, expectedEpoch) => {
+      if (expectedIdentity !== undefined && expectedIdentity !== sessionIdentityRef.current) return false
+      if (expectedEpoch !== undefined && expectedEpoch !== sessionEpochRef.current) return false
+      return applySession(null, null, notice)
     },
     [applySession],
   )
@@ -156,14 +179,26 @@ export default function App() {
         api,
         getCsrfToken: () => session.csrfToken,
         applySession,
+        commitSession: (nextUser, nextCsrfToken, nextNotice, expectedTransition) => applySession(nextUser, nextCsrfToken, nextNotice, expectedTransition),
+        beginSessionTransition,
+        isSessionTransitionCurrent,
       }),
-    [applySession, session.csrfToken],
+    [applySession, beginSessionTransition, isSessionTransitionCurrent, session.csrfToken],
   )
-  const adminApi = useMemo(() => withSessionRecovery(api, expireSession), [expireSession])
+  const adminApi = useMemo(
+    () => withSessionRecovery(api, expireSession, {
+      getSessionIdentity: () => sessionIdentityRef.current,
+      isSessionIdentityCurrent: (identity) => identity === sessionIdentityRef.current,
+      getSessionEpoch: () => sessionEpochRef.current,
+      isSessionEpochCurrent: (epoch) => epoch === sessionEpochRef.current,
+    }),
+    [expireSession],
+  )
 
   const publicSession = publicSessionForRole(session)
 
   async function authenticate(credentials) {
+    const expectedEpoch = sessionEpochRef.current + 1
     setAuth((current) => ({
       ...current,
       busy: true,
@@ -174,6 +209,7 @@ export default function App() {
     try {
       await accountActions.authenticate(credentials)
     } catch (error) {
+      if (expectedEpoch !== sessionEpochRef.current) return
       setAuth((current) => ({
         ...current,
         busy: false,
@@ -185,6 +221,7 @@ export default function App() {
   }
 
   async function authenticateWithGoogle() {
+    const expectedEpoch = sessionEpochRef.current + 1
     setAuth((current) => ({
       ...current,
       busy: true,
@@ -195,6 +232,7 @@ export default function App() {
     try {
       await accountActions.authenticateWithGoogle()
     } catch (error) {
+      if (expectedEpoch !== sessionEpochRef.current) return
       setAuth((current) => ({
         ...current,
         busy: false,
@@ -206,6 +244,7 @@ export default function App() {
   }
 
   function retrySession() {
+    beginSessionTransition()
     setSession(EMPTY_SESSION)
     loadSession()
   }
@@ -222,6 +261,13 @@ export default function App() {
     )
   }, [])
 
+  const surfaceIdentity = sessionIdentity(session)
+  const surfaceEpoch = sessionEpochRef.current
+  const guardedSurfaceExpire = useCallback(
+    (notice, requestIdentity, requestEpoch) => expireSession(notice, requestIdentity ?? surfaceIdentity, requestEpoch ?? surfaceEpoch),
+    [expireSession, surfaceEpoch, surfaceIdentity],
+  )
+
   const surface = sessionSurface(session)
   if (surface === 'admin') {
     return (
@@ -230,7 +276,7 @@ export default function App() {
         session={session}
         route={normalizeAdminRoute(adminRoute)}
         onNavigate={(route) => setAdminRoute(normalizeAdminRoute(route))}
-        onSessionExpired={expireSession}
+        onSessionExpired={guardedSurfaceExpire}
         onLogout={() => applySession(null, null, null)}
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -248,7 +294,7 @@ export default function App() {
       onThemeToggle={toggleTheme}
       onNavigate={(route) => setPublicRoute(normalizePublicRoute(route))}
       onRetrySession={retrySession}
-      onSessionExpired={expireSession}
+      onSessionExpired={guardedSurfaceExpire}
       onAuthSubmit={authenticate}
       onGoogleLogin={authenticateWithGoogle}
       onAuthModeChange={(mode) => setAuth((current) => ({ ...current, mode, error: null }))}

@@ -11,6 +11,7 @@ import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
 import { QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../scripts/migrations/qa-evidence-fence.js'
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../scripts/migrations/summary-detail-v1.js'
+import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -50,12 +51,17 @@ export async function assertQaEvidenceFenceReady(context) {
   const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
   const byName = new Map(collections.map((collection) => [collection.name, collection]))
   const expected = new Map([
-    ['articles', SUMMARY_DETAIL_ARTICLE_VALIDATOR],
-    ['sources', QA_EVIDENCE_FENCE_SOURCE_VALIDATOR],
+    ['articles', [SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]],
+    ['sources', [QA_EVIDENCE_FENCE_SOURCE_VALIDATOR]],
   ])
-  for (const [name, validator] of expected) {
+  for (const [name, validators] of expected) {
     const actual = byName.get(name)
-    if (!actual || actual.options?.validationLevel !== 'strict' || actual.options?.validationAction !== 'error' || stableJson(actual.options?.validator) !== stableJson(validator)) throw new Error(`QA evidence fence is not ready for ${name}`)
+    const validatorMatches = validators.some((validator) => stableJson(actual?.options?.validator) === stableJson(validator))
+    if (!actual || actual.options?.validationLevel !== 'strict' || actual.options?.validationAction !== 'error' || !validatorMatches) throw new Error(`QA evidence fence is not ready for ${name}`)
+    if (name === 'articles' && stableJson(actual.options?.validator) === stableJson(TOPIC_TAXONOMY_ARTICLE_VALIDATOR)) {
+      const indexes = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
+      if (TOPIC_TAXONOMY_ARTICLE_INDEXES.some((expectedIndex) => !exactMongoIndex(indexes.get(expectedIndex.name), expectedIndex))) throw new Error('QA taxonomy article indexes are not ready')
+    }
   }
 }
 

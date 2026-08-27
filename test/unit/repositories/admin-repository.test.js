@@ -101,10 +101,30 @@ describe('MongoAdminRepository', () => {
     const fixture = createContext({ findOne: { adminAuditLogs: [null] } })
     const input = { actor, targetId: articleId, reasonCode: 'article_topics_changed', changedFields: ['topics'], request: { requestId: 'req-1' }, now }
     await expect(fixture.repository.insertAdminAudit(input)).resolves.toEqual(expect.objectContaining({ action: 'article_topics_changed', targetId: articleId }))
-    const replay = createContext({ findOne: { adminAuditLogs: [{ eventId: 'existing' }] } })
-    await expect(replay.repository.insertAdminAudit(input)).resolves.toEqual({ eventId: 'existing' })
+    const existing = fixture.collections.get('adminAuditLogs').insertOne.mock.calls[0][0]
+    const replay = createContext({ findOne: { adminAuditLogs: [existing] } })
+    await expect(replay.repository.insertAdminAudit(input)).resolves.toEqual(existing)
     await expect(fixture.repository.insertAdminAudit({ ...input, reasonCode: 'invalid' })).rejects.toThrow(/allowlisted/i)
     await expect(fixture.repository.insertAdminAudit({ ...input, request: {} })).rejects.toThrow(/identity/i)
+  })
+
+  it('checks the active session and user lifecycle fence before admin work', async () => {
+    const fixture = createContext({ updateResults: { sessions: [{ matchedCount: 1 }], users: [{ matchedCount: 1 }] } })
+    await expect(fixture.repository.assertActiveSessionForUser({ sessionId, userId: adminId, sessionVersion: 3, role: 'admin', now })).resolves.toBe(true)
+    expect(fixture.collections.get('sessions').updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: sessionId, userId: adminId, userSessionVersion: 3, status: 'active' }),
+      expect.objectContaining({ $set: { lastSeenAt: now } }),
+      {},
+    )
+    expect(fixture.collections.get('users').updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: adminId, status: 'active', sessionVersion: 3, role: 'admin' }),
+      expect.objectContaining({ $set: { updatedAt: now } }),
+      {},
+    )
+
+    const stale = createContext({ updateResults: { sessions: [{ matchedCount: 0 }] } })
+    await expect(stale.repository.assertActiveSessionForUser({ sessionId, userId: adminId, sessionVersion: 3, role: 'admin', now })).resolves.toBe(false)
+    expect(stale.collections.get('users')).toBeUndefined()
   })
 
   it('lists admin articles and audit logs with cursor boundaries', async () => {
@@ -130,7 +150,7 @@ describe('MongoAdminRepository', () => {
     })
     const reserve = vi.fn(async () => ({ allowed: true }))
     await expect(fixture.repository.updateAdminArticle(articleId, { category: 'topics', value: ['ai', 'technology'], actorFence: actorFence(), actor, request: { requestId: 'req-1' }, rateLimitAdmission: { reserve }, reasonCode: 'article_topics_changed' })).resolves.toEqual(current)
-    expect(fixture.collections.get('articles').updateOne).toHaveBeenCalled()
+    expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ $set: expect.objectContaining({ topics: ['ai', 'technology'], topicIds: expect.arrayContaining(['ai-ml']), topicTaxonomyVersion: 1 }) }), expect.anything())
     expect(fixture.collections.get('indexingJobs').updateOne).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ $setOnInsert: expect.any(Object) }), expect.objectContaining({ upsert: true, session: fixture.session }))
 
     const media = createContext({ findOne: { articles: [article(articleId, { leadMedia: null })] } })

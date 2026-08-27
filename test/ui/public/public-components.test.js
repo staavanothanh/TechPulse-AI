@@ -273,4 +273,35 @@ describe('public feature presentation contract', () => {
     expect(html).toContain('>DevOps</span>')
     expect(html).toContain('>Dữ liệu</span>')
   })
+  it('renders all eight product domains in AccountView and activates buttons for old aliases', () => {
+    const account = render(AccountView, {
+      user: { id: 'u-1', email: 'reader@example.com', role: 'user', topicPreferences: ['AI', 'Robot', 'Security', 'CustomTopic'] },
+      onSavePreferences: handlers.onSubmit,
+    })
+
+    // All 8 parent domains should be present
+    expect(account).toContain('AI')
+    expect(account).toContain('AI Agent')
+    expect(account).toContain('Robotics')
+    expect(account).toContain('Software Engineering')
+    expect(account).toContain('DevOps')
+    expect(account).toContain('Bảo mật')
+    expect(account).toContain('Dữ liệu')
+    expect(account).toContain('Blockchain')
+
+    // 'Robot' should activate 'Robotics', 'Security' should activate 'Bảo mật', 'AI' should activate 'AI'
+    expect(account).toMatch(/aria-pressed="true"[^>]*>Robotics/)
+    expect(account).toMatch(/aria-pressed="true"[^>]*>Bảo mật/)
+    expect(account).toMatch(/aria-pressed="true"[^>]*>AI/)
+  })
+  it('marks Q&A topic buttons active when scope uses legacy aliases', () => {
+    const html = render(QaView, {
+      state: 'empty',
+      scope: { topics: ['robot', 'security'] },
+      topics: ['Robotics', 'Bảo mật'],
+      onAsk: handlers.onSubmit,
+    })
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Robotics/)
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Bảo mật/)
+  })
 })

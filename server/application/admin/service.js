@@ -17,6 +17,16 @@ function requireAdmin(auth) {
   return auth.user
 }
 
+async function requireLiveAdmin(auth, repository) {
+  const user = requireAdmin(auth)
+  const sessionId = auth.session?._id ?? auth.session?.id
+  const sessionVersion = auth.session?.userSessionVersion
+  if (!sessionId || !Number.isInteger(sessionVersion)) throw new AdminGovernanceError(401, 'unauthorized', 'Active administrator session is required')
+  if (typeof repository.assertActiveSessionForUser !== 'function') throw new AdminGovernanceError(503, 'service_unavailable', 'Admin session verification is unavailable')
+  if (!await repository.assertActiveSessionForUser({ sessionId, userId: user._id ?? user.id, sessionVersion, role: 'admin' })) throw new AdminGovernanceError(401, 'unauthorized', 'Session is no longer active')
+  return user
+}
+
 function articleId(value) {
   if (typeof value !== 'string' || !ObjectId.isValid(value) || new ObjectId(value).toHexString() !== value.toLowerCase()) throw new AdminGovernanceError(400, 'bad_request', 'Article identifier is invalid')
   return value.toLowerCase()
@@ -137,7 +147,6 @@ function safeAudit(value) {
 function validateArticlePatch(patch = {}) {
   const categories = [['status', 'article_status_changed'], ['topics', 'article_topics_changed'], ['leadMediaStatus', 'article_media_visibility_changed']].filter(([field]) => Object.hasOwn(patch, field))
   if (categories.length !== 1 || patch.reasonCode !== categories[0][1]) throw new AdminGovernanceError(422, 'validation_error', 'Exactly one article mutation category and matching reasonCode are required')
-  if (categories[0][0] === 'topics' && (!Array.isArray(patch.topics) || patch.topics.length === 0 || patch.topics.length > 20 || new Set(patch.topics).size !== patch.topics.length || patch.topics.some((topic) => typeof topic !== 'string' || topic.length < 1 || topic.length > 64))) throw new AdminGovernanceError(422, 'validation_error', 'Article topics are invalid')
   return categories[0][0]
 }
 
@@ -146,36 +155,39 @@ function unavailable() { throw new AdminGovernanceError(503, 'service_unavailabl
 export function createAdminGovernanceService({ repository, rateLimitAdmission } = {}) {
   const repo = repository ?? {}
   return Object.freeze({
-    async getAdminOverview({ auth } = {}) { requireAdmin(auth); return safeOverview(await (repo.getOverview ?? unavailable).call(repo)) },
+    async getAdminOverview({ auth } = {}) {
+      await requireLiveAdmin(auth, repo)
+      return safeOverview(await (repo.getOverview ?? unavailable).call(repo))
+    },
     async listAdminArticles({ auth, query } = {}) {
-      requireAdmin(auth)
+      await requireLiveAdmin(auth, repo)
       const result = await (repo.listAdminArticles ?? unavailable).call(repo, query)
       return { articles: (result?.articles ?? []).map((item) => safeArticle(item)), hasNext: Boolean(result?.hasNext), nextCursor: result?.nextCursor ?? null }
     },
     async getAdminArticle({ auth, articleId: value } = {}) {
-      requireAdmin(auth)
+      await requireLiveAdmin(auth, repo)
       const item = await (repo.findAdminArticle ?? unavailable).call(repo, articleId(value))
       if (!item) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(item, true)
     },
     async updateAdminArticle({ auth, articleId: value, patch, request } = {}) {
-      requireAdmin(auth)
+      const user = await requireLiveAdmin(auth, repo)
       const id = articleId(value)
       const category = validateArticlePatch(patch)
-      const item = await (repo.updateAdminArticle ?? unavailable).call(repo, id, { category, value: patch[category], reasonCode: patch.reasonCode, actor: auth.user, actorFence: { userId: auth.user.id ?? auth.user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request, rateLimitAdmission })
+      const item = await (repo.updateAdminArticle ?? unavailable).call(repo, id, { category, value: patch[category], reasonCode: patch.reasonCode, actor: user, actorFence: { userId: user.id ?? user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request, rateLimitAdmission })
       if (!item) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(item)
     },
     async mergeDuplicateArticles({ auth, input, idempotencyKey, request } = {}) {
-      requireAdmin(auth)
+      const user = await requireLiveAdmin(auth, repo)
       if (!input || typeof input.canonicalArticleId !== 'string' || !Array.isArray(input.duplicateArticleIds) || input.reasonCode !== 'duplicate_merge_confirmed') throw new AdminGovernanceError(422, 'validation_error', 'Duplicate merge request is invalid')
       if (!idempotencyKey) throw new AdminGovernanceError(400, 'bad_request', 'Idempotency-Key is invalid')
-      const result = await (repo.mergeDuplicateArticles ?? unavailable).call(repo, { ...input, idempotencyKey, actor: auth.user, actorFence: { userId: auth.user.id ?? auth.user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request: { serverRequestId: request?.requestId ?? request?.serverRequestId, idempotencyKey }, rateLimitAdmission, reasonCode: input.reasonCode })
+      const result = await (repo.mergeDuplicateArticles ?? unavailable).call(repo, { ...input, idempotencyKey, actor: user, actorFence: { userId: user.id ?? user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request: { serverRequestId: request?.requestId ?? request?.serverRequestId, idempotencyKey }, rateLimitAdmission, reasonCode: input.reasonCode })
       if (!result?.canonical) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(result.canonical)
     },
     async listAuditLogs({ auth, query } = {}) {
-      requireAdmin(auth)
+      await requireLiveAdmin(auth, repo)
       const result = await (repo.listAuditLogs ?? unavailable).call(repo, query)
       return { logs: (result?.logs ?? []).map(safeAudit), hasNext: Boolean(result?.hasNext), nextCursor: result?.nextCursor ?? null }
     },

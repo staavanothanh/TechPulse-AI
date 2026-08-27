@@ -105,11 +105,13 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       import('../security/rate-limit-admission.js'),
       import('./schema-readiness.js'),
     ])
-    const verifySchema = createReleaseVerifiedSchemaVerifier('auth-core', environment)
+    const verifyAuthSchema = createReleaseVerifiedSchemaVerifier('auth-core', environment)
+    const verifyTaxonomySchema = createReleaseVerifiedSchemaVerifier('topic-taxonomy-v1', environment)
+    const verifySchema = async (context) => {
+      await verifyAuthSchema(context)
+      await verifyTaxonomySchema(context)
+    }
     // Do not evaluate the optional OAuth attestation until OAuth is enabled.
-    // createReleaseVerifiedSchemaVerifier validates immediately, so creating
-    // it unconditionally would block password auth on deployments that have
-    // not opted into Google OAuth yet.
     const verifyOAuthSchema = googleOAuthEnvironmentConfigured(environment)
       ? createReleaseVerifiedSchemaVerifier('google-oauth', environment)
       : async () => undefined
@@ -124,7 +126,12 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       import('./content.js'),
       import('./schema-readiness.js'),
     ])
-    const verifySchema = createReleaseVerifiedSchemaVerifier('articles', environment)
+    const verifyArticlesSchema = createReleaseVerifiedSchemaVerifier('articles', environment)
+    const verifyTaxonomySchema = createReleaseVerifiedSchemaVerifier('topic-taxonomy-v1', environment)
+    const verifySchema = async (context) => {
+      await verifyArticlesSchema(context)
+      await verifyTaxonomySchema(context)
+    }
     return createConfiguredContentServices({ context: common.context, queryEmbedding, verifySchema })
   }
   factories.sources = async ({ common }) => {
@@ -173,7 +180,12 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       import('./indexing.js'),
       import('./schema-readiness.js'),
     ])
-    const verifySchema = createReleaseVerifiedSchemaVerifier('indexing-jobs', environment)
+    const verifyIndexingSchema = createReleaseVerifiedSchemaVerifier('indexing-jobs', environment)
+    const verifyTaxonomySchema = createReleaseVerifiedSchemaVerifier('topic-taxonomy-v1', environment)
+    const verifySchema = async (context) => {
+      await verifyIndexingSchema(context)
+      await verifyTaxonomySchema(context)
+    }
     const verifyProviderSchema = createReleaseVerifiedSchemaVerifier('provider-routing-v2', environment)
     const providerAdapters = createConfiguredProviderAdapters({
       registry: common.runtime.providerRegistry,
@@ -200,8 +212,10 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
     const verifyChatSchema = createReleaseVerifiedSchemaVerifier('chat-sessions', environment)
     const verifyProviderSchema = createReleaseVerifiedSchemaVerifier('provider-routing-v2', environment)
     const verifyEvidenceAttestation = createReleaseVerifiedSchemaVerifier('summary-detail-v1', environment)
+    const verifyTaxonomySchema = createReleaseVerifiedSchemaVerifier('topic-taxonomy-v1', environment)
     const verifyEvidenceSchema = async (context) => {
       await verifyEvidenceAttestation(context)
+      await verifyTaxonomySchema(context)
       await assertQaEvidenceFenceReady(context)
     }
     return createConfiguredQaService({
@@ -222,7 +236,12 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       import('./admin.js'),
       import('./schema-readiness.js'),
     ])
-    const verifySchema = createReleaseVerifiedSchemaVerifier('governance', environment)
+    const verifyGovernanceSchema = createReleaseVerifiedSchemaVerifier('governance', environment)
+    const verifyTaxonomySchema = createReleaseVerifiedSchemaVerifier('topic-taxonomy-v1', environment)
+    const verifySchema = async (context, options) => {
+      await verifyGovernanceSchema(context, options)
+      await verifyTaxonomySchema(context, options)
+    }
     return createConfiguredAdminGovernanceService({
       context: common.context,
       rateLimitAdmission: common.rateLimitAdmission,

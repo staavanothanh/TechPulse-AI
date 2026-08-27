@@ -16,6 +16,10 @@ describe('article dedupe and provenance', () => {
     expect(merged.provenance).toHaveLength(2)
     expect(mergeProvenance(first.provenance, second.provenance)).toEqual(merged.provenance)
     expect(merged.provenance.map(({ sourceId }) => sourceId)).toEqual([SOURCE_ID, OTHER_SOURCE_ID])
+    expect(merged.topics).toContain('ai')
+    expect(merged.topics).toContain('safety')
+    expect(merged.topicIds).toContain('ai-ml')
+    expect(merged.topicTaxonomyVersion).toBe(1)
   })
 
   it('sends near-title candidates with different canonical URLs to review-needed instead of auto-merging', () => {
@@ -35,5 +39,35 @@ describe('article dedupe and provenance', () => {
     expect(merged).not.toHaveProperty('body')
     expect(merged).not.toHaveProperty('mediaBinary')
     expect(JSON.stringify(merged)).not.toContain('secret')
+  })
+
+  it('immutably unions canonical topicIds and version across duplicate records', () => {
+    const canonical = {
+      _id: '1',
+      titleOriginal: 'Robotics and AI',
+      topics: ['ai', 'safety'],
+      topicIds: ['ai-ml'],
+      topicTaxonomyVersion: 1,
+      provenance: [],
+      updatedAt: new Date('2026-08-10T00:00:00.000Z'),
+    }
+    const duplicate = {
+      _id: '2',
+      titleOriginal: 'Robotics and AI',
+      topics: ['ai', 'robot'],
+      topicIds: ['robotics'],
+      topicTaxonomyVersion: 1,
+      provenance: [],
+      updatedAt: new Date('2026-08-10T01:00:00.000Z'),
+    }
+    const merged = mergeArticleRecords(canonical, duplicate)
+
+    expect(merged.topics).toEqual(['ai', 'robot', 'safety'])
+    expect(merged.topicIds).toContain('ai-ml')
+    expect(merged.topicIds).toContain('robotics')
+    expect(merged.topicTaxonomyVersion).toBe(1)
+    expect(Object.isFrozen(merged)).toBe(true)
+    expect(Object.isFrozen(merged.topics)).toBe(true)
+    expect(Object.isFrozen(merged.topicIds)).toBe(true)
   })
 })

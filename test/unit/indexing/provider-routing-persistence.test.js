@@ -22,6 +22,8 @@ import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../../scripts
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../../scripts/migrations/article-governance-hardening.js'
 import { ARTICLE_INDEXES } from '../../../scripts/migrations/articles.js'
 import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
+import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../../scripts/migrations/summary-detail-v1.js'
+import { TOPIC_TAXONOMY_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_USERS_VALIDATOR } from '../../../scripts/migrations/topic-taxonomy-v1.js'
 
 const now = new Date('2026-08-15T00:00:00.000Z')
 const failureDomain = Object.freeze({
@@ -149,8 +151,40 @@ describe('ADR-0013 provider-routing persistence migration', () => {
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'indexing-jobs' })).rejects.toThrow(/downgrade/i)
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'chat-sessions' })).rejects.toThrow(/downgrade/i)
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'sources' })).rejects.toThrow(/downgrade/i)
+    await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'auth-core' })).resolves.toBeUndefined()
+    await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'google-oauth' })).resolves.toBeUndefined()
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'governance' })).resolves.toBeUndefined()
     await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'provider-routing-v2' })).resolves.toBeUndefined()
+  })
+  it('blocks older auth, article, and composite targets after taxonomy is installed', async () => {
+    const installed = {
+      listCollections: vi.fn(() => ({ toArray: async () => [
+        { name: 'articles', options: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR } },
+        { name: 'users', options: { validator: TOPIC_TAXONOMY_USERS_VALIDATOR } },
+      ] })),
+    }
+    for (const target of ['auth-core', 'google-oauth', 'articles', 'summary-detail-v1', 'governance']) {
+      await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target })).rejects.toThrow(/topic-taxonomy/i)
+    }
+    await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'topic-taxonomy-v1' })).resolves.toBeUndefined()
+  })
+
+  it('allows provider and QA reruns while blocking governance downgrade after successor install', async () => {
+    const installed = {
+      listCollections: vi.fn(() => ({ toArray: async () => [{ name: 'articles', options: { validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } }] })),
+    }
+    await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'provider-routing-v2' })).resolves.toBeUndefined()
+    await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'qa-evidence-fence' })).resolves.toBeUndefined()
+    await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target: 'governance' })).rejects.toThrow(/successor article schema/i)
+  })
+
+  it('blocks provider, QA and governance reruns after summary-detail is installed', async () => {
+    const installed = {
+      listCollections: vi.fn(() => ({ toArray: async () => [{ name: 'articles', options: { validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR } }] })),
+    }
+    for (const target of ['provider-routing-v2', 'qa-evidence-fence', 'governance']) {
+      await expect(assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: installed, target })).rejects.toThrow(/successor article schema/i)
+    }
   })
 
   it('persists bounded cutover intent and resets a processing source whose cursor passed the article', async () => {

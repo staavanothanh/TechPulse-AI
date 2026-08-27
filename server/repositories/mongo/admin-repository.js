@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb'
 import { createHash } from 'node:crypto'
 import { indexingJobDocument } from './indexing-job-repository.js'
 import { canonicalRequestHash } from '../../domain/jobs/idempotency.js'
+import { canonicalTopicIds, TOPIC_TAXONOMY_VERSION } from '../../../shared/topic-catalog.js'
 
 const ARTICLE_PROJECTION = Object.freeze({
   _id: 1, sourceId: 1, titleOriginal: 1, originalUrl: 1, status: 1, topics: 1, provenance: 1, rightsSnapshot: 1,
@@ -73,6 +74,17 @@ function encodeAuditCursor(value) { return Buffer.from(JSON.stringify({ id: valu
 function adminAuditEventId({ reasonCode, targetId, requestId, actorId, eventIdentity = requestId }) {
   return `admin:${createHash('sha256').update(`${reasonCode}\u0000${String(targetId)}\u0000${String(eventIdentity)}\u0000${String(actorId)}`).digest('hex')}`
 }
+function auditIdentityMatches(existing, expected) {
+  return String(existing?.eventId) === String(expected.eventId)
+    && String(existing?.actorId) === String(expected.actorId)
+    && existing?.action === expected.action
+    && existing?.targetType === expected.targetType
+    && String(existing?.targetId) === String(expected.targetId)
+    && existing?.reasonCode === expected.reasonCode
+    && String(existing?.requestId) === String(expected.requestId)
+    && JSON.stringify(existing?.changedFields ?? []) === JSON.stringify(expected.changedFields ?? [])
+}
+
 
 function deterministicObjectId(identity) {
   return new ObjectId(createHash('sha256').update(identity).digest('hex').slice(0, 24))
@@ -115,6 +127,15 @@ export class MongoAdminRepository {
   ingestionJobs() { return this.collection('ingestionJobs') }
   indexingJobs() { return this.collection('indexingJobs') }
   users() { return this.collection('users') }
+  sessions() { return this.collection('sessions') }
+
+  async assertActiveSessionForUser({ sessionId, userId, sessionVersion, role, now = this.clock() } = {}, options = {}) {
+    const mongoOptions = options.session ? { session: options.session } : {}
+    const touchedSession = await this.sessions().updateOne({ _id: objectId(sessionId), userId: objectId(userId), userSessionVersion: sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, { $set: { lastSeenAt: now } }, mongoOptions)
+    if (touchedSession.matchedCount !== 1) return false
+    const touchedUser = await this.users().updateOne({ _id: objectId(userId), status: 'active', sessionVersion, ...(role ? { role } : {}) }, { $set: { updatedAt: now } }, mongoOptions)
+    return touchedUser.matchedCount === 1
+  }
   auditLogs() { return this.collection('adminAuditLogs') }
 
   async insertAdminAudit({ actor, targetId, reasonCode, changedFields, request, now } = {}, session) {
@@ -130,7 +151,10 @@ export class MongoAdminRepository {
     const eventId = adminAuditEventId({ reasonCode, targetId, requestId, actorId, eventIdentity: request?.eventIdentity })
     const document = { _id: new ObjectId(), eventId, actorType: 'admin', actorId: objectId(actorId), action: reasonCode, targetType: 'article', targetId: objectId(targetId), changedFields: [...changedFields], reasonCode, requestId: String(requestId), result: 'succeeded', createdAt: date(now ?? this.clock()) }
     const existing = await this.auditLogs().findOne({ eventId }, { session })
-    if (existing) return existing
+    if (existing) {
+      if (!auditIdentityMatches(existing, document)) throw new Error('Admin audit identity collision')
+      return existing
+    }
     await this.auditLogs().insertOne(document, { session })
     return document
   }
@@ -195,7 +219,11 @@ export class MongoAdminRepository {
     if (!current) return null
     const now = date(this.clock(), 'Article update date')
     const set = { updatedAt: now }
-    if (category === 'topics') set.topics = [...nextValue]
+    if (category === 'topics') {
+      set.topics = [...nextValue]
+      set.topicIds = canonicalTopicIds(nextValue, { includeAncestors: true })
+      set.topicTaxonomyVersion = TOPIC_TAXONOMY_VERSION
+    }
     else if (category === 'leadMediaStatus') {
       if (!['available', 'hidden'].includes(nextValue) || nextValue === 'available' && !current.leadMedia) { const error = new Error('Media state is invalid'); error.status = 409; error.code = 'conflict'; throw error }
       set.leadMediaStatus = nextValue
@@ -231,7 +259,7 @@ export class MongoAdminRepository {
         const job = reconciliationJob({ article: transactionalArticle, source, category, nextValue, actorFence, request, now })
         await jobs.updateOne({ actorScope: job.actorScope, idempotencyKey: job.idempotencyKey }, { $setOnInsert: job }, { upsert: true, session })
       }
-      await this.insertAdminAudit({ actor, targetId: _id, reasonCode, changedFields: [category], request, now }, session)
+      await this.insertAdminAudit({ actor, targetId: _id, reasonCode, changedFields: [category], request: { requestId: request?.requestId, serverRequestId: request?.serverRequestId, idempotencyKey: request?.idempotencyKey, eventIdentity: canonicalRequestHash({ operation: 'admin-article-update', articleId: _id.toHexString(), category, value: nextValue, reasonCode }) }, now }, session)
       return this.findAdminArticle(_id, { session })
     })
   }

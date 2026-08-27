@@ -1,30 +1,12 @@
-export const TOPICS = Object.freeze([
-  'AI',
-  'JavaScript',
-  'Blockchain',
-  'DevOps',
-  'Bảo mật',
-  'Dữ liệu',
-])
+import {
+  topicLabel as catalogTopicLabel,
+  topicOptions,
+} from '../../../../shared/topic-catalog.js'
 
-const TOPIC_LABELS = Object.freeze({
-  ai: 'AI',
-  javascript: 'JavaScript',
-  blockchain: 'Blockchain',
-  devops: 'DevOps',
-  'dev ops': 'DevOps',
-  'dev-ops': 'DevOps',
-  'bảo mật': 'Bảo mật',
-  security: 'Bảo mật',
-  'dữ liệu': 'Dữ liệu',
-  data: 'Dữ liệu',
-  database: 'Dữ liệu',
-})
+export const TOPICS = topicOptions({ kind: 'parent', status: 'active', locale: 'vi' })
 
 export function topicLabel(topic) {
-  if (typeof topic !== 'string') return ''
-  const normalized = topic.trim().toLocaleLowerCase('vi')
-  return TOPIC_LABELS[normalized] ?? topic.trim()
+  return catalogTopicLabel(topic, 'vi')
 }
 
 export const EMPTY_FILTERS = Object.freeze({

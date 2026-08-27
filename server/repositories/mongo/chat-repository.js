@@ -82,6 +82,13 @@ function citedEvidenceTargets({ answer, citations, expectedEvidenceFence }) {
 function encodeCursor(document) {
   return Buffer.from(JSON.stringify({ updatedAt: dateValue(document.updatedAt).toISOString(), id: idString(document._id) })).toString('base64url')
 }
+function summaryMessageCount(document) {
+  const messages = Array.isArray(document?.messages) ? document.messages : null
+  if (!messages || messages.length > 30 || !Number.isInteger(document.messageCount) || document.messageCount !== messages.length) {
+    throw conflictError('Chat session message count is invalid')
+  }
+  return messages.length
+}
 
 function decodeCursor(value) {
   if (value === undefined || value === null || value === '') return null
@@ -255,7 +262,7 @@ export class MongoChatRepository {
     const rows = await this.chatSessions().find(filter).sort({ updatedAt: -1, _id: -1 }).limit(limit + 1).toArray()
     const hasNext = rows.length > limit
     const page = hasNext ? rows.slice(0, limit) : rows
-    return { sessions: page.map((row) => ({ id: idString(row._id), title: row.title ?? null, updatedAt: dateValue(row.updatedAt).toISOString() })), hasNext, nextCursor: hasNext ? encodeCursor(page.at(-1)) : null }
+    return { sessions: page.map((row) => ({ id: idString(row._id), title: row.title ?? null, messageCount: summaryMessageCount(row), updatedAt: dateValue(row.updatedAt).toISOString() })), hasNext, nextCursor: hasNext ? encodeCursor(page.at(-1)) : null }
   }
 
   async getChatSession({ actor, userId, chatSessionId, now = this.clock() } = {}) {

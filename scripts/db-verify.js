@@ -42,6 +42,11 @@ import {
 } from './migrations/qa-evidence-fence.js'
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from './migrations/summary-detail-v1.js'
 import {
+  TOPIC_TAXONOMY_ARTICLE_VALIDATOR,
+  TOPIC_TAXONOMY_USERS_VALIDATOR,
+  TOPIC_TAXONOMY_ARTICLE_INDEXES,
+} from './migrations/topic-taxonomy-v1.js'
+import {
   actionsForCollection,
   probeAuditRoleCapabilities,
   probeHmacLifecycleRoleCapabilities,
@@ -280,9 +285,23 @@ async function probeQaEvidenceFenceRoleCapabilities({ client, db } = {}) {
   }
 }
 
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth'].includes(target)) {
+async function probeTopicTaxonomyRoleCapabilities({ client, db } = {}) {
+  const failed = { articleRuntime: false, userRuntime: false, transaction: false }
+  if (!client?.startSession || !db?.collection) return failed
+  const outcome = await runChatRoleTransaction(client, async (session) => {
+    const article = await db.collection('articles').updateOne({ _id: new ObjectId() }, { $set: { topicIds: [], topicTaxonomyVersion: 1 } }, { session })
+    const user = await db.collection('users').updateOne({ _id: new ObjectId() }, { $set: { topicPreferenceIds: [], topicPreferenceTaxonomyVersion: 1 } }, { session })
+    return { articleRuntime: article !== undefined, userRuntime: user !== undefined }
+  })
+  return {
+    articleRuntime: outcome.value?.articleRuntime === true && !outcome.operationFailed,
+    userRuntime: outcome.value?.userRuntime === true && !outcome.operationFailed,
+    transaction: outcome.transactionStarted && outcome.sessionHealthy,
+  }
+}
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth',
+    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1',
   )
   process.exitCode = 2
 } else {
@@ -326,6 +345,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                   }
               : target === 'summary-detail-v1'
                 ? { articles: { validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR } }
+              : target === 'topic-taxonomy-v1'
+                ? { articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }, users: { validator: TOPIC_TAXONOMY_USERS_VALIDATOR } }
               : target === 'governance'
                 ? { ...GOVERNANCE_COLLECTIONS, takedownRequests: { ...GOVERNANCE_COLLECTIONS.takedownRequests, validator: GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } }
               : target === 'google-oauth'
@@ -352,6 +373,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
               : target === 'google-oauth' ? GOOGLE_OAUTH_AUTH_INDEXES
               : target === 'summary-detail-v1'
                 ? { articles: ARTICLE_INDEXES.articles }
+              : target === 'topic-taxonomy-v1'
+                ? { articles: [...ARTICLE_INDEXES.articles, ...TOPIC_TAXONOMY_ARTICLE_INDEXES], users: AUTH_CORE_INDEXES.users }
               : AUTH_CORE_INDEXES
     verificationStage = 'schema-app'
     for (const name of Object.keys(expectedCollections)) {
@@ -377,12 +400,12 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 GOVERNANCE_AUDIT_VALIDATOR,
                 GOOGLE_OAUTH_AUDIT_VALIDATOR,
               ]
-            : (target === 'auth-core' || target === 'google-oauth') && name === 'users'
-              ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_COLLECTIONS.users.validator]
+            : (target === 'auth-core' || target === 'google-oauth' || target === 'topic-taxonomy-v1') && name === 'users'
+              ? [AUTH_CORE_COLLECTIONS[name]?.validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR].filter(Boolean)
             : target === 'articles' && name === 'articles'
-                ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR]
-              : target === 'summary-detail-v1' && name === 'articles'
-                ? [SUMMARY_DETAIL_ARTICLE_VALIDATOR]
+                ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
+              : (target === 'summary-detail-v1' || target === 'topic-taxonomy-v1') && name === 'articles'
+                ? [SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
               : target === 'provider-routing-v2' && name === 'articles'
                 ? [PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR]
               : target === 'sources' && name === 'sources'
@@ -405,7 +428,11 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       }
       const actualIndexes = await context.db.collection(name).indexes()
       const actualByName = new Map(actualIndexes.map((index) => [index.name, index]))
-      for (const index of expectedIndexes[name]) {
+      const expectedCollectionIndexes = [
+        ...(expectedIndexes[name] ?? []),
+        ...(target === 'topic-taxonomy-v1' && name === 'users' && actualByName.has('users_google_sub_unique') ? GOOGLE_OAUTH_INDEXES.users : []),
+      ]
+      for (const index of expectedCollectionIndexes) {
         const actual = actualByName.get(index.name)
         if (!actual) {
           missing.push(`${name}:index:${index.name}`)
@@ -548,6 +575,21 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
         { limit: 1 },
       )
       if (legacyDetailCount > 0) validatorProblems.push('articles:legacy-summary-detail')
+    }
+    if (target === 'topic-taxonomy-v1') {
+      verificationStage = 'topic-taxonomy-backfill'
+      const [articleResidue, userResidue] = await Promise.all([
+        context.db.collection('articles').countDocuments({
+          status: { $ne: 'removed' },
+          $or: [{ topicIds: { $not: { $type: 'array' } } }, { topicTaxonomyVersion: { $ne: 1 } }],
+        }, { limit: 1 }),
+        context.db.collection('users').countDocuments({
+          status: { $ne: 'deleted' },
+          $or: [{ topicPreferenceIds: { $not: { $type: 'array' } } }, { topicPreferenceTaxonomyVersion: { $ne: 1 } }],
+        }, { limit: 1 }),
+      ])
+      if (articleResidue > 0) validatorProblems.push('articles:legacy-topic-taxonomy')
+      if (userResidue > 0) validatorProblems.push('users:legacy-topic-taxonomy')
     }
     const plans =
       target === 'qa-evidence-fence' || target === 'summary-detail-v1'
@@ -843,6 +885,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                   ],
                   ['articles_search_text', 'articles', { $text: { $search: 'ai' } }],
                 ]
+              : target === 'topic-taxonomy-v1'
+                ? [
+                    ['articles_topic_ids_published_at', 'articles', { status: 'published', topicIds: 'ai-ml' }, { topicIds: 1, publishedAt: -1, _id: -1 }, 'articles_status_topic_ids_published_at'],
+                  ]
               : target === 'governance'
                 ? [
                     ['sources_admin_overview', 'sources', { operationalStatus: { $in: ['active', 'paused'] } }, undefined, 'sources_operational_overview'],
@@ -957,7 +1003,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       target === 'articles' ||
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
-      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'summary-detail-v1' || target === 'governance' || target === 'google-oauth'
+      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'summary-detail-v1' || target === 'topic-taxonomy-v1' || target === 'governance' || target === 'google-oauth'
         ? 'not-requested'
         : 'unavailable-local'
     const roleProblems = []
@@ -987,6 +1033,11 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
             ? [
                 { database: context.database, collection: 'articles', label: 'summary detail article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
               ]
+          : target === 'topic-taxonomy-v1'
+            ? [
+                { database: context.database, collection: 'articles', label: 'topic taxonomy article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
+                { database: context.database, collection: 'users', label: 'topic taxonomy user path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
+              ]
           : ['durable-jobs', 'indexing-jobs', 'indexing-drain-performance', 'chat-sessions'].includes(target)
             ? []
             : [
@@ -1007,14 +1058,20 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
           for (const action of forbidden)
             if (actions.has(action)) roleProblems.push(`${label} role has forbidden ${action}`)
         }
-        if (target === 'provider-routing-v2' && roleProblems.length === 0) roleStatus = 'verified'
+        if ((target === 'provider-routing-v2' || target === 'topic-taxonomy-v1') && roleProblems.length === 0) roleStatus = 'verified'
       } else if (requireRole && target === 'provider-routing-v2') {
         roleProblems.push('provider-routing role privileges unavailable')
+        roleStatus = 'unverified'
+      } else if (requireRole && target === 'topic-taxonomy-v1') {
+        roleProblems.push('topic-taxonomy role privileges unavailable')
         roleStatus = 'unverified'
       }
     } catch {
       if (requireRole && target === 'provider-routing-v2') {
         roleProblems.push('provider-routing role privileges unavailable')
+        roleStatus = 'unverified'
+      } else if (requireRole && target === 'topic-taxonomy-v1') {
+        roleProblems.push('topic-taxonomy role privileges unavailable')
         roleStatus = 'unverified'
       } else roleStatus = 'unavailable-local'
     }
@@ -1065,6 +1122,11 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
     } else if (requireRole && target === 'summary-detail-v1') {
       const probe = await probeQaEvidenceFenceRoleCapabilities(context)
       if (!probe.articleRuntime || !probe.transaction) roleProblems.push('summary detail article runtime capability failed')
+      roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
+    } else if (requireRole && target === 'topic-taxonomy-v1') {
+      const probe = await probeTopicTaxonomyRoleCapabilities(context)
+      for (const [capability, passed] of Object.entries(probe))
+        if (!passed) roleProblems.push(`topic-taxonomy runtime capability failed: ${capability}`)
       roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
     } else if (requireRole && target === 'governance') {
       verificationStage = 'governance-role-probe'

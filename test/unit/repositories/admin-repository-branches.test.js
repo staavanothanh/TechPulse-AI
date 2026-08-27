@@ -278,7 +278,7 @@ describe('MongoAdminRepository branch coverage', () => {
     })
     await expect(
       auditRace.repository.updateAdminArticle(ARTICLE_ID, updateInput()),
-    ).resolves.toMatchObject({ _id: ARTICLE_ID })
+    ).rejects.toThrow('audit identity collision')
     expect(auditRace.collections.adminAuditLogs.insertOne).not.toHaveBeenCalled()
   })
 

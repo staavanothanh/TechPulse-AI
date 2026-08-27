@@ -60,6 +60,9 @@ describe('application role and route policy', () => {
     expect(publicSessionKey({ status: 'ready', user: { id: 'reader-two', role: 'user' } })).toBe(
       'user:reader-two',
     )
+    expect(publicSessionKey({ status: 'ready', user: { id: 'reader-one', role: 'user' }, csrfToken: 'csrf-next' })).toBe(
+      'user:reader-one:csrf-next',
+    )
     expect(publicSessionKey({ status: 'loading', user: null })).toBe('guest')
   })
 
