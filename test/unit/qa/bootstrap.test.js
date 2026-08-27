@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { assertChatSessionsReady, assertQaEvidenceFenceReady, createConfiguredQaService } from '../../../server/bootstrap/qa.js'
 import { MongoChatRepository } from '../../../server/repositories/mongo/chat-repository.js'
+import { MongoArticleRepository } from '../../../server/repositories/mongo/article-repository.js'
 import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../../scripts/migrations/chat-sessions.js'
 import { PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
@@ -75,6 +76,48 @@ describe('Step 10 Q&A bootstrap', () => {
       providerAdmission: { run: vi.fn() },
       providerAdapters: { llmProvider: { answer: vi.fn(), verifySupport: vi.fn() } },
     })).resolves.toBeDefined()
+  })
+  it('passes a nonconfidential query embedding through to Q&A retrieval', async () => {
+    const queryEmbedding = vi.fn(async () => ({
+      model: 'embedding-model',
+      dimensions: 2,
+      version: 1,
+      artifactCompatibilityId: 'embedding-compat-v1',
+      embedding: [1, 0],
+    }))
+    queryEmbedding.capability = 'nonconfidential'
+    const findEvidence = vi.spyOn(MongoArticleRepository.prototype, 'findQnaEvidence').mockResolvedValue([])
+    vi.spyOn(MongoChatRepository.prototype, 'reserveAnswerAttempt').mockResolvedValue({ _id: new ObjectId(), status: 'reserved' })
+    vi.spyOn(MongoChatRepository.prototype, 'assertActorFence').mockResolvedValue(true)
+    vi.spyOn(MongoChatRepository.prototype, 'appendAnswer').mockResolvedValue({
+      attemptCommitted: true,
+      chatSessionId: 'chat-1',
+      messageId: 'answer-1',
+      answer: { id: 'answer-1', status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence', chatSessionId: 'chat-1', createdAt: '2026-08-27T00:00:00.000Z' },
+    })
+    try {
+      const service = await createConfiguredQaService({
+        context: readyContext(),
+        maintenanceRegistry: { register: vi.fn() },
+        providerRegistry: { routes: [], domains: [{}], workloadPolicies: qaPolicies },
+        providerRouter: { execute: vi.fn() },
+        providerAdmission: { run: vi.fn() },
+        providerAdapters: { llmProvider: { answer: vi.fn(), verifySupport: vi.fn() } },
+        queryEmbedding,
+      })
+
+      await service.createAnswer({
+        auth: { user: { id: '507f1f77bcf86cd799439001', status: 'active', sessionVersion: 3 }, session: { id: '507f1f77bcf86cd799439002', userSessionVersion: 3 } },
+        question: 'Tìm bài viết về tác nhân',
+        scope: { topics: ['ai'] },
+        idempotencyKey: 'bootstrap-embedding-capability-key',
+      })
+
+      expect(queryEmbedding).toHaveBeenCalledWith('Tìm bài viết về tác nhân')
+      expect(findEvidence).toHaveBeenCalledWith(expect.objectContaining({ queryEmbedding: expect.objectContaining({ model: 'embedding-model', artifactCompatibilityId: 'embedding-compat-v1' }) }))
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   it('constructs the provider admission boundary for a normalized workload graph', async () => {
