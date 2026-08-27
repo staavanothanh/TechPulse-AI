@@ -46,6 +46,16 @@ describe('Executable source policy gates', () => {
     expect(video).toEqual(expect.objectContaining({ allowed: true, displayMode: 'link-only' }))
   })
 
+  it('accepts null optional metadata persisted on normalized article media', () => {
+    expect(evaluateMediaPolicy(source(), {
+      type: 'image',
+      url: 'https://media.example.com/image.jpg',
+      sourcePageUrl: 'https://example.com/article',
+      altText: 'Diagram',
+      credit: null,
+    })).toEqual(expect.objectContaining({ allowed: true, displayMode: 'remote-preview' }))
+  })
+
   it('enforces every image/video mode combination independently', () => {
     for (const imageMode of ['none', 'remote-preview']) {
       for (const videoMode of ['none', 'link-only']) {

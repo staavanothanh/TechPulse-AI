@@ -12,7 +12,7 @@ export function evaluateMediaPolicy(source, candidate) {
   } catch { return reject(source, 'source_policy_invalid') }
   if (source.operationalStatus !== 'active' || !['permitted', 'metadata-only'].includes(source.licenseStatus)) return reject(source, 'source_policy_blocked')
   if (!candidate || !['image', 'video'].includes(candidate.type)) return reject(source, 'media_type_invalid')
-  if (candidate.altText !== undefined && (typeof candidate.altText !== 'string' || candidate.altText.length > 500) || candidate.credit !== undefined && (typeof candidate.credit !== 'string' || candidate.credit.length > 500)) return reject(source, 'media_metadata_invalid')
+  if (candidate.altText !== undefined && candidate.altText !== null && (typeof candidate.altText !== 'string' || candidate.altText.length > 500) || candidate.credit !== undefined && candidate.credit !== null && (typeof candidate.credit !== 'string' || candidate.credit.length > 500)) return reject(source, 'media_metadata_invalid')
   let parsedUrl
   let sourcePageUrl
   try {
