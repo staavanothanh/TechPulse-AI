@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { InMemoryScrollRestoration } from './theme/use-scroll-restoration.js'
 import { createApiClient } from '../shared/generated/api-client.js'
 import PublicApp from './features/public/index.js'
 import AdminRedesign from './features/admin/ui/AdminShell.jsx'
@@ -9,8 +11,12 @@ import {
   withSessionRecovery,
 } from './app/integration/session-actions.js'
 import {
+  adminRouteToPath,
   normalizeAdminRoute,
   normalizePublicRoute,
+  parseAdminPath,
+  parsePublicPath,
+  publicRouteToPath,
   publicSessionForRole,
   publicSessionKey,
   sessionSurface,
@@ -36,6 +42,8 @@ function PublicSurface({
   api,
   publicSession,
   route,
+  articleId,
+  searchParams,
   theme,
   onThemeToggle,
   onNavigate,
@@ -54,6 +62,8 @@ function PublicSurface({
     csrfToken: publicSession?.csrfToken,
     user: publicSession?.user,
     route,
+    articleId,
+    searchParams,
     onNavigate,
     onSessionExpired,
     accountActions,
@@ -93,10 +103,44 @@ function PublicSurface({
 }
 
 export default function App() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [theme, toggleTheme] = useTheme()
   const [session, setSession] = useState(EMPTY_SESSION)
-  const [publicRoute, setPublicRoute] = useState('feed')
-  const [adminRoute, setAdminRoute] = useState('overview')
+  const publicPath = useMemo(
+    () => parsePublicPath(location.pathname, location.search),
+    [location.pathname, location.search],
+  )
+  const adminPath = useMemo(() => parseAdminPath(location.pathname), [location.pathname])
+  const publicRoute = publicPath.route
+  const articleId = publicPath.articleId
+  const searchParams = publicPath.searchParams
+  const adminRoute = adminPath.route
+
+  const handlePublicNavigate = useCallback(
+    (nextRoute, options) => {
+      if (options?.back) {
+        if (typeof window !== 'undefined' && window.history?.state && window.history.state.idx > 0) {
+          navigate(-1)
+          return
+        }
+        const fallback = nextRoute || 'feed'
+        navigate(publicRouteToPath(fallback), { replace: true })
+        return
+      }
+      const target = publicRouteToPath(nextRoute, options)
+      navigate(target)
+    },
+    [navigate],
+  )
+
+  const handleAdminNavigate = useCallback(
+    (nextRoute) => {
+      const target = adminRouteToPath(nextRoute)
+      navigate(target)
+    },
+    [navigate],
+  )
   const [auth, setAuth] = useState({
     mode: 'login',
     busy: false,
@@ -160,9 +204,9 @@ export default function App() {
       error: null,
       notice: nextNotice,
     }))
-    if (!nextUser) setPublicRoute('feed')
+    if (!nextUser) handlePublicNavigate('feed')
     return true
-  }, [])
+  }, [handlePublicNavigate])
 
   const expireSession = useCallback(
     (notice, expectedIdentity, expectedEpoch) => {
@@ -271,37 +315,45 @@ export default function App() {
   const surface = sessionSurface(session)
   if (surface === 'admin') {
     return (
-      <AdminRedesign
-        api={adminApi}
-        session={session}
-        route={normalizeAdminRoute(adminRoute)}
-        onNavigate={(route) => setAdminRoute(normalizeAdminRoute(route))}
-        onSessionExpired={guardedSurfaceExpire}
-        onLogout={() => applySession(null, null, null)}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-      />
+      <>
+        <InMemoryScrollRestoration />
+        <AdminRedesign
+          api={adminApi}
+          session={session}
+          route={normalizeAdminRoute(adminRoute)}
+          onNavigate={handleAdminNavigate}
+          onSessionExpired={guardedSurfaceExpire}
+          onLogout={() => applySession(null, null, null)}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
+      </>
     )
   }
 
   return (
-    <PublicSurface
-      key={publicSessionKey(publicSession)}
-      api={api}
-      publicSession={publicSession}
-      route={normalizePublicRoute(publicRoute)}
-      theme={theme}
-      onThemeToggle={toggleTheme}
-      onNavigate={(route) => setPublicRoute(normalizePublicRoute(route))}
-      onRetrySession={retrySession}
-      onSessionExpired={guardedSurfaceExpire}
-      onAuthSubmit={authenticate}
-      onGoogleLogin={authenticateWithGoogle}
-      onAuthModeChange={(mode) => setAuth((current) => ({ ...current, mode, error: null }))}
-      onGuestBrowse={guestBrowseNotice}
-      auth={auth}
-      accountActions={accountActions}
-      sessionNotice={session.notice}
-    />
+    <>
+      <InMemoryScrollRestoration />
+      <PublicSurface
+        key={publicSessionKey(publicSession)}
+        api={api}
+        publicSession={publicSession}
+        route={normalizePublicRoute(publicRoute)}
+        articleId={articleId}
+        searchParams={searchParams}
+        theme={theme}
+        onThemeToggle={toggleTheme}
+        onNavigate={handlePublicNavigate}
+        onRetrySession={retrySession}
+        onSessionExpired={guardedSurfaceExpire}
+        onAuthSubmit={authenticate}
+        onGoogleLogin={authenticateWithGoogle}
+        onAuthModeChange={(mode) => setAuth((current) => ({ ...current, mode, error: null }))}
+        onGuestBrowse={guestBrowseNotice}
+        auth={auth}
+        accountActions={accountActions}
+        sessionNotice={session.notice}
+      />
+    </>
   )
 }
