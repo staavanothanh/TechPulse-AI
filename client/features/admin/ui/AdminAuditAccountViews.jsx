@@ -30,7 +30,6 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
       <PageHeader
         eyebrow="Append-only"
         title="Audit bất biến"
-        description="Mọi mutation admin đều ghi audit với reasonCode allowlist. Không có update hoặc delete endpoint."
         action={
           <AdminButton icon="refresh" onClick={resource.reload}>
             Làm mới
@@ -72,7 +71,7 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
           Lọc
         </AdminButton>
       </form>
-      <Panel title="Audit stream" hint="Read-only structured events">
+      <Panel title="Audit stream">
         <ResourceFrame resource={resource} loadingLabel="Đang tải audit logs…">
           <Table
             label="Audit logs"
@@ -162,9 +161,8 @@ export function AdminAccountView({ api, session, onLogout, onSessionExpired }) {
       <PageHeader
         eyebrow="Tài khoản quản trị"
         title="Phiên admin"
-        description="Phiên server-side, CSRF trong memory và không lưu token trong trình duyệt."
       />
-      <Panel title="Thông tin phiên" hint="Dữ liệu lấy từ session props">
+      <Panel title="Thông tin phiên">
         <dl className="admin-account-facts">
           <div>
             <dt>Vai trò</dt>
@@ -184,7 +182,7 @@ export function AdminAccountView({ api, session, onLogout, onSessionExpired }) {
           </div>
           <div>
             <dt>CSRF</dt>
-            <dd className="admin-mono">session-bound · memory</dd>
+            <dd className="admin-mono">CSRF trong memory · session-bound</dd>
           </div>
         </dl>
         {error ? (

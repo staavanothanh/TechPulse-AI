@@ -31,7 +31,6 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
       <PageHeader
         eyebrow="Bảng điều hành"
         title="Tổng quan vận hành"
-        description="Ngoại lệ cần xử lý và trạng thái pipeline ingestion, indexing, takedown và xóa tài khoản."
         action={
           <AdminButton icon="refresh" onClick={resource.reload}>
             Làm mới
@@ -49,7 +48,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
           ))}
         </section>
         <div className="admin-two-column">
-          <Panel title="Cần xử lý" hint="Ưu tiên theo số liệu overview API">
+          <Panel title="Cần xử lý">
             <div className="admin-exception-list">
               {exceptions.length ? (
                 exceptions.map(([key, label, tone]) => (
@@ -85,7 +84,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
               )}
             </div>
           </Panel>
-          <Panel title="Trạng thái pipeline" hint="Server-owned queue state">
+          <Panel title="Trạng thái pipeline">
             <div className="admin-pipeline">
               <div>
                 <span className="admin-pipeline-index">01</span>
@@ -121,15 +120,11 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
                 />
               </div>
             </div>
-            <p className="admin-note">
-              Cron và coordinator thuộc server. UI chỉ hiển thị trạng thái và gọi các operation
-              admin đã được contract cho phép.
-            </p>
           </Panel>
         </div>
         <Panel
           title="Lần ingestion thành công gần nhất"
-          hint="lastSuccessfulIngestionAt có thể null"
+          hint="lastSuccessfulIngestionAt"
         >
           <div className="admin-last-run">
             <Icon name="activity" size={24} />
@@ -139,7 +134,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
                   ? formatAdminDate(data.lastSuccessfulIngestionAt)
                   : 'Chưa có lần thành công'}
               </strong>
-              <p>Thời điểm được server ghi nhận. Không hiển thị lease hoặc credential nội bộ.</p>
+              <p>Thời điểm hoàn tất chu kỳ thu thập dữ liệu gần nhất.</p>
             </div>
           </div>
         </Panel>

@@ -52,7 +52,6 @@ export function AdminUsersView({ api, session, initialData, onSessionExpired, ca
       <PageHeader
         eyebrow="Người dùng"
         title="Quản lý người dùng"
-        description="Dữ liệu vận hành tối thiểu. Suspend và restore sẽ thu hồi session theo policy server."
         action={
           <AdminButton icon="refresh" onClick={resource.reload} disabled={mutation.busy}>
             Làm mới

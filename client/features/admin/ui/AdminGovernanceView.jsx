@@ -111,7 +111,6 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
       <PageHeader
         eyebrow="Governance"
         title="Takedown & xóa tài khoản"
-        description="Xử lý workflow gỡ nội dung và theo dõi tiến độ xóa tài khoản. Danh sách không hiển thị thông tin người yêu cầu."
         action={
           <AdminButton
             icon="refresh"
@@ -137,7 +136,7 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
       ) : null}
       <Panel
         title="Takedown requests"
-        hint="Hide trước khi hoàn tất. Completion chỉ hợp lệ khi server xác nhận đầy đủ cleanup"
+        hint="Hide trước khi hoàn tất"
       >
         <ResourceFrame resource={takedowns} loadingLabel="Đang tải takedown requests…">
           <Table
@@ -187,7 +186,6 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
       </Panel>
       <Panel
         title="Account deletion workflows"
-        hint="Bảy completion flags thuộc server-owned cleanup fence"
       >
         <ResourceFrame resource={deletions} loadingLabel="Đang tải account deletion workflows…">
           <Table

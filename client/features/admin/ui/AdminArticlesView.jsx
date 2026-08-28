@@ -126,7 +126,6 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
       <PageHeader
         eyebrow="Articles & AI index"
         title="Quản lý bài viết"
-        description="Theo dõi trạng thái xuất bản, summary và embedding. Dữ liệu nguồn chỉ được xử lý theo Source Registry policy."
         action={
           <AdminButton icon="refresh" onClick={resource.reload} disabled={mutation.busy}>
             Làm mới

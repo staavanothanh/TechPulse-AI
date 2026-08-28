@@ -228,7 +228,6 @@ function DueWorkRunPanel({ run }) {
     <Panel
       className="admin-due-work-panel"
       title="Kết quả bounded run gần nhất"
-      hint="Aggregate an toàn của ba queue đã đăng ký; chi tiết job vẫn nằm trong các tab bên dưới."
     >
       <div className="admin-due-work-meta" role="status">
         {normalized.runId
@@ -544,7 +543,6 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
       <PageHeader
         eyebrow="Durable jobs"
         title="Jobs và queue"
-        description="Xem, retry và cancel mọi bounded job qua một operational view duy nhất."
         action={
           <>
             <AdminButton
@@ -622,11 +620,6 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
       ) : null}
       <Panel
         title={tab === 'ingestion' ? 'Ingestion queue' : 'Indexing queue'}
-        hint={
-          tab === 'ingestion'
-            ? 'Nguồn và trạng thái lease an toàn'
-            : 'Summary, embedding và visibility reconciliation'
-        }
       >
         <JobList
           data={active.data}
