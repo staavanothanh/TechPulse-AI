@@ -9,9 +9,13 @@ import {
 import {
   AdminButton,
   AdminConfirmDialog,
+  ArticlePreviewDialog,
+  CompactId,
+  Icon,
   PageHeader,
   Panel,
   ResourceFrame,
+  SourceBadge,
   StatusBadge,
   Table,
 } from './AdminShared.jsx'
@@ -62,6 +66,7 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
   })
   const mutation = useAdminMutation({ onSessionExpired, cacheScope })
   const [confirmation, setConfirmation] = useState(null)
+  const [previewArticleId, setPreviewArticleId] = useState(null)
   function applyFilters(event) {
     event.preventDefault()
     setAppliedQuery({ ...draftQuery })
@@ -180,17 +185,36 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
                 label: 'Article',
                 render: (value, row) =>
                   row.status === 'removed' ? (
-                    <>
-                      <strong className="admin-mono">{value}</strong>
-                      <small>Tombstone metadata-free</small>
-                    </>
-                  ) : (
-                    <>
-                      <strong>{row.titleOriginal}</strong>
-                      <small className="admin-mono">
-                        {value} · source {row.sourceId}
+                    <div className="admin-cell-resource">
+                      <strong className="admin-muted">Bài viết đã gỡ bỏ (Tombstone)</strong>
+                      <small className="admin-cell-sub">
+                        <span>Article: </span>
+                        <CompactId id={value} label="Article ID" length={8} />
                       </small>
-                    </>
+                    </div>
+                  ) : (
+                    <div className="admin-cell-resource">
+                      <div className="admin-cell-title-row">
+                        <strong className="admin-cell-primary">
+                          {row.titleOriginal || row.titleVi || 'Chưa có tiêu đề'}
+                        </strong>
+                        <button
+                          type="button"
+                          className="admin-btn-preview"
+                          onClick={() => setPreviewArticleId(value)}
+                          title={`Xem nhanh bài viết ${value}`}
+                          aria-label={`Xem nhanh bài viết ${value}`}
+                        >
+                          <Icon name="eye" size={13} />
+                          <span>Xem</span>
+                        </button>
+                      </div>
+                      <small className="admin-cell-sub">
+                        <SourceBadge sourceId={row.sourceId} />
+                        <span> · </span>
+                        <CompactId id={value} label="Article ID" length={8} />
+                      </small>
+                    </div>
                   ),
               },
               {
@@ -239,6 +263,12 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
         busy={mutation.busy}
         onCancel={() => setConfirmation(null)}
         onConfirm={confirmArticleAction}
+      />
+      <ArticlePreviewDialog
+        open={Boolean(previewArticleId)}
+        articleId={previewArticleId}
+        api={api}
+        onClose={() => setPreviewArticleId(null)}
       />
     </div>
   )

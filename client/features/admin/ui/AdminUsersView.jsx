@@ -9,6 +9,7 @@ import {
 import {
   AdminButton,
   AdminConfirmDialog,
+  CompactId,
   PageHeader,
   Panel,
   ResourceFrame,
@@ -73,21 +74,25 @@ export function AdminUsersView({ api, session, initialData, onSessionExpired, ca
               {
                 key: 'id',
                 label: 'User',
-                render: (value, row) => (
-                  <>
-                    <strong className="admin-mono">{value}</strong>
-                    <small>{row.role ?? 'identity tombstone'}</small>
-                  </>
-                ),
-              },
-              {
-                key: 'email',
-                label: 'Email',
                 render: (value, row) =>
                   row.status === 'deleted' ? (
-                    <span className="admin-muted">Đã ẩn theo tombstone</span>
+                    <div className="admin-cell-resource">
+                      <strong className="admin-muted">Đã ẩn theo tombstone</strong>
+                      <small className="admin-cell-sub">
+                        <span>User: </span>
+                        <CompactId id={value} label="User ID" length={8} />
+                        <span> · {row.role ?? 'identity tombstone'}</span>
+                      </small>
+                    </div>
                   ) : (
-                    (value ?? 'Chưa ghi nhận')
+                    <div className="admin-cell-resource">
+                      <strong className="admin-cell-primary">{row.email || 'Chưa ghi nhận email'}</strong>
+                      <small className="admin-cell-sub">
+                        <span>User: </span>
+                        <CompactId id={value} label="User ID" length={8} />
+                        <span> · {row.role ?? 'user'}</span>
+                      </small>
+                    </div>
                   ),
               },
               {

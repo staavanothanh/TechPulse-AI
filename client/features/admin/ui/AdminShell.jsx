@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { registerSourceDictionary } from './AdminShared.jsx'
 import { ADMIN_NAVIGATION, readResponseData, statusTone } from './admin-data.js'
 import {
   AdminAccountView,
@@ -143,6 +144,24 @@ export default function AdminRedesign({
   const activeRoute = controlled ? (route === 'deletions' ? 'governance' : route) : localRoute
   const theme = suppliedTheme ?? localTheme
   const overview = initialData?.overview
+  if (initialData?.sources) {
+    const sources = initialData.sources?.sources || initialData.sources || []
+    if (Array.isArray(sources)) registerSourceDictionary(sources)
+  }
+  useEffect(() => {
+    if (!api?.listSources) return undefined
+    let active = true
+    void Promise.resolve(api.listSources({ credentials: 'same-origin' }))
+      .then((res) => {
+        if (!active) return
+        const sources = res?.data?.sources || res?.data || []
+        if (Array.isArray(sources)) registerSourceDictionary(sources)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [api])
   const viewProps = {
     api,
     session,
