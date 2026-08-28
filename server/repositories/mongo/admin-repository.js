@@ -23,11 +23,34 @@ export const SOURCE_OVERVIEW_PIPELINE = Object.freeze([
   { $project: { _id: 0, key: 1, value: 1 } },
 ])
 
+export const ARTICLE_OVERVIEW_PIPELINE = Object.freeze([
+  { $facet: {
+    articlesNeedingReview: [
+      { $match: { status: 'review-needed' } },
+      { $count: 'value' },
+    ],
+    failedIndexes: [
+      { $match: { status: { $ne: 'removed' }, $or: [{ summaryStatus: 'failed' }, { embeddingStatus: 'failed' }] } },
+      { $count: 'value' },
+    ],
+  } },
+  { $project: {
+    articlesNeedingReview: { $ifNull: [{ $first: '$articlesNeedingReview.value' }, 0] },
+    failedIndexes: { $ifNull: [{ $first: '$failedIndexes.value' }, 0] },
+  } },
+])
+
 export const INGESTION_OVERVIEW_PIPELINE = Object.freeze([
   { $match: { status: { $in: ['queued', 'running', 'partial'] } } },
   { $count: 'value' },
   { $set: { key: 'queuedJobs' } },
-  { $unionWith: { coll: 'ingestionJobs', pipeline: [{ $match: { status: 'failed' } }, { $count: 'value' }, { $set: { key: 'failedJobs' } }] } },
+  { $unionWith: { coll: 'ingestionJobs', pipeline: [
+    { $match: { status: 'failed', 'error.retryable': true } },
+    { $lookup: { from: 'ingestionJobs', localField: '_id', foreignField: 'parentJobId', as: 'children' } },
+    { $match: { 'children.status': { $ne: 'succeeded' } } },
+    { $count: 'value' },
+    { $set: { key: 'failedJobs' } },
+  ] } },
   { $unionWith: { coll: 'ingestionJobs', pipeline: [
     { $match: { status: 'succeeded', finishedAt: { $type: 'date' } } },
     { $sort: { finishedAt: -1, _id: -1 } },
@@ -170,11 +193,10 @@ export class MongoAdminRepository {
   }
 
   async getOverview() {
-    const [sources, jobs, articlesNeedingReview, failedIndexes, openTakedowns, failedAccountDeletions] = await Promise.all([
+    const [sources, jobs, articleMetrics, openTakedowns, failedAccountDeletions] = await Promise.all([
       this.sources().aggregate(SOURCE_OVERVIEW_PIPELINE).toArray(),
       this.ingestionJobs().aggregate(INGESTION_OVERVIEW_PIPELINE).toArray(),
-      aggregateCount(this.articles(), { status: 'review-needed' }),
-      aggregateCount(this.indexingJobs(), { status: 'failed' }),
+      this.articles().aggregate(ARTICLE_OVERVIEW_PIPELINE).next(),
       aggregateCount(this.collection('takedownRequests'), { status: { $in: ['received', 'reviewing', 'approved'] } }),
       aggregateCount(this.collection('accountDeletionRequests'), { status: 'failed' }),
     ])
@@ -186,8 +208,8 @@ export class MongoAdminRepository {
       sourcesNeedingReview: sourceMetrics.sourcesNeedingReview ?? 0,
       queuedJobs: jobMetrics.queuedJobs ?? 0,
       failedJobs: jobMetrics.failedJobs ?? 0,
-      articlesNeedingReview,
-      failedIndexes,
+      articlesNeedingReview: articleMetrics?.articlesNeedingReview ?? 0,
+      failedIndexes: articleMetrics?.failedIndexes ?? 0,
       openTakedowns,
       failedAccountDeletions,
       lastSuccessfulIngestionAt: jobMetrics.lastSuccessfulIngestionAt ?? null,
