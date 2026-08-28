@@ -7,13 +7,14 @@ import {
 } from './admin-data.js'
 import {
   AdminButton,
+  CompactId,
   PageHeader,
   Panel,
   ResourceFrame,
+  SourceBadge,
   StatusBadge,
   Table,
 } from './AdminShared.jsx'
-
 export function AdminAuditView({ api, session, initialData, onSessionExpired, cacheScope }) {
   const [draftQuery, setDraftQuery] = useState({ actorType: '', targetId: '' })
   const [appliedQuery, setAppliedQuery] = useState({})
@@ -92,20 +93,28 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
                 key: 'actorType',
                 label: 'Actor',
                 render: (value, row) => (
-                  <>
-                    <span>{value}</span>
-                    <small className="admin-mono">{row.actorId}</small>
-                  </>
+                  <div className="admin-cell-resource">
+                    <strong className="admin-cell-primary">{value}</strong>
+                    <small className="admin-cell-sub">
+                      <CompactId id={row.actorId} label="Actor ID" length={8} />
+                    </small>
+                  </div>
                 ),
               },
               {
                 key: 'targetType',
                 label: 'Đối tượng',
                 render: (value, row) => (
-                  <>
-                    <span>{value}</span>
-                    <small className="admin-mono">{row.targetId}</small>
-                  </>
+                  <div className="admin-cell-resource">
+                    {value === 'source' ? (
+                      <SourceBadge sourceId={row.targetId} />
+                    ) : (
+                      <strong className="admin-cell-primary">{value}</strong>
+                    )}
+                    <small className="admin-cell-sub">
+                      <CompactId id={row.targetId} label="Target ID" length={8} />
+                    </small>
+                  </div>
                 ),
               },
               {

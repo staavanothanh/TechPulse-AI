@@ -13,6 +13,8 @@ import {
 import { AdminUsersView } from '../../../client/features/admin/ui/AdminUsersView.jsx'
 import { AdminArticlesView } from '../../../client/features/admin/ui/AdminArticlesView.jsx'
 import { AdminJobsView } from '../../../client/features/admin/ui/AdminJobsView.jsx'
+import { AdminAuditView } from '../../../client/features/admin/ui/AdminAuditAccountViews.jsx'
+import { AdminGovernanceView } from '../../../client/features/admin/ui/AdminGovernanceView.jsx'
 
 const render = (Component, props = {}) =>
   renderToStaticMarkup(React.createElement(Component, props))
@@ -190,6 +192,59 @@ describe('Admin ID presentation & Article Preview UX', () => {
       expect(html).toContain('HACKER-NEWS · cron')
       expect(html).toContain('Hacker News Top Stories')
       expect(html).toContain('6a8bd73…e1f9')
+    })
+
+    it('formats actor and target with CompactId and SourceBadge in Audit view', () => {
+      const auditRecord = {
+        id: '6a8fda6a02452572edd176f3',
+        action: 'source_status_updated',
+        actorType: 'admin',
+        actorId: '6a7b82ac621661fc69a69ced',
+        targetType: 'source',
+        targetId: '507f1f77bcf86cd799439011',
+        changedFields: ['operationalStatus'],
+        result: 'succeeded',
+        createdAt: '2026-08-28T08:54:00.000Z',
+      }
+      registerSourceDictionary([
+        { id: auditRecord.targetId, name: 'The Verge Technology' },
+      ])
+
+      const html = render(AdminAuditView, {
+        api: { listAuditLogs: vi.fn() },
+        initialData: { data: [auditRecord] },
+      })
+
+      expect(html).toContain('source_status_updated')
+      expect(html).toContain('The Verge Technology')
+      expect(html).toContain('6a7b82a…9ced')
+      expect(html).toContain('507f1f7…9011')
+    })
+
+    it('formats takedowns and deletions with CompactId in Governance view', () => {
+      const takedown = {
+        id: '6a8c1234e66aeb38ac019999',
+        targetType: 'article',
+        targetIds: ['60d5ec12a1b2c3d4e5f67890'],
+        status: 'received',
+        requestedScope: ['article'],
+        createdAt: '2026-08-28T08:54:00.000Z',
+      }
+      const deletion = {
+        id: '6a8d5678e66aeb38ac018888',
+        attempt: 1,
+        status: 'running',
+        completion: { userSoftDeleted: true },
+      }
+
+      const html = render(AdminGovernanceView, {
+        api: { listTakedownRequests: vi.fn(), listAccountDeletionRequests: vi.fn() },
+        initialData: { takedowns: { data: [takedown] }, deletions: { data: [deletion] } },
+      })
+
+      expect(html).toContain('6a8c123…9999')
+      expect(html).toContain('6a8d567…8888')
+      expect(html).toContain('article · 1 target')
     })
   })
 })
