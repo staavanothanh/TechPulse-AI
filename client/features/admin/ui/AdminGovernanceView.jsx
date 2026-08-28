@@ -10,6 +10,7 @@ import {
 import {
   AdminButton,
   AdminConfirmDialog,
+  CompactId,
   PageHeader,
   Panel,
   ResourceFrame,
@@ -110,7 +111,6 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
       <PageHeader
         eyebrow="Governance"
         title="Takedown & xóa tài khoản"
-        description="Xử lý workflow gỡ nội dung và theo dõi tiến độ xóa tài khoản. Danh sách không hiển thị thông tin người yêu cầu."
         action={
           <AdminButton
             icon="refresh"
@@ -136,7 +136,7 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
       ) : null}
       <Panel
         title="Takedown requests"
-        hint="Hide trước khi hoàn tất. Completion chỉ hợp lệ khi server xác nhận đầy đủ cleanup"
+        hint="Hide trước khi hoàn tất"
       >
         <ResourceFrame resource={takedowns} loadingLabel="Đang tải takedown requests…">
           <Table
@@ -148,15 +148,15 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
                 key: 'id',
                 label: 'Request',
                 render: (value, row) => (
-                  <>
-                    <strong className="admin-mono">{value}</strong>
-                    <small>
+                  <div className="admin-cell-resource">
+                    <strong className="admin-cell-primary">
                       {row.targetType} · {row.targetIds?.length ?? 0} target
+                    </strong>
+                    <small className="admin-cell-sub">
+                      <span>Request: </span>
+                      <CompactId id={value} label="Request ID" length={8} />
                     </small>
-                    <small className="admin-mono">
-                      {row.targetIds?.slice(0, 2).join(', ') ?? 'target'}
-                    </small>
-                  </>
+                  </div>
                 ),
               },
               {
@@ -186,7 +186,6 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
       </Panel>
       <Panel
         title="Account deletion workflows"
-        hint="Bảy completion flags thuộc server-owned cleanup fence"
       >
         <ResourceFrame resource={deletions} loadingLabel="Đang tải account deletion workflows…">
           <Table
@@ -198,12 +197,15 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
                 key: 'id',
                 label: 'Workflow',
                 render: (value, row) => (
-                  <>
-                    <strong className="admin-mono">{value}</strong>
-                    <small>
-                      attempt {row.attempt ?? 'n/a'} · priority {row.priority ?? 'n/a'}
+                  <div className="admin-cell-resource">
+                    <strong className="admin-cell-primary">
+                      User Deletion · attempt {row.attempt ?? 1}
+                    </strong>
+                    <small className="admin-cell-sub">
+                      <span>Workflow: </span>
+                      <CompactId id={value} label="Workflow ID" length={8} />
                     </small>
-                  </>
+                  </div>
                 ),
               },
               {

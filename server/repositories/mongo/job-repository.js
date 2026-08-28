@@ -78,6 +78,7 @@ export function serializeIngestionJob(document) {
     checkpoint: document.checkpoint ? { ...document.checkpoint } : undefined, counters: { ...document.counters }, cancellationRequestedAt: document.cancellationRequestedAt,
     error: document.error ? { ...document.error } : undefined, createdAt: document.createdAt, startedAt: document.startedAt, heartbeatAt: document.heartbeatAt,
     finishedAt: document.finishedAt, purgeAfter: document.purgeAfter, updatedAt: document.updatedAt,
+    retryAvailable: document.retryAvailable !== undefined ? Boolean(document.retryAvailable) : (['partial', 'failed'].includes(document.status) && (document.status === 'partial' || document.error?.retryable === true) && Number(document.attempt) < 3),
   }
 }
 
@@ -304,7 +305,18 @@ export class MongoJobRepository {
     throw new Error('Scheduled materialization could not advance safely')
   }
 
-  async findIngestionJobById(jobId, options = {}) { return serializeIngestionJob(await this.jobs().findOne({ _id: idValue(jobId) }, options)) }
+  async findIngestionJobById(jobId, options = {}) {
+    const document = await this.jobs().findOne({ _id: idValue(jobId) }, options)
+    if (!document) return null
+    const canRetryStatus = ['failed', 'partial'].includes(document.status) && (document.status === 'partial' || document.error?.retryable === true) && Number(document.attempt) < 3
+    if (canRetryStatus) {
+      const child = await this.jobs().findOne({ parentJobId: document._id }, { projection: { _id: 1 }, ...options })
+      document.retryAvailable = !child
+    } else {
+      document.retryAvailable = false
+    }
+    return serializeIngestionJob(document)
+  }
 
   async listIngestionJobs(query = {}) {
     const limit = query.limit === undefined ? 20 : Number(query.limit)
@@ -325,6 +337,25 @@ export class MongoJobRepository {
     const documents = await this.jobs().find(filter).sort({ createdAt: -1, _id: -1 }).project(INGESTION_JOB_LIST_PROJECTION).limit(limit + 1).toArray()
     const hasNext = documents.length > limit
     const page = documents.slice(0, limit)
+    const candidateParentIds = page
+      .filter((doc) => ['failed', 'partial'].includes(doc.status) && (doc.status === 'partial' || doc.error?.retryable === true) && Number(doc.attempt) < 3)
+      .map((doc) => doc._id)
+    if (candidateParentIds.length > 0) {
+      const children = await this.jobs().find({
+        parentJobId: { $in: candidateParentIds },
+      }).project({ parentJobId: 1 }).toArray()
+      const retriedParentIds = new Set(
+        children.map((child) => (child.parentJobId?.toHexString ? child.parentJobId.toHexString() : String(child.parentJobId))),
+      )
+      page.forEach((doc) => {
+        const canRetryStatus = ['failed', 'partial'].includes(doc.status) && (doc.status === 'partial' || doc.error?.retryable === true) && Number(doc.attempt) < 3
+        doc.retryAvailable = canRetryStatus && !retriedParentIds.has(doc._id.toHexString())
+      })
+    } else {
+      page.forEach((doc) => {
+        doc.retryAvailable = ['failed', 'partial'].includes(doc.status) && (doc.status === 'partial' || doc.error?.retryable === true) && Number(doc.attempt) < 3
+      })
+    }
     return { jobs: page.map(serializeIngestionJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }
   }
 
@@ -489,6 +520,78 @@ export class MongoJobRepository {
         summary.retriesCreated += outcome.retriesCreated
       } catch { summary.failed += 1 }
     }
+
+    // Recover orphaned running jobs whose lease was superseded or released
+    const remainingSlots = Math.max(0, limit - summary.inspected)
+    if (remainingSlots > 0) {
+      const runningCandidates = await this.jobs()
+        .find({ status: 'running' })
+        .sort({ updatedAt: 1, _id: 1 })
+        .limit(remainingSlots)
+        .toArray()
+
+      for (const runningJob of runningCandidates) {
+        try {
+          const outcome = await this.withTransaction(async (session) => {
+            const currentJob = await this.jobs().findOne(
+              { _id: runningJob._id, status: 'running', leaseGeneration: runningJob.leaseGeneration },
+              { session },
+            )
+            if (!currentJob) return { recovered: 0 }
+
+            const leaseKey = `ingestion:source:${currentJob.sourceId.toHexString?.() ?? currentJob.sourceId}`
+            const lease = await this.leases().findOne({ key: leaseKey }, { session })
+
+            const isOwned = lease?.activeOwner
+              && String(lease.activeOwner.jobId) === String(currentJob._id)
+              && Number(lease.activeOwner.leaseGeneration) === Number(currentJob.leaseGeneration)
+              && lease.activeOwner.expiresAt > now
+
+            if (isOwned) return { recovered: 0 }
+
+            const safe = {
+              code: 'lease_expired',
+              message: 'Job lease expired or was superseded before completion',
+              retryable: false,
+              occurredAt: now,
+            }
+            await this.jobs().updateOne(
+              { _id: currentJob._id, status: 'running', leaseGeneration: currentJob.leaseGeneration },
+              {
+                $set: {
+                  status: 'failed',
+                  error: safe,
+                  finishedAt: now,
+                  purgeAfter: purgeAfterFor('failed', now, currentJob.idempotencyExpiresAt),
+                  updatedAt: now,
+                },
+              },
+              { session },
+            )
+
+            const audit = createJobAuditEvent({
+              actor: { id: 'system:due-work', role: 'system-worker' },
+              action: 'ingestion_job_lease_recovered',
+              targetId: currentJob._id.toHexString(),
+              changedFields: ['status', 'error'],
+              reasonCode: 'lease_expired_recovered',
+              request: { serverRequestId: `orphan-recovery:${currentJob._id.toHexString()}:${currentJob.leaseGeneration}` },
+              createdAt: now,
+            })
+            await this.insertAudit(audit, session)
+            return { recovered: 1 }
+          })
+
+          if (outcome?.recovered) {
+            summary.recovered += 1
+            summary.inspected += 1
+          }
+        } catch {
+          summary.failed += 1
+        }
+      }
+    }
+
     return summary
   }
 }

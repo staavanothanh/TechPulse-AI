@@ -17,13 +17,16 @@ import {
 import {
   AdminButton,
   AdminConfirmDialog,
+  ArticlePreviewDialog,
+  CompactId,
+  Icon,
   PageHeader,
   Panel,
   ResourceFrame,
+  SourceBadge,
   StatusBadge,
   Table,
 } from './AdminShared.jsx'
-
 function JobRowActions({ job, kind, onRetry, onCancel, busy }) {
   const retryable = isAdminJobRetryable(job, kind)
   const cancellable = ['queued', 'running'].includes(job.status)
@@ -65,6 +68,7 @@ function JobList({
   kind,
   onRetry,
   onCancel,
+  onPreviewArticle,
   busy,
 }) {
   const rows = listItems(data)
@@ -85,12 +89,15 @@ function JobList({
                   key: 'id',
                   label: 'Job',
                   render: (value, row) => (
-                    <>
-                      <strong className="admin-mono">{value}</strong>
-                      <small>
-                        {row.connectorType ?? 'connector'} · {row.trigger ?? 'unknown'}
+                    <div className="admin-cell-resource">
+                      <strong className="admin-cell-primary">
+                        {(row.connectorType ?? 'connector').toUpperCase()} · {row.trigger ?? 'unknown'}
+                      </strong>
+                      <small className="admin-cell-sub">
+                        <span>Job: </span>
+                        <CompactId id={value} label="Job ID" length={8} />
                       </small>
-                    </>
+                    </div>
                   ),
                 },
                 {
@@ -100,14 +107,16 @@ function JobList({
                 },
                 {
                   key: 'sourceId',
-                  label: 'Source',
+                  label: 'Nguồn crawl',
                   render: (value, row) => (
-                    <>
-                      <strong className="admin-mono">{value}</strong>
-                      <small>
-                        attempt {row.attempt ?? 'n/a'} · batch {row.batchSize ?? 'n/a'}
+                    <div className="admin-cell-resource">
+                      <SourceBadge sourceId={value} />
+                      <small className="admin-cell-sub">
+                        <span>Source: </span>
+                        <CompactId id={value} label="Source ID" length={8} />
+                        <span> · attempt {row.attempt ?? 1} · batch {row.batchSize ?? 20}</span>
                       </small>
-                    </>
+                    </div>
                   ),
                 },
                 {
@@ -129,12 +138,19 @@ function JobList({
                   key: 'id',
                   label: 'Job',
                   render: (value, row) => (
-                    <>
-                      <strong className="admin-mono">{value}</strong>
-                      <small>
-                        {row.task ?? 'task'} · {row.trigger ?? 'unknown'}
+                    <div className="admin-cell-resource">
+                      <strong className="admin-cell-primary">
+                        {row.task === 'summary'
+                          ? 'Tóm tắt AI (Summary)'
+                          : row.task === 'embedding'
+                            ? 'Embedding Vector'
+                            : (row.task ?? 'task')} · {row.trigger ?? 'unknown'}
+                      </strong>
+                      <small className="admin-cell-sub">
+                        <span>Job: </span>
+                        <CompactId id={value} label="Job ID" length={8} />
                       </small>
-                    </>
+                    </div>
                   ),
                 },
                 {
@@ -146,12 +162,26 @@ function JobList({
                   key: 'articleId',
                   label: 'Article',
                   render: (value, row) => (
-                    <>
-                      <strong className="admin-mono">{value}</strong>
-                      <small>
-                        source {row.sourceId ?? 'n/a'} · attempt {row.attempt ?? 'n/a'}
+                    <div className="admin-cell-resource">
+                      <div className="admin-cell-title-row">
+                        <SourceBadge sourceId={row.sourceId} />
+                        <button
+                          type="button"
+                          className="admin-btn-preview"
+                          onClick={() => onPreviewArticle?.(value)}
+                          title={`Xem nhanh bài viết ${value}`}
+                          aria-label={`Xem nhanh bài viết ${value}`}
+                        >
+                          <Icon name="eye" size={13} />
+                          <span>Xem</span>
+                        </button>
+                      </div>
+                      <small className="admin-cell-sub">
+                        <span>Article: </span>
+                        <CompactId id={value} label="Article ID" length={8} />
+                        <span> · attempt {row.attempt ?? 'n/a'}</span>
                       </small>
-                    </>
+                    </div>
                   ),
                 },
                 {
@@ -198,7 +228,6 @@ function DueWorkRunPanel({ run }) {
     <Panel
       className="admin-due-work-panel"
       title="Kết quả bounded run gần nhất"
-      hint="Aggregate an toàn của ba queue đã đăng ký; chi tiết job vẫn nằm trong các tab bên dưới."
     >
       <div className="admin-due-work-meta" role="status">
         {normalized.runId
@@ -333,13 +362,19 @@ function IndexingCreateForm({ onSubmit, busy }) {
 }
 
 export function AdminJobsView({ api, session, initialData, onSessionExpired, cacheScope }) {
-  const [tab, setTab] = useState('ingestion')
-  const [draftQuery, setDraftQuery] = useState({})
-  const [appliedQuery, setAppliedQuery] = useState({})
   const seeded = initialData ?? {}
-  const [dueWorkRun, setDueWorkRun] = useState(() =>
+  const [tab, setTab] = useState('ingestion')
+  const [draftQuery, setDraftQuery] = useState({
+    ingestion: { status: '' },
+    indexing: { status: '' },
+  })
+  const [appliedQuery, setAppliedQuery] = useState({})
+  const [dueWorkRun, setDueWorkRun] = useState(
     seeded.dueWorkRun ? normalizeDueWorkRun(seeded.dueWorkRun) : null,
   )
+  const [confirmation, setConfirmation] = useState(null)
+  const [previewArticleId, setPreviewArticleId] = useState(null)
+  const pollStartedAtRef = useRef(null)
   const ingestion = useAdminResource(api, 'listIngestionJobs', {
     enabled: tab === 'ingestion',
     initialData: seeded.ingestion,
@@ -365,8 +400,6 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
   const indexingState = indexing.state
   const reloadIndexing = indexing.reload
   const pollErrorCountRef = useRef(0)
-  const pollStartedAtRef = useRef(null)
-  const [confirmation, setConfirmation] = useState(null)
   function actionFor(job, kind, action) {
     setConfirmation({
       job,
@@ -510,7 +543,6 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
       <PageHeader
         eyebrow="Durable jobs"
         title="Jobs và queue"
-        description="Xem, retry và cancel mọi bounded job qua một operational view duy nhất."
         action={
           <>
             <AdminButton
@@ -588,11 +620,6 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
       ) : null}
       <Panel
         title={tab === 'ingestion' ? 'Ingestion queue' : 'Indexing queue'}
-        hint={
-          tab === 'ingestion'
-            ? 'Nguồn và trạng thái lease an toàn'
-            : 'Summary, embedding và visibility reconciliation'
-        }
       >
         <JobList
           data={active.data}
@@ -604,6 +631,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
           kind={tab}
           onRetry={(job, kind) => actionFor(job, kind, 'retry')}
           onCancel={(job, kind) => actionFor(job, kind, 'cancel')}
+          onPreviewArticle={setPreviewArticleId}
           busy={mutation.busy}
         />
         {tab === 'ingestion' ? (
@@ -628,6 +656,12 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         busy={mutation.busy}
         onCancel={() => setConfirmation(null)}
         onConfirm={confirmJobAction}
+      />
+      <ArticlePreviewDialog
+        open={Boolean(previewArticleId)}
+        articleId={previewArticleId}
+        api={api}
+        onClose={() => setPreviewArticleId(null)}
       />
     </div>
   )

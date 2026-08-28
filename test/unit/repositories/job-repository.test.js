@@ -96,12 +96,12 @@ function createContext({
   const collection = (name) => {
     if (collections.has(name)) return collections.get(name)
     const handle = {
-      findOne: vi.fn(async (...args) => queues(findOne, name).shift() ?? null),
-      findOneAndUpdate: vi.fn(async (...args) => queues(findOneAndUpdateResults, name).shift() ?? null),
-      updateOne: vi.fn(async (...args) => queues(updateResults, name).shift() ?? { matchedCount: 1, upsertedCount: 0 }),
+      findOne: vi.fn(async (..._args) => queues(findOne, name).shift() ?? null),
+      findOneAndUpdate: vi.fn(async (..._args) => queues(findOneAndUpdateResults, name).shift() ?? null),
+      updateOne: vi.fn(async (..._args) => queues(updateResults, name).shift() ?? { matchedCount: 1, upsertedCount: 0 }),
       insertOne: vi.fn(async (...args) => queues(insertResults, name).shift() ?? { insertedId: args[0]?._id }),
-      deleteMany: vi.fn(async (...args) => queues(deleteResults, name).shift() ?? { deletedCount: 1 }),
-      find: vi.fn((...args) => {
+      deleteMany: vi.fn(async (..._args) => queues(deleteResults, name).shift() ?? { deletedCount: 1 }),
+      find: vi.fn((..._args) => {
         const values = queues(findResults, name).shift()
         return createCursor(values ?? (name === 'sources' ? sourceRows : []))
       }),
@@ -256,6 +256,55 @@ describe('MongoJobRepository', () => {
     await expect(fixture.repository.listIngestionJobs({ status: 'bad' })).rejects.toMatchObject({ status: 400 })
     await expect(fixture.repository.listIngestionJobs({ cursor: 'bad' })).rejects.toMatchObject({ status: 400 })
 
+
+    const createFailedParent = () => serializedDocument({
+      _id: jobId,
+      status: 'failed',
+      attempt: 1,
+      error: { code: 'source_fetch_failed', message: 'fetch failed', retryable: true, occurredAt: now },
+    })
+    const childJob = serializedDocument({
+      _id: sessionId,
+      parentJobId: jobId,
+      attempt: 2,
+      status: 'succeeded',
+    })
+    const retryCheckFixture = createContext({
+      findResults: {
+        ingestionJobs: [
+          [createFailedParent()],
+          [childJob],
+        ],
+      },
+      findOne: {
+        ingestionJobs: [createFailedParent(), childJob],
+      },
+    })
+    const suppressed = await retryCheckFixture.repository.listIngestionJobs({ limit: 10 })
+    expect(suppressed.jobs[0].retryAvailable).toBe(false)
+    expect(suppressed.jobs[0].error.retryable).toBe(true)
+
+    const singleSuppressed = await retryCheckFixture.repository.findIngestionJobById(jobId.toHexString())
+    expect(singleSuppressed.retryAvailable).toBe(false)
+    expect(singleSuppressed.error.retryable).toBe(true)
+
+    const unretriedFixture = createContext({
+      findResults: {
+        ingestionJobs: [
+          [createFailedParent()],
+          [],
+        ],
+      },
+      findOne: {
+        ingestionJobs: [createFailedParent(), null],
+      },
+    })
+    const unretried = await unretriedFixture.repository.listIngestionJobs({ limit: 10 })
+    expect(unretried.jobs[0].retryAvailable).toBe(true)
+    expect(unretried.jobs[0].error.retryable).toBe(true)
+    const singleUnretried = await unretriedFixture.repository.findIngestionJobById(jobId.toHexString())
+    expect(singleUnretried.retryAvailable).toBe(true)
+    expect(singleUnretried.error.retryable).toBe(true)
     const aged = createContext({ findResults: { ingestionJobs: [[document]] } })
     await expect(aged.repository.selectDueIngestion({ now })).resolves.toEqual(expect.objectContaining({ id: jobId.toHexString() }))
     expect(aged.collections.get('ingestionJobs').find).toHaveBeenCalledTimes(1)
@@ -323,5 +372,48 @@ describe('MongoJobRepository', () => {
     const leaseRepository = { listExpired: vi.fn(async () => snapshots) }
     await expect(fixture.repository.recoverExpiredIngestion({ leaseRepository, now, limit: 10 })).resolves.toEqual({ inspected: 2, recovered: 2, retriesCreated: 1, failed: 0 })
     expect(fixture.collections.get('ingestionJobs').updateOne).toHaveBeenCalledWith(expect.objectContaining({ parentJobId: jobId, attempt: 2 }), expect.objectContaining({ $setOnInsert: expect.any(Object) }), expect.objectContaining({ upsert: true }))
+  })
+
+  it('recovers orphaned running jobs whose lease was released or superseded to failed', async () => {
+    const jobId = new ObjectId()
+    const sourceId = new ObjectId()
+    const runningJob = {
+      _id: jobId,
+      sourceId,
+      status: 'running',
+      leaseGeneration: 5,
+      idempotencyExpiresAt: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
+    }
+    const lease = {
+      key: `ingestion:source:${sourceId.toHexString()}`,
+      generationHighWater: 6,
+      // No activeOwner: lease was released
+    }
+    const fixture = createContext({
+      findOne: {
+        ingestionJobs: [runningJob],
+        jobLeases: [lease],
+        adminAuditLogs: [null],
+      },
+      findResults: {
+        ingestionJobs: [[runningJob]],
+      },
+      updateResults: {
+        ingestionJobs: [{ matchedCount: 1 }],
+      },
+    })
+    const leaseRepository = { listExpired: vi.fn(async () => []) }
+    const result = await fixture.repository.recoverExpiredIngestion({ leaseRepository, now, limit: 10 })
+    expect(result).toEqual({ inspected: 1, recovered: 1, retriesCreated: 0, failed: 0 })
+    expect(fixture.collections.get('ingestionJobs').updateOne).toHaveBeenCalledWith(
+      { _id: jobId, status: 'running', leaseGeneration: 5 },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'failed',
+          error: expect.objectContaining({ code: 'lease_expired' }),
+        }),
+      }),
+      expect.any(Object),
+    )
   })
 })

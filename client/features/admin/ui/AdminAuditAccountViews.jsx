@@ -7,13 +7,14 @@ import {
 } from './admin-data.js'
 import {
   AdminButton,
+  CompactId,
   PageHeader,
   Panel,
   ResourceFrame,
+  SourceBadge,
   StatusBadge,
   Table,
 } from './AdminShared.jsx'
-
 export function AdminAuditView({ api, session, initialData, onSessionExpired, cacheScope }) {
   const [draftQuery, setDraftQuery] = useState({ actorType: '', targetId: '' })
   const [appliedQuery, setAppliedQuery] = useState({})
@@ -29,7 +30,6 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
       <PageHeader
         eyebrow="Append-only"
         title="Audit bất biến"
-        description="Mọi mutation admin đều ghi audit với reasonCode allowlist. Không có update hoặc delete endpoint."
         action={
           <AdminButton icon="refresh" onClick={resource.reload}>
             Làm mới
@@ -71,7 +71,7 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
           Lọc
         </AdminButton>
       </form>
-      <Panel title="Audit stream" hint="Read-only structured events">
+      <Panel title="Audit stream">
         <ResourceFrame resource={resource} loadingLabel="Đang tải audit logs…">
           <Table
             label="Audit logs"
@@ -92,20 +92,28 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
                 key: 'actorType',
                 label: 'Actor',
                 render: (value, row) => (
-                  <>
-                    <span>{value}</span>
-                    <small className="admin-mono">{row.actorId}</small>
-                  </>
+                  <div className="admin-cell-resource">
+                    <strong className="admin-cell-primary">{value}</strong>
+                    <small className="admin-cell-sub">
+                      <CompactId id={row.actorId} label="Actor ID" length={8} />
+                    </small>
+                  </div>
                 ),
               },
               {
                 key: 'targetType',
                 label: 'Đối tượng',
                 render: (value, row) => (
-                  <>
-                    <span>{value}</span>
-                    <small className="admin-mono">{row.targetId}</small>
-                  </>
+                  <div className="admin-cell-resource">
+                    {value === 'source' ? (
+                      <SourceBadge sourceId={row.targetId} />
+                    ) : (
+                      <strong className="admin-cell-primary">{value}</strong>
+                    )}
+                    <small className="admin-cell-sub">
+                      <CompactId id={row.targetId} label="Target ID" length={8} />
+                    </small>
+                  </div>
                 ),
               },
               {
@@ -153,9 +161,8 @@ export function AdminAccountView({ api, session, onLogout, onSessionExpired }) {
       <PageHeader
         eyebrow="Tài khoản quản trị"
         title="Phiên admin"
-        description="Phiên server-side, CSRF trong memory và không lưu token trong trình duyệt."
       />
-      <Panel title="Thông tin phiên" hint="Dữ liệu lấy từ session props">
+      <Panel title="Thông tin phiên">
         <dl className="admin-account-facts">
           <div>
             <dt>Vai trò</dt>
@@ -175,7 +182,7 @@ export function AdminAccountView({ api, session, onLogout, onSessionExpired }) {
           </div>
           <div>
             <dt>CSRF</dt>
-            <dd className="admin-mono">session-bound · memory</dd>
+            <dd className="admin-mono">CSRF trong memory · session-bound</dd>
           </div>
         </dl>
         {error ? (

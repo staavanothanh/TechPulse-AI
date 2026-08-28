@@ -287,7 +287,7 @@ failed | partial → queued (retry mới)
 ```
 
 - Retry tạo attempt mới, giữ link tới original job.
-- `running` quá timeout được bounded recovery transaction đánh dấu `failed/lease_expired` trước khi tạo tối đa một linked retry.
+- `running` quá timeout hoặc mất lease (orphaned running job khi lease đã bị giải phóng hoặc bị thế hệ sau ghi đè) được bounded recovery transaction đánh dấu `failed/lease_expired` trước khi tạo tối đa một linked retry (nếu còn lượt attempt).
 - `queued` có `availableAt`; từng queue sort theo effective priority, `availableAt`, creation time và `_id`. Coordinator reserve deadline/claim margin rồi cấp một selection attempt cho mỗi registered due queue trước khi spill slot; budget không đủ thì fail safe, priority không so trực tiếp xuyên queue.
 - Mỗi shared logical lease key giữ persistent `generationHighWater` không TTL; acquisition sau recovery tăng generation, release chỉ clear active owner.
 - Shared lease key derive server-side cho source ingestion, article indexing và source reconciliation; cấm actor/invocation/random job ID. Account deletion là ADR-0014 stable-request exception với inline owner/generation/deadline.

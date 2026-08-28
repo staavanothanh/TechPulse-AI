@@ -325,7 +325,9 @@ export function runAdminDueWork(api, { csrfToken } = {}) {
 }
 
 export function isAdminJobRetryable(job) {
-  if (!job || !['partial', 'failed'].includes(job.status)) return false
+  if (!job) return false
+  if (typeof job.retryAvailable === 'boolean') return job.retryAvailable
+  if (!['partial', 'failed'].includes(job.status)) return false
   const statusAllowsRetry = job.status === 'partial' || job.error?.retryable === true
   const attempt = Number(job.attempt)
   return statusAllowsRetry && Number.isInteger(attempt) && attempt >= 1 && attempt < 3

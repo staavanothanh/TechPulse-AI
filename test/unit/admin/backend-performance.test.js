@@ -35,8 +35,7 @@ describe('admin Mongo performance boundaries', () => {
         { key: 'failedJobs', value: 5 },
         { key: 'lastSuccessfulIngestionAt', value: new Date('2026-08-20T00:00:00.000Z') },
       ])],
-      ['articles', aggregateCollection({ count: 6 })],
-      ['indexingJobs', aggregateCollection({ count: 7 })],
+      ['articles', aggregateCollection({ articlesNeedingReview: 6, failedIndexes: 7 })],
       ['takedownRequests', aggregateCollection({ count: 8 })],
       ['accountDeletionRequests', aggregateCollection({ count: 9 })],
     ])

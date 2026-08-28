@@ -1,6 +1,46 @@
-import { forwardRef, useEffect, useRef } from 'react'
+import { forwardRef, useEffect, useRef, useState } from 'react'
 import { listMeta, statusLabel, statusTone } from './admin-data.js'
 
+const SOURCE_DICTIONARY = new Map()
+
+export function registerSourceDictionary(sources = []) {
+  if (!Array.isArray(sources)) return
+  for (const source of sources) {
+    if (source && source.id) {
+      SOURCE_DICTIONARY.set(source.id, {
+        id: source.id,
+        name: source.name || source.title || source.id,
+        operationalStatus: source.operationalStatus || source.status || 'unknown',
+        connector: source.connector || source.type || 'rss',
+        policyVersion: source.policyVersion,
+      })
+    }
+  }
+}
+
+export function getSourceFromDictionary(sourceId) {
+  if (!sourceId) return null
+  return SOURCE_DICTIONARY.get(sourceId) || null
+}
+
+export function clearSourceDictionary() {
+  SOURCE_DICTIONARY.clear()
+}
+
+const ARTICLE_PREVIEW_CACHE = new Map()
+
+export function getCachedArticlePreview(id) {
+  if (!id) return null
+  return ARTICLE_PREVIEW_CACHE.get(String(id)) || null
+}
+
+export function cacheArticlePreview(id, data) {
+  if (id && data) ARTICLE_PREVIEW_CACHE.set(String(id), data)
+}
+
+export function clearArticlePreviewCache() {
+  ARTICLE_PREVIEW_CACHE.clear()
+}
 function Icon({ name, size = 18 }) {
   const paths = {
     activity: (
@@ -100,6 +140,25 @@ function Icon({ name, size = 18 }) {
         <path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" />
       </>
     ),
+    copy: (
+      <>
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </>
+    ),
+    external: (
+      <>
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        <polyline points="15 3 21 3 21 9" />
+        <line x1="10" y1="14" x2="21" y2="3" />
+      </>
+    ),
+    eye: (
+      <>
+        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+        <circle cx="12" cy="12" r="3" />
+      </>
+    ),
     x: (
       <>
         <path d="m6 6 12 12M18 6 6 18" />
@@ -146,6 +205,89 @@ function StatusBadge({ value, label = statusLabel(value) }) {
     <span className={`admin-status admin-status-${statusTone(value)}`}>
       <i aria-hidden="true" />
       {label}
+    </span>
+  )
+}
+
+function CompactId({
+  id,
+  label = 'ID',
+  length = 12,
+  copyable = true,
+  showFull = false,
+  className = '',
+}) {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  if (!id && id !== 0) return <span className="admin-muted">—</span>
+  const strId = String(id)
+  const displayText =
+    showFull || strId.length <= length
+      ? strId
+      : strId.length > 16
+        ? `${strId.slice(0, 7)}…${strId.slice(-4)}`
+        : `${strId.slice(0, length)}…`
+
+  async function handleCopy(event) {
+    event.stopPropagation()
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(strId)
+      }
+      setCopied(true)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  if (!copyable) {
+    return (
+      <span className={`admin-compact-id ${className}`} title={strId}>
+        <code className="admin-mono">{displayText}</code>
+      </span>
+    )
+  }
+
+  return (
+    <span className={`admin-compact-id ${copied ? 'admin-compact-id-copied' : ''} ${className}`}>
+      <code className="admin-mono" title={strId}>
+        {displayText}
+      </code>
+      <button
+        type="button"
+        className="admin-compact-id-btn"
+        onClick={handleCopy}
+        title={copied ? `Đã sao chép ${label}` : `Sao chép ${label}: ${strId}`}
+        aria-label={`Sao chép ${label}: ${strId}`}
+      >
+        <Icon name={copied ? 'check' : 'copy'} size={13} />
+      </button>
+      <span className="admin-sr-only" role="status" aria-live="polite">
+        {copied ? `Đã sao chép ${label}` : ''}
+      </span>
+    </span>
+  )
+}
+
+function SourceBadge({ sourceId, source, showId = false, className = '' }) {
+  const resolved = source || (sourceId ? getSourceFromDictionary(sourceId) : null)
+  if (!resolved && !sourceId) return <span className="admin-muted">—</span>
+
+  const name = resolved?.name || sourceId
+  return (
+    <span className={`admin-source-badge ${className}`} title={`Nguồn: ${name} (${sourceId || resolved?.id})`}>
+      <Icon name="globe" size={13} />
+      <span className="admin-source-badge-name">{name}</span>
+      {showId && sourceId ? <CompactId id={sourceId} label="Source ID" length={8} /> : null}
     </span>
   )
 }
@@ -348,9 +490,188 @@ export function AdminConfirmDialog({
   )
 }
 
+function ArticlePreviewDialog({
+  open = false,
+  articleId = null,
+  api,
+  onClose,
+}) {
+  const [loading, setLoading] = useState(false)
+  const [article, setArticle] = useState(null)
+  const [error, setError] = useState(null)
+  const dialogRef = useRef(null)
+  const closeRef = useRef(null)
+
+  useEffect(() => {
+    if (!open || !articleId) {
+      setArticle(null)
+      setError(null)
+      setLoading(false)
+      return undefined
+    }
+
+    const cached = getCachedArticlePreview(articleId)
+    if (cached) {
+      setArticle(cached)
+      setError(null)
+      setLoading(false)
+      return undefined
+    }
+
+    if (!api?.getArticle && !api?.getAdminArticle) {
+      setLoading(false)
+      return undefined
+    }
+
+    let active = true
+    setLoading(true)
+    setError(null)
+
+    const fetcher = api.getAdminArticle
+      ? api.getAdminArticle({ pathParams: { articleId: String(articleId) }, credentials: 'same-origin' })
+      : api.getArticle({ pathParams: { articleId: String(articleId) }, credentials: 'same-origin' })
+
+    void Promise.resolve(fetcher)
+      .then((res) => {
+        if (!active) return
+        const data = res?.data?.data ?? res?.data ?? null
+        if (data) cacheArticlePreview(articleId, data)
+        setArticle(data)
+        setLoading(false)
+      })
+      .catch((err) => {
+        if (!active) return
+        setError(err?.message || 'Không thể tải thông tin bài viết')
+        setLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [api, articleId, open])
+
+  useEffect(() => {
+    if (open) closeRef.current?.focus?.({ preventScroll: true })
+  }, [open, loading])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose?.()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose, open])
+
+  if (!open) return null
+
+  return (
+    <div className="admin-confirm-scrim" role="presentation" onClick={onClose}>
+      <section
+        className="admin-confirm-dialog admin-preview-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="admin-preview-title"
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="admin-preview-header">
+          <div>
+            <p className="admin-eyebrow">Xem nhanh bài viết</p>
+            <h2 id="admin-preview-title">
+              {loading
+                ? 'Đang tải thông tin…'
+                : article?.status === 'removed'
+                  ? 'Bài viết đã gỡ bỏ (Tombstone)'
+                  : article?.titleOriginal || article?.titleVi || `Bài viết #${articleId}`}
+            </h2>
+          </div>
+          <button
+            type="button"
+            className="admin-preview-close"
+            onClick={onClose}
+            aria-label="Đóng xem trước"
+            ref={closeRef}
+          >
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="admin-preview-loading" aria-busy="true">
+            <span className="admin-skeleton admin-skeleton-wide" />
+            <span className="admin-skeleton" />
+          </div>
+        ) : error ? (
+          <div className="admin-preview-error" role="alert">
+            <p>{error}</p>
+          </div>
+        ) : article?.status === 'removed' ? (
+          <div className="admin-preview-body">
+            <p className="admin-muted">
+              Bài viết này đã được gỡ bỏ khỏi hệ thống theo quy trình takedown. Toàn bộ nội dung và metadata đã bị xóa an toàn.
+            </p>
+            <div className="admin-preview-meta">
+              <span>Mã bài viết:</span>
+              <CompactId id={articleId} label="Article ID" />
+            </div>
+          </div>
+        ) : (
+          <div className="admin-preview-body">
+            {article?.topics && article.topics.length ? (
+              <div className="admin-preview-topics">
+                {article.topics.map((topic) => (
+                  <span key={topic} className="admin-chip">{topic}</span>
+                ))}
+              </div>
+            ) : null}
+
+            {article?.summaryVi ? (
+              <div className="admin-preview-section">
+                <strong>Tóm tắt AI (Tiếng Việt)</strong>
+                <p>{article.summaryVi}</p>
+              </div>
+            ) : article?.excerptOriginal ? (
+              <div className="admin-preview-section">
+                <strong>Trích đoạn gốc</strong>
+                <p>{article.excerptOriginal}</p>
+              </div>
+            ) : null}
+
+            <div className="admin-preview-grid">
+              <div>
+                <small>Nguồn tin</small>
+                <SourceBadge sourceId={article?.sourceId} showId />
+              </div>
+              <div>
+                <small>Trạng thái AI</small>
+                <div className="admin-status-group">
+                  <StatusBadge value={article?.summaryStatus || 'pending'} label={`Summary: ${article?.summaryStatus || 'pending'}`} />
+                  <StatusBadge value={article?.embeddingStatus || 'pending'} label={`Embedding: ${article?.embeddingStatus || 'pending'}`} />
+                </div>
+              </div>
+            </div>
+
+            <div className="admin-preview-meta">
+              <span>Mã bài viết:</span>
+              <CompactId id={articleId} label="Article ID" />
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
 export {
   Icon,
   StatusBadge,
+  CompactId,
+  SourceBadge,
+  ArticlePreviewDialog,
   PageHeader,
   Panel,
   LoadingState,

@@ -1,6 +1,6 @@
 import { ObjectId } from 'mongodb'
 import { describe, expect, it, vi } from 'vitest'
-import { MongoAdminRepository, SOURCE_OVERVIEW_PIPELINE } from '../../../server/repositories/mongo/admin-repository.js'
+import { INGESTION_OVERVIEW_PIPELINE, MongoAdminRepository, SOURCE_OVERVIEW_PIPELINE } from '../../../server/repositories/mongo/admin-repository.js'
 
 const adminId = new ObjectId('507f1f77bcf86cd799439011')
 const articleId = new ObjectId('507f1f77bcf86cd799439012')
@@ -86,8 +86,7 @@ describe('MongoAdminRepository', () => {
       aggregateResults: {
         sources: [[{ key: 'activeSources', value: 2 }, { key: 'pausedSources', value: 1 }]],
         ingestionJobs: [[{ key: 'queuedJobs', value: 4 }, { key: 'lastSuccessfulIngestionAt', value: now }]],
-        articles: [{ count: 3 }],
-        indexingJobs: [{ count: 1 }],
+        articles: [{ articlesNeedingReview: 3, failedIndexes: 1 }],
         takedownRequests: [{ count: 2 }],
         accountDeletionRequests: [{ count: 1 }],
       },
@@ -95,6 +94,14 @@ describe('MongoAdminRepository', () => {
     await expect(fixture.repository.getOverview()).resolves.toEqual({ activeSources: 2, pausedSources: 1, sourcesNeedingReview: 0, queuedJobs: 4, failedJobs: 0, articlesNeedingReview: 3, failedIndexes: 1, openTakedowns: 2, failedAccountDeletions: 1, lastSuccessfulIngestionAt: now })
     expect(SOURCE_OVERVIEW_PIPELINE).toHaveLength(6)
     expect(fixture.collections.get('sources').aggregate).toHaveBeenCalled()
+  })
+
+  it('only counts retryable failed ingestion jobs without successful retries in overview', async () => {
+    const failedStage = INGESTION_OVERVIEW_PIPELINE.find((stage) => stage.$unionWith?.pipeline?.some((p) => p.$set?.key === 'failedJobs'))
+    expect(failedStage).toBeDefined()
+    const pipeline = failedStage.$unionWith.pipeline
+    const matchStage = pipeline.find((p) => p.$match)
+    expect(matchStage.$match).toEqual(expect.objectContaining({ status: 'failed', 'error.retryable': true }))
   })
 
   it('inserts allowlisted admin audit records and replays existing events', async () => {

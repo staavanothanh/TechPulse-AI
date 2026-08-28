@@ -24,7 +24,7 @@
   "crons": [
     {
       "path": "/api/internal/cron/due-work",
-      "schedule": "0 5 * * *"
+      "schedule": "0 21 * * *"
     }
   ]
 }

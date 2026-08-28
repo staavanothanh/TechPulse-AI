@@ -151,7 +151,6 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
       <PageHeader
         eyebrow="Source Registry"
         title="Quản lý nguồn"
-        description="Connector, publisher, rights policy và media policy. Giao diện không hiển thị thông tin nhạy cảm."
         action={
           <AdminButton icon="refresh" onClick={reload} disabled={mutation.busy}>
             Làm mới
