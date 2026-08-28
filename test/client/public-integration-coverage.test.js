@@ -185,7 +185,7 @@ describe('public integration hooks', () => {
     result.feed.handlers.onOpenSearch()
     result.feed.handlers.onOpenArticle(article.id)
     expect(onNavigate).toHaveBeenCalledWith('search')
-    expect(onNavigate).toHaveBeenCalledWith('article')
+    expect(onNavigate).toHaveBeenCalledWith('article', { articleId: article.id })
 
     result.search.handlers.onQueryChange('q', 'AI')
     result = hookRuntime.render(usePublicIntegration, baseProps)
@@ -207,9 +207,17 @@ describe('public integration hooks', () => {
     result = hookRuntime.render(usePublicIntegration, articleProps)
     expect(result.article.state).toBe('ready')
     expect(result.article.article).toEqual(article)
+    expect(api.getArticle).toHaveBeenCalledTimes(1)
     result.article.onBack()
-    expect(onNavigate).toHaveBeenCalledWith('feed')
+    expect(onNavigate).toHaveBeenCalledWith('feed', { back: true })
 
+    // Re-visiting cached article resolves instantly without additional API call
+    result = hookRuntime.render(usePublicIntegration, { ...baseProps, route: 'feed' })
+    await hookRuntime.runEffects()
+    result = hookRuntime.render(usePublicIntegration, articleProps)
+    await hookRuntime.runEffects()
+    expect(result.article.state).toBe('ready')
+    expect(api.getArticle).toHaveBeenCalledTimes(1)
     const savedProps = { ...baseProps, route: 'saved' }
     result = hookRuntime.render(usePublicIntegration, savedProps)
     await hookRuntime.runEffects()
@@ -344,6 +352,98 @@ describe('public integration hooks', () => {
 
     expect(result.account.user).toMatchObject({ id: 'user-new', topicPreferences: ['Robotics'] })
     expect(expired).not.toHaveBeenCalled()
+  })
+
+  it('triggers exactly one API call when submitting a feed filter', async () => {
+    hookRuntime.reset()
+    const api = {
+      listArticles: vi.fn().mockResolvedValue(response([article])),
+      listSavedArticles: vi.fn().mockResolvedValue(response([])),
+    }
+    const props = {
+      api,
+      csrfToken: 'csrf-token',
+      user: { id: 'user-1', topicPreferences: [] },
+      route: 'feed',
+    }
+    let result = hookRuntime.render(usePublicIntegration, props)
+    await hookRuntime.runEffects()
+    expect(api.listArticles).toHaveBeenCalledTimes(1)
+
+    result.feed.handlers.onFilterChange('topic', 'AI')
+    result = hookRuntime.render(usePublicIntegration, props)
+    result.feed.handlers.onSubmit({ preventDefault: vi.fn() })
+    await flushMicrotasks()
+    await hookRuntime.runEffects()
+
+    expect(api.listArticles).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves feed and does not refetch on back-navigation even when feed is empty', async () => {
+    hookRuntime.reset()
+    const api = {
+      listArticles: vi.fn().mockResolvedValue(response([])),
+      listSavedArticles: vi.fn().mockResolvedValue(response([])),
+      getArticle: vi.fn().mockResolvedValue(response(article)),
+    }
+    const props = {
+      api,
+      csrfToken: 'csrf-token',
+      user: { id: 'user-1', topicPreferences: [] },
+      route: 'feed',
+    }
+    let result = hookRuntime.render(usePublicIntegration, props)
+    await hookRuntime.runEffects()
+    expect(api.listArticles).toHaveBeenCalledTimes(1)
+    expect(result.feed.articles).toEqual([])
+
+    const articleProps = { ...props, route: 'article' }
+    result = hookRuntime.render(usePublicIntegration, articleProps)
+    await hookRuntime.runEffects()
+
+    const returnFeedProps = { ...props, route: 'feed' }
+    result = hookRuntime.render(usePublicIntegration, returnFeedProps)
+    await hookRuntime.runEffects()
+
+    expect(api.listArticles).toHaveBeenCalledTimes(1)
+  })
+
+  it('hydrates search from searchParams and updates URL on search submit', async () => {
+    hookRuntime.reset()
+    const api = {
+      searchArticles: vi.fn().mockResolvedValue(response([article])),
+      listArticles: vi.fn().mockResolvedValue(response([])),
+      listSavedArticles: vi.fn().mockResolvedValue(response([])),
+    }
+    const onNavigate = vi.fn()
+    const props = {
+      api,
+      csrfToken: 'csrf-token',
+      user: { id: 'user-1', topicPreferences: [] },
+      route: 'search',
+      searchParams: { q: 'AI', topic: 'NLP', mode: 'hybrid' },
+      onNavigate,
+    }
+
+    let result = hookRuntime.render(usePublicIntegration, props)
+    await hookRuntime.runEffects()
+    result = hookRuntime.render(usePublicIntegration, props)
+
+    expect(result.search.query.q).toBe('AI')
+    expect(result.search.query.topic).toBe('NLP')
+    expect(api.searchArticles).toHaveBeenCalledWith(
+      expect.objectContaining({ credentials: 'same-origin', fetchImpl: expect.any(Function) }),
+    )
+    expect(result.search.state).toBe('ready')
+
+    result.search.handlers.onQueryChange('q', 'Robotics')
+    result = hookRuntime.render(usePublicIntegration, props)
+    result.search.handlers.onSubmit({ preventDefault: vi.fn() })
+    await flushMicrotasks()
+
+    expect(onNavigate).toHaveBeenCalledWith('search', {
+      searchParams: expect.objectContaining({ q: 'Robotics' }),
+    })
   })
 })
 

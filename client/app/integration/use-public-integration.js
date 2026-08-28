@@ -48,6 +48,8 @@ export function usePublicIntegration({
   csrfToken,
   user,
   route,
+  articleId: routeArticleId = null,
+  searchParams: routeSearchParams = null,
   onNavigate,
   onSessionExpired,
   accountActions,
@@ -87,7 +89,7 @@ export function usePublicIntegration({
       if (!id) return
       setArticleId(id)
       setArticleReturnRoute(route === 'search' || route === 'saved' ? route : 'feed')
-      onNavigate?.('article')
+      onNavigate?.('article', { articleId: id })
     },
     [onNavigate, route],
   )
@@ -116,7 +118,15 @@ export function usePublicIntegration({
     savedOverrides,
     toggleSave,
   })
-  const search = useSearch({ contentApi, expire, openArticle, savedOverrides, toggleSave })
+  const search = useSearch({
+    contentApi,
+    expire,
+    openArticle,
+    savedOverrides,
+    toggleSave,
+    initialParams: routeSearchParams,
+    onSearchSubmit: (query) => onNavigate?.('search', { searchParams: query }),
+  })
   const saved = useSaved({
     contentApi,
     csrfToken,
@@ -126,12 +136,13 @@ export function usePublicIntegration({
     openArticle,
     onNavigate,
   })
+  const activeArticleId = routeArticleId ?? articleId
   const article = useArticle({
-    articleId,
+    articleId: activeArticleId,
     contentApi,
     enabled: Boolean(user) && route === 'article',
     expire,
-    onBack: () => onNavigate?.(articleReturnRoute),
+    onBack: () => onNavigate?.(articleReturnRoute || 'feed', { back: true }),
   })
   const qa = useQa({ csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
   const account = useAccount({ accountActions, expire, sessionNotice, csrfToken, user })
@@ -160,7 +171,7 @@ function useFeed({
   const [pendingArticleId, setPendingArticleId] = useState(null)
   const requestSequence = useRef(0)
   const failedRequest = useRef(null)
-
+  const hasAttemptedRef = useRef(false)
   const load = useCallback(
     async ({ values = applied, targetPage = 1, cursor = null, requestedPage = 1, lastPage = false, filterChange = false } = {}) => {
       const sequence = requestSequence.current + 1
@@ -205,7 +216,8 @@ function useFeed({
   )
 
   useEffect(() => {
-    if (!enabled) return undefined
+    if (!enabled || hasAttemptedRef.current) return undefined
+    hasAttemptedRef.current = true
     const task = Promise.resolve().then(() => load({ values: applied, targetPage: 1 }))
     void task
     return undefined
@@ -300,9 +312,17 @@ function useFeed({
   }
 }
 
-function useSearch({ contentApi, expire, openArticle, savedOverrides, toggleSave }) {
+function useSearch({
+  contentApi,
+  expire,
+  openArticle,
+  savedOverrides,
+  toggleSave,
+  initialParams = null,
+  onSearchSubmit,
+}) {
   const [state, setState] = useState('initial')
-  const [query, setQuery] = useState(EMPTY_QUERY)
+  const [query, setQuery] = useState(() => ({ ...EMPTY_QUERY, ...(initialParams || {}) }))
   const [submitted, setSubmitted] = useState(null)
   const [results, setResults] = useState([])
   const [meta, setMeta] = useState({ hasNext: false, nextCursor: null })
@@ -311,7 +331,7 @@ function useSearch({ contentApi, expire, openArticle, savedOverrides, toggleSave
   const [page, setPage] = useState(1)
   const [cursors, setCursors] = useState([null])
   const [pendingArticleId, setPendingArticleId] = useState(null)
-
+  const hasHydratedRef = useRef(false)
   const run = useCallback(
     async (values, targetPage = 1, cursor = null) => {
       setState('loading')
@@ -351,12 +371,23 @@ function useSearch({ contentApi, expire, openArticle, savedOverrides, toggleSave
     }
   }
 
+  useEffect(() => {
+    if (initialParams?.q && !hasHydratedRef.current) {
+      hasHydratedRef.current = true
+      const initialQuery = { ...EMPTY_QUERY, ...initialParams }
+      setQuery(initialQuery)
+      setSubmitted(initialQuery)
+      void run(initialQuery)
+    }
+  }, [initialParams, run])
+
   function submit(event) {
-    event.preventDefault()
+    event?.preventDefault?.()
     const validation = validateSearchInput(query)
     setErrors(validation.errors)
     if (!validation.valid) return
     setSubmitted({ ...query })
+    onSearchSubmit?.(query)
     void run(query)
   }
 
@@ -391,7 +422,7 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
   const [pendingArticleId, setPendingArticleId] = useState(null)
   const [clearOpen, setClearOpen] = useState(false)
   const [clearBusy, setClearBusy] = useState(false)
-
+  const hasAttemptedRef = useRef(false)
   const load = useCallback(async () => {
     setState('loading')
     setError(null)
@@ -410,7 +441,8 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
   }, [contentApi, expire, markSaved])
 
   useEffect(() => {
-    if (!enabled) return undefined
+    if (!enabled || hasAttemptedRef.current) return undefined
+    hasAttemptedRef.current = true
     const task = Promise.resolve().then(load)
     void task
     return undefined
@@ -473,23 +505,34 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack }) {
   const [state, setState] = useState('loading')
   const [article, setArticle] = useState(null)
   const [error, setError] = useState(null)
+  const articleCacheRef = useRef(new Map())
+
   useEffect(() => {
     let active = true
     if (!enabled || !articleId)
       return () => {
         active = false
       }
+
+    if (articleCacheRef.current.has(articleId)) {
+      setArticle(articleCacheRef.current.get(articleId))
+      setState('ready')
+      setError(null)
+      return () => {
+        active = false
+      }
+    }
+
+    setState('loading')
+    setError(null)
+
     void Promise.resolve()
-      .then(() => {
-        if (active) {
-          setState('loading')
-          setError(null)
-        }
-        return contentApi.getArticle(articleId)
-      })
+      .then(() => contentApi.getArticle(articleId))
       .then((response) => {
         if (active) {
-          setArticle(responseData(response, null))
+          const item = responseData(response, null)
+          if (item) articleCacheRef.current.set(articleId, item)
+          setArticle(item)
           setState('ready')
         }
       })
