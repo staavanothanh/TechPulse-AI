@@ -89,7 +89,7 @@ describe('Admin ID presentation & Article Preview UX', () => {
       expect(html).toBe('')
     })
 
-    it('renders article preview with title, topics, AI summary, and reader link', () => {
+    it('renders article preview with title, topics, AI summary, and top-right close control', () => {
       const articleId = '60d5ec12a1b2c3d4e5f67890'
       const html = render(ArticlePreviewDialog, {
         open: true,
@@ -100,6 +100,8 @@ describe('Admin ID presentation & Article Preview UX', () => {
       expect(html).toContain('Xem nhanh bài viết')
       expect(html).toContain('admin-preview-dialog')
       expect(html).toContain('role="dialog"')
+      expect(html).toContain('aria-label="Đóng xem trước"')
+      expect(html).not.toContain('Mở trang đọc')
     })
   })
 

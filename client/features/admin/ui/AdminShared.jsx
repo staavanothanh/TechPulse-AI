@@ -661,22 +661,6 @@ function ArticlePreviewDialog({
             </div>
           </div>
         )}
-
-        <div className="admin-confirm-actions">
-          <AdminButton variant="secondary" onClick={onClose}>
-            Đóng
-          </AdminButton>
-          {article?.id && article.status !== 'removed' ? (
-            <a
-              className="admin-btn admin-btn-primary"
-              href={`/article/${encodeURIComponent(article.id)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Mở trang đọc ↗
-            </a>
-          ) : null}
-        </div>
       </section>
     </div>
   )
