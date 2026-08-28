@@ -256,6 +256,55 @@ describe('MongoJobRepository', () => {
     await expect(fixture.repository.listIngestionJobs({ status: 'bad' })).rejects.toMatchObject({ status: 400 })
     await expect(fixture.repository.listIngestionJobs({ cursor: 'bad' })).rejects.toMatchObject({ status: 400 })
 
+
+    const createFailedParent = () => serializedDocument({
+      _id: jobId,
+      status: 'failed',
+      attempt: 1,
+      error: { code: 'source_fetch_failed', message: 'fetch failed', retryable: true, occurredAt: now },
+    })
+    const childJob = serializedDocument({
+      _id: sessionId,
+      parentJobId: jobId,
+      attempt: 2,
+      status: 'succeeded',
+    })
+    const retryCheckFixture = createContext({
+      findResults: {
+        ingestionJobs: [
+          [createFailedParent()],
+          [childJob],
+        ],
+      },
+      findOne: {
+        ingestionJobs: [createFailedParent(), childJob],
+      },
+    })
+    const suppressed = await retryCheckFixture.repository.listIngestionJobs({ limit: 10 })
+    expect(suppressed.jobs[0].retryAvailable).toBe(false)
+    expect(suppressed.jobs[0].error.retryable).toBe(true)
+
+    const singleSuppressed = await retryCheckFixture.repository.findIngestionJobById(jobId.toHexString())
+    expect(singleSuppressed.retryAvailable).toBe(false)
+    expect(singleSuppressed.error.retryable).toBe(true)
+
+    const unretriedFixture = createContext({
+      findResults: {
+        ingestionJobs: [
+          [createFailedParent()],
+          [],
+        ],
+      },
+      findOne: {
+        ingestionJobs: [createFailedParent(), null],
+      },
+    })
+    const unretried = await unretriedFixture.repository.listIngestionJobs({ limit: 10 })
+    expect(unretried.jobs[0].retryAvailable).toBe(true)
+    expect(unretried.jobs[0].error.retryable).toBe(true)
+    const singleUnretried = await unretriedFixture.repository.findIngestionJobById(jobId.toHexString())
+    expect(singleUnretried.retryAvailable).toBe(true)
+    expect(singleUnretried.error.retryable).toBe(true)
     const aged = createContext({ findResults: { ingestionJobs: [[document]] } })
     await expect(aged.repository.selectDueIngestion({ now })).resolves.toEqual(expect.objectContaining({ id: jobId.toHexString() }))
     expect(aged.collections.get('ingestionJobs').find).toHaveBeenCalledTimes(1)
@@ -347,7 +396,7 @@ describe('MongoJobRepository', () => {
         adminAuditLogs: [null],
       },
       findResults: {
-        ingestionJobs: [runningJob],
+        ingestionJobs: [[runningJob]],
       },
       updateResults: {
         ingestionJobs: [{ matchedCount: 1 }],

@@ -23,6 +23,7 @@ export function serializeIngestionJobResponse(job) {
     batchSize: job.batchSize,
     parentJobId: job.parentJobId ?? null,
     counters: { ...job.counters },
+    retryAvailable: Boolean(job.retryAvailable),
     error: safeError(job.error),
     createdAt: iso(job.createdAt),
     startedAt: iso(job.startedAt),

@@ -7221,6 +7221,10 @@ export const openApiDocument = {
           "counters": {
             "$ref": "#/components/schemas/JobCounters"
           },
+          "retryAvailable": {
+            "type": "boolean",
+            "description": "Server-derived flag indicating whether a linked retry can currently be created for this job."
+          },
           "error": {
             "anyOf": [
               {
