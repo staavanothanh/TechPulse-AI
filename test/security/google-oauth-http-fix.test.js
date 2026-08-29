@@ -143,15 +143,40 @@ describe('Google OAuth HTTP boundary', () => {
     expect(authService.googleLogin).not.toHaveBeenCalled()
   })
 
-  it('serializes OAuth state failures as the canonical error envelope and clears the cookie', async () => {
-    authService.googleLogin.mockRejectedValueOnce(new AuthError(409, 'oauth_state_replayed', 'OAuth state has already been used'))
+
+  it('redirects to the home page with an account_suspended marker when the account was deleted', async () => {
+    authService.googleLogin.mockRejectedValueOnce(new AuthError(403, 'forbidden', 'This account has been suspended'))
     const response = await fetch(`${origin}/api/v1/auth/google/callback?code=google-code&state=${STATE}`, {
+      redirect: 'manual',
       headers: { Cookie: `__Host-techpulse_google_oauth_state=${STATE}` },
     })
-    expect(response.status).toBe(409)
-    expect(await response.json()).toEqual({ error: expect.objectContaining({ code: 'oauth_state_replayed', requestId: expect.any(String) }) })
+    expect(response.status).toBe(303)
+    expect(response.headers.get('location')).toBe('/?auth_error=account_suspended')
     expect(response.headers.get('set-cookie')).toContain('__Host-techpulse_google_oauth_state=;')
+    expect(response.headers.get('set-cookie')).not.toContain('__Host-techpulse_session=')
     expect(response.headers.get('cache-control')).toContain('no-store')
+  })
+
+  it('clears the OAuth state cookie when Google login fails and redirects', async () => {
+    authService.googleLogin.mockRejectedValueOnce(new AuthError(409, 'oauth_identity_conflict', 'Email account requires explicit Google linking'))
+    const response = await fetch(`${origin}/api/v1/auth/google/callback?code=google-code&state=${STATE}`, {
+      redirect: 'manual',
+      headers: { Cookie: `__Host-techpulse_google_oauth_state=${STATE}` },
+    })
+    expect(response.status).toBe(303)
+    expect(response.headers.get('location')).toBe('/?auth_error=oauth_identity_conflict')
+    expect(response.headers.get('set-cookie')).toContain('__Host-techpulse_google_oauth_state=;')
+  })
+
+  it('redirects with an account_suspended marker for suspended accounts', async () => {
+    authService.googleLogin.mockRejectedValueOnce(new AuthError(403, 'forbidden', 'This account has been suspended'))
+    const response = await fetch(`${origin}/api/v1/auth/google/callback?code=google-code&state=${STATE}`, {
+      redirect: 'manual',
+      headers: { Cookie: `__Host-techpulse_google_oauth_state=${STATE}` },
+    })
+    expect(response.status).toBe(303)
+    expect(response.headers.get('location')).toBe('/?auth_error=account_suspended')
+    expect(response.headers.get('set-cookie')).toContain('__Host-techpulse_google_oauth_state=;')
   })
 
   it('preserves rate-limit status and Retry-After from the auth service', async () => {

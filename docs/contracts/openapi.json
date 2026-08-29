@@ -346,6 +346,20 @@
               "Cache-Control": {
                 "$ref": "#/components/headers/PrivateNoStore"
               }
+            },
+            "x-callback-error": {
+              "description": "OAuth callback business error: the browser is redirected to the same-origin UI with an auth_error query marker and the OAuth state cookie is cleared. No session cookie is set.",
+              "headers": {
+                "Set-Cookie": {
+                  "$ref": "#/components/headers/ClearOAuthStateCookie"
+                },
+                "Location": {
+                  "$ref": "#/components/headers/OAuthErrorLocation"
+                },
+                "Cache-Control": {
+                  "$ref": "#/components/headers/PrivateNoStore"
+                }
+              }
             }
           },
           "400": {
@@ -460,6 +474,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -480,9 +497,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -818,11 +832,11 @@
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -857,14 +871,14 @@
           "204": {
             "description": "Chat session deleted or already absent"
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -1151,6 +1165,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1180,9 +1197,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -1325,6 +1339,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1348,9 +1365,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -1438,6 +1452,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1464,9 +1481,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -1514,6 +1528,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1543,9 +1560,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -1590,6 +1604,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1619,9 +1636,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -1669,6 +1683,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1698,9 +1715,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -1806,6 +1820,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1835,9 +1852,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -1930,6 +1944,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -1959,9 +1976,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -2006,6 +2020,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2032,9 +2049,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -2140,11 +2154,21 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       },
       "patch": {
@@ -2186,6 +2210,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2212,9 +2239,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -2265,6 +2289,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2294,9 +2321,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -2344,6 +2368,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2373,9 +2400,6 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -2442,11 +2466,21 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
@@ -2474,11 +2508,21 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
@@ -2491,10 +2535,18 @@
         "x-persistence": "mongo",
         "summary": "Create a retry for one failed or partial indexing task",
         "parameters": [
-          { "$ref": "#/components/parameters/JobIdPath" },
-          { "$ref": "#/components/parameters/CsrfTokenHeader" },
-          { "$ref": "#/components/parameters/BrowserOriginHeader" },
-          { "$ref": "#/components/parameters/IdempotencyKeyHeader" }
+          {
+            "$ref": "#/components/parameters/JobIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
         ],
         "requestBody": {
           "required": true,
@@ -2517,22 +2569,38 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "429": { "$ref": "#/components/responses/RateLimited" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -2546,9 +2614,15 @@
         "x-persistence": "mongo",
         "summary": "Request cooperative cancellation of an indexing job",
         "parameters": [
-          { "$ref": "#/components/parameters/JobIdPath" },
-          { "$ref": "#/components/parameters/CsrfTokenHeader" },
-          { "$ref": "#/components/parameters/BrowserOriginHeader" }
+          {
+            "$ref": "#/components/parameters/JobIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          }
         ],
         "requestBody": {
           "required": true,
@@ -2571,21 +2645,35 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -2688,6 +2776,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2714,9 +2805,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -2811,6 +2899,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2831,9 +2922,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -2921,6 +3009,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2948,9 +3039,6 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
           }
@@ -2966,14 +3054,23 @@
         "x-persistence": "mongo",
         "summary": "List durable account-deletion workflows without identity data",
         "parameters": [
-          { "$ref": "#/components/parameters/CursorQuery" },
-          { "$ref": "#/components/parameters/LimitQuery" },
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
           {
             "name": "status",
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["queued", "running", "completed", "failed"]
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed"
+              ]
             }
           }
         ],
@@ -2988,11 +3085,21 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
@@ -3005,7 +3112,9 @@
         "x-persistence": "mongo",
         "summary": "Get cleanup progress for one account-deletion workflow",
         "parameters": [
-          { "$ref": "#/components/parameters/DeletionRequestIdPath" }
+          {
+            "$ref": "#/components/parameters/DeletionRequestIdPath"
+          }
         ],
         "responses": {
           "200": {
@@ -3018,11 +3127,21 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
@@ -3035,10 +3154,18 @@
         "x-persistence": "mongo",
         "summary": "Retry remaining cleanup steps without restoring identity or sessions",
         "parameters": [
-          { "$ref": "#/components/parameters/DeletionRequestIdPath" },
-          { "$ref": "#/components/parameters/CsrfTokenHeader" },
-          { "$ref": "#/components/parameters/BrowserOriginHeader" },
-          { "$ref": "#/components/parameters/IdempotencyKeyHeader" }
+          {
+            "$ref": "#/components/parameters/DeletionRequestIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
         ],
         "requestBody": {
           "required": true,
@@ -3061,22 +3188,38 @@
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "429": { "$ref": "#/components/responses/RateLimited" },
-          "500": { "$ref": "#/components/responses/InternalError" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -3222,6 +3365,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -3249,9 +3395,6 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
           }
@@ -3278,7 +3421,11 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["admin", "user", "system-worker"]
+              "enum": [
+                "admin",
+                "user",
+                "system-worker"
+              ]
             }
           },
           {
@@ -3483,6 +3630,13 @@
         "schema": {
           "type": "string",
           "const": "/"
+        }
+      },
+      "OAuthErrorLocation": {
+        "description": "Same-origin UI location with an auth_error query marker after an OAuth callback business error (for example /?auth_error=conflict). The SPA reads the marker and renders a fixed message without exposing the raw error body.",
+        "schema": {
+          "type": "string",
+          "pattern": "^/\\?auth_error=[A-Za-z0-9._~-]+$"
         }
       },
       "PrivateNoStore": {
@@ -3974,8 +4128,12 @@
       },
       "NullableHttpsUrl": {
         "anyOf": [
-          { "$ref": "#/components/schemas/HttpsUrl" },
-          { "type": "null" }
+          {
+            "$ref": "#/components/schemas/HttpsUrl"
+          },
+          {
+            "type": "null"
+          }
         ]
       },
       "AdminReasonCode": {
@@ -4005,7 +4163,9 @@
       },
       "AuditReasonCode": {
         "oneOf": [
-          { "$ref": "#/components/schemas/AdminReasonCode" },
+          {
+            "$ref": "#/components/schemas/AdminReasonCode"
+          },
           {
             "type": "string",
             "enum": [
@@ -4457,13 +4617,27 @@
                 "completion": {
                   "type": "object",
                   "properties": {
-                    "sessionsRevoked": { "const": true },
-                    "sessionsDeleted": { "const": true },
-                    "savedArticlesDeleted": { "const": true },
-                    "chatSessionsDeleted": { "const": true },
-                    "answerAttemptsDeleted": { "const": true },
-                    "userQuotaDataDeleted": { "const": true },
-                    "identityAnonymized": { "const": true }
+                    "sessionsRevoked": {
+                      "const": true
+                    },
+                    "sessionsDeleted": {
+                      "const": true
+                    },
+                    "savedArticlesDeleted": {
+                      "const": true
+                    },
+                    "chatSessionsDeleted": {
+                      "const": true
+                    },
+                    "answerAttemptsDeleted": {
+                      "const": true
+                    },
+                    "userQuotaDataDeleted": {
+                      "const": true
+                    },
+                    "identityAnonymized": {
+                      "const": true
+                    }
                   }
                 },
                 "completedAt": {
@@ -4499,11 +4673,16 @@
           {
             "properties": {
               "status": {
-                "enum": ["queued", "running"]
+                "enum": [
+                  "queued",
+                  "running"
+                ]
               },
               "completion": {
                 "properties": {
-                  "sessionsRevoked": { "const": true }
+                  "sessionsRevoked": {
+                    "const": true
+                  }
                 }
               }
             }
@@ -4514,7 +4693,9 @@
       "AccountDeletionAcceptedResponse": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["data"],
+        "required": [
+          "data"
+        ],
         "properties": {
           "data": {
             "$ref": "#/components/schemas/AccountDeletionAccepted"
@@ -4597,11 +4778,17 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["image", "video"]
+            "enum": [
+              "image",
+              "video"
+            ]
           },
           "displayMode": {
             "type": "string",
-            "enum": ["remote-preview", "link-only"]
+            "enum": [
+              "remote-preview",
+              "link-only"
+            ]
           },
           "url": {
             "$ref": "#/components/schemas/HttpsUrl"
@@ -4610,10 +4797,16 @@
             "$ref": "#/components/schemas/HttpsUrl"
           },
           "altText": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "credit": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "attribution": {
             "type": "string",
@@ -4628,20 +4821,40 @@
         "allOf": [
           {
             "if": {
-              "properties": { "type": { "const": "image" } },
-              "required": ["type"]
+              "properties": {
+                "type": {
+                  "const": "image"
+                }
+              },
+              "required": [
+                "type"
+              ]
             },
             "then": {
-              "properties": { "displayMode": { "const": "remote-preview" } }
+              "properties": {
+                "displayMode": {
+                  "const": "remote-preview"
+                }
+              }
             }
           },
           {
             "if": {
-              "properties": { "type": { "const": "video" } },
-              "required": ["type"]
+              "properties": {
+                "type": {
+                  "const": "video"
+                }
+              },
+              "required": [
+                "type"
+              ]
             },
             "then": {
-              "properties": { "displayMode": { "const": "link-only" } }
+              "properties": {
+                "displayMode": {
+                  "const": "link-only"
+                }
+              }
             }
           }
         ]
@@ -4734,8 +4947,12 @@
           },
           "leadMedia": {
             "anyOf": [
-              { "$ref": "#/components/schemas/LeadMedia" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/LeadMedia"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "isSaved": {
@@ -4745,19 +4962,41 @@
         "allOf": [
           {
             "if": {
-              "properties": { "summaryStatus": { "const": "ready" } },
-              "required": ["summaryStatus"]
+              "properties": {
+                "summaryStatus": {
+                  "const": "ready"
+                }
+              },
+              "required": [
+                "summaryStatus"
+              ]
             },
             "then": {
               "properties": {
-                "summaryVi": { "type": "string", "minLength": 1, "maxLength": 4000 },
-                "summaryBasis": { "type": "string", "enum": ["metadata", "excerpt", "fulltext-temporary", "official-payload"] }
+                "summaryVi": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
+                },
+                "summaryBasis": {
+                  "type": "string",
+                  "enum": [
+                    "metadata",
+                    "excerpt",
+                    "fulltext-temporary",
+                    "official-payload"
+                  ]
+                }
               }
             },
             "else": {
               "properties": {
-                "summaryVi": { "type": "null" },
-                "summaryBasis": { "type": "null" }
+                "summaryVi": {
+                  "type": "null"
+                },
+                "summaryBasis": {
+                  "type": "null"
+                }
               }
             }
           }
@@ -4788,79 +5027,188 @@
           "aiDisclosure"
         ],
         "properties": {
-          "id": { "type": "string" },
-          "titleOriginal": { "type": "string" },
-          "titleVi": { "type": ["string", "null"] },
+          "id": {
+            "type": "string"
+          },
+          "titleOriginal": {
+            "type": "string"
+          },
+          "titleVi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "name", "authorityTier"],
+            "required": [
+              "id",
+              "name",
+              "authorityTier"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "name": { "type": "string" },
-              "authorityTier": { "$ref": "#/components/schemas/AuthorityTier" }
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "authorityTier": {
+                "$ref": "#/components/schemas/AuthorityTier"
+              }
             }
           },
-          "publishedAt": { "type": "string", "format": "date-time" },
-          "sourceLanguage": { "type": "string" },
-          "topics": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "summaryVi": { "type": ["string", "null"] },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "summaryVi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "summaryParagraphsVi": {
-            "type": ["array", "null"],
-            "items": { "type": "string", "minLength": 20, "maxLength": 2000 },
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 2000
+            },
             "minItems": 2,
             "maxItems": 5,
             "description": "Detailed Vietnamese article summary. Null until the canonical rich-summary artifact is ready. The server also enforces a 6000-character aggregate limit."
           },
-          "summaryStatus": { "$ref": "#/components/schemas/PublicArtifactStatus" },
-          "summaryDetailStatus": { "$ref": "#/components/schemas/PublicArtifactStatus" },
+          "summaryStatus": {
+            "$ref": "#/components/schemas/PublicArtifactStatus"
+          },
+          "summaryDetailStatus": {
+            "$ref": "#/components/schemas/PublicArtifactStatus"
+          },
           "summaryBasis": {
-            "type": ["string", "null"],
-            "enum": ["metadata", "excerpt", "fulltext-temporary", "official-payload", null]
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "metadata",
+              "excerpt",
+              "fulltext-temporary",
+              "official-payload",
+              null
+            ]
           },
           "leadMedia": {
             "anyOf": [
-              { "$ref": "#/components/schemas/LeadMedia" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/LeadMedia"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
-          "isSaved": { "type": "boolean" },
-          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
-          "author": { "type": ["string", "null"] },
-          "retrievedAt": { "type": "string", "format": "date-time" },
-          "citation": { "$ref": "#/components/schemas/SourceCitation" },
-          "aiDisclosure": { "type": "string" }
+          "isSaved": {
+            "type": "boolean"
+          },
+          "originalUrl": {
+            "$ref": "#/components/schemas/HttpsUrl"
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "retrievedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "citation": {
+            "$ref": "#/components/schemas/SourceCitation"
+          },
+          "aiDisclosure": {
+            "type": "string"
+          }
         },
         "allOf": [
           {
             "if": {
-              "properties": { "summaryStatus": { "const": "ready" } },
-              "required": ["summaryStatus"]
+              "properties": {
+                "summaryStatus": {
+                  "const": "ready"
+                }
+              },
+              "required": [
+                "summaryStatus"
+              ]
             },
             "then": {
               "properties": {
-                "summaryVi": { "type": "string", "minLength": 1, "maxLength": 4000 },
-                "summaryBasis": { "type": "string", "enum": ["metadata", "excerpt", "fulltext-temporary", "official-payload"] }
+                "summaryVi": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
+                },
+                "summaryBasis": {
+                  "type": "string",
+                  "enum": [
+                    "metadata",
+                    "excerpt",
+                    "fulltext-temporary",
+                    "official-payload"
+                  ]
+                }
               }
             },
             "else": {
               "properties": {
-                "summaryVi": { "type": "null" },
-                "summaryBasis": { "type": "null" }
+                "summaryVi": {
+                  "type": "null"
+                },
+                "summaryBasis": {
+                  "type": "null"
+                }
               }
             }
           },
           {
             "if": {
-              "properties": { "summaryDetailStatus": { "const": "ready" } },
-              "required": ["summaryDetailStatus"]
+              "properties": {
+                "summaryDetailStatus": {
+                  "const": "ready"
+                }
+              },
+              "required": [
+                "summaryDetailStatus"
+              ]
             },
             "then": {
               "properties": {
-                "summaryStatus": { "const": "ready" },
+                "summaryStatus": {
+                  "const": "ready"
+                },
                 "summaryParagraphsVi": {
                   "type": "array",
-                  "items": { "type": "string", "minLength": 20, "maxLength": 2000 },
+                  "items": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 2000
+                  },
                   "minItems": 2,
                   "maxItems": 5
                 }
@@ -4868,7 +5216,9 @@
             },
             "else": {
               "properties": {
-                "summaryParagraphsVi": { "type": "null" }
+                "summaryParagraphsVi": {
+                  "type": "null"
+                }
               }
             }
           }
@@ -5104,9 +5454,22 @@
           }
         },
         "anyOf": [
-          { "required": ["articleId"] },
-          { "required": ["topics"] },
-          { "required": ["publishedAfter", "publishedBefore"] }
+          {
+            "required": [
+              "articleId"
+            ]
+          },
+          {
+            "required": [
+              "topics"
+            ]
+          },
+          {
+            "required": [
+              "publishedAfter",
+              "publishedBefore"
+            ]
+          }
         ],
         "description": "At least one of articleId, topics, or a time-bounded topic query must be supplied."
       },
@@ -5172,15 +5535,37 @@
           "sourceLanguage"
         ],
         "properties": {
-          "id": { "type": "string" },
-          "articleId": { "type": "string" },
-          "sourceId": { "type": "string" },
-          "sourceName": { "type": "string" },
-          "titleOriginal": { "type": "string" },
-          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
-          "author": { "type": ["string", "null"] },
-          "publishedAt": { "type": "string", "format": "date-time" },
-          "sourceLanguage": { "type": "string" }
+          "id": {
+            "type": "string"
+          },
+          "articleId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "titleOriginal": {
+            "type": "string"
+          },
+          "originalUrl": {
+            "$ref": "#/components/schemas/HttpsUrl"
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
         }
       },
       "AnsweredAnswer": {
@@ -5590,11 +5975,17 @@
         "properties": {
           "imageMode": {
             "type": "string",
-            "enum": ["none", "remote-preview"]
+            "enum": [
+              "none",
+              "remote-preview"
+            ]
           },
           "videoMode": {
             "type": "string",
-            "enum": ["none", "link-only"]
+            "enum": [
+              "none",
+              "link-only"
+            ]
           },
           "allowedHosts": {
             "type": "array",
@@ -5608,7 +5999,10 @@
             "type": "boolean"
           },
           "evidenceNote": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 4000
           }
         }
@@ -5763,31 +6157,58 @@
           {
             "if": {
               "properties": {
-                "status": { "const": "passed" }
+                "status": {
+                  "const": "passed"
+                }
               },
-              "required": ["status"]
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
-                "checkedAt": { "type": "string", "format": "date-time" },
-                "contentType": { "type": "string", "minLength": 1 },
-                "resolvedHost": { "type": "string", "minLength": 1 },
-                "sampleCount": { "type": "integer", "minimum": 1 },
-                "error": { "type": "null" }
+                "checkedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "contentType": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "resolvedHost": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sampleCount": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "error": {
+                  "type": "null"
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "failed" }
+                "status": {
+                  "const": "failed"
+                }
               },
-              "required": ["status"]
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
-                "checkedAt": { "type": "string", "format": "date-time" },
-                "error": { "$ref": "#/components/schemas/SafeError" }
+                "checkedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "error": {
+                  "$ref": "#/components/schemas/SafeError"
+                }
               }
             }
           }
@@ -5797,71 +6218,155 @@
       "SourceReconciliation": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["status", "requiredPolicyVersion", "completedPolicyVersion", "requestedAt", "error"],
+        "required": [
+          "status",
+          "requiredPolicyVersion",
+          "completedPolicyVersion",
+          "requestedAt",
+          "error"
+        ],
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["idle", "pending", "processing", "completed", "failed"]
+            "enum": [
+              "idle",
+              "pending",
+              "processing",
+              "completed",
+              "failed"
+            ]
           },
-          "requiredPolicyVersion": { "type": "integer", "minimum": 1 },
-          "completedPolicyVersion": { "type": ["integer", "null"], "minimum": 1 },
-          "requestedAt": { "type": ["string", "null"], "format": "date-time" },
+          "requiredPolicyVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "completedPolicyVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "requestedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "error": {
             "anyOf": [
-              { "$ref": "#/components/schemas/SafeError" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/SafeError"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
         "allOf": [
           {
             "if": {
-              "properties": { "status": { "enum": ["pending", "processing"] } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "enum": [
+                    "pending",
+                    "processing"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
-                "requestedAt": { "type": "string", "format": "date-time" },
-                "completedPolicyVersion": { "type": "null" },
-                "error": { "type": "null" }
+                "requestedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "completedPolicyVersion": {
+                  "type": "null"
+                },
+                "error": {
+                  "type": "null"
+                }
               }
             }
           },
           {
             "if": {
-              "properties": { "status": { "const": "completed" } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
-                "requestedAt": { "type": "string", "format": "date-time" },
-                "completedPolicyVersion": { "type": "integer", "minimum": 1 },
-                "error": { "type": "null" }
+                "requestedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "completedPolicyVersion": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "error": {
+                  "type": "null"
+                }
               }
             }
           },
           {
             "if": {
-              "properties": { "status": { "const": "failed" } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
-                "requestedAt": { "type": "string", "format": "date-time" },
-                "completedPolicyVersion": { "type": "null" },
-                "error": { "$ref": "#/components/schemas/SafeError" }
+                "requestedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "completedPolicyVersion": {
+                  "type": "null"
+                },
+                "error": {
+                  "$ref": "#/components/schemas/SafeError"
+                }
               }
             }
           },
           {
             "if": {
-              "properties": { "status": { "const": "idle" } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "idle"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
-                "requestedAt": { "type": "null" },
-                "error": { "type": "null" }
+                "requestedAt": {
+                  "type": "null"
+                },
+                "error": {
+                  "type": "null"
+                }
               }
             }
           }
@@ -5996,13 +6501,32 @@
               "lastError"
             ],
             "properties": {
-              "lastIngestSucceededAt": { "type": ["string", "null"], "format": "date-time" },
-              "lastIngestFailedAt": { "type": ["string", "null"], "format": "date-time" },
-              "consecutiveFailures": { "type": "integer", "minimum": 0 },
+              "lastIngestSucceededAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "lastIngestFailedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "consecutiveFailures": {
+                "type": "integer",
+                "minimum": 0
+              },
               "lastError": {
                 "anyOf": [
-                  { "$ref": "#/components/schemas/SafeError" },
-                  { "type": "null" }
+                  {
+                    "$ref": "#/components/schemas/SafeError"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               }
             },
@@ -6020,13 +6544,25 @@
         "allOf": [
           {
             "if": {
-              "properties": { "attributionRequired": { "const": true } },
-              "required": ["attributionRequired"]
+              "properties": {
+                "attributionRequired": {
+                  "const": true
+                }
+              },
+              "required": [
+                "attributionRequired"
+              ]
             },
             "then": {
-              "required": ["attributionText"],
+              "required": [
+                "attributionText"
+              ],
               "properties": {
-                "attributionText": { "type": "string", "minLength": 1, "maxLength": 500 }
+                "attributionText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
               }
             }
           }
@@ -6090,40 +6626,82 @@
         "allOf": [
           {
             "if": {
-              "properties": { "connectorType": { "const": "rss" } },
-              "required": ["connectorType"]
+              "properties": {
+                "connectorType": {
+                  "const": "rss"
+                }
+              },
+              "required": [
+                "connectorType"
+              ]
             },
             "then": {
               "properties": {
-                "accessMethod": { "enum": ["rss", "atom"] },
-                "authorityTier": { "enum": ["primary", "editorial"] },
-                "connectorConfig": { "$ref": "#/components/schemas/RssConnectorConfig" }
+                "accessMethod": {
+                  "enum": [
+                    "rss",
+                    "atom"
+                  ]
+                },
+                "authorityTier": {
+                  "enum": [
+                    "primary",
+                    "editorial"
+                  ]
+                },
+                "connectorConfig": {
+                  "$ref": "#/components/schemas/RssConnectorConfig"
+                }
               }
             }
           },
           {
             "if": {
-              "properties": { "connectorType": { "const": "arxiv" } },
-              "required": ["connectorType"]
+              "properties": {
+                "connectorType": {
+                  "const": "arxiv"
+                }
+              },
+              "required": [
+                "connectorType"
+              ]
             },
             "then": {
               "properties": {
-                "accessMethod": { "const": "api" },
-                "authorityTier": { "const": "primary" },
-                "connectorConfig": { "$ref": "#/components/schemas/ArxivConnectorConfig" }
+                "accessMethod": {
+                  "const": "api"
+                },
+                "authorityTier": {
+                  "const": "primary"
+                },
+                "connectorConfig": {
+                  "$ref": "#/components/schemas/ArxivConnectorConfig"
+                }
               }
             }
           },
           {
             "if": {
-              "properties": { "connectorType": { "const": "hacker-news" } },
-              "required": ["connectorType"]
+              "properties": {
+                "connectorType": {
+                  "const": "hacker-news"
+                }
+              },
+              "required": [
+                "connectorType"
+              ]
             },
             "then": {
               "properties": {
-                "accessMethod": { "const": "api" },
-                "authorityTier": { "const": "community-signal" },
-                "connectorConfig": { "$ref": "#/components/schemas/HackerNewsConnectorConfig" }
+                "accessMethod": {
+                  "const": "api"
+                },
+                "authorityTier": {
+                  "const": "community-signal"
+                },
+                "connectorConfig": {
+                  "$ref": "#/components/schemas/HackerNewsConnectorConfig"
+                }
               }
             }
           }
@@ -6176,30 +6754,81 @@
           },
           "reasonCode": {
             "type": "string",
-            "enum": ["source_configuration_changed", "source_status_changed"]
+            "enum": [
+              "source_configuration_changed",
+              "source_status_changed"
+            ]
           }
         },
         "anyOf": [
-          { "required": ["name"] },
-          { "required": ["publisherName"] },
-          { "required": ["domain"] },
-          { "required": ["authorityTier"] },
-          { "required": ["connectorConfig"] },
-          { "required": ["mediaPolicy"] },
-          { "required": ["operationalStatus"] },
-          { "required": ["attributionRequired"] },
-          { "required": ["attributionText"] }
+          {
+            "required": [
+              "name"
+            ]
+          },
+          {
+            "required": [
+              "publisherName"
+            ]
+          },
+          {
+            "required": [
+              "domain"
+            ]
+          },
+          {
+            "required": [
+              "authorityTier"
+            ]
+          },
+          {
+            "required": [
+              "connectorConfig"
+            ]
+          },
+          {
+            "required": [
+              "mediaPolicy"
+            ]
+          },
+          {
+            "required": [
+              "operationalStatus"
+            ]
+          },
+          {
+            "required": [
+              "attributionRequired"
+            ]
+          },
+          {
+            "required": [
+              "attributionText"
+            ]
+          }
         ],
         "allOf": [
           {
             "if": {
-              "properties": { "attributionRequired": { "const": true } },
-              "required": ["attributionRequired"]
+              "properties": {
+                "attributionRequired": {
+                  "const": true
+                }
+              },
+              "required": [
+                "attributionRequired"
+              ]
             },
             "then": {
-              "required": ["attributionText"],
+              "required": [
+                "attributionText"
+              ],
               "properties": {
-                "attributionText": { "type": "string", "minLength": 1, "maxLength": 500 }
+                "attributionText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
               }
             }
           }
@@ -6304,25 +6933,47 @@
         "allOf": [
           {
             "if": {
-              "properties": { "licenseStatus": { "const": "blocked" } },
-              "required": ["licenseStatus"]
+              "properties": {
+                "licenseStatus": {
+                  "const": "blocked"
+                }
+              },
+              "required": [
+                "licenseStatus"
+              ]
             },
             "then": {
               "properties": {
-                "llmInputScope": { "const": "none" },
+                "llmInputScope": {
+                  "const": "none"
+                },
                 "storageScope": {
                   "properties": {
-                    "metadata": { "const": false },
-                    "excerpt": { "const": false },
-                    "summary": { "const": false },
-                    "embedding": { "const": false }
+                    "metadata": {
+                      "const": false
+                    },
+                    "excerpt": {
+                      "const": false
+                    },
+                    "summary": {
+                      "const": false
+                    },
+                    "embedding": {
+                      "const": false
+                    }
                   }
                 },
                 "mediaPolicy": {
                   "properties": {
-                    "imageMode": { "const": "none" },
-                    "videoMode": { "const": "none" },
-                    "allowedHosts": { "maxItems": 0 }
+                    "imageMode": {
+                      "const": "none"
+                    },
+                    "videoMode": {
+                      "const": "none"
+                    },
+                    "allowedHosts": {
+                      "maxItems": 0
+                    }
                   }
                 }
               }
@@ -6330,16 +6981,31 @@
           },
           {
             "if": {
-              "properties": { "licenseStatus": { "const": "metadata-only" } },
-              "required": ["licenseStatus"]
+              "properties": {
+                "licenseStatus": {
+                  "const": "metadata-only"
+                }
+              },
+              "required": [
+                "licenseStatus"
+              ]
             },
             "then": {
               "properties": {
-                "llmInputScope": { "enum": ["none", "metadata"] },
+                "llmInputScope": {
+                  "enum": [
+                    "none",
+                    "metadata"
+                  ]
+                },
                 "storageScope": {
                   "properties": {
-                    "metadata": { "const": true },
-                    "excerpt": { "const": false }
+                    "metadata": {
+                      "const": true
+                    },
+                    "excerpt": {
+                      "const": false
+                    }
                   }
                 }
               }
@@ -6347,15 +7013,25 @@
           },
           {
             "if": {
-              "properties": { "llmInputScope": { "const": "none" } },
-              "required": ["llmInputScope"]
+              "properties": {
+                "llmInputScope": {
+                  "const": "none"
+                }
+              },
+              "required": [
+                "llmInputScope"
+              ]
             },
             "then": {
               "properties": {
                 "storageScope": {
                   "properties": {
-                    "summary": { "const": false },
-                    "embedding": { "const": false }
+                    "summary": {
+                      "const": false
+                    },
+                    "embedding": {
+                      "const": false
+                    }
                   }
                 }
               }
@@ -6363,13 +7039,25 @@
           },
           {
             "if": {
-              "properties": { "attributionRequired": { "const": true } },
-              "required": ["attributionRequired"]
+              "properties": {
+                "attributionRequired": {
+                  "const": true
+                }
+              },
+              "required": [
+                "attributionRequired"
+              ]
             },
             "then": {
-              "required": ["attributionText"],
+              "required": [
+                "attributionText"
+              ],
               "properties": {
-                "attributionText": { "type": "string", "minLength": 1, "maxLength": 500 }
+                "attributionText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
               }
             }
           }
@@ -6618,33 +7306,49 @@
       "JobRetryRequest": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["reasonCode"],
+        "required": [
+          "reasonCode"
+        ],
         "properties": {
-          "reasonCode": { "const": "job_retry_requested" }
+          "reasonCode": {
+            "const": "job_retry_requested"
+          }
         }
       },
       "JobCancellationRequest": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["reasonCode"],
+        "required": [
+          "reasonCode"
+        ],
         "properties": {
-          "reasonCode": { "const": "job_cancel_requested" }
+          "reasonCode": {
+            "const": "job_cancel_requested"
+          }
         }
       },
       "ArtifactRegenerationRequest": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["reasonCode"],
+        "required": [
+          "reasonCode"
+        ],
         "properties": {
-          "reasonCode": { "const": "artifact_regeneration_requested" }
+          "reasonCode": {
+            "const": "artifact_regeneration_requested"
+          }
         }
       },
       "AccountDeletionRetryRequest": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["reasonCode"],
+        "required": [
+          "reasonCode"
+        ],
         "properties": {
-          "reasonCode": { "const": "account_deletion_retry_requested" }
+          "reasonCode": {
+            "const": "account_deletion_retry_requested"
+          }
         }
       },
       "IngestionJobResponse": {
@@ -6866,7 +7570,10 @@
             "$ref": "#/components/schemas/CronQueueSummaries"
           },
           "nextAvailableAt": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           }
         },
@@ -6875,34 +7582,82 @@
       "CronRecoverySummary": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["inspected", "recovered", "retriesCreated", "failed"],
+        "required": [
+          "inspected",
+          "recovered",
+          "retriesCreated",
+          "failed"
+        ],
         "properties": {
-          "inspected": { "type": "integer", "minimum": 0 },
-          "recovered": { "type": "integer", "minimum": 0 },
-          "retriesCreated": { "type": "integer", "minimum": 0 },
-          "failed": { "type": "integer", "minimum": 0 }
+          "inspected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recovered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retriesCreated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       },
       "CronQueueSummaries": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["ingestion", "indexing", "accountDeletion"],
+        "required": [
+          "ingestion",
+          "indexing",
+          "accountDeletion"
+        ],
         "properties": {
-          "ingestion": { "$ref": "#/components/schemas/CronQueueCounters" },
-          "indexing": { "$ref": "#/components/schemas/CronQueueCounters" },
-          "accountDeletion": { "$ref": "#/components/schemas/CronQueueCounters" }
+          "ingestion": {
+            "$ref": "#/components/schemas/CronQueueCounters"
+          },
+          "indexing": {
+            "$ref": "#/components/schemas/CronQueueCounters"
+          },
+          "accountDeletion": {
+            "$ref": "#/components/schemas/CronQueueCounters"
+          }
         }
       },
       "CronQueueCounters": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["claimed", "succeeded", "partial", "failed", "deferred"],
+        "required": [
+          "claimed",
+          "succeeded",
+          "partial",
+          "failed",
+          "deferred"
+        ],
         "properties": {
-          "claimed": { "type": "integer", "minimum": 0 },
-          "succeeded": { "type": "integer", "minimum": 0 },
-          "partial": { "type": "integer", "minimum": 0 },
-          "failed": { "type": "integer", "minimum": 0 },
-          "deferred": { "type": "integer", "minimum": 0 }
+          "claimed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "succeeded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "partial": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deferred": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       },
       "CronRunResponse": {
@@ -7047,22 +7802,48 @@
       },
       "AdminArticle": {
         "oneOf": [
-          { "$ref": "#/components/schemas/AdminArticleActive" },
-          { "$ref": "#/components/schemas/AdminArticleRemoved" }
+          {
+            "$ref": "#/components/schemas/AdminArticleActive"
+          },
+          {
+            "$ref": "#/components/schemas/AdminArticleRemoved"
+          }
         ],
         "description": "Safe admin article summary. Removed articles use the metadata-free tombstone branch."
       },
       "AdminArticleRemoved": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "sourceId", "status", "removalPolicyVersion", "removedAt", "updatedAt"],
+        "required": [
+          "id",
+          "sourceId",
+          "status",
+          "removalPolicyVersion",
+          "removedAt",
+          "updatedAt"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "sourceId": { "type": "string" },
-          "status": { "const": "removed" },
-          "removalPolicyVersion": { "type": "integer", "minimum": 1 },
-          "removedAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "status": {
+            "const": "removed"
+          },
+          "removalPolicyVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "removedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         },
         "description": "Closed metadata-free article tombstone. Title, URL, author, provenance, topics, media and AI artifacts are forbidden."
       },
@@ -7095,7 +7876,12 @@
           },
           "status": {
             "type": "string",
-            "enum": ["processing", "review-needed", "published", "hidden"]
+            "enum": [
+              "processing",
+              "review-needed",
+              "published",
+              "hidden"
+            ]
           },
           "topics": {
             "type": "array",
@@ -7106,13 +7892,21 @@
           },
           "leadMedia": {
             "anyOf": [
-              { "$ref": "#/components/schemas/LeadMedia" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/LeadMedia"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "leadMediaStatus": {
             "type": "string",
-            "enum": ["none", "available", "hidden"]
+            "enum": [
+              "none",
+              "available",
+              "hidden"
+            ]
           },
           "summaryStatus": {
             "$ref": "#/components/schemas/ArtifactStatus"
@@ -7141,8 +7935,12 @@
       },
       "AdminArticleDetail": {
         "oneOf": [
-          { "$ref": "#/components/schemas/AdminArticleDetailActive" },
-          { "$ref": "#/components/schemas/AdminArticleRemoved" }
+          {
+            "$ref": "#/components/schemas/AdminArticleDetailActive"
+          },
+          {
+            "$ref": "#/components/schemas/AdminArticleRemoved"
+          }
         ],
         "description": "Safe admin article detail. Removed articles expose only the metadata-free tombstone."
       },
@@ -7174,14 +7972,32 @@
           "updatedAt"
         ],
         "properties": {
-          "id": { "type": "string" },
-          "sourceId": { "type": "string" },
-          "titleOriginal": { "type": "string" },
-          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
-          "status": { "type": "string", "enum": ["processing", "review-needed", "published", "hidden"] },
+          "id": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "titleOriginal": {
+            "type": "string"
+          },
+          "originalUrl": {
+            "$ref": "#/components/schemas/HttpsUrl"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "review-needed",
+              "published",
+              "hidden"
+            ]
+          },
           "topics": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "uniqueItems": true
           },
           "provenance": {
@@ -7189,11 +8005,22 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["sourceId", "originalUrl", "observedAt"],
+              "required": [
+                "sourceId",
+                "originalUrl",
+                "observedAt"
+              ],
               "properties": {
-                "sourceId": { "type": "string" },
-                "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
-                "observedAt": { "type": "string", "format": "date-time" }
+                "sourceId": {
+                  "type": "string"
+                },
+                "originalUrl": {
+                  "$ref": "#/components/schemas/HttpsUrl"
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               }
             },
             "minItems": 1,
@@ -7202,52 +8029,137 @@
           "rightsSnapshot": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["sourcePolicyVersion", "licenseStatus", "llmInputScope", "capturedAt"],
+            "required": [
+              "sourcePolicyVersion",
+              "licenseStatus",
+              "llmInputScope",
+              "capturedAt"
+            ],
             "properties": {
-              "sourcePolicyVersion": { "type": "integer", "minimum": 1 },
-              "licenseStatus": { "$ref": "#/components/schemas/LicenseStatus" },
-              "llmInputScope": { "$ref": "#/components/schemas/LlmInputScope" },
-              "capturedAt": { "type": "string", "format": "date-time" }
+              "sourcePolicyVersion": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "licenseStatus": {
+                "$ref": "#/components/schemas/LicenseStatus"
+              },
+              "llmInputScope": {
+                "$ref": "#/components/schemas/LlmInputScope"
+              },
+              "capturedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
             }
           },
           "leadMedia": {
             "anyOf": [
-              { "$ref": "#/components/schemas/LeadMedia" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/LeadMedia"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
-          "leadMediaStatus": { "type": "string", "enum": ["none", "available", "hidden"] },
-          "summaryStatus": { "$ref": "#/components/schemas/ArtifactStatus" },
-          "summaryModel": { "type": ["string", "null"] },
-          "summarySourcePolicyVersion": { "type": ["integer", "null"], "minimum": 1 },
-          "summaryGeneratedAt": { "type": ["string", "null"], "format": "date-time" },
+          "leadMediaStatus": {
+            "type": "string",
+            "enum": [
+              "none",
+              "available",
+              "hidden"
+            ]
+          },
+          "summaryStatus": {
+            "$ref": "#/components/schemas/ArtifactStatus"
+          },
+          "summaryModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summarySourcePolicyVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "summaryGeneratedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "summaryError": {
             "anyOf": [
-              { "$ref": "#/components/schemas/SafeError" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/SafeError"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
-          "embeddingStatus": { "$ref": "#/components/schemas/ArtifactStatus" },
-          "embeddingModel": { "type": ["string", "null"] },
-          "embeddingVersion": { "type": ["integer", "null"], "minimum": 1 },
-          "embeddingSourcePolicyVersion": { "type": ["integer", "null"], "minimum": 1 },
-          "embeddedAt": { "type": ["string", "null"], "format": "date-time" },
+          "embeddingStatus": {
+            "$ref": "#/components/schemas/ArtifactStatus"
+          },
+          "embeddingModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "embeddingVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "embeddingSourcePolicyVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "embeddedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "embeddingError": {
             "anyOf": [
-              { "$ref": "#/components/schemas/SafeError" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/SafeError"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         },
         "description": "Safe admin diagnostics only. Excludes excerpt/full text, vectors, provider payloads, private chat and secrets."
       },
       "AdminArticleDetailResponse": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["data"],
+        "required": [
+          "data"
+        ],
         "properties": {
-          "data": { "$ref": "#/components/schemas/AdminArticleDetail" }
+          "data": {
+            "$ref": "#/components/schemas/AdminArticleDetail"
+          }
         }
       },
       "AdminArticleUpdateRequest": {
@@ -7272,7 +8184,10 @@
           },
           "leadMediaStatus": {
             "type": "string",
-            "enum": ["available", "hidden"]
+            "enum": [
+              "available",
+              "hidden"
+            ]
           },
           "reasonCode": {
             "type": "string",
@@ -7284,9 +8199,21 @@
           }
         },
         "anyOf": [
-          { "required": ["status"] },
-          { "required": ["topics"] },
-          { "required": ["leadMediaStatus"] }
+          {
+            "required": [
+              "status"
+            ]
+          },
+          {
+            "required": [
+              "topics"
+            ]
+          },
+          {
+            "required": [
+              "leadMediaStatus"
+            ]
+          }
         ],
         "description": "At least one of status, topics or leadMediaStatus is required. Runtime domain validation returns 422 when reasonCode does not match the changed field set. Restoring media requires a current source policy that still permits its mode and host. Removed article restoration is subject to takedown policy."
       },
@@ -7350,39 +8277,86 @@
       "HistoricalCitationAvailable": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "status", "articleId", "sourceId", "originalUrl", "titleOriginal", "publishedAt"],
+        "required": [
+          "id",
+          "status",
+          "articleId",
+          "sourceId",
+          "originalUrl",
+          "titleOriginal",
+          "publishedAt"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "status": { "const": "available" },
-          "articleId": { "type": "string" },
-          "sourceId": { "type": "string" },
-          "originalUrl": { "$ref": "#/components/schemas/HttpsUrl" },
-          "titleOriginal": { "type": "string", "minLength": 1, "maxLength": 500 },
-          "publishedAt": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "const": "available"
+          },
+          "articleId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "originalUrl": {
+            "$ref": "#/components/schemas/HttpsUrl"
+          },
+          "titleOriginal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "HistoricalCitationUnavailable": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "status", "unavailableReason"],
+        "required": [
+          "id",
+          "status",
+          "unavailableReason"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "status": { "const": "unavailable" },
-          "articleId": { "type": "string" },
-          "sourceId": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "const": "unavailable"
+          },
+          "articleId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
           "unavailableReason": {
             "type": "string",
-            "enum": ["takedown", "source-policy", "article-removed"]
+            "enum": [
+              "takedown",
+              "source-policy",
+              "article-removed"
+            ]
           }
         },
         "description": "Redacted historical citation. originalUrl, titleOriginal and publishedAt are intentionally forbidden by additionalProperties=false."
       },
       "HistoricalChatCitation": {
         "oneOf": [
-          { "$ref": "#/components/schemas/HistoricalCitationAvailable" },
-          { "$ref": "#/components/schemas/HistoricalCitationUnavailable" }
+          {
+            "$ref": "#/components/schemas/HistoricalCitationAvailable"
+          },
+          {
+            "$ref": "#/components/schemas/HistoricalCitationUnavailable"
+          }
         ],
-        "discriminator": { "propertyName": "status" },
+        "discriminator": {
+          "propertyName": "status"
+        },
         "description": "Persistence/serialization contract for citations retained in historical chat after source-policy or takedown changes."
       },
       "TakedownCompletion": {
@@ -7420,8 +8394,12 @@
       },
       "TakedownRequest": {
         "oneOf": [
-          { "$ref": "#/components/schemas/TakedownRequestPrePurge" },
-          { "$ref": "#/components/schemas/TakedownRequestPostPurge" }
+          {
+            "$ref": "#/components/schemas/TakedownRequestPrePurge"
+          },
+          {
+            "$ref": "#/components/schemas/TakedownRequestPostPurge"
+          }
         ],
         "description": "Takedown detail before requester PII retention expiry or after the terminal PII fields are purged. The post-purge branch is terminal-only and contains no requester PII."
       },
@@ -7496,8 +8474,12 @@
           },
           "decisionReasonCode": {
             "anyOf": [
-              { "$ref": "#/components/schemas/AdminReasonCode" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/AdminReasonCode"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Allowlisted administrative transition reason. Free-form administrative decision text is not persisted or serialized."
           },
@@ -7505,7 +8487,10 @@
             "$ref": "#/components/schemas/TakedownCompletion"
           },
           "completedAt": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           },
           "createdAt": {
@@ -7520,74 +8505,147 @@
         "allOf": [
           {
             "if": {
-              "properties": { "status": { "const": "completed" } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
                 "completion": {
                   "properties": {
-                    "hidden": { "const": true },
-                    "historicalChatCitationsRedacted": { "const": true }
+                    "hidden": {
+                      "const": true
+                    },
+                    "historicalChatCitationsRedacted": {
+                      "const": true
+                    }
                   }
                 },
-                "completedAt": { "type": "string", "format": "date-time" }
+                "completedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "metadata" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "metadata"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "metadataRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "metadataRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "media-metadata" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "media-metadata"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "mediaMetadataRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "mediaMetadataRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "summary" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "summary"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "summaryRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "summaryRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "embedding" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "embedding"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "embeddingRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "embeddingRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           }
@@ -7614,11 +8672,17 @@
           },
           "status": {
             "type": "string",
-            "enum": ["rejected", "completed"]
+            "enum": [
+              "rejected",
+              "completed"
+            ]
           },
           "targetType": {
             "type": "string",
-            "enum": ["source", "article"]
+            "enum": [
+              "source",
+              "article"
+            ]
           },
           "targetIds": {
             "type": "array",
@@ -7644,8 +8708,12 @@
           },
           "decisionReasonCode": {
             "anyOf": [
-              { "$ref": "#/components/schemas/AdminReasonCode" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/AdminReasonCode"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Allowlisted administrative transition reason. Free-form administrative decision text is not persisted or serialized."
           },
@@ -7668,74 +8736,147 @@
         "allOf": [
           {
             "if": {
-              "properties": { "status": { "const": "completed" } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "properties": {
                 "completion": {
                   "properties": {
-                    "hidden": { "const": true },
-                    "historicalChatCitationsRedacted": { "const": true }
+                    "hidden": {
+                      "const": true
+                    },
+                    "historicalChatCitationsRedacted": {
+                      "const": true
+                    }
                   }
                 },
-                "completedAt": { "type": "string", "format": "date-time" }
+                "completedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "metadata" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "metadata"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "metadataRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "metadataRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "media-metadata" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "media-metadata"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "mediaMetadataRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "mediaMetadataRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "summary" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "summary"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "summaryRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "summaryRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           },
           {
             "if": {
               "properties": {
-                "status": { "const": "completed" },
-                "requestedScope": { "contains": { "const": "embedding" } }
+                "status": {
+                  "const": "completed"
+                },
+                "requestedScope": {
+                  "contains": {
+                    "const": "embedding"
+                  }
+                }
               },
-              "required": ["status", "requestedScope"]
+              "required": [
+                "status",
+                "requestedScope"
+              ]
             },
             "then": {
               "properties": {
-                "completion": { "properties": { "embeddingRemoved": { "const": true } } }
+                "completion": {
+                  "properties": {
+                    "embeddingRemoved": {
+                      "const": true
+                    }
+                  }
+                }
               }
             }
           }
@@ -7815,29 +8956,99 @@
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["reviewing", "approved", "rejected", "completed"]
+            "enum": [
+              "reviewing",
+              "approved",
+              "rejected",
+              "completed"
+            ]
           },
           "reasonCode": {
             "type": "string",
-            "enum": ["takedown_review_started", "takedown_approved", "takedown_rejected", "takedown_completed"]
+            "enum": [
+              "takedown_review_started",
+              "takedown_approved",
+              "takedown_rejected",
+              "takedown_completed"
+            ]
           }
         },
         "allOf": [
           {
-            "if": { "properties": { "status": { "const": "reviewing" } }, "required": ["status"] },
-            "then": { "properties": { "reasonCode": { "const": "takedown_review_started" } } }
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "reviewing"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "const": "takedown_review_started"
+                }
+              }
+            }
           },
           {
-            "if": { "properties": { "status": { "const": "approved" } }, "required": ["status"] },
-            "then": { "properties": { "reasonCode": { "const": "takedown_approved" } } }
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "approved"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "const": "takedown_approved"
+                }
+              }
+            }
           },
           {
-            "if": { "properties": { "status": { "const": "rejected" } }, "required": ["status"] },
-            "then": { "properties": { "reasonCode": { "const": "takedown_rejected" } } }
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "rejected"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "const": "takedown_rejected"
+                }
+              }
+            }
           },
           {
-            "if": { "properties": { "status": { "const": "completed" } }, "required": ["status"] },
-            "then": { "properties": { "reasonCode": { "const": "takedown_completed" } } }
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "const": "takedown_completed"
+                }
+              }
+            }
           }
         ],
         "description": "MVP decisions are all-or-nothing. approved covers the complete requestedScope; completed requires every corresponding cleanup check. Account deletion is a separate workflow."
@@ -7867,12 +9078,24 @@
           "updatedAt"
         ],
         "properties": {
-          "id": { "type": "string" },
-          "status": { "$ref": "#/components/schemas/TakedownStatus" },
-          "targetType": { "type": "string", "enum": ["source", "article"] },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TakedownStatus"
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "source",
+              "article"
+            ]
+          },
           "targetIds": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "uniqueItems": true,
             "minItems": 1
           },
@@ -7880,13 +9103,24 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["metadata", "media-metadata", "summary", "embedding"]
+              "enum": [
+                "metadata",
+                "media-metadata",
+                "summary",
+                "embedding"
+              ]
             },
             "uniqueItems": true,
             "minItems": 1
           },
-          "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         },
         "description": "PII-minimized list item. Requester contact, reason and evidence are available only from the detail operation."
       },
@@ -8015,17 +9249,50 @@
           },
           "reasonCode": {
             "type": "string",
-            "enum": ["user_suspended", "user_restored"]
+            "enum": [
+              "user_suspended",
+              "user_restored"
+            ]
           }
         },
         "allOf": [
           {
-            "if": { "properties": { "status": { "const": "suspended" } }, "required": ["status"] },
-            "then": { "properties": { "reasonCode": { "const": "user_suspended" } } }
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "suspended"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "const": "user_suspended"
+                }
+              }
+            }
           },
           {
-            "if": { "properties": { "status": { "const": "active" } }, "required": ["status"] },
-            "then": { "properties": { "reasonCode": { "const": "user_restored" } } }
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "active"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "const": "user_restored"
+                }
+              }
+            }
           }
         ]
       },
@@ -8069,11 +9336,17 @@
         ],
         "properties": {
           "from": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 100
           },
           "to": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 100
           }
         },

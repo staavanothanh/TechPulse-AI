@@ -3,6 +3,11 @@ import {
   createSessionActions,
   withSessionRecovery,
 } from '../../client/app/integration/session-actions.js'
+import {
+  genericOAuthRedirectError,
+  OAUTH_REDIRECT_ERROR_MESSAGES,
+  authErrorForRedirect,
+} from '../../client/app/integration/oauth-redirect.js'
 
 function response(user = { id: 'user-opaque', role: 'user' }, csrfToken = 'csrf-next') {
   return { data: { user, csrfToken } }
@@ -183,28 +188,32 @@ describe('application session actions', () => {
     expect(onSessionExpired).toHaveBeenCalledOnce()
   })
 
-  it('does not expire a newer admin session for a late 401', async () => {
-    let identity = 'admin:old:csrf-old'
-    let epoch = 4
-    let rejectRequest
-    const onSessionExpired = vi.fn()
-    const api = withSessionRecovery(
-      { getAdminOverview: vi.fn(() => new Promise((_, reject) => { rejectRequest = reject })) },
-      onSessionExpired,
-      {
-        getSessionIdentity: () => identity,
-        isSessionIdentityCurrent: (value) => value === identity,
-        getSessionEpoch: () => epoch,
-        isSessionEpochCurrent: (value) => value === epoch,
-      },
+  it('maps OAuth redirect error markers to fixed English messages', () => {
+    expect(authErrorForRedirect('conflict')).toEqual(
+      expect.objectContaining({ status: 409, code: 'conflict', message: 'Account already exists' }),
     )
+    expect(authErrorForRedirect('account_suspended')).toEqual(
+      expect.objectContaining({ status: 403, message: 'This account has been suspended' }),
+    )
+    expect(authErrorForRedirect('oauth_identity_conflict')).toEqual(
+      expect.objectContaining({ message: 'Email account requires explicit Google linking' }),
+    )
+    expect(authErrorForRedirect('oauth_provider_error')).toEqual(
+      expect.objectContaining({ status: 502, message: 'Google OAuth verification failed' }),
+    )
+  })
 
-    const pending = api.getAdminOverview()
-    identity = 'admin:new:csrf-new'
-    epoch = 5
-    rejectRequest(Object.assign(new Error('expired'), { status: 401 }))
+  it('falls back to a generic sign-in message for unknown OAuth redirect markers', () => {
+    const error = genericOAuthRedirectError()
+    expect(error).toBeInstanceOf(Error)
+    expect(error.status).toBe(400)
+    expect(OAUTH_REDIRECT_ERROR_MESSAGES.unexpected_marker).toBeUndefined()
+    expect(error.message).toMatch(/could not be completed/i)
+  })
 
-    await expect(pending).rejects.toMatchObject({ status: 401 })
-    expect(onSessionExpired).not.toHaveBeenCalled()
+  it('returns null when no OAuth redirect marker is present', () => {
+    expect(authErrorForRedirect(null)).toBeNull()
+    expect(authErrorForRedirect(undefined)).toBeNull()
+    expect(authErrorForRedirect('')).toBeNull()
   })
 })

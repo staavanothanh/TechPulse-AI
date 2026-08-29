@@ -21,6 +21,7 @@ import {
   publicSessionKey,
   sessionSurface,
 } from './app/integration/routing.js'
+import { authErrorForRedirect } from './app/integration/oauth-redirect.js'
 import { usePublicIntegration } from './app/integration/use-public-integration.js'
 
 const api = createApiClient()
@@ -141,6 +142,7 @@ export default function App() {
     },
     [navigate],
   )
+
   const [auth, setAuth] = useState({
     mode: 'login',
     busy: false,
@@ -148,6 +150,25 @@ export default function App() {
     error: null,
     notice: null,
   })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const marker = new URLSearchParams(window.location.search).get('auth_error')
+    const redirectError = authErrorForRedirect(marker)
+    if (!redirectError) return undefined
+    setAuth((current) => ({
+      ...current,
+      mode: 'login',
+      busy: false,
+      googleBusy: false,
+      error: redirectError,
+      notice: null,
+    }))
+    const next = new URL(window.location.href)
+    next.searchParams.delete('auth_error')
+    window.history.replaceState(window.history.state, '', next)
+    return undefined
+  }, [])
 
   const sessionEpochRef = useRef(0)
   const sessionIdentityRef = useRef(sessionIdentity(session))

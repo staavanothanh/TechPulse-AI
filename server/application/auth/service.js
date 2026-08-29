@@ -331,7 +331,11 @@ export function createAuthService({ repository, runtime, environment = process.e
     }
     const emailNormalized = normalizeEmail(googleUser.email)
     const existingBySubject = repository.findUserByGoogleSub ? await repository.findUserByGoogleSub(googleUser.sub) : null
-    if (existingBySubject && (existingBySubject.emailNormalized !== emailNormalized || existingBySubject.status !== 'active')) throw new AuthError(409, 'oauth_identity_conflict', 'Google identity is linked to another account')
+    if (existingBySubject && (existingBySubject.emailNormalized !== emailNormalized || existingBySubject.status !== 'active')) {
+      if (existingBySubject.status === 'suspended') throw new AuthError(403, 'forbidden', 'This account has been suspended')
+      if (existingBySubject.status === 'deletion-pending' || existingBySubject.status === 'deleted') throw new AuthError(403, 'forbidden', 'This account has been suspended')
+      throw new AuthError(409, 'oauth_identity_conflict', 'Google identity is linked to another account')
+    }
     let user = existingBySubject
     if (!user) {
       const existingByEmail = await repository.findUserByEmail(emailNormalized)

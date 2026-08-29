@@ -348,6 +348,20 @@ export const openApiDocument = {
               "Cache-Control": {
                 "$ref": "#/components/headers/PrivateNoStore"
               }
+            },
+            "x-callback-error": {
+              "description": "OAuth callback business error: the browser is redirected to the same-origin UI with an auth_error query marker and the OAuth state cookie is cleared. No session cookie is set.",
+              "headers": {
+                "Set-Cookie": {
+                  "$ref": "#/components/headers/ClearOAuthStateCookie"
+                },
+                "Location": {
+                  "$ref": "#/components/headers/OAuthErrorLocation"
+                },
+                "Cache-Control": {
+                  "$ref": "#/components/headers/PrivateNoStore"
+                }
+              }
             }
           },
           "400": {
@@ -3618,6 +3632,13 @@ export const openApiDocument = {
         "schema": {
           "type": "string",
           "const": "/"
+        }
+      },
+      "OAuthErrorLocation": {
+        "description": "Same-origin UI location with an auth_error query marker after an OAuth callback business error (for example /?auth_error=conflict). The SPA reads the marker and renders a fixed message without exposing the raw error body.",
+        "schema": {
+          "type": "string",
+          "pattern": "^/\\?auth_error=[A-Za-z0-9._~-]+$"
         }
       },
       "PrivateNoStore": {
