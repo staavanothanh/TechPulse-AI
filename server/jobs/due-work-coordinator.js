@@ -65,7 +65,11 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
   }
   const handleResult = (result, queueName, candidate) => {
     const status = record(result, queueCounters[queueName])
-    if (result?.claimed === false) {
+    if (result?.claimed !== false) {
+      if (queueName === 'ingestion') {
+        exhaustedQueues.delete('indexing')
+      }
+    } else {
       if (queueName === 'ingestion' && (result?.sourceId || candidate?.sourceId)) {
         blockedSourceIds.add(String(result?.sourceId || candidate?.sourceId))
       } else if (queueName === 'indexing' && (result?.articleId || candidate?.articleId)) {

@@ -1,5 +1,6 @@
 # Agent
-.agents/
+.agents/*
+!.agents/upgrade-architect.md
 .claude/
 .dsh/
 .open-design/

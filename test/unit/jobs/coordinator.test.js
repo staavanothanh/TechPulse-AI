@@ -183,4 +183,58 @@ describe('bounded cross-queue fairness', () => {
     expect(result.queues.indexing.claimed).toBe(1)
     expect(result.queues.ingestion.claimed).toBe(1)
   })
+
+  it('re-checks indexing queue in spill loop after ingestion creates downstream work', async () => {
+    const registry = createQueueRegistry()
+    let indexingCreated = false
+    let indexingRemaining = 1
+    const indexing = {
+      queueName: 'indexing',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => {
+        if (indexingCreated && indexingRemaining > 0) {
+          indexingRemaining -= 1
+          return { id: 'new-indexing-1', availableAt: new Date('2026-08-10T00:00:00.000Z') }
+        }
+        return null
+      }),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    let ingestionRemaining = 1
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => {
+        if (ingestionRemaining > 0) {
+          ingestionRemaining -= 1
+          return { id: 'ingestion-1', sourceId: 'src-1', availableAt: new Date('2026-08-10T00:00:00.000Z') }
+        }
+        return null
+      }),
+      claimAndExecute: vi.fn(async () => {
+        indexingCreated = true
+        return { status: 'succeeded', claimed: true, sourceId: 'src-1' }
+      }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+
+    registry.register(indexing)
+    registry.register(ingestion)
+
+    const result = await runDueWork({
+      registry,
+      maxJobs: 3,
+      maxRecoveries: 0,
+      budgetMs: 5000,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    expect(ingestion.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(indexing.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(result.queues.ingestion.claimed).toBe(1)
+    expect(result.queues.indexing.claimed).toBe(1)
+  })
 })

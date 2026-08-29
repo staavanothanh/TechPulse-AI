@@ -179,25 +179,24 @@ export function createCronDueWorkRunner({
   return async () => {
     const startedAt = now()
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
-    const deadline = startedAt.getTime() + materializationBudgetMs
-    // Give every fixed governance materializer one bounded turn first. Daily
-    // ingestion pagination can otherwise consume the full serverless budget on
-    // every invocation and starve hide-first cleanup indefinitely.
+    const globalDeadline = startedAt.getTime() + CRON_DUE_WORK_PROFILE.budgetMs
+    const materializationDeadline = startedAt.getTime() + materializationBudgetMs
     for (const materializer of materializers) await materializer()
     let hasMore = true
     let pages = 0
     while (hasMore && pages < maxMaterializationPages) {
       const pageNow = now()
       if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
-      if (pages > 0 && pageNow.getTime() >= deadline) break
+      if (pages > 0 && pageNow.getTime() >= materializationDeadline) break
       const result = await jobRepository.materializeDailyIngestion({ now: pageNow, limit: materializationPageLimit })
       pages += 1
       hasMore = result?.hasMore === true
-      if (hasMore && now().getTime() >= deadline) break
+      if (hasMore && now().getTime() >= materializationDeadline) break
     }
+    const remainingBudgetMs = Math.max(1000, globalDeadline - now().getTime())
     const coordinated = await coordinatorRunner({
       maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
-      budgetMs: CRON_DUE_WORK_PROFILE.budgetMs,
+      budgetMs: remainingBudgetMs,
     })
     return typeof indexingDrainRunner === 'function' ? indexingDrainRunner(coordinated) : coordinated
   }
