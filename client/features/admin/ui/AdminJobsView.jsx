@@ -361,6 +361,18 @@ function IndexingCreateForm({ onSubmit, busy }) {
   )
 }
 
+export function JobsActionBar({ ingestion, indexing, tab }) {
+  return (
+    <div className="admin-jobs-action-slot">
+      {tab === 'ingestion' ? (
+        <IngestionCreateForm {...ingestion} />
+      ) : (
+        <IndexingCreateForm {...indexing} />
+      )}
+    </div>
+  )
+}
+
 export function AdminJobsView({ api, session, initialData, onSessionExpired, cacheScope }) {
   const seeded = initialData ?? {}
   const [tab, setTab] = useState('ingestion')
@@ -607,6 +619,15 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         >
           Áp dụng lọc
         </AdminButton>
+        <JobsActionBar
+          tab={tab}
+          ingestion={{
+            sources: listItems(sources.data),
+            onSubmit: createIngestion,
+            busy: mutation.busy,
+          }}
+          indexing={{ onSubmit: createIndexing, busy: mutation.busy }}
+        />
       </div>
       {mutation.error ? (
         <p className="admin-inline-error" role="alert">
@@ -634,15 +655,6 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
           onPreviewArticle={setPreviewArticleId}
           busy={mutation.busy}
         />
-        {tab === 'ingestion' ? (
-          <IngestionCreateForm
-            sources={listItems(sources.data)}
-            onSubmit={createIngestion}
-            busy={mutation.busy}
-          />
-        ) : (
-          <IndexingCreateForm onSubmit={createIndexing} busy={mutation.busy} />
-        )}
       </Panel>
       <AdminConfirmDialog
         open={Boolean(confirmation)}

@@ -9,6 +9,7 @@ import {
   AdminSourcesView,
   AdminUsersView,
 } from '../../../client/features/admin/ui/AdminViews.jsx'
+import { JobsActionBar } from '../../../client/features/admin/ui/AdminJobsView.jsx'
 import {
   AddSourcePanel,
   SourceCreateForm,
@@ -193,6 +194,91 @@ describe('admin feature views', () => {
     expect(html).toContain('job-opaque')
     expect(html).toContain('Thử lại')
     expect(html).not.toMatch(/idempotencyKey|leaseGeneration|provider|token/i)
+  })
+
+  it('renders the job create forms above the queue tables beside the filter controls', () => {
+    const ingestionHtml = renderToStaticMarkup(
+      React.createElement(AdminJobsView, {
+        api: {},
+        session,
+        initialData: {
+          ingestion: { data: [], meta: { hasNext: false } },
+          indexing: { data: [], meta: { hasNext: false } },
+          sources: {
+            data: [
+              {
+                id: 'source-opaque',
+                name: 'Nguồn ingestion',
+                sourceKey: 'rss:nguon',
+                operationalStatus: 'active',
+                licenseStatus: 'permitted',
+                technicalCheck: { status: 'passed' },
+              },
+            ],
+            meta: { hasNext: false },
+          },
+        },
+        onSessionExpired: vi.fn(),
+      }),
+    )
+    const toolbarStart = ingestionHtml.indexOf('class="admin-toolbar"')
+    const panelStart = ingestionHtml.indexOf('Ingestion queue')
+    const ingestionFormStart = ingestionHtml.indexOf('id="admin-job-source"')
+    const indexingFormStart = ingestionHtml.indexOf('id="admin-index-article"')
+
+    expect(ingestionFormStart).toBeGreaterThan(-1)
+    expect(ingestionFormStart).toBeGreaterThan(toolbarStart)
+    expect(ingestionFormStart).toBeLessThan(panelStart)
+    expect(indexingFormStart).toBe(-1)
+
+    const ingestionSlotStart = ingestionHtml.indexOf('class="admin-jobs-action-slot"')
+    const ingestionSlotEnd = ingestionHtml.indexOf('</form>', ingestionSlotStart)
+    expect(ingestionSlotStart).toBeGreaterThan(-1)
+    expect(ingestionSlotEnd).toBeGreaterThan(-1)
+    expect(ingestionHtml.slice(ingestionSlotStart, ingestionSlotEnd)).toContain(
+      'Trigger ingestion',
+    )
+    expect(ingestionHtml.slice(0, panelStart)).not.toContain(
+      'class="admin-inline-form admin-indexing-form"',
+    )
+  })
+
+  it('exposes the ingestion and indexing forms only inside the toolbar action slot', () => {
+    const ingestionProps = {
+      sources: [
+        {
+          id: 'source-opaque',
+          name: 'Nguồn ingestion',
+          sourceKey: 'rss:nguon',
+          operationalStatus: 'active',
+          licenseStatus: 'permitted',
+          technicalCheck: { status: 'passed' },
+        },
+      ],
+      onSubmit: vi.fn(),
+      busy: false,
+    }
+    const ingestionFormHtml = renderToStaticMarkup(
+      React.createElement(JobsActionBar, {
+        ingestion: ingestionProps,
+        indexing: { onSubmit: vi.fn(), busy: false },
+        tab: 'ingestion',
+      }),
+    )
+    expect(ingestionFormHtml).toContain('id="admin-job-source"')
+    expect(ingestionFormHtml).toContain('Trigger ingestion')
+    expect(ingestionFormHtml).not.toContain('id="admin-index-article"')
+
+    const indexingFormHtml = renderToStaticMarkup(
+      React.createElement(JobsActionBar, {
+        ingestion: ingestionProps,
+        indexing: { onSubmit: vi.fn(), busy: false },
+        tab: 'indexing',
+      }),
+    )
+    expect(indexingFormHtml).toContain('id="admin-index-article"')
+    expect(indexingFormHtml).toContain('Xếp indexing job')
+    expect(indexingFormHtml).not.toContain('id="admin-job-source"')
   })
 
   it('renders article index health without source text, vectors, or provider payloads', () => {
