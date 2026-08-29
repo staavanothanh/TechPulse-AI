@@ -159,12 +159,22 @@ describe('RSS/Atom connector', () => {
     ['recursive-expansion.xml', 'source_payload_rejected'],
     ['extreme-nesting.xml', 'source_payload_rejected'],
     ['oversized-field.xml', 'source_payload_rejected'],
-    ['oversized-items.xml', 'source_payload_rejected'],
   ])('fails closed for hostile fixture %s', async (name, code) => {
     await expect(createRssConnector().run({
       source: source(),
       payload: { body: await hostileFixture(name), contentType: 'application/rss+xml', url: 'https://feeds.example.test/rss.xml' },
     })).rejects.toMatchObject({ code, retryable: false })
+  })
+
+  it('truncates oversized feeds to the newest maxItems instead of rejecting', async () => {
+    const oversized = (await hostileFixture('oversized-items.xml')).toString()
+    const truncated = await createRssConnector().run({
+      source: source(),
+      payload: { body: oversized, contentType: 'application/rss+xml', url: 'https://feeds.example.test/rss.xml' },
+    })
+    expect(truncated.candidates).toHaveLength(100)
+    expect(truncated.candidates[0].titleOriginal).toBe('Item 0')
+    expect(truncated.candidates.some((candidate) => candidate.titleOriginal === 'Item 100')).toBe(false)
   })
 
   it('rejects a normalized field whose descendants exceed maxFieldChars after joining and decoding', async () => {
@@ -176,7 +186,6 @@ describe('RSS/Atom connector', () => {
       payload: { body, contentType: 'application/rss+xml', url: 'https://feeds.example.test/rss.xml' },
     })).rejects.toMatchObject({ code: 'source_payload_rejected', retryable: false })
   })
-
   it('rejects non-allowlisted content types before parsing', async () => {
     await expect(createRssConnector().run({
       source: source(),

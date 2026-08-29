@@ -23,6 +23,22 @@ function localName(name) {
   return String(name).split(':').pop().toLowerCase()
 }
 
+function truncateNode(name, value, attributes, limits, state, depth) {
+  const local = localName(name)
+  const isItem = local === 'item' || local === 'entry'
+  const parts = Array.isArray(value) ? value : []
+  const directText = parts
+    .filter((part) => part && typeof part === 'object' && Object.prototype.hasOwnProperty.call(part, '#text'))
+    .map((part) => String(part['#text'] ?? ''))
+    .join('')
+  fieldCharacterCount(directText, limits)
+  if (isItem && state.items >= limits.maxItems) return null
+  const children = orderedToNodes(parts, state, depth + 1, limits)
+  const node = { name, localName: local, attributes, text: directText, children }
+  if (isItem) state.items += 1
+  return node
+}
+
 function orderedToNodes(ordered, state, depth, limits) {
   if (!Array.isArray(ordered)) throw sourcePayloadRejected()
   if (depth > limits.maxDepth) throw sourcePayloadRejected()
@@ -36,19 +52,8 @@ function orderedToNodes(ordered, state, depth, limits) {
       if (name.startsWith('!')) throw sourcePayloadRejected()
       state.nodes += 1
       if (state.nodes > limits.maxNodes) throw sourcePayloadRejected()
-      const parts = Array.isArray(value) ? value : []
-      const directText = parts
-        .filter((part) => part && typeof part === 'object' && Object.prototype.hasOwnProperty.call(part, '#text'))
-        .map((part) => String(part['#text'] ?? ''))
-        .join('')
-      fieldCharacterCount(directText, limits)
-      const children = orderedToNodes(parts, state, depth + 1, limits)
-      const node = { name, localName: localName(name), attributes, text: directText, children }
-      if (node.localName === 'item' || node.localName === 'entry') {
-        state.items += 1
-        if (state.items > limits.maxItems) throw sourcePayloadRejected()
-      }
-      nodes.push(node)
+      const node = truncateNode(name, value, attributes, limits, state, depth)
+      if (node) nodes.push(node)
     }
   }
   return nodes
