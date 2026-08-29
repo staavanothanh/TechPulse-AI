@@ -344,6 +344,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                     articles: { validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR },
                     sources: { validator: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR },
                   }
+              : target === 'summary-detail-v1'
+                ? { articles: { validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR } }
               : target === 'source-policy-reconciliation'
                 ? { articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }, sources: SOURCE_COLLECTIONS.sources }
               : target === 'topic-taxonomy-v1'
