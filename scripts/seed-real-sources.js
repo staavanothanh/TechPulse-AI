@@ -35,7 +35,7 @@ export const REAL_SOURCE_SEEDS = Object.freeze([
     connectorConfig: Object.freeze({
       kind: 'rss',
       feedUrl: 'https://www.theverge.com/rss/index.xml',
-      batchSize: 20,
+      batchSize: 100,
     }),
     termsUrl: 'https://www.theverge.com/terms-of-use',
     licenseUrl: 'https://www.theverge.com/terms-of-use',
@@ -59,7 +59,7 @@ export const REAL_SOURCE_SEEDS = Object.freeze([
     connectorConfig: Object.freeze({
       kind: 'rss',
       feedUrl: 'https://feeds.arstechnica.com/arstechnica/index',
-      batchSize: 20,
+      batchSize: 100,
     }),
     termsUrl: 'https://arstechnica.com/terms-of-use/',
     licenseUrl: 'https://arstechnica.com/terms-of-use/',
@@ -83,7 +83,7 @@ export const REAL_SOURCE_SEEDS = Object.freeze([
     connectorConfig: Object.freeze({
       kind: 'rss',
       feedUrl: 'https://deepmind.com/blog/feed/basic/',
-      batchSize: 20,
+      batchSize: 100,
     }),
     termsUrl: 'https://deepmind.google/about/',
     licenseUrl: 'https://deepmind.google/about/',
@@ -107,7 +107,7 @@ export const REAL_SOURCE_SEEDS = Object.freeze([
     connectorConfig: Object.freeze({
       kind: 'rss',
       feedUrl: 'https://openai.com/news/rss.xml',
-      batchSize: 20,
+      batchSize: 100,
     }),
     termsUrl: 'https://openai.com/policies/terms-of-use/',
     licenseUrl: 'https://openai.com/policies/terms-of-use/',
@@ -130,7 +130,7 @@ export const REAL_SOURCE_SEEDS = Object.freeze([
     connectorConfig: Object.freeze({
       kind: 'rss',
       feedUrl: 'https://huggingface.co/blog/feed.xml',
-      batchSize: 20,
+      batchSize: 100,
     }),
     termsUrl: 'https://huggingface.co/terms-of-service',
     licenseUrl: 'https://huggingface.co/terms-of-service',
