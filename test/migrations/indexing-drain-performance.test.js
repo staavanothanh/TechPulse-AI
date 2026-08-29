@@ -73,6 +73,6 @@ describe('indexing drain performance migration', () => {
     const verify = readFileSync(new URL('../../scripts/db-verify.js', import.meta.url), 'utf8')
     expect(RUNTIME_SCHEMA_GENERATIONS['indexing-jobs']).toBe('indexing-jobs-drain-performance-v1')
     expect(verify).toMatch(/target === 'indexing-jobs'[\s\S]*INDEXING_DRAIN_PERFORMANCE_INDEXES/)
-    expect(verify).toContain("target === 'indexing-drain-performance' ? 'indexing-jobs' : target")
+    expect(verify).toContain("target === 'indexing-drain-performance' || target === 'source-policy-reconciliation' ? 'indexing-jobs' : target")
   })
 })
