@@ -14,17 +14,18 @@ Hệ thống điều phối cron hằng ngày (`GET /api/internal/cron/due-work`
 
 ## Quyết định
 
-1. **Quản lý Hạn chót Toàn cục (Global Request Deadline Clamping):**
-   - Thiết lập một hạn chót duy nhất cho toàn bộ vòng đời của cron request: `globalDeadline = startedAt + CRON_DUE_WORK_PROFILE.budgetMs` (240 giây).
+1. **Quản lý Hạn chót Toàn cục theo Phase-Start Admission:**
+   - Thiết lập hạn chót toàn cục duy nhất ngay từ đầu cron request: `globalDeadline = startedAt + CRON_DUE_WORK_PROFILE.budgetMs` (240 giây, để lại 60 giây dự phòng trước trần 300 giây của Vercel serverless function).
    - Truyền hạn chót tuyệt đối xuyên suốt từ `createCronDueWorkRunner` sang `coordinatorRunner` và `createProfiledIndexingDrainRunner`.
-   - Mọi tác vụ thành phần (materialization, coordinator, indexing tasks: summary, embedding, visibility) đều bị kẹp chặt theo hạn chót toàn cục này, bảo đảm không bao giờ vượt quá trần 300 giây của Vercel serverless function.
+   - Áp dụng ngữ nghĩa **phase-start admission**: Một tác vụ mạng hoặc materializer đang chạy dở có thể kết thúc trễ hơn mốc dự kiến, nhưng hệ thống bảo đảm **không có bất kỳ pha mới nào (materialization page, coordinator turn, indexing task slice)** được phép bắt đầu nếu hạn chót 240s đã trôi qua hoặc thời gian còn lại dưới 1.000 ms.
 
-2. **Chốt chặn Bắt đầu Pha (Phase Start Admission Guard):**
-   - Bảo đảm không có bất kỳ pha materialization, coordinator hay indexing drain nào được phép bắt đầu mới sau khi hạn chót toàn cục đã trôi qua hoặc thời gian còn lại dưới 1.000 ms.
-   - Nếu prework quá hạn, coordinator và indexing drain bị bỏ qua hoàn toàn và trả về kết quả `runId: 'cron-overdue-skip'`, `nextAvailableAt: null` an toàn.
+2. **Chốt chặn Bắt đầu Pha & Phản hồi Quá hạn (Overdue Skip Response):**
+   - Kiểm tra hạn chót toàn cục trước mọi trang materialization (kể cả trang 0).
+   - Nếu prework chạy quá hạn (hoặc thời gian còn lại < 1.000 ms), bỏ qua hoàn toàn coordinator và indexing drain, trả về kết quả tổng hợp `runId: 'cron-overdue-skip'`.
+   - Trong tình huống quá hạn này, hệ thống chủ động trả về `nextAvailableAt: null` mà không thực hiện thêm truy vấn database nào để tránh kéo dài thêm độ trễ khi ngân sách đã cạn; xem `nextAvailableAt: null` như một tín hiệu chưa xác định (omitted backlog signal) thay vì một mốc thời gian chính xác.
 
 3. **Phân định 3 Execution Profiles chuyên biệt:**
-   - `CRON_DUE_WORK_PROFILE` (240s / 200 jobs): Dành riêng cho cron tự động hàng ngày, cho phép coordinator tiêu hóa toàn bộ các nguồn ingestion active trong ngày và drain indexing.
+   - `CRON_DUE_WORK_PROFILE` (240s / 200 jobs): Dành riêng cho cron tự động hàng ngày, cho phép coordinator cào cuốn chiếu các nguồn active và drain indexing.
    - `ADMIN_DUE_WORK_PROFILE` (150s / 24 jobs): Dành riêng cho thao tác thủ công *"Chạy queue bounded"* trên Admin Dashboard.
    - `LEGACY_QUICK_KICK` (8s / 3 jobs): Giữ nguyên vẹn cho thao tác auto-kick nhanh sau khi tạo nguồn hoặc bấm retry đơn lẻ.
 
@@ -35,14 +36,13 @@ Hệ thống điều phối cron hằng ngày (`GET /api/internal/cron/due-work`
 
 ## Hệ quả
 
-- Toàn bộ các nguồn tin active trong ngày được cào đầy đủ và liên tục trong cùng 1 lần gọi cron duy nhất.
-- Hàng đợi indexing được tái kích hoạt ngay khi có bài viết mới sinh ra, giảm thiểu tối đa backlog tồn đọng.
+- Các nguồn tin active trong ngày có cơ hội cào cuốn chiếu công bằng và liên tục trong cùng 1 lần gọi cron.
+- Hàng đợi indexing được tái kích hoạt ngay khi có bài viết mới sinh ra, giảm thiểu backlog tồn đọng.
 - Giữ nguyên 100% hợp đồng OpenAPI `DueWorkRun` (`202 Accepted`) và tính tương thích ngược của các endpoint admin.
-- Không thể cam kết hàng đợi hoàn toàn rỗng nếu các connector/LLM bên ngoài phản hồi chậm quá 240 giây, nhưng hệ thống bảo đảm chắc chắn:
+- Không thể cam kết hàng đợi rỗng hoàn toàn nếu các connector/LLM bên ngoài phản hồi chậm quá 240 giây, nhưng hệ thống bảo đảm chắc chắn:
   - Mọi nguồn đến hạn nhận được lượt chạy công bằng trong khi start-guard còn cho phép.
-  - Không có pha nào bắt đầu mới sau khi hạn chót 240s đã trôi qua.
-  - Báo cáo chính xác tiến độ hoàn thành và `nextAvailableAt` an toàn.
-
+  - Không có pha công việc mới nào bắt đầu sau khi hạn chót 240s đã trôi qua.
+  - Phản hồi HTTP tuân thủ nghiêm ngặt schema mà không làm crash function hay vượt trần Vercel.
 ## Phương án không chọn
 
 - Tăng cứng `budgetMs` của `createCoordinatorRunner` lên 240s dùng chung cho mọi nơi: Sẽ làm chậm nghiêm trọng thời gian phản hồi của các API tạo nguồn và retry thủ công vốn cần auto-kick nhanh.
