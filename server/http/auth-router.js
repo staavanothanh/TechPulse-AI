@@ -24,6 +24,25 @@ function noStore(res) {
   res.set('Cache-Control', 'no-store, private')
 }
 
+
+const OAUTH_REDIRECT_ERROR_MARKERS = new Map([
+  ['conflict', 'conflict'],
+  ['oauth_identity_conflict', 'oauth_identity_conflict'],
+  ['forbidden', 'account_suspended'],
+  ['oauth_state_replayed', 'oauth_state_replayed'],
+  ['oauth_provider_error', 'oauth_provider_error'],
+])
+
+function redirectAuthError(res, error) {
+  const code = error?.code
+  const marker = OAUTH_REDIRECT_ERROR_MARKERS.get(code)
+  if (!marker) return false
+  res.set('Set-Cookie', serializeClearOAuthStateCookie())
+  noStore(res)
+  res.status(303).location(`/?auth_error=${encodeURIComponent(marker)}`).end()
+  return true
+}
+
 function validateBody(name, body) {
   const validate = validators.get(name)
   if (validate(body)) return
@@ -155,7 +174,13 @@ export function createAuthRouter({ authService } = {}) {
     if (typeof code !== 'string' || code.length === 0) throw new AuthError(422, 'validation_error', 'Authorization code is required')
     await service.verifyGoogleState({ state, stateCookie, request: req })
     res.set('Set-Cookie', serializeClearOAuthStateCookie())
-    const result = await service.googleLogin({ code, state, stateCookie, request: req })
+    let result
+    try {
+      result = await service.googleLogin({ code, state, stateCookie, request: req })
+    } catch (error) {
+      if (redirectAuthError(res, error)) return
+      throw error
+    }
     setAuthCookie(res, result)
     noStore(res)
     res.status(303).location('/').end()

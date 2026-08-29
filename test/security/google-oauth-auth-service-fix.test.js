@@ -89,13 +89,34 @@ describe('Google OAuth auth service integration boundary', () => {
     expect(repo.findUserByEmail).not.toHaveBeenCalled()
   })
 
-  it('returns a conflict for a local account without a verified Google subject link', async () => {
-    const repo = repository({ findUserByEmail: vi.fn(async () => ({ _id: '507f1f77bcf86cd799439011', emailNormalized: 'user@gmail.com', emailDisplay: 'user@gmail.com', role: 'user', status: 'active', topicPreferences: [], sessionVersion: 0, createdAt: new Date() })) })
+
+  it('rejects Google login for a user whose account is pending deletion with a suspended message', async () => {
+    const repo = repository({ findUserByGoogleSub: vi.fn(async () => ({ _id: '507f1f77bcf86cd799439011', emailNormalized: 'user@gmail.com', emailDisplay: 'user@gmail.com', role: 'user', status: 'deletion-pending', topicPreferences: [], sessionVersion: 1, createdAt: new Date() })) })
     const service = createAuthService({ repository: repo, runtime: RUNTIME, environment: ENVIRONMENT, quotaKeyring: quotaKeyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp } })
     const { state } = service.generateGoogleAuthUrl()
     vi.stubGlobal('fetch', googleFetch())
 
-    await expect(service.googleLogin({ code: 'google-code', state, stateCookie: state, request: request() })).rejects.toMatchObject({ status: 409, code: 'oauth_identity_conflict' })
+    await expect(service.googleLogin({ code: 'google-code', state, stateCookie: state, request: request() })).rejects.toMatchObject({ status: 403, code: 'forbidden', message: 'This account has been suspended' })
+    expect(repo.createUser).not.toHaveBeenCalled()
+  })
+
+  it('rejects Google login for a user whose account was deleted with a suspended message', async () => {
+    const repo = repository({ findUserByGoogleSub: vi.fn(async () => ({ _id: '507f1f77bcf86cd799439011', emailNormalized: null, status: 'deleted', sessionVersion: 1, createdAt: new Date() })) })
+    const service = createAuthService({ repository: repo, runtime: RUNTIME, environment: ENVIRONMENT, quotaKeyring: quotaKeyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp } })
+    const { state } = service.generateGoogleAuthUrl()
+    vi.stubGlobal('fetch', googleFetch())
+
+    await expect(service.googleLogin({ code: 'google-code', state, stateCookie: state, request: request() })).rejects.toMatchObject({ status: 403, code: 'forbidden', message: 'This account has been suspended' })
+    expect(repo.createUser).not.toHaveBeenCalled()
+  })
+
+  it('rejects Google login for a suspended account with a dedicated message', async () => {
+    const repo = repository({ findUserByGoogleSub: vi.fn(async () => ({ _id: '507f1f77bcf86cd799439011', emailNormalized: 'user@gmail.com', emailDisplay: 'user@gmail.com', role: 'user', status: 'suspended', topicPreferences: [], sessionVersion: 0, createdAt: new Date() })) })
+    const service = createAuthService({ repository: repo, runtime: RUNTIME, environment: ENVIRONMENT, quotaKeyring: quotaKeyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp } })
+    const { state } = service.generateGoogleAuthUrl()
+    vi.stubGlobal('fetch', googleFetch())
+
+    await expect(service.googleLogin({ code: 'google-code', state, stateCookie: state, request: request() })).rejects.toMatchObject({ status: 403, code: 'forbidden', message: 'This account has been suspended' })
     expect(repo.createUser).not.toHaveBeenCalled()
   })
 
