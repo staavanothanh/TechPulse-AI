@@ -650,14 +650,22 @@ export function useAdminMutation({ onSessionExpired, cacheScope } = {}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState('')
+  const noticeTimerRef = useRef(null)
+  useEffect(() => {
+    return () => {
+      clearTimeout(noticeTimerRef.current)
+    }
+  }, [])
   async function run(action, successMessage, errorContext = {}) {
     setBusy(true)
     setError(null)
     setNotice('')
+    clearTimeout(noticeTimerRef.current)
     try {
       const response = await action()
       if (response) invalidateAdminResourceCache(cacheScope)
       setNotice(successMessage)
+      noticeTimerRef.current = setTimeout(() => setNotice(''), 6000)
       return response
     } catch (requestError) {
       if (isSessionExpired(requestError))
