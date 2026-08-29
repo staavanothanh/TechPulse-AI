@@ -392,6 +392,15 @@ describe('admin coverage states', () => {
       },
       onNavigate: noop,
     })
+    const overviewQueued = render(AdminOverviewView, {
+      api: adminApi,
+      cacheScope: {},
+      initialData: {
+        failedJobs: 0,
+        queuedJobs: 1,
+      },
+      onNavigate: noop,
+    })
     const overviewEmpty = render(AdminOverviewView, {
       api: adminApi,
       cacheScope: {},
@@ -416,6 +425,8 @@ describe('admin coverage states', () => {
     expect(overview).toContain('Cần xử lý')
     expect(overview).toContain('lastSuccessfulIngestionAt')
     expect(overviewEmpty).toContain('Không có ngoại lệ mở.')
+    expect(overviewQueued).toContain('Đang chờ')
+    expect(overviewEmpty).toContain('Ổn định')
   })
 
   it('covers source registry, policy review and account views without secret fields', () => {

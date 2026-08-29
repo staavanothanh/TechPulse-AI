@@ -93,8 +93,8 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
                   <small>{formatCount(data.queuedJobs)} job đang chờ</small>
                 </span>
                 <StatusBadge
-                  value={Number(data.failedJobs) ? 'failed' : 'active'}
-                  label={Number(data.failedJobs) ? 'Cần xem' : 'Ổn định'}
+                  value={Number(data.failedJobs) ? 'failed' : Number(data.queuedJobs) ? 'queued' : 'active'}
+                  label={Number(data.failedJobs) ? 'Cần xem' : Number(data.queuedJobs) ? 'Đang chờ' : 'Ổn định'}
                 />
               </div>
               <div>
