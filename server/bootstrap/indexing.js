@@ -7,6 +7,8 @@ import { sanitizeText } from '../domain/article/normalization.js'
 import { createArtifactProcessor } from '../application/indexing/artifact-processor.js'
 import { createIndexingJobService } from '../application/indexing/service.js'
 import { createReconciliationRunner } from '../application/indexing/reconciliation.js'
+import { createSourcePolicyReconciliationService } from '../application/indexing/source-policy-reconciliation-service.js'
+import { createSourcePolicyReconciliationWorker } from '../application/indexing/source-policy-reconciliation.js'
 import { createIndexingQueueAdapter } from '../jobs/indexing-queue.js'
 import { MongoArticleRepository } from '../repositories/mongo/article-repository.js'
 import { MongoIndexingJobRepository } from '../repositories/mongo/indexing-job-repository.js'
@@ -19,9 +21,10 @@ import { INDEXING_DRAIN_PERFORMANCE_INDEXES } from '../../scripts/migrations/ind
 import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
 import { GOOGLE_OAUTH_AUDIT_VALIDATOR } from '../../scripts/migrations/google-oauth.js'
 import { PROVIDER_ADMISSION_STATE_VALIDATOR_V2, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
+import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_INDEXES } from '../../scripts/migrations/source-policy-reconciliation.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
+import { assertSourcesReady } from './sources.js'
 import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
-
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
@@ -41,7 +44,7 @@ export async function assertIndexingJobsReady(context) {
     if (expectedIndexes.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('indexing-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
   const articleCollection = collectionMap.get('articles')
   const articleIndexes = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
   const expectedArticleIndexes = [
@@ -49,6 +52,28 @@ export async function assertIndexingJobsReady(context) {
     ...(stableJson(articleCollection?.options?.validator) === stableJson(TOPIC_TAXONOMY_ARTICLE_VALIDATOR) ? TOPIC_TAXONOMY_ARTICLE_INDEXES : []),
   ]
   if (expectedArticleIndexes.some((expected) => !exactMongoIndex(articleIndexes.get(expected.name), expected))) throw new Error('article reconciliation index is not ready')
+}
+function sourcePolicyReconciliationNotReady(message) {
+  return Object.assign(new Error(message), { code: 'source_policy_reconciliation_not_ready' })
+}
+
+export async function assertSourcePolicyReconciliationReady(context) {
+  if (!context?.db) throw new Error('Mongo context is required')
+  const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
+  const audit = collections.find((collection) => collection.name === 'adminAuditLogs')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || stableJson(audit.options?.validator) !== stableJson(SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR)) throw sourcePolicyReconciliationNotReady('source-policy-reconciliation audit validator is not ready')
+  const indexes = new Map((await context.db.collection('adminAuditLogs').indexes()).map((index) => [index.name, index]))
+  if (SOURCE_POLICY_RECONCILIATION_INDEXES.some((expected) => !exactMongoIndex(indexes.get(expected.name), expected))) throw sourcePolicyReconciliationNotReady('source-policy-reconciliation indexes are not ready')
+}
+
+export async function checkSourcePolicyReconciliationReady(context) {
+  try {
+    await assertSourcePolicyReconciliationReady(context)
+    return true
+  } catch (error) {
+    if (error?.code === 'source_policy_reconciliation_not_ready') return false
+    throw error
+  }
 }
 
 function workloadPolicy(registry, workloadId) {
@@ -72,12 +97,14 @@ function configuredEmbeddingRoute(registry) {
 }
 
 export async function createConfiguredIndexingRuntime({
-  context, jobRuntime, rateLimitAdmission, providerRegistry = { admissionDomains: [], providerFailureDomains: [], routes: [], workloadPolicies: [] }, llmProvider, embeddingProvider, now = () => new Date(), verifySchema = assertIndexingJobsReady, verifyProviderSchema = assertProviderRoutingReady,
+  context, jobRuntime, rateLimitAdmission, providerRegistry = { admissionDomains: [], providerFailureDomains: [], routes: [], workloadPolicies: [] }, llmProvider, embeddingProvider, now = () => new Date(), verifySchema = assertIndexingJobsReady, verifyProviderSchema = assertProviderRoutingReady, verifyReconciliationSchema = checkSourcePolicyReconciliationReady,
 } = {}) {
   if (!jobRuntime?.queueRegistry || !jobRuntime?.maintenanceRegistry || !jobRuntime?.leaseRepository || typeof jobRuntime.coordinatorRunner !== 'function') throw new Error('Shared durable job runtime is required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   await verifySchema(context)
   await verifyProviderSchema(context)
+  await assertSourcesReady(context)
+  const reconciliationReady = await verifyReconciliationSchema(context)
   const embeddingTarget = configuredEmbeddingTarget(providerRegistry)
   const indexingJobRepository = new MongoIndexingJobRepository(context, { embeddingTarget })
   const articleRepository = new MongoArticleRepository(context, { embeddingTarget })
@@ -90,6 +117,8 @@ export async function createConfiguredIndexingRuntime({
   jobRuntime.queueRegistry.register(createIndexingQueueAdapter({ indexingJobRepository, jobRepository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, executor: (input) => artifactProcessor.execute(input) }))
   jobRuntime.maintenanceRegistry.register('purge-indexing-jobs', ({ cutoff, limit }) => indexingJobRepository.purgeDueIndexingJobs({ cutoff, limit }))
   const reconciliationRunner = createReconciliationRunner({ repository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
+  const sourcePolicyReconciliationWorker = reconciliationReady === false ? undefined : createSourcePolicyReconciliationWorker({ sourceRepository, indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
+  const sourcePolicyReconciliationService = reconciliationReady === false ? undefined : createSourcePolicyReconciliationService({ worker: sourcePolicyReconciliationWorker, sourceRepository, rateLimitAdmission, now })
   if (Array.isArray(jobRuntime.cronMaterializers)) jobRuntime.cronMaterializers.push(() => reconciliationRunner.runDueSources())
   const indexingJobService = createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork: jobRuntime.coordinatorRunner, embeddingTarget, now })
   workloadPolicy(providerRegistry, 'summary')
@@ -110,5 +139,5 @@ export async function createConfiguredIndexingRuntime({
   }
   Object.defineProperty(queryEmbedding, 'capability', { value: embeddingRoute.capability, enumerable: true, writable: false, configurable: false })
   Object.freeze(queryEmbedding)
-  return { indexingJobService, indexingJobRepository, providerAdmissionRepository, providerFailureDomainRepository, providerAdmission, providerRouter, artifactProcessor, reconciliationRunner, queryEmbedding }
+  return { indexingJobService, indexingJobRepository, providerAdmissionRepository, providerFailureDomainRepository, providerAdmission, providerRouter, artifactProcessor, reconciliationRunner, sourcePolicyReconciliationWorker, sourcePolicyReconciliationService, queryEmbedding }
 }

@@ -26,11 +26,15 @@ const sourceService = {
   requestReReview: vi.fn(async () => source),
   runTechnicalCheck: vi.fn(async () => { const error = new Error('Technical check is unavailable until Step 4'); error.status = 503; error.code = 'service_unavailable'; throw error }),
 }
+const reconciliationService = {
+  preview: vi.fn(async () => ({ outcome: 'completed', mode: 'dry-run', sourceId: source.id, sourceKey: source.sourceKey, policyVersion: 1, requiredPolicyVersion: 1, operationalStatus: source.operationalStatus, reconciliation: source.reconciliation, inspected: 0, staleArticleCount: 0, wouldCreate: 0, created: 0, pages: 0, hasMore: false, jobs: [], skippedReasons: [], failedReasons: [] })),
+  execute: vi.fn(async () => ({ outcome: 'completed', mode: 'execute', sourceId: source.id, sourceKey: source.sourceKey, policyVersion: 1, requiredPolicyVersion: 1, operationalStatus: source.operationalStatus, reconciliation: source.reconciliation, inspected: 0, staleArticleCount: 0, wouldCreate: 0, created: 0, pages: 0, hasMore: false, jobs: [], skippedReasons: [], failedReasons: [] })),
+}
 let server
 let origin
 
 beforeAll(async () => {
-  const app = createApp({ authService, sourceService })
+  const app = createApp({ authService, sourceService, sourcePolicyReconciliationService: reconciliationService })
   server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)) })
   origin = `http://127.0.0.1:${server.address().port}`
 })
@@ -50,6 +54,8 @@ describe('Source Registry HTTP security boundary', () => {
       [`/api/v1/admin/sources/${source.id}`, { method: 'PATCH', headers: mutationHeaders, body: JSON.stringify({ operationalStatus: 'testing', reasonCode: 'source_status_changed' }) }],
       [`/api/v1/admin/sources/${source.id}/technical-checks`, { method: 'POST', headers: mutationHeaders, body: JSON.stringify({ reasonCode: 'source_technical_check_requested' }) }],
       [`/api/v1/admin/sources/${source.id}/policy-reviews`, { method: 'POST', headers: mutationHeaders, body: JSON.stringify(reviewBody) }],
+      [`/api/v1/admin/sources/${source.id}/reconciliation`, { headers: { Cookie: cookie } }],
+      [`/api/v1/admin/sources/${source.id}/reconciliation`, { method: 'POST', headers: { ...mutationHeaders, 'Idempotency-Key': 'regular-reconciliation-1' }, body: JSON.stringify({ reasonCode: 'source_policy_reconciliation_requested' }) }],
       [`/api/v1/admin/sources/${source.id}/re-review-requests`, { method: 'POST', headers: { ...mutationHeaders, 'Idempotency-Key': 'regular-user-re-review-1' }, body: JSON.stringify({ reasonCode: 'source_policy_re_review_requested' }) }],
     ]
     for (const [path, init] of cases) {
@@ -63,6 +69,8 @@ describe('Source Registry HTTP security boundary', () => {
     expect(sourceService.update).not.toHaveBeenCalled()
     expect(sourceService.runTechnicalCheck).not.toHaveBeenCalled()
     expect(sourceService.reviewPolicy).not.toHaveBeenCalled()
+    expect(reconciliationService.preview).not.toHaveBeenCalled()
+    expect(reconciliationService.execute).not.toHaveBeenCalled()
     expect(sourceService.requestReReview).not.toHaveBeenCalled()
   })
 
@@ -101,5 +109,28 @@ describe('Source Registry HTTP security boundary', () => {
     })
     expect(response.status).toBe(503)
     expect((await response.json()).error.code).toBe('service_unavailable')
+  })
+  it('returns a no-store preview and requires CSRF plus idempotency for execution', async () => {
+    vi.clearAllMocks()
+    const cookie = `__Host-techpulse_session=${adminToken}`
+    const preview = await fetch(`${origin}/api/v1/admin/sources/${source.id}/reconciliation?limit=2`, { headers: { Cookie: cookie } })
+    expect(preview.status).toBe(200)
+    expect(preview.headers.get('cache-control')).toBe('no-store, private')
+    expect((await preview.json()).data).toEqual(expect.objectContaining({ mode: 'dry-run', sourceId: source.id }))
+    expect(reconciliationService.preview).toHaveBeenCalledWith(expect.objectContaining({ auth: expect.any(Object), sourceId: source.id, limit: '2' }))
+
+    const missingKey = await fetch(`${origin}/api/v1/admin/sources/${source.id}/reconciliation`, {
+      method: 'POST', headers: { Origin: 'http://localhost:3000', Cookie: cookie, 'X-CSRF-Token': 'csrf-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reasonCode: 'source_policy_reconciliation_requested' }),
+    })
+    expect(missingKey.status).toBe(400)
+    expect(reconciliationService.execute).not.toHaveBeenCalled()
+
+    const executed = await fetch(`${origin}/api/v1/admin/sources/${source.id}/reconciliation`, {
+      method: 'POST', headers: { Origin: 'http://localhost:3000', Cookie: cookie, 'X-CSRF-Token': 'csrf-token', 'Content-Type': 'application/json', 'Idempotency-Key': 'source-reconciliation-1' },
+      body: JSON.stringify({ reasonCode: 'source_policy_reconciliation_requested', limit: 2, maxPages: 1 }),
+    })
+    expect(executed.status).toBe(202)
+    expect(reconciliationService.execute).toHaveBeenCalledWith(expect.objectContaining({ sourceId: source.id, limit: 2, maxPages: 1, reasonCode: 'source_policy_reconciliation_requested', idempotencyKey: 'source-reconciliation-1' }))
   })
 })

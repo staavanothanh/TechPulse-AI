@@ -1,5 +1,6 @@
 import { ObjectId } from 'mongodb'
 import { validateSourceAuditInput } from '../../audit/source-writer.js'
+import { JobError } from '../../domain/jobs/idempotency.js'
 
 const SOURCE_STATUSES = new Set(['draft', 'testing', 'active', 'paused', 'archived'])
 const LICENSE_STATUSES = new Set(['permitted', 'metadata-only', 'review-needed', 'blocked'])
@@ -48,7 +49,7 @@ function auditId(value) {
 }
 function sourceAuditDocument(document) {
   validateSourceAuditInput(document)
-  if (!['admin', 'system-worker'].includes(document.actorType) || document.actorType === 'system-worker' && document.action !== 'source_created' || document.targetType !== 'source' || !['succeeded', 'failed'].includes(document.result) || !document.eventId || !document.requestId) throw new Error('source audit identity is invalid')
+  if (!['admin', 'system-worker'].includes(document.actorType) || document.actorType === 'system-worker' && document.action !== 'source_created' || document.targetType !== 'source' || !['succeeded', 'failed'].includes(document.result) && !(document.action === 'source_policy_reconciliation_requested' && document.result === 'pending') || !document.eventId || !document.requestId) throw new Error('source audit identity is invalid')
   const safe = {
     _id: document._id ? idValue(document._id) : new ObjectId(), eventId: String(document.eventId), actorType: document.actorType, actorId: auditId(document.actorId),
     action: document.action, targetType: 'source', targetId: auditId(document.targetId), changedFields: [...document.changedFields], reasonCode: document.reasonCode,
@@ -155,6 +156,43 @@ export class MongoSourceRepository {
   async findSourceByKey(sourceKey, options = {}) { return serializeSource(await this.collection('sources').findOne({ sourceKey }, options)) }
   async findAuditReplay({ eventId }) {
     return this.collection('adminAuditLogs').findOne({ eventId }, { projection: { _id: 1, action: 1, targetId: 1, actorId: 1, requestId: 1, result: 1, createdAt: 1 } })
+  }
+  async findReconciliationRequest({ sourceId, actorId, requestId } = {}) {
+    const filter = {
+      action: 'source_policy_reconciliation_requested', targetType: 'source', actorId: idValue(actorId), requestId: String(requestId),
+      ...(sourceId === undefined ? {} : { targetId: idValue(sourceId) }),
+    }
+    return this.collection('adminAuditLogs').findOne(filter, { projection: { _id: 1, eventId: 1, action: 1, targetId: 1, actorId: 1, requestId: 1, result: 1, createdAt: 1 } })
+  }
+
+  async commitReconciliationAudit({ audit, actorFence, rateLimitAdmission, admission } = {}) {
+    const work = async (session) => {
+      if (!await this.assertActorFence(actorFence, session)) { const error = new JobError(401, 'unauthorized', 'Actor session is no longer active'); throw error }
+      const committed = await this.insertAudit(audit, session)
+      if (committed.replay) return committed
+      if (typeof rateLimitAdmission?.reserve !== 'function') throw new JobError(503, 'service_unavailable', 'Rate-limit admission is temporarily unavailable')
+      let result
+      try { result = await rateLimitAdmission.reserve({ ...(admission ?? {}), session }) } catch (error) {
+        if (error instanceof JobError || error?.code === 11000 || error?.hasErrorLabel?.('TransientTransactionError')) throw error
+        throw new JobError(503, 'service_unavailable', 'Rate-limit admission is temporarily unavailable')
+      }
+      if (!result || typeof result.allowed !== 'boolean') throw new JobError(503, 'service_unavailable', 'Rate-limit admission is temporarily unavailable')
+      if (!result.allowed) throw new JobError(429, 'rate_limit_exceeded', 'Too many reconciliation requests', { retryAfter: result.retryAfterSeconds })
+      return committed
+    }
+    let lastError
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.withTransaction(work)
+      } catch (error) {
+        // Two distinct requests can race the unique rate-bucket upsert in a
+        // fresh window. One transaction aborts with 11000; retrying the whole
+        // audit+admission transaction preserves the atomic invariant.
+        if (error?.code !== 11000 || attempt === 2) throw error
+        lastError = error
+      }
+    }
+    throw lastError
   }
 
   async commitCreate({ source, audit, actorFence }) {

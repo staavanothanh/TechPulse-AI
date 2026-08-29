@@ -1705,6 +1705,58 @@
         }
       }
     },
+    "/api/v1/admin/sources/{sourceId}/reconciliation": {
+      "get": {
+        "tags": ["Admin Sources"],
+        "operationId": "getSourcePolicyReconciliation",
+        "x-persistence": "mongo",
+        "summary": "Preview source-policy reconciliation without writes",
+        "parameters": [
+          { "$ref": "#/components/parameters/SourceIdPath" },
+          { "$ref": "#/components/parameters/LimitQuery" }
+        ],
+        "responses": {
+          "200": { "description": "Bounded reconciliation preview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourcePolicyReconciliationResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      },
+      "post": {
+        "tags": ["Admin Sources"],
+        "operationId": "runSourcePolicyReconciliation",
+        "x-persistence": "mongo",
+        "summary": "Materialize bounded source-policy reconciliation jobs",
+        "parameters": [
+          { "$ref": "#/components/parameters/SourceIdPath" },
+          { "$ref": "#/components/parameters/CsrfTokenHeader" },
+          { "$ref": "#/components/parameters/BrowserOriginHeader" },
+          { "$ref": "#/components/parameters/IdempotencyKeyHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourcePolicyReconciliationRequest" } } }
+        },
+        "responses": {
+          "202": { "description": "Reconciliation jobs materialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourcePolicyReconciliationResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/admin/ingestion-jobs": {
       "get": {
         "tags": [
@@ -6614,6 +6666,67 @@
             "const": "source_policy_re_review_requested"
           }
         }
+      },
+      "SourcePolicyReconciliationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reasonCode"],
+        "properties": {
+          "reasonCode": { "const": "source_policy_reconciliation_requested" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "maxPages": { "type": "integer", "minimum": 1, "maximum": 10 }
+        }
+      },
+      "SourcePolicyReconciliationJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "idempotencyKey", "actorScope", "requestHash", "articleId", "sourceId", "expectedSourcePolicyVersion", "task", "trigger", "status", "attempt", "priority"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-f0-9]{24}$" },
+          "idempotencyKey": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$" },
+          "actorScope": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "requestHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "articleId": { "type": "string", "pattern": "^[a-f0-9]{24}$" },
+          "sourceId": { "type": "string", "pattern": "^[a-f0-9]{24}$" },
+          "expectedSourcePolicyVersion": { "type": "integer", "minimum": 1 },
+          "task": { "enum": ["summary", "embedding", "visibility-reconcile"] },
+          "trigger": { "const": "policy-change" },
+          "status": { "const": "queued" },
+          "attempt": { "type": "integer", "const": 1 },
+          "priority": { "type": "integer", "const": 75 },
+          "targetEmbeddingVersion": { "type": "integer", "minimum": 1 },
+          "targetEmbeddingArtifactCompatibilityId": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "SourcePolicyReconciliationReport": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["outcome", "mode", "sourceId", "sourceKey", "policyVersion", "requiredPolicyVersion", "operationalStatus", "reconciliation", "inspected", "staleArticleCount", "wouldCreate", "created", "pages", "hasMore", "jobs", "skippedReasons", "failedReasons"],
+        "properties": {
+          "outcome": { "enum": ["completed", "partial", "failed", "skipped"] },
+          "mode": { "enum": ["dry-run", "execute"] },
+          "sourceId": { "type": ["string", "null"] },
+          "sourceKey": { "type": ["string", "null"] },
+          "policyVersion": { "type": ["integer", "null"], "minimum": 1 },
+          "requiredPolicyVersion": { "type": ["integer", "null"], "minimum": 1 },
+          "operationalStatus": { "type": ["string", "null"] },
+          "reconciliation": { "anyOf": [{ "$ref": "#/components/schemas/SourceReconciliation" }, { "type": "null" }] },
+          "inspected": { "type": "integer", "minimum": 0 },
+          "staleArticleCount": { "type": "integer", "minimum": 0 },
+          "wouldCreate": { "type": "integer", "minimum": 0 },
+          "created": { "type": "integer", "minimum": 0 },
+          "pages": { "type": "integer", "minimum": 0 },
+          "hasMore": { "type": "boolean" },
+          "jobs": { "type": "array", "maxItems": 300, "items": { "$ref": "#/components/schemas/SourcePolicyReconciliationJob" } },
+          "skippedReasons": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+          "failedReasons": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 } }
+        }
+      },
+      "SourcePolicyReconciliationResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": { "data": { "$ref": "#/components/schemas/SourcePolicyReconciliationReport" } }
       },
       "JobRetryRequest": {
         "type": "object",

@@ -13,6 +13,7 @@ export const SOURCE_AUDIT_RULES = Object.freeze({
   source_policy_reviewed: Object.freeze({ reasonCode: 'source_policy_reviewed', exactFields: POLICY_REVIEW_FIELDS }),
   source_policy_re_review_requested: Object.freeze({ reasonCode: 'source_policy_re_review_requested', allowedFields: RE_REVIEW_FIELDS }),
   source_technical_check_recorded: Object.freeze({ reasonCode: 'source_technical_check_requested', exactFields: ['technicalCheck'] }),
+  source_policy_reconciliation_requested: Object.freeze({ reasonCode: 'source_policy_reconciliation_requested', exactFields: ['reconciliation'] }),
 })
 
 function sameFields(actual, expected) {
@@ -26,22 +27,23 @@ function validateTransition(action, transition, result) {
   if (action === 'source_policy_re_review_requested') return !transition || transition.from === 'active' && transition.to === 'paused'
   return transition === undefined
 }
-
-function deterministicEventId(action, targetId, requestId, actorId, sessionId) {
-  return `source:${createHash('sha256').update(`${action}\u0000${targetId}\u0000${requestId}\u0000${actorId}\u0000${sessionId ?? 'no-session'}`).digest('hex')}`
+function deterministicEventId(action, targetId, requestId, actorId, sessionId, requestHash) {
+  const suffix = action === 'source_policy_reconciliation_requested' ? `\u0000${requestHash ?? ''}` : ''
+  return `source:${createHash('sha256').update(`${action}\u0000${targetId}\u0000${requestId}\u0000${actorId}\u0000${sessionId ?? 'no-session'}${suffix}`).digest('hex')}`
 }
 
 function deterministicIdempotencyEventId(requestId, actorId, sessionId) {
   return `source:${createHash('sha256').update(`source-re-review\u0000${actorId}\u0000${sessionId}\u0000${requestId}`).digest('hex')}`
 }
 
-export function sourceAuditEventId(action, targetId, requestId, actorId, sessionId) {
+export function sourceAuditEventId(action, targetId, requestId, actorId, sessionId, requestHash) {
   if (!SOURCE_AUDIT_RULES[action] || !targetId || !requestId || !actorId) throw new Error('source audit identity is invalid')
   if (action === 'source_policy_re_review_requested') {
     if (!sessionId) throw new Error('source audit session identity is invalid')
     return deterministicIdempotencyEventId(String(requestId), String(actorId), String(sessionId))
   }
-  return deterministicEventId(action, String(targetId), String(requestId), String(actorId), sessionId ? String(sessionId) : undefined)
+  if (action === 'source_policy_reconciliation_requested' && !/^[a-f0-9]{64}$/.test(String(requestHash ?? ''))) throw new Error('source reconciliation request hash is invalid')
+  return deterministicEventId(action, String(targetId), String(requestId), String(actorId), sessionId ? String(sessionId) : undefined, requestHash)
 }
 
 export function validateSourceAuditInput({ action, changedFields, reasonCode, stateTransition, result = 'succeeded' }) {
@@ -63,10 +65,10 @@ export function createSourceAuditEvent({ actor, action, targetId, changedFields,
   const requestId = request?.idempotencyKey ?? request?.serverRequestId
   const actorType = actor?.role === 'admin' ? 'admin' : actor?.role === 'system-worker' ? 'system-worker' : null
   if (!actorId || !actorType || actorType === 'system-worker' && action !== 'source_created' || !targetId || !requestId) throw new Error('source audit identity is invalid')
-  if (!['succeeded', 'failed'].includes(result)) throw new Error('source audit result is invalid')
+  if (!['succeeded', 'failed'].includes(result) && !(action === 'source_policy_reconciliation_requested' && result === 'pending')) throw new Error('source audit result is invalid')
   if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) throw new Error('source audit timestamp is invalid')
   const event = {
-    eventId: sourceAuditEventId(action, targetId, requestId, actorId, request?.actorSessionId),
+    eventId: sourceAuditEventId(action, targetId, requestId, actorId, request?.actorSessionId, request?.requestHash),
     actorType, actorId, action, targetType: 'source', targetId,
     changedFields: [...changedFields], reasonCode, requestId: String(requestId), result, createdAt,
   }

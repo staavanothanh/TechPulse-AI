@@ -312,14 +312,19 @@ export class MongoIndexingJobRepository {
     }
   }
 
-  async selectPendingReconciliationSource({ now = this.clock(), retryBackoffMs = 60_000 } = {}) {
+  async selectPendingReconciliationSource({ sourceId, now = this.clock(), retryBackoffMs = 60_000 } = {}) {
     const selectedAt = dateValue(now, 'Reconciliation selection time')
     if (!Number.isInteger(retryBackoffMs) || retryBackoffMs < 1 || retryBackoffMs > 24 * 60 * 60 * 1000) throw new JobError(422, 'validation_error', 'Reconciliation retry backoff is invalid')
     const retryEligibleAt = new Date(selectedAt.getTime() - retryBackoffMs)
-    const document = await this.sources().find({ $or: [
-      { 'reconciliation.status': { $in: ['pending', 'processing'] } },
-      { 'reconciliation.status': 'failed', 'reconciliation.error.occurredAt': { $lte: retryEligibleAt } },
-    ] })
+    const filter = {
+      operationalStatus: { $ne: 'archived' },
+      $or: [
+        { 'reconciliation.status': { $in: ['pending', 'processing'] } },
+        { 'reconciliation.status': 'failed', 'reconciliation.error.occurredAt': { $lte: retryEligibleAt } },
+      ],
+    }
+    if (sourceId !== undefined) filter._id = idValue(sourceId)
+    const document = await this.sources().find(filter)
       .sort({ 'reconciliation.requiredPolicyVersion': 1 }).hint('sources_reconciliation').limit(1).next()
     if (!document) return null
     return { id: document._id.toHexString(), policyVersion: document.policyVersion }
@@ -338,7 +343,7 @@ export class MongoIndexingJobRepository {
       if (touched.matchedCount !== 1) throw new JobError(409, 'conflict', 'Reconciliation lease fence is stale')
       const retryEligibleAt = new Date(materializedAt.getTime() - 60_000)
       const source = await this.sources().findOne({
-        _id: sourceObjectId, $or: [
+        _id: sourceObjectId, operationalStatus: { $ne: 'archived' }, $or: [
           { 'reconciliation.status': { $in: ['pending', 'processing'] } },
           { 'reconciliation.status': 'failed', 'reconciliation.error.occurredAt': { $lte: retryEligibleAt } },
         ],
@@ -369,6 +374,54 @@ export class MongoIndexingJobRepository {
       if (advanced.matchedCount !== 1) throw new JobError(409, 'conflict', 'Source reconciliation cursor changed')
       return { inspected: selected.length, created, hasMore }
     })
+  }
+  async previewReconciliationPage({ sourceId, limit = 100, now = this.clock(), retryBackoffMs = 60_000 } = {}) {
+    const sourceObjectId = idValue(sourceId)
+    const inspectedAt = dateValue(now, 'Reconciliation preview time')
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(retryBackoffMs) || retryBackoffMs < 1 || retryBackoffMs > 24 * 60 * 60 * 1000) throw new Error('Reconciliation preview input is invalid')
+    const source = await this.sources().findOne({ _id: sourceObjectId }, {
+      projection: {
+        _id: 1, sourceKey: 1, operationalStatus: 1, policyVersion: 1, licenseStatus: 1, llmInputScope: 1,
+        storageScope: 1, mediaPolicy: 1, technicalCheck: 1, reconciliation: 1,
+      },
+    })
+    if (!source) return { outcome: 'skipped', reason: 'source_not_found' }
+    const marker = source.reconciliation ?? {}
+    const safeSource = { ...source, id: sourceObjectId.toHexString() }
+    if (source.operationalStatus === 'archived') return { outcome: 'skipped', reason: 'source_archived' }
+    if (source.policyVersion !== marker.requiredPolicyVersion) return { outcome: 'skipped', reason: 'policy_version_drift' }
+    if (!['pending', 'processing', 'failed'].includes(marker.status)) return { outcome: 'skipped', reason: 'reconciliation_not_pending' }
+    if (marker.status === 'failed' && marker.error?.occurredAt instanceof Date && marker.error.occurredAt.getTime() > inspectedAt.getTime() - retryBackoffMs) return { outcome: 'skipped', reason: 'retry_backoff' }
+
+    const cursor = marker.cursorArticleId
+    const articleFilter = { sourceId: sourceObjectId, ...(cursor ? { _id: { $gt: cursor } } : {}) }
+    const documents = await this.articles().find(articleFilter, { projection: { _id: 1, status: 1, rightsSnapshot: 1 } }).sort({ _id: 1 }).hint('articles_source_reconciliation').limit(limit + 1).toArray()
+    const selected = documents.slice(0, limit)
+    const candidates = selected.flatMap((article) => buildReconciliationJobs({ source: safeSource, articleId: article._id.toHexString(), now: inspectedAt, embeddingTarget: this.embeddingTarget }))
+    const candidateKeys = candidates.map((job) => job.idempotencyKey)
+    const existing = candidateKeys.length === 0
+      ? []
+      : await this.jobs().find({ actorScope: 'system-policy-reconciliation', idempotencyKey: { $in: candidateKeys } }, { projection: { idempotencyKey: 1 } }).toArray()
+    const existingKeys = new Set(existing.map((job) => job.idempotencyKey))
+    const wouldCreateJobs = candidates.filter((job) => !existingKeys.has(job.idempotencyKey)).map((job) => ({
+      id: job.id, idempotencyKey: job.idempotencyKey, actorScope: job.actorScope, requestHash: job.requestHash,
+      articleId: job.articleId, sourceId: job.sourceId, expectedSourcePolicyVersion: job.expectedSourcePolicyVersion,
+      task: job.task, trigger: job.trigger, status: job.status, attempt: job.attempt, priority: job.priority,
+      ...(job.targetEmbeddingVersion ? { targetEmbeddingVersion: job.targetEmbeddingVersion } : {}),
+      ...(job.targetEmbeddingArtifactCompatibilityId ? { targetEmbeddingArtifactCompatibilityId: job.targetEmbeddingArtifactCompatibilityId } : {}),
+    }))
+    const staleArticleCount = selected.filter((article) => article.status !== 'removed' && article.rightsSnapshot?.sourcePolicyVersion !== source.policyVersion).length
+    return {
+      outcome: 'completed', sourceId: sourceObjectId.toHexString(), sourceKey: source.sourceKey,
+      policyVersion: source.policyVersion, requiredPolicyVersion: marker.requiredPolicyVersion,
+      reconciliation: {
+        status: marker.status, requiredPolicyVersion: marker.requiredPolicyVersion,
+        completedPolicyVersion: marker.completedPolicyVersion ?? null, requestedAt: marker.requestedAt ?? null,
+        error: marker.error ? { code: marker.error.code, message: typeof marker.error.message === 'string' ? marker.error.message : 'Reconciliation did not complete safely', retryable: Boolean(marker.error.retryable), occurredAt: marker.error.occurredAt ?? null } : null,
+      },
+      inspected: selected.length, staleArticleCount, wouldCreate: wouldCreateJobs.length,
+      wouldCreateJobs, hasMore: documents.length > limit,
+    }
   }
 
   async markReconciliationFailure({ sourceId, fence, now = this.clock(), error } = {}) {

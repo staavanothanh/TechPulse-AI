@@ -5,9 +5,13 @@ import {
   GOOGLE_OAUTH_INDEXES,
   buildGoogleOAuthMigration,
   runGoogleOAuthMigration,
+  withGoogleOAuthAuditCompatibility,
 } from '../../../scripts/migrations/google-oauth.js'
+import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } from '../../../scripts/migrations/source-policy-reconciliation.js'
 import { AUTH_CORE_COLLECTIONS } from '../../../scripts/migrations/auth-core.js'
 import { GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
+import { runGovernanceMigration } from '../../../scripts/migrations/governance.js'
+import { runGovernanceHardeningMigration } from '../../../scripts/migrations/governance-hardening.js'
 
 describe('Google OAuth migration contract', () => {
   it('keeps the password hash required while allowing a bounded optional Google subject', () => {
@@ -36,6 +40,42 @@ describe('Google OAuth migration contract', () => {
       expect.objectContaining({ type: 'collMod', collection: 'users' }),
       expect.objectContaining({ type: 'collMod', collection: 'adminAuditLogs', options: expect.objectContaining({ validator: GOOGLE_OAUTH_AUDIT_VALIDATOR }) }),
     ]))
+  })
+
+  it('accepts an explicit terminal audit successor without changing the default OAuth plan', () => {
+    const plan = buildGoogleOAuthMigration({ auditValidator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR })
+    expect(plan).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'collMod', collection: 'adminAuditLogs', options: expect.objectContaining({ validator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR }) }),
+    ]))
+    expect(buildGoogleOAuthMigration()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'collMod', collection: 'adminAuditLogs', options: expect.objectContaining({ validator: GOOGLE_OAUTH_AUDIT_VALIDATOR }) }),
+    ]))
+  })
+
+  it('preserves the terminal source-policy audit validator across governance and OAuth reruns', async () => {
+    let auditValidator = SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR
+    const commands = []
+    const db = {
+      listCollections: vi.fn(() => ({ toArray: async () => [
+        { name: 'users', options: { validator: AUTH_CORE_COLLECTIONS.users.validator } },
+        { name: 'adminAuditLogs', options: { validator: auditValidator } },
+      ] })),
+      createCollection: vi.fn(async () => undefined),
+      command: vi.fn(async (command) => {
+        commands.push(command)
+        if (command.collMod === 'adminAuditLogs') auditValidator = command.validator
+      }),
+      collection: vi.fn(() => ({ createIndex: vi.fn(async () => 'index-name') })),
+    }
+
+    await runGovernanceMigration({ db: withGoogleOAuthAuditCompatibility(db, { auditValidator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR }) })
+    await runGovernanceHardeningMigration({ db: withGoogleOAuthAuditCompatibility(db, { auditValidator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR }) })
+    await runGoogleOAuthMigration({ db, auditValidator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR })
+
+    const auditCommands = commands.filter((command) => command.collMod === 'adminAuditLogs')
+    expect(auditCommands.length).toBeGreaterThan(0)
+    expect(auditCommands.every((command) => command.validator === SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR)).toBe(true)
+    expect(auditValidator).toBe(SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR)
   })
 
   it('is safe to rerun against an existing database', async () => {

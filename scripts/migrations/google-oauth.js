@@ -53,7 +53,7 @@ export const GOOGLE_OAUTH_INDEXES = Object.freeze({
   ]),
 })
 
-function migrationOperations() {
+function migrationOperations(auditValidator = GOOGLE_OAUTH_AUDIT_VALIDATOR) {
   return [
     {
       type: 'collMod',
@@ -63,13 +63,13 @@ function migrationOperations() {
     {
       type: 'collMod',
       collection: 'adminAuditLogs',
-      options: { validator: GOOGLE_OAUTH_AUDIT_VALIDATOR, validationLevel: 'strict', validationAction: 'error' },
+      options: { validator: auditValidator, validationLevel: 'strict', validationAction: 'error' },
     },
     { type: 'createIndex', collection: 'users', ...GOOGLE_OAUTH_INDEXES.users[0] },
   ]
 }
 
-async function assertPredecessor(db) {
+async function assertPredecessor(db, auditValidator = GOOGLE_OAUTH_AUDIT_VALIDATOR) {
   if (typeof db.listCollections !== 'function') throw new Error('Google OAuth migration predecessor check is unavailable')
   // MongoDB's listCollections command accepts a string/regex name filter;
   // using a query-style $in here is rejected by Atlas before any mutation.
@@ -78,20 +78,20 @@ async function assertPredecessor(db) {
   const users = byName.get('users')
   const audit = byName.get('adminAuditLogs')
   const usersReady = users && [AUTH_CORE_COLLECTIONS.users.validator, GOOGLE_OAUTH_USERS_VALIDATOR].some((validator) => stableJson(users.options?.validator) === stableJson(validator))
-  const auditReady = audit && [GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))
+  const auditReady = audit && [GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, auditValidator].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))
   if (!usersReady || !auditReady) throw new Error('Google OAuth migration predecessor is not ready')
 }
 
-export function buildGoogleOAuthMigration({ dryRun = false } = {}) {
-  const plan = migrationOperations()
+export function buildGoogleOAuthMigration({ dryRun = false, auditValidator = GOOGLE_OAUTH_AUDIT_VALIDATOR } = {}) {
+  const plan = migrationOperations(auditValidator)
   return dryRun ? plan.map((operation) => ({ ...operation, dryRun: true })) : plan
 }
 
-export async function runGoogleOAuthMigration({ db, dryRun = false } = {}) {
+export async function runGoogleOAuthMigration({ db, dryRun = false, auditValidator = GOOGLE_OAUTH_AUDIT_VALIDATOR } = {}) {
   if (!db || typeof db.command !== 'function' || typeof db.collection !== 'function') throw new Error('MongoDB database is required')
-  const plan = buildGoogleOAuthMigration({ dryRun })
+  const plan = buildGoogleOAuthMigration({ dryRun, auditValidator })
   if (dryRun) return plan
-  await assertPredecessor(db)
+  await assertPredecessor(db, auditValidator)
   for (const operation of plan) {
     if (operation.type === 'collMod') await db.command({ collMod: operation.collection, ...operation.options })
     else await db.collection(operation.collection).createIndex(operation.key, { ...(operation.options ?? {}), name: operation.name })
@@ -99,18 +99,19 @@ export async function runGoogleOAuthMigration({ db, dryRun = false } = {}) {
   return plan
 }
 
+
 /**
  * Governance is an earlier release chain but its audit collMod must not
  * overwrite the OAuth successor validator when both are applied together.
  */
-export function withGoogleOAuthAuditCompatibility(db) {
+export function withGoogleOAuthAuditCompatibility(db, { auditValidator = GOOGLE_OAUTH_AUDIT_VALIDATOR } = {}) {
   if (!db || typeof db.command !== 'function') throw new Error('MongoDB database is required')
   return new Proxy(db, {
     get(target, property, receiver) {
       if (property !== 'command') return Reflect.get(target, property, receiver)
       return (command, ...args) => {
         if (command?.collMod !== 'adminAuditLogs') return target.command(command, ...args)
-        return target.command({ ...command, validator: GOOGLE_OAUTH_AUDIT_VALIDATOR })
+        return target.command({ ...command, validator: auditValidator }, ...args)
       }
     },
   })

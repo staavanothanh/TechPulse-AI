@@ -45,7 +45,7 @@ export function createApp(options = {}) {
   app.use(createAnswersRouter({ qaService: options.qaService, authService: options.authService }))
   app.use(createChatSessionsRouter({ qaService: options.qaService, authService: options.authService }))
   app.use(createAccountDeletionRouter({ accountDeletionService: options.accountDeletionService, authService: options.authService }))
-  app.use(createAdminSourcesRouter({ sourceService: options.sourceService, authService: options.authService }))
+  app.use(createAdminSourcesRouter({ sourceService: options.sourceService, sourcePolicyReconciliationService: options.sourcePolicyReconciliationService, authService: options.authService }))
   app.use(createAdminIngestionJobsRouter({ jobService: options.jobService, authService: options.authService }))
   app.use(createAdminIndexingJobsRouter({ indexingJobService: options.indexingJobService, authService: options.authService }))
   app.use(createAdminGovernanceRouter({ adminGovernanceService: options.adminGovernanceService, authService: options.authService }))

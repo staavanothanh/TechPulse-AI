@@ -45,6 +45,24 @@ describe('Step 9 durable source reconciliation', () => {
     expect(leaseRepository.release).toHaveBeenCalledTimes(2)
   })
 
+  it('defers on a reconciliation lease conflict without retrying in the same run', async () => {
+    const repository = {
+      selectPendingReconciliationSource: vi.fn(async () => ({ id: SOURCE_ID, policyVersion: 4 })),
+      materializeReconciliationPage: vi.fn(),
+    }
+    const leaseRepository = {
+      clearExpiredReconciliation: vi.fn(async () => false),
+      acquire: vi.fn(async () => { throw Object.assign(new Error('busy'), { status: 409, code: 'conflict' }) }),
+      release: vi.fn(),
+    }
+    const runner = createReconciliationRunner({ repository, leaseRepository, ownerToken: () => 'source-owner-token', now: () => new Date('2026-08-10T00:00:00.000Z') })
+
+    await expect(runner.runDueSources()).resolves.toEqual({ inspected: 0, created: 0, pages: 0, hasMore: true, failed: 0 })
+    expect(repository.selectPendingReconciliationSource).toHaveBeenCalledOnce()
+    expect(leaseRepository.acquire).toHaveBeenCalledOnce()
+    expect(repository.materializeReconciliationPage).not.toHaveBeenCalled()
+    expect(leaseRepository.release).not.toHaveBeenCalled()
+  })
   it('records a bounded exact-marker failure and lets a later invocation retry it', async () => {
     const repository = {
       selectPendingReconciliationSource: vi.fn(async () => ({ id: SOURCE_ID })),

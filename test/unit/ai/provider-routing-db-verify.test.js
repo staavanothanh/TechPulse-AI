@@ -53,4 +53,8 @@ describe('provider-routing-v2 database role readiness', () => {
     expect(governanceArticleCheck).toContain("validationLevel !== 'strict'")
     expect(governanceArticleCheck).toContain("validationAction !== 'error'")
   })
+  it('retains summary-detail verification when adding reconciliation target', () => {
+    const source = readFileSync(new URL('../../../scripts/db-verify.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+    expect(source).toMatch(/target === 'summary-detail-v1'\s*\n\s*\? \{ articles: \{ validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR \} \}\s*\n\s*: target === 'source-policy-reconciliation'/)
+  })
 })

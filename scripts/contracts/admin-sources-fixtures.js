@@ -55,7 +55,17 @@ function fixtureServices() {
       return { ...SOURCE, operationalStatus: 'paused', licenseStatus: 'review-needed', llmInputScope: 'none', storageScope: { metadata: false, excerpt: false, summary: false, embedding: false }, policyVersion: 3, reconciliation: { status: 'pending', requiredPolicyVersion: 3, completedPolicyVersion: null, requestedAt: NOW, error: null } }
     },
   }
-  return { authService, sourceService }
+  const reconciliationReport = {
+    outcome: 'completed', mode: 'dry-run', sourceId: SOURCE_ID, sourceKey: SOURCE.sourceKey,
+    policyVersion: SOURCE.policyVersion, requiredPolicyVersion: SOURCE.policyVersion, operationalStatus: SOURCE.operationalStatus,
+    reconciliation: SOURCE.reconciliation, inspected: 0, staleArticleCount: 0, wouldCreate: 0, created: 0, pages: 0,
+    hasMore: false, jobs: [], skippedReasons: [], failedReasons: [],
+  }
+  const reconciliationService = {
+    async preview() { return reconciliationReport },
+    async execute() { return { ...reconciliationReport, mode: 'execute' } },
+  }
+  return { authService, sourceService, sourcePolicyReconciliationService: reconciliationService }
 }
 
 async function start(app) {
@@ -100,6 +110,8 @@ export async function runAdminSourcesContractFixtures({ document } = {}) {
     await request('requestSourcePolicyReReview', `/api/v1/admin/sources/${SOURCE_ID}/re-review-requests`, { method: 'POST', headers: { ...jsonHeaders, 'Idempotency-Key': 'contract-re-review-1' }, body: JSON.stringify({ reasonCode: 'source_policy_re_review_requested' }) }, 202)
     await request('requestSourcePolicyReReview', `/api/v1/admin/sources/${SOURCE_ID}/re-review-requests`, { method: 'POST', headers: { ...jsonHeaders, 'Idempotency-Key': 'stale-re-review-key' }, body: JSON.stringify({ reasonCode: 'source_policy_re_review_requested' }) }, 409)
     await request('requestSourcePolicyReReview', `/api/v1/admin/sources/${SOURCE_ID}/re-review-requests`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ reasonCode: 'source_policy_re_review_requested' }) }, 400)
+    await request('getSourcePolicyReconciliation', `/api/v1/admin/sources/${SOURCE_ID}/reconciliation?limit=2`, { headers: { Cookie: adminCookie } }, 200)
+    await request('runSourcePolicyReconciliation', `/api/v1/admin/sources/${SOURCE_ID}/reconciliation`, { method: 'POST', headers: { ...jsonHeaders, 'Idempotency-Key': 'contract-reconciliation-1' }, body: JSON.stringify({ reasonCode: 'source_policy_reconciliation_requested', limit: 2, maxPages: 1 }) }, 202)
   } finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) }
   return { cases }
 }
