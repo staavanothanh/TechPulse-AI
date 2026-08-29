@@ -173,4 +173,54 @@ describe('worker scheduling', () => {
       await new Promise((resolve) => server.close(resolve))
     }
   })
+
+  it('configures cron due-work runner to invoke coordinator with CRON_DUE_WORK_PROFILE budget and claims', async () => {
+    const { createCronDueWorkRunner } = await import('../../../server/bootstrap/jobs.js')
+    const jobRepository = { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false })) }
+    const coordinatorRunner = vi.fn(async (options) => ({ ...baseResult(), coordinatorOptions: options }))
+    const indexingDrainRunner = vi.fn(async (res) => res)
+    const runner = createCronDueWorkRunner({
+      jobRepository,
+      coordinatorRunner,
+      indexingDrainRunner,
+      now: () => STARTED_AT,
+    })
+
+    const result = await runner()
+    expect(coordinatorRunner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
+        budgetMs: CRON_DUE_WORK_PROFILE.budgetMs,
+      }),
+    )
+    expect(result.coordinatorOptions.maxJobs).toBe(200)
+    expect(result.coordinatorOptions.budgetMs).toBe(240_000)
+  })
+
+  it('clamps task drain deadline to the global profile deadline', async () => {
+    const queue = queueFixture([
+      { id: 'summary-1', articleId: 'article-1', task: 'summary' },
+    ])
+    const profile = {
+      maxJobs: 5,
+      budgetMs: 100_000,
+      taskProfiles: [
+        { task: 'summary', maxClaims: 1, budgetMs: 100_000 },
+      ],
+    }
+    const runner = createProfiledIndexingDrainRunner({
+      queueRegistry: registry(queue),
+      profile,
+      now: () => new Date(STARTED_AT.getTime() + 20_000),
+    })
+
+    await runner(baseResult())
+    // StartedAt was STARTED_AT. Global deadline is STARTED_AT + 100_000 (100s from start).
+    // Drain started 20s in, so drainStartedAt + 150s = 170s, but clamped to 100s!
+    expect(queue.claimAndExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deadline: new Date(STARTED_AT.getTime() + 100_000),
+      }),
+    )
+  })
 })

@@ -53,9 +53,15 @@ export async function createConfiguredJobService({ context, now, rateLimitAdmiss
   }
 }
 
-export function createCoordinatorRunner({ queueRegistry, now = () => new Date() } = {}) {
+export function createCoordinatorRunner({ queueRegistry, now = () => new Date(), maxJobs = 3, maxRecoveries = 3, budgetMs = 8000 } = {}) {
   if (!queueRegistry) throw new Error('Queue registry is required')
-  return async () => runDueWork({ registry: queueRegistry, maxJobs: 3, maxRecoveries: 3, budgetMs: 8000, now })
+  return async (options = {}) => runDueWork({
+    registry: queueRegistry,
+    maxJobs: options.maxJobs ?? maxJobs,
+    maxRecoveries: options.maxRecoveries ?? maxRecoveries,
+    budgetMs: options.budgetMs ?? budgetMs,
+    now,
+  })
 }
 
 const ADMIN_TASK_PROFILES = Object.freeze([
@@ -122,11 +128,13 @@ export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now 
     const allocations = profile.taskProfiles
       ? allocateTaskClaims(profile.taskProfiles, remainingClaims).filter(({ maxClaims }) => maxClaims > 0)
       : [{ maxClaims: remainingClaims, budgetMs: profile.budgetMs }]
+    const baseStartedAt = baseResult.startedAt instanceof Date ? baseResult.startedAt : new Date(baseResult.startedAt)
+    const globalDeadline = new Date(baseStartedAt.getTime() + profile.budgetMs)
     const settled = await Promise.allSettled(allocations.map(({ task, maxClaims, budgetMs }) => createIndexingDrainRunner({
       queue,
       ...(task ? { tasks: [task] } : {}),
       maxClaims,
-      deadline: new Date(drainStartedAt.getTime() + budgetMs),
+      deadline: new Date(Math.min(drainStartedAt.getTime() + budgetMs, globalDeadline.getTime())),
       now,
     })()))
     const firstFailure = settled.find(({ status }) => status === 'rejected')
@@ -187,7 +195,10 @@ export function createCronDueWorkRunner({
       hasMore = result?.hasMore === true
       if (hasMore && now().getTime() >= deadline) break
     }
-    const coordinated = await coordinatorRunner()
+    const coordinated = await coordinatorRunner({
+      maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
+      budgetMs: CRON_DUE_WORK_PROFILE.budgetMs,
+    })
     return typeof indexingDrainRunner === 'function' ? indexingDrainRunner(coordinated) : coordinated
   }
 }
@@ -225,8 +236,14 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
   const coordinatorRunner = createCoordinatorRunner({ queueRegistry, now })
   const adminIndexingDrainRunner = createProfiledIndexingDrainRunner({ queueRegistry, profile: ADMIN_DUE_WORK_PROFILE, now })
   const cronIndexingDrainRunner = createProfiledIndexingDrainRunner({ queueRegistry, profile: CRON_DUE_WORK_PROFILE, now })
-  const adminDueWorkRunner = async () => adminIndexingDrainRunner(await coordinatorRunner())
-  const dueWorkRunner = createCronDueWorkRunner({ jobRepository, coordinatorRunner, indexingDrainRunner: cronIndexingDrainRunner, now, materializers: cronMaterializers })
+  const adminDueWorkRunner = async () => adminIndexingDrainRunner(await coordinatorRunner({ maxJobs: ADMIN_DUE_WORK_PROFILE.maxJobs, budgetMs: ADMIN_DUE_WORK_PROFILE.budgetMs }))
+  const dueWorkRunner = createCronDueWorkRunner({
+    jobRepository,
+    coordinatorRunner: async (options = {}) => coordinatorRunner({ maxJobs: CRON_DUE_WORK_PROFILE.maxJobs, budgetMs: CRON_DUE_WORK_PROFILE.budgetMs, ...options }),
+    indexingDrainRunner: cronIndexingDrainRunner,
+    now,
+    materializers: cronMaterializers,
+  })
   const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner, runAdminDueWork: adminDueWorkRunner, verifySchema: verifyJobsSchema })
   return {
     ...configured,
