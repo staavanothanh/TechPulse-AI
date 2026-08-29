@@ -30,6 +30,15 @@ describe('Source audit writer', () => {
     expect(differentSession).not.toBe(first)
   })
 
+  it('allows a pending reconciliation request audit bound to the canonical intent hash', () => {
+    const request = { serverRequestId: 'reconciliation-key-1', idempotencyKey: 'reconciliation-key-1', actorSessionId: '64d2f4bda57d0c1d2c38f100', requestHash: 'a'.repeat(64) }
+    const first = createSourceAuditEvent({ actor, action: 'source_policy_reconciliation_requested', targetId: '64d2f4bda57d0c1d2c38f010', changedFields: ['reconciliation'], reasonCode: 'source_policy_reconciliation_requested', request, result: 'pending', createdAt: new Date('2026-08-29T00:00:00.000Z') })
+    const replay = createSourceAuditEvent({ actor, action: 'source_policy_reconciliation_requested', targetId: '64d2f4bda57d0c1d2c38f010', changedFields: ['reconciliation'], reasonCode: 'source_policy_reconciliation_requested', request, result: 'pending', createdAt: new Date('2026-08-29T00:05:00.000Z') })
+    const differentIntent = createSourceAuditEvent({ actor, action: 'source_policy_reconciliation_requested', targetId: '64d2f4bda57d0c1d2c38f010', changedFields: ['reconciliation'], reasonCode: 'source_policy_reconciliation_requested', request: { ...request, requestHash: 'b'.repeat(64) }, result: 'pending', createdAt: new Date('2026-08-29T00:00:00.000Z') })
+    expect(first).toEqual(expect.objectContaining({ result: 'pending', action: 'source_policy_reconciliation_requested', changedFields: ['reconciliation'] }))
+    expect(replay.eventId).toBe(first.eventId)
+    expect(differentIntent.eventId).not.toBe(first.eventId)
+  })
   it('rejects missing session scope, invalid result/timestamp and unauthorized worker actions', () => {
     expect(() => sourceAuditEventId('source_policy_re_review_requested', 'target', 'key', actor.id)).toThrow(/session/i)
     const base = { actor, action: 'source_created', targetId: '64d2f4bda57d0c1d2c38f010', changedFields: ['sourceKey', 'operationalStatus', 'policyVersion'], reasonCode: 'source_created', request: { serverRequestId: 'audit-guard-1' } }

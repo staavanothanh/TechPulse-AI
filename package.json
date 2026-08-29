@@ -36,6 +36,7 @@
     "seed:sources": "node --env-file-if-exists=.env scripts/seed-sources.js",
     "seed:demo": "node --env-file-if-exists=.env scripts/seed-demo.js",
     "verify:demo": "node --env-file-if-exists=.env scripts/verify-demo.js",
+    "reconcile:source-policy": "node --env-file-if-exists=.env scripts/reconcile-source-policy.js",
     "contract:validate": "node scripts/contracts/validate-openapi.js",
     "contract:generate": "node scripts/contracts/generate.js",
     "contract:test": "node scripts/contracts/test-contract.js"

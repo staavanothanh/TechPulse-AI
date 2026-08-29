@@ -20,9 +20,9 @@ describe('admin Source Registry OpenAPI contract', () => {
     expect(result.cases).toBeGreaterThanOrEqual(17)
   })
 
-  it('contains all seven Source Registry operation IDs', () => {
+  it('contains all nine Source Registry operation IDs', () => {
     const ids = Object.entries(document.paths).filter(([path]) => path.includes('/admin/sources')).flatMap(([, item]) => Object.values(item).map((operation) => operation.operationId)).filter(Boolean)
-    expect(ids.sort()).toEqual(['createSource', 'getSource', 'listSources', 'requestSourcePolicyReReview', 'reviewSourcePolicy', 'runSourceTechnicalCheck', 'updateSource'].sort())
+    expect(ids.sort()).toEqual(['createSource', 'getSource', 'getSourcePolicyReconciliation', 'listSources', 'requestSourcePolicyReReview', 'reviewSourcePolicy', 'runSourcePolicyReconciliation', 'runSourceTechnicalCheck', 'updateSource'].sort())
     expect(Object.entries(document.paths).filter(([path]) => path.includes('/admin/sources')).some(([, item]) => Object.hasOwn(item, 'delete'))).toBe(false)
   })
 

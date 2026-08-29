@@ -317,6 +317,31 @@ const operations = [
     ]
   },
   {
+    "operationId": "getSourcePolicyReconciliation",
+    "method": "GET",
+    "path": "/api/v1/admin/sources/{sourceId}/reconciliation",
+    "requiredHeaders": [],
+    "browserManagedHeaders": [],
+    "pathParams": [
+      "sourceId"
+    ]
+  },
+  {
+    "operationId": "runSourcePolicyReconciliation",
+    "method": "POST",
+    "path": "/api/v1/admin/sources/{sourceId}/reconciliation",
+    "requiredHeaders": [
+      "X-CSRF-Token",
+      "Idempotency-Key"
+    ],
+    "browserManagedHeaders": [
+      "Origin"
+    ],
+    "pathParams": [
+      "sourceId"
+    ]
+  },
+  {
     "operationId": "listIngestionJobs",
     "method": "GET",
     "path": "/api/v1/admin/ingestion-jobs",
@@ -724,6 +749,8 @@ export function createApiClient(clientOptions = {}) {
     runSourceTechnicalCheck: (init = {}) => requestOperation('runSourceTechnicalCheck', init, clientOptions),
     reviewSourcePolicy: (init = {}) => requestOperation('reviewSourcePolicy', init, clientOptions),
     requestSourcePolicyReReview: (init = {}) => requestOperation('requestSourcePolicyReReview', init, clientOptions),
+    getSourcePolicyReconciliation: (init = {}) => requestOperation('getSourcePolicyReconciliation', init, clientOptions),
+    runSourcePolicyReconciliation: (init = {}) => requestOperation('runSourcePolicyReconciliation', init, clientOptions),
     listIngestionJobs: (init = {}) => requestOperation('listIngestionJobs', init, clientOptions),
     createIngestionJob: (init = {}) => requestOperation('createIngestionJob', init, clientOptions),
     getIngestionJob: (init = {}) => requestOperation('getIngestionJob', init, clientOptions),

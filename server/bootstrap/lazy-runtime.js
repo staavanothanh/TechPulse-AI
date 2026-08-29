@@ -327,6 +327,7 @@ export function createLazyRuntimeOptions({
     sourceService: createLazyService({ load: capabilities.sources, select: (value) => value.sourceService, unavailableMessage: 'Source Registry service is unavailable' }),
     jobService,
     indexingJobService: createLazyService({ load: capabilities.indexing, select: (value) => value.indexingJobService, unavailableMessage: 'Indexing job service is unavailable' }),
+    sourcePolicyReconciliationService: createLazyService({ load: capabilities.indexing, select: (value) => value.sourcePolicyReconciliationService, unavailableMessage: 'Source policy reconciliation service is unavailable' }),
     qaService: createLazyService({ load: capabilities.qa, select: (value) => value, unavailableMessage: 'Grounded Q&A service is unavailable' }),
     adminGovernanceService: createLazyService({ load: capabilities.governance, select: (value) => value.adminGovernanceService, unavailableMessage: 'Admin governance service is unavailable' }),
     accountDeletionService: createLazyService({ load: capabilities.governance, select: (value) => value.accountDeletionService, unavailableMessage: 'Account deletion service is unavailable' }),

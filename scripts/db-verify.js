@@ -30,6 +30,7 @@ import {
   GOOGLE_OAUTH_COLLECTIONS,
   GOOGLE_OAUTH_INDEXES,
 } from './migrations/google-oauth.js'
+import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_INDEXES } from './migrations/source-policy-reconciliation.js'
 import { GOVERNANCE_HARDENING_INDEXES } from './migrations/governance-hardening.js'
 import { RUNTIME_CAPABILITY_PROBE_COLLECTION, RUNTIME_CAPABILITY_PROBE_DEFINITION, RUNTIME_CAPABILITY_PROBE_INDEXES } from './migrations/governance-capability-probes.js'
 import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from './migrations/governance-retention-hardening.js'
@@ -299,9 +300,9 @@ async function probeTopicTaxonomyRoleCapabilities({ client, db } = {}) {
     transaction: outcome.transactionStarted && outcome.sessionHealthy,
   }
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1',
+    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation',
   )
   process.exitCode = 2
 } else {
@@ -343,8 +344,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                     articles: { validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR },
                     sources: { validator: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR },
                   }
-              : target === 'summary-detail-v1'
-                ? { articles: { validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR } }
+              : target === 'source-policy-reconciliation'
+                ? { articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }, sources: SOURCE_COLLECTIONS.sources }
               : target === 'topic-taxonomy-v1'
                 ? { articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }, users: { validator: TOPIC_TAXONOMY_USERS_VALIDATOR } }
               : target === 'governance'
@@ -371,6 +372,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? { articles: ARTICLE_INDEXES.articles, sources: SOURCE_INDEXES.sources }
               : target === 'governance' ? { ...GOVERNANCE_INDEXES, takedownRequests: [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests] }
               : target === 'google-oauth' ? GOOGLE_OAUTH_AUTH_INDEXES
+              : target === 'source-policy-reconciliation'
+                ? { articles: [...ARTICLE_INDEXES.articles, ...TOPIC_TAXONOMY_ARTICLE_INDEXES], sources: SOURCE_INDEXES.sources, adminAuditLogs: [...AUTH_CORE_INDEXES.adminAuditLogs, ...SOURCE_POLICY_RECONCILIATION_INDEXES] }
               : target === 'summary-detail-v1'
                 ? { articles: ARTICLE_INDEXES.articles }
               : target === 'topic-taxonomy-v1'
@@ -391,15 +394,22 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
         validatorProblems.push(`${name}:validator`)
       else {
         const accepted =
-          (target === 'auth-core' || target === 'google-oauth') && name === 'adminAuditLogs'
-            ? [
-                AUTH_CORE_COLLECTIONS[name].validator,
-                SOURCE_AUDIT_VALIDATOR,
-                DURABLE_JOB_AUDIT_VALIDATOR,
-                INDEXING_JOB_AUDIT_VALIDATOR,
-                GOVERNANCE_AUDIT_VALIDATOR,
-                GOOGLE_OAUTH_AUDIT_VALIDATOR,
-              ]
+          target === 'source-policy-reconciliation' && name === 'adminAuditLogs'
+            ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+            : target === 'source-policy-reconciliation' && name === 'articles'
+              ? [SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
+            : target === 'source-policy-reconciliation' && name === 'sources'
+              ? [SOURCE_COLLECTIONS.sources.validator, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR]
+            : (target === 'auth-core' || target === 'google-oauth') && name === 'adminAuditLogs'
+              ? [
+                  AUTH_CORE_COLLECTIONS[name].validator,
+                  SOURCE_AUDIT_VALIDATOR,
+                  DURABLE_JOB_AUDIT_VALIDATOR,
+                  INDEXING_JOB_AUDIT_VALIDATOR,
+                  GOVERNANCE_AUDIT_VALIDATOR,
+                  GOOGLE_OAUTH_AUDIT_VALIDATOR,
+                  SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR,
+                ]
             : (target === 'auth-core' || target === 'google-oauth' || target === 'topic-taxonomy-v1') && name === 'users'
               ? [AUTH_CORE_COLLECTIONS[name]?.validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR].filter(Boolean)
             : target === 'articles' && name === 'articles'
@@ -506,17 +516,20 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       target === 'indexing-drain-performance' ||
       target === 'chat-sessions' ||
       target === 'qa-evidence-fence' ||
-      target === 'summary-detail-v1'
+      target === 'summary-detail-v1' ||
+      target === 'source-policy-reconciliation'
     ) {
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')
       else {
         const acceptedAuditValidators =
-          target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'chat-sessions'
-            ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR]
+          target === 'source-policy-reconciliation'
+            ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+            : target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'chat-sessions'
+              ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
             : target === 'durable-jobs' || target === 'articles'
-              ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR]
-              : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR]
+              ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+              : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
         if (
           auditCollection.options?.validationLevel !== 'strict' ||
           auditCollection.options?.validationAction !== 'error' ||
@@ -1159,7 +1172,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       let runtimeSchemaAttestation
       if (issueRuntimeAttestation) {
         verificationStage = 'runtime-schema-attestation'
-        const attestationScope = target === 'indexing-drain-performance' ? 'indexing-jobs' : target
+        const attestationScope = target === 'indexing-drain-performance' || target === 'source-policy-reconciliation' ? 'indexing-jobs' : target
         runtimeSchemaAttestation = issueReleaseVerifiedSchemaAttestation(attestationScope, process.env)
       }
       console.log(

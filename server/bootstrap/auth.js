@@ -15,6 +15,7 @@ import {
   GOOGLE_OAUTH_COLLECTIONS,
   GOOGLE_OAUTH_INDEXES,
 } from '../../scripts/migrations/google-oauth.js'
+import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } from '../../scripts/migrations/source-policy-reconciliation.js'
 import { TOPIC_TAXONOMY_USERS_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
@@ -36,7 +37,7 @@ export async function assertAuthCoreReady(context) {
     const acceptedValidators = name === 'users'
       ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR]
       : name === 'adminAuditLogs'
-        ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR]
+        ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
         : [AUTH_CORE_COLLECTIONS[name].validator]
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || !acceptedValidators.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) {
       throw new Error('auth-core validator is not ready')
