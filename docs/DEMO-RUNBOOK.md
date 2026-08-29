@@ -75,12 +75,24 @@ Trong lúc chuyển source demo sang source thật, một script seed đã xóa 
 - lifecycle source: `connectorConfig` là rights/technical evidence, đổi qua
   `applySourceUpdate` phải qua re-review + bump policyVersion.
 
-Hậu quả: 25 audit record của lần tạo gốc mất vĩnh viễn (không có backup
-sidecar trong MVP). Không có dữ liệu orphan (các source mới chưa từng chạy
-ingestion). 7 source thật hiện tại (5 RSS batch 100 + arXiv/HN batch 10) đã
-được reseed; mỗi source có 5 lifecycle audit do seed tạo. Trail này không phải
-governance history chân thực của lần tạo gốc — đây là hậu quả không thể đảo
-ngược của việc xóa append-only trail, được ghi nhận để minh bạch.
+Hậu quả: 30 audit record mất vĩnh viễn, gồm hai đợt xóa không manifest:
+- 25 record của lần tạo gốc (5 source RSS mới x 5 lifecycle audit) bị xóa khi
+  reseed để sửa batchSize;
+- 5 record `source_configuration_updated` giả (restoration event không hợp lệ,
+  vì action này chỉ hợp lệ sau patch thật qua `applySourceUpdate`) bị xóa ở
+  lần sửa sau.
 
-Bài học: không xóa append-only trail; khi cần đổi config, đi qua
-`applySourceUpdate` + re-review; khi cần demo sạch, dùng database riêng.
+Cả hai đợt đều vi phạm §19.1 DATA-MODEL: xóa audit chỉ hợp lệ sau 180 ngày
+qua owner-only offline script + signed retention manifest vào
+`techpulse_governance.auditRetentionManifests`; verifier chỉ chấp nhận missing
+event trong manifest hợp lệ. Hiện tại `techpulse_governance` có 0 manifest,
+0 checkpoint — mọi gap đều là tamper/rollback failure nếu checkpoint verify
+được chạy. Không có backup sidecar trong MVP nên 30 record không thể khôi
+phục. Không có dữ liệu orphan (các source mới chưa từng chạy ingestion).
+7 source thật hiện tại (5 RSS batch 100 + arXiv/HN batch 10) đã được reseed;
+mỗi source có 5 lifecycle audit do seed tạo — trail này không phải governance
+history chân thực của lần tạo gốc.
+
+Bài học: không xóa append-only trail (kể cả row vừa tạo sai); khi cần đổi
+config, đi qua `applySourceUpdate` + re-review; khi cần demo sạch, dùng
+database riêng.
