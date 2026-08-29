@@ -100,4 +100,87 @@ describe('bounded cross-queue fairness', () => {
     expect(ingestion.recoverExpired).toHaveBeenCalledTimes(3)
     expect(result.recovery).toEqual({ inspected: 3, recovered: 3, retriesCreated: 3, failed: 0 })
   })
+
+  it('processes independent sources when one source encounters a lease conflict', async () => {
+    const registry = createQueueRegistry()
+    const candidates = [
+      { id: 'job-source-a', sourceId: 'source-A', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+      { id: 'job-source-b', sourceId: 'source-B', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+    ]
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async ({ excludeSourceIds = [] } = {}) => {
+        return candidates.find((c) => !excludeSourceIds.includes(c.sourceId)) ?? null
+      }),
+      claimAndExecute: vi.fn(async ({ candidate }) => {
+        if (candidate.sourceId === 'source-A') {
+          return { status: 'deferred', claimed: false, sourceId: 'source-A' }
+        }
+        return { status: 'succeeded', claimed: true, sourceId: 'source-B' }
+      }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    const result = await runDueWork({
+      registry,
+      maxJobs: 2,
+      maxRecoveries: 0,
+      budgetMs: 5000,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    expect(ingestion.claimAndExecute).toHaveBeenCalledTimes(2)
+    expect(result.queues.ingestion).toEqual({
+      claimed: 1,
+      succeeded: 1,
+      partial: 0,
+      failed: 0,
+      deferred: 1,
+    })
+  })
+
+  it('ensures each due queue receives a fair turn before older backlog items spill', async () => {
+    const registry = createQueueRegistry()
+    // Indexing backlog is older (2026-08-01)
+    const indexingCandidate = { id: 'old-indexing-1', availableAt: new Date('2026-08-01T00:00:00.000Z') }
+    // Ingestion candidate is newer (2026-08-10)
+    const ingestionCandidate = { id: 'new-ingestion-1', sourceId: 'source-1', availableAt: new Date('2026-08-10T00:00:00.000Z') }
+
+    const indexing = {
+      queueName: 'indexing',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => indexingCandidate),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => ingestionCandidate),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true, sourceId: 'source-1' })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+
+    registry.register(indexing)
+    registry.register(ingestion)
+
+    const result = await runDueWork({
+      registry,
+      maxJobs: 2,
+      maxRecoveries: 0,
+      budgetMs: 5000,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    // Both indexing and ingestion must have claimed 1 job in the initial fair turn
+    expect(indexing.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(ingestion.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(result.queues.indexing.claimed).toBe(1)
+    expect(result.queues.ingestion.claimed).toBe(1)
+  })
 })

@@ -359,10 +359,14 @@ export class MongoJobRepository {
     return { jobs: page.map(serializeIngestionJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }
   }
 
-  async selectDueIngestion({ now = new Date() } = {}) {
-    const aged = await this.jobs().find({ status: 'queued', availableAt: { $lte: now }, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_aged').limit(1).next()
+  async selectDueIngestion({ now = new Date(), excludeSourceIds = [] } = {}) {
+    const filter = { status: 'queued', availableAt: { $lte: now } }
+    if (Array.isArray(excludeSourceIds) && excludeSourceIds.length > 0) {
+      filter.sourceId = { $nin: excludeSourceIds.map((id) => idValue(id)) }
+    }
+    const aged = await this.jobs().find({ ...filter, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_aged').limit(1).next()
     if (aged) return serializeIngestionJob(aged)
-    return serializeIngestionJob(await this.jobs().find({ status: 'queued', availableAt: { $lte: now }, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_normal').limit(1).next())
+    return serializeIngestionJob(await this.jobs().find({ ...filter, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_normal').limit(1).next())
   }
 
   async nextAvailableAt() {

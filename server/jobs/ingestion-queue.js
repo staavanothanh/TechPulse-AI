@@ -35,7 +35,7 @@ export function createIngestionQueueAdapter({ jobRepository, leaseRepository, ex
   return Object.freeze({
     queueName: 'ingestion',
     recoveryStrategy: 'terminal-parent-linked-retry',
-    selectDue: ({ now }) => jobRepository.selectDueIngestion({ now }),
+    selectDue: ({ now, excludeSourceIds } = {}) => jobRepository.selectDueIngestion({ now, excludeSourceIds }),
     recoverExpired: ({ now, limit }) => jobRepository.recoverExpiredIngestion({ leaseRepository, now, limit }),
     nextAvailableAt: () => jobRepository.nextAvailableAt(),
     async claimAndExecute({ candidate, now = new Date() } = {}) {

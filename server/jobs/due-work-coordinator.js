@@ -54,27 +54,56 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
   }
 
   let slots = maxJobs
-  const deferredQueues = new Set()
+  const blockedSourceIds = new Set()
+  const blockedArticleIds = new Set()
+  const exhaustedQueues = new Set()
+
+  const getSelectOptions = (queueName) => {
+    if (queueName === 'ingestion') return { now: startedAt, excludeSourceIds: [...blockedSourceIds] }
+    if (queueName === 'indexing') return { now: startedAt, excludeArticleIds: [...blockedArticleIds] }
+    return { now: startedAt }
+  }
+  const handleResult = (result, queueName, candidate) => {
+    const status = record(result, queueCounters[queueName])
+    if (result?.claimed === false) {
+      if (queueName === 'ingestion' && (result?.sourceId || candidate?.sourceId)) {
+        blockedSourceIds.add(String(result?.sourceId || candidate?.sourceId))
+      } else if (queueName === 'indexing' && (result?.articleId || candidate?.articleId)) {
+        blockedArticleIds.add(String(result?.articleId || candidate?.articleId))
+      } else {
+        exhaustedQueues.add(queueName)
+      }
+    }
+    return status
+  }
   for (let index = 0; index < adapters.length; index += 1) {
     const adapter = adapters[index]
     if (slots <= 0) break
     if (!canStart(adapters.length - index)) break
-    const candidate = await adapter.selectDue({ now: startedAt })
-    if (!candidate) continue
-    const status = record(await adapter.claimAndExecute({ candidate, now: startedAt }), queueCounters[adapter.queueName])
-    if (status === 'deferred') deferredQueues.add(adapter.queueName)
+    const candidate = await adapter.selectDue(getSelectOptions(adapter.queueName))
+    if (!candidate) {
+      exhaustedQueues.add(adapter.queueName)
+      continue
+    }
+    handleResult(await adapter.claimAndExecute({ candidate, now: startedAt }), adapter.queueName, candidate)
     slots -= 1
   }
 
   while (slots > 0 && adapters.length > 0) {
     if (!canStart()) break
-    const eligibleAdapters = adapters.filter((adapter) => !deferredQueues.has(adapter.queueName))
-    const heads = (await Promise.all(eligibleAdapters.map(async (adapter) => ({ adapter, candidate: await adapter.selectDue({ now: startedAt }) })))).filter(({ candidate }) => candidate)
+    const eligibleAdapters = adapters.filter((adapter) => !exhaustedQueues.has(adapter.queueName))
+    if (eligibleAdapters.length === 0) break
+    const heads = (await Promise.all(
+      eligibleAdapters.map(async (adapter) => {
+        const candidate = await adapter.selectDue(getSelectOptions(adapter.queueName))
+        if (!candidate) exhaustedQueues.add(adapter.queueName)
+        return { adapter, candidate }
+      }),
+    )).filter(({ candidate }) => candidate)
     if (heads.length === 0) break
     heads.sort((left, right) => candidateTime(left.candidate) - candidateTime(right.candidate) || QUEUE_ORDER.indexOf(left.adapter.queueName) - QUEUE_ORDER.indexOf(right.adapter.queueName))
     const selected = heads[0]
-    const status = record(await selected.adapter.claimAndExecute({ candidate: selected.candidate, now: startedAt }), queueCounters[selected.adapter.queueName])
-    if (status === 'deferred') deferredQueues.add(selected.adapter.queueName)
+    handleResult(await selected.adapter.claimAndExecute({ candidate: selected.candidate, now: startedAt }), selected.adapter.queueName, selected.candidate)
     slots -= 1
   }
 
