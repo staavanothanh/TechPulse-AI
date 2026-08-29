@@ -117,7 +117,7 @@ async function nextAvailableAt(queueRegistry, now) {
 
 export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now = () => new Date() } = {}) {
   if (!queueRegistry || !profile || !Number.isInteger(profile.maxJobs) || profile.maxJobs < 3 || !Number.isFinite(profile.budgetMs) || profile.budgetMs <= 0 || !validTaskProfiles(profile)) throw new Error('Indexing drain profile is invalid')
-  return async (baseResult) => {
+  return async (baseResult, options = {}) => {
     if (!baseResult?.startedAt || !baseResult?.queues) throw new Error('Due-work base result is required')
     const queue = queueRegistry.get('indexing')
     const remainingClaims = Math.max(0, profile.maxJobs - queueAttempts(baseResult.queues))
@@ -129,12 +129,14 @@ export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now 
       ? allocateTaskClaims(profile.taskProfiles, remainingClaims).filter(({ maxClaims }) => maxClaims > 0)
       : [{ maxClaims: remainingClaims, budgetMs: profile.budgetMs }]
     const baseStartedAt = baseResult.startedAt instanceof Date ? baseResult.startedAt : new Date(baseResult.startedAt)
-    const globalDeadline = new Date(baseStartedAt.getTime() + profile.budgetMs)
+    const effectiveDeadline = options.deadline instanceof Date
+      ? options.deadline
+      : new Date(baseStartedAt.getTime() + profile.budgetMs)
     const settled = await Promise.allSettled(allocations.map(({ task, maxClaims, budgetMs }) => createIndexingDrainRunner({
       queue,
       ...(task ? { tasks: [task] } : {}),
       maxClaims,
-      deadline: new Date(Math.min(drainStartedAt.getTime() + budgetMs, globalDeadline.getTime())),
+      deadline: new Date(Math.min(drainStartedAt.getTime() + budgetMs, effectiveDeadline.getTime())),
       now,
     })()))
     const firstFailure = settled.find(({ status }) => status === 'rejected')
@@ -170,16 +172,18 @@ export function createCronDueWorkRunner({
   maxMaterializationPages = MAX_DAILY_MATERIALIZATION_PAGES,
   materializationBudgetMs = DAILY_MATERIALIZATION_BUDGET_MS,
   materializers = [],
+  profile = CRON_DUE_WORK_PROFILE,
 } = {}) {
   if (!jobRepository || typeof coordinatorRunner !== 'function' || indexingDrainRunner !== undefined && typeof indexingDrainRunner !== 'function') throw new Error('Cron job dependencies are required')
   if (!Number.isInteger(materializationPageLimit) || materializationPageLimit < 1 || materializationPageLimit > DAILY_MATERIALIZATION_PAGE_LIMIT) throw new Error('Daily materialization page limit is invalid')
   if (!Number.isInteger(maxMaterializationPages) || maxMaterializationPages < 1) throw new Error('Daily materialization page cap is invalid')
   if (!Number.isFinite(materializationBudgetMs) || materializationBudgetMs <= 0) throw new Error('Daily materialization budget is invalid')
   if (!Array.isArray(materializers) || materializers.some((materializer) => typeof materializer !== 'function')) throw new Error('Cron materializers are invalid')
+  if (profile !== undefined && (!Number.isFinite(profile?.budgetMs) || profile.budgetMs <= 0)) throw new Error('Cron profile is invalid')
   return async () => {
     const startedAt = now()
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
-    const globalDeadline = startedAt.getTime() + CRON_DUE_WORK_PROFILE.budgetMs
+    const globalDeadline = new Date(startedAt.getTime() + (profile?.budgetMs ?? CRON_DUE_WORK_PROFILE.budgetMs))
     const materializationDeadline = startedAt.getTime() + materializationBudgetMs
     for (const materializer of materializers) await materializer()
     let hasMore = true
@@ -193,12 +197,14 @@ export function createCronDueWorkRunner({
       hasMore = result?.hasMore === true
       if (hasMore && now().getTime() >= materializationDeadline) break
     }
-    const remainingBudgetMs = Math.max(1000, globalDeadline - now().getTime())
+    const remainingBudgetMs = Math.max(1000, globalDeadline.getTime() - now().getTime())
     const coordinated = await coordinatorRunner({
       maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
       budgetMs: remainingBudgetMs,
     })
-    return typeof indexingDrainRunner === 'function' ? indexingDrainRunner(coordinated) : coordinated
+    return typeof indexingDrainRunner === 'function'
+      ? indexingDrainRunner(coordinated, { deadline: globalDeadline, startedAt })
+      : coordinated
   }
 }
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ADMIN_DUE_WORK_PROFILE,
   CRON_DUE_WORK_PROFILE,
+  createCronDueWorkRunner,
   createProfiledIndexingDrainRunner,
 } from '../../../server/bootstrap/jobs.js'
 import { createIndexingDrainRunner } from '../../../server/jobs/indexing-drain.js'
@@ -220,6 +221,58 @@ describe('worker scheduling', () => {
     expect(queue.claimAndExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         deadline: new Date(STARTED_AT.getTime() + 100_000),
+      }),
+    )
+  })
+
+  it('threads the cron invocation absolute deadline across materialization, coordinator, and indexing drain', async () => {
+    let currentMs = STARTED_AT.getTime()
+    const now = () => new Date(currentMs)
+
+    const jobRepository = {
+      materializeDailyIngestion: vi.fn(async () => {
+        currentMs += 3_000
+        return { hasMore: false }
+      }),
+    }
+
+    const coordinatorRunner = vi.fn(async (options) => {
+      currentMs += 40_000
+      return {
+        ...baseResult(),
+        startedAt: new Date(STARTED_AT.getTime() + 3_000),
+        coordinatorOptions: options,
+      }
+    })
+
+    const queue = queueFixture([
+      { id: 'summary-1', articleId: 'article-1', task: 'summary' },
+    ])
+    const indexingDrainRunner = createProfiledIndexingDrainRunner({
+      queueRegistry: registry(queue),
+      profile: CRON_DUE_WORK_PROFILE,
+      now,
+    })
+
+    const runner = createCronDueWorkRunner({
+      jobRepository,
+      coordinatorRunner,
+      indexingDrainRunner,
+      now,
+    })
+
+    await runner()
+
+    expect(coordinatorRunner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxJobs: 200,
+        budgetMs: 237_000,
+      }),
+    )
+
+    expect(queue.claimAndExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deadline: new Date(STARTED_AT.getTime() + 240_000),
       }),
     )
   })
