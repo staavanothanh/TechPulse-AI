@@ -56,7 +56,7 @@ export async function assertGoogleOAuthReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const [name, definition] of Object.entries(GOOGLE_OAUTH_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || ![definition.validator, ...(name === 'users' ? [TOPIC_TAXONOMY_USERS_VALIDATOR] : [])].some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('google-oauth validator is not ready')
+    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || ![definition.validator, ...(name === 'users' ? [TOPIC_TAXONOMY_USERS_VALIDATOR] : []), ...(name === 'adminAuditLogs' ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR] : [])].some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('google-oauth validator is not ready')
   }
   const usersIndexes = new Map((await context.db.collection('users').indexes()).map((index) => [index.name, index]))
   for (const expected of GOOGLE_OAUTH_INDEXES.users) if (!exactMongoIndex(usersIndexes.get(expected.name), expected)) throw new Error('google-oauth indexes are not ready')

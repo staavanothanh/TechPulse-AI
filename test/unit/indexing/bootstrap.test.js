@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { assertIndexingJobsReady, assertSourcePolicyReconciliationReady, createConfiguredIndexingRuntime } from '../../../server/bootstrap/indexing.js'
+import { assertIndexingJobsReady, assertSourcePolicyReconciliationReady, checkSourcePolicyReconciliationReady, createConfiguredIndexingRuntime } from '../../../server/bootstrap/indexing.js'
 import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from '../../../scripts/migrations/indexing-jobs.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_INDEXES } from '../../../scripts/migrations/source-policy-reconciliation.js'
 import { SOURCE_COLLECTIONS, SOURCE_INDEXES } from '../../../scripts/migrations/sources.js'
@@ -63,6 +63,10 @@ describe('Step 9 indexing bootstrap readiness', () => {
     const ready = readyContext()
     await expect(assertSourcePolicyReconciliationReady({ ...ready, db: { ...ready.db, collection: (name) => ({ indexes: async () => name === 'adminAuditLogs' ? [] : indexesFor(name) }) } })).rejects.toThrow(/indexes/i)
   })
+  it('reports reconciliation migration absence without blocking core indexing', async () => {
+    await expect(checkSourcePolicyReconciliationReady(readyContext({ auditValidator: INDEXING_JOB_AUDIT_VALIDATOR }))).resolves.toBe(false)
+    await expect(checkSourcePolicyReconciliationReady(readyContext())).resolves.toBe(true)
+  })
 
   it('registers indexing queue and cleanup into the shared Step 4 runtime', async () => {
     const registered = []
@@ -85,6 +89,15 @@ describe('Step 9 indexing bootstrap readiness', () => {
     expect(runtime.sourcePolicyReconciliationService).toEqual(expect.objectContaining({ preview: expect.any(Function), execute: expect.any(Function) }))
     expect(runtime.queryEmbedding.capability).toBe('nonconfidential')
     expect(Object.isFrozen(runtime.queryEmbedding)).toBe(true)
+  })
+  it('keeps core indexing available when reconciliation migration is absent', async () => {
+    const jobRuntime = { queueRegistry: { register: vi.fn() }, maintenanceRegistry: { register: vi.fn() }, coordinatorRunner: vi.fn(), leaseRepository: {}, cronMaterializers: [] }
+    const runtime = await createConfiguredIndexingRuntime({
+      context: readyContext(), jobRuntime, rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) },
+      providerRegistry: providerGraph(), verifyReconciliationSchema: vi.fn(async () => false),
+    })
+    expect(runtime.indexingJobService).toEqual(expect.objectContaining({ createSummaryJob: expect.any(Function), createIndexingJob: expect.any(Function) }))
+    expect(runtime.sourcePolicyReconciliationService).toBeUndefined()
   })
 
   it('fails startup when the configured embedding workload is absent', async () => {

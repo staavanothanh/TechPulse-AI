@@ -53,13 +53,27 @@ export async function assertIndexingJobsReady(context) {
   ]
   if (expectedArticleIndexes.some((expected) => !exactMongoIndex(articleIndexes.get(expected.name), expected))) throw new Error('article reconciliation index is not ready')
 }
+function sourcePolicyReconciliationNotReady(message) {
+  return Object.assign(new Error(message), { code: 'source_policy_reconciliation_not_ready' })
+}
+
 export async function assertSourcePolicyReconciliationReady(context) {
   if (!context?.db) throw new Error('Mongo context is required')
   const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
   const audit = collections.find((collection) => collection.name === 'adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || stableJson(audit.options?.validator) !== stableJson(SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR)) throw new Error('source-policy-reconciliation audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || stableJson(audit.options?.validator) !== stableJson(SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR)) throw sourcePolicyReconciliationNotReady('source-policy-reconciliation audit validator is not ready')
   const indexes = new Map((await context.db.collection('adminAuditLogs').indexes()).map((index) => [index.name, index]))
-  if (SOURCE_POLICY_RECONCILIATION_INDEXES.some((expected) => !exactMongoIndex(indexes.get(expected.name), expected))) throw new Error('source-policy-reconciliation indexes are not ready')
+  if (SOURCE_POLICY_RECONCILIATION_INDEXES.some((expected) => !exactMongoIndex(indexes.get(expected.name), expected))) throw sourcePolicyReconciliationNotReady('source-policy-reconciliation indexes are not ready')
+}
+
+export async function checkSourcePolicyReconciliationReady(context) {
+  try {
+    await assertSourcePolicyReconciliationReady(context)
+    return true
+  } catch (error) {
+    if (error?.code === 'source_policy_reconciliation_not_ready') return false
+    throw error
+  }
 }
 
 function workloadPolicy(registry, workloadId) {
@@ -83,14 +97,14 @@ function configuredEmbeddingRoute(registry) {
 }
 
 export async function createConfiguredIndexingRuntime({
-  context, jobRuntime, rateLimitAdmission, providerRegistry = { admissionDomains: [], providerFailureDomains: [], routes: [], workloadPolicies: [] }, llmProvider, embeddingProvider, now = () => new Date(), verifySchema = assertIndexingJobsReady, verifyProviderSchema = assertProviderRoutingReady, verifyReconciliationSchema = assertSourcePolicyReconciliationReady,
+  context, jobRuntime, rateLimitAdmission, providerRegistry = { admissionDomains: [], providerFailureDomains: [], routes: [], workloadPolicies: [] }, llmProvider, embeddingProvider, now = () => new Date(), verifySchema = assertIndexingJobsReady, verifyProviderSchema = assertProviderRoutingReady, verifyReconciliationSchema = checkSourcePolicyReconciliationReady,
 } = {}) {
   if (!jobRuntime?.queueRegistry || !jobRuntime?.maintenanceRegistry || !jobRuntime?.leaseRepository || typeof jobRuntime.coordinatorRunner !== 'function') throw new Error('Shared durable job runtime is required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   await verifySchema(context)
   await verifyProviderSchema(context)
   await assertSourcesReady(context)
-  await verifyReconciliationSchema(context)
+  const reconciliationReady = await verifyReconciliationSchema(context)
   const embeddingTarget = configuredEmbeddingTarget(providerRegistry)
   const indexingJobRepository = new MongoIndexingJobRepository(context, { embeddingTarget })
   const articleRepository = new MongoArticleRepository(context, { embeddingTarget })
@@ -103,8 +117,8 @@ export async function createConfiguredIndexingRuntime({
   jobRuntime.queueRegistry.register(createIndexingQueueAdapter({ indexingJobRepository, jobRepository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, executor: (input) => artifactProcessor.execute(input) }))
   jobRuntime.maintenanceRegistry.register('purge-indexing-jobs', ({ cutoff, limit }) => indexingJobRepository.purgeDueIndexingJobs({ cutoff, limit }))
   const reconciliationRunner = createReconciliationRunner({ repository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
-  const sourcePolicyReconciliationWorker = createSourcePolicyReconciliationWorker({ sourceRepository, indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
-  const sourcePolicyReconciliationService = createSourcePolicyReconciliationService({ worker: sourcePolicyReconciliationWorker, sourceRepository, rateLimitAdmission, now })
+  const sourcePolicyReconciliationWorker = reconciliationReady === false ? undefined : createSourcePolicyReconciliationWorker({ sourceRepository, indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
+  const sourcePolicyReconciliationService = reconciliationReady === false ? undefined : createSourcePolicyReconciliationService({ worker: sourcePolicyReconciliationWorker, sourceRepository, rateLimitAdmission, now })
   if (Array.isArray(jobRuntime.cronMaterializers)) jobRuntime.cronMaterializers.push(() => reconciliationRunner.runDueSources())
   const indexingJobService = createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork: jobRuntime.coordinatorRunner, embeddingTarget, now })
   workloadPolicy(providerRegistry, 'summary')

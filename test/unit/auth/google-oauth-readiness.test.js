@@ -7,9 +7,10 @@ import {
   GOOGLE_OAUTH_INDEXES,
 } from '../../../scripts/migrations/google-oauth.js'
 import { TOPIC_TAXONOMY_USERS_VALIDATOR } from '../../../scripts/migrations/topic-taxonomy-v1.js'
+import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } from '../../../scripts/migrations/source-policy-reconciliation.js'
 
-function readyContext({ userValidator = GOOGLE_OAUTH_COLLECTIONS.users.validator } = {}) {
-  const definitions = Object.entries(AUTH_CORE_COLLECTIONS).map(([name, definition]) => [name, name === 'users' ? { validator: userValidator } : name === 'adminAuditLogs' ? { validator: GOOGLE_OAUTH_AUDIT_VALIDATOR } : definition])
+function readyContext({ userValidator = GOOGLE_OAUTH_COLLECTIONS.users.validator, auditValidator = GOOGLE_OAUTH_AUDIT_VALIDATOR } = {}) {
+  const definitions = Object.entries(AUTH_CORE_COLLECTIONS).map(([name, definition]) => [name, name === 'users' ? { validator: userValidator } : name === 'adminAuditLogs' ? { validator: auditValidator } : definition])
   const indexes = Object.fromEntries(Object.entries(AUTH_CORE_INDEXES).map(([name, values]) => [name, [...values, ...(name === 'users' ? GOOGLE_OAUTH_INDEXES.users : [])]]))
   const collections = definitions.map(([name, definition]) => ({ name, options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } }))
   return {
@@ -27,6 +28,11 @@ describe('Google OAuth readiness boundary', () => {
   })
   it('accepts the taxonomy successor users validator for both auth and OAuth readiness', async () => {
     const context = readyContext({ userValidator: TOPIC_TAXONOMY_USERS_VALIDATOR })
+    await expect(assertAuthCoreReady(context)).resolves.toBeUndefined()
+    await expect(assertGoogleOAuthReady(context)).resolves.toBeUndefined()
+  })
+  it('accepts the terminal source-policy audit validator for OAuth readiness', async () => {
+    const context = readyContext({ auditValidator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR })
     await expect(assertAuthCoreReady(context)).resolves.toBeUndefined()
     await expect(assertGoogleOAuthReady(context)).resolves.toBeUndefined()
   })

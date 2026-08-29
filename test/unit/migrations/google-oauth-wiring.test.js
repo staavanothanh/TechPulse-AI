@@ -14,5 +14,8 @@ describe('Google OAuth migration and release wiring', () => {
     expect(migrate).toContain('runGoogleOAuthMigration')
     expect(verify).toContain("'google-oauth'")
     expect(verify).toContain('GOOGLE_OAUTH_COLLECTIONS')
+    expect(migrate).toContain('preservedSourcePolicyAuditValidator')
+    expect(migrate).toContain('withGoogleOAuthAuditCompatibility(context.db, auditValidator ? { auditValidator } : {})')
+    expect(migrate).toContain('runGoogleOAuthMigration({ db: context.db, ...(auditValidator ? { auditValidator } : {}) })')
   })
 })

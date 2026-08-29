@@ -22,11 +22,12 @@ function validateBody(name, body) {
 function noStore(res) { res.set('Cache-Control', 'no-store, private') }
 function asyncRoute(handler) { return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next) }
 function unavailable() { throw new SourceError(503, 'service_unavailable', 'Source Registry service is not configured') }
+function reconciliationUnavailable() { throw new SourceError(503, 'service_unavailable', 'Source policy reconciliation service is not configured') }
 
 export function createAdminSourcesRouter({ sourceService, sourcePolicyReconciliationService, authService } = {}) {
   const router = Router()
   const service = sourceService ?? { list: unavailable, get: unavailable, create: unavailable, update: unavailable, reviewPolicy: unavailable, requestReReview: unavailable, runTechnicalCheck: unavailable }
-  const reconciliation = sourcePolicyReconciliationService ?? { preview: unavailable, execute: unavailable }
+  const reconciliation = sourcePolicyReconciliationService ?? { preview: reconciliationUnavailable, execute: reconciliationUnavailable }
   const admin = requireRole('admin')
   const csrf = requireCsrf(authService)
   const idempotencyKey = (req) => {

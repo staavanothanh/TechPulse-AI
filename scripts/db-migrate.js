@@ -29,9 +29,20 @@ import { configureDns } from './configure-dns.js'
 import { migrationUriEnvName } from './migration-credential.js'
 import { buildGoogleOAuthMigration, runGoogleOAuthMigration, withGoogleOAuthAuditCompatibility } from './migrations/google-oauth.js'
 import { buildTopicTaxonomyMigration, runTopicTaxonomyMigration } from './migrations/topic-taxonomy-v1.js'
-import { buildSourcePolicyReconciliationMigration, runSourcePolicyReconciliationMigration } from './migrations/source-policy-reconciliation.js'
+import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, buildSourcePolicyReconciliationMigration, runSourcePolicyReconciliationMigration } from './migrations/source-policy-reconciliation.js'
 
 configureDns()
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+  return JSON.stringify(value)
+}
+
+async function preservedSourcePolicyAuditValidator(db) {
+  const collections = await db.listCollections({ name: /^adminAuditLogs$/ }, { nameOnly: false }).toArray()
+  const current = collections.find((collection) => collection.name === 'adminAuditLogs')?.options?.validator
+  return stableJson(current) === stableJson(SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR) ? SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR : undefined
+}
 
 const args = new Set(process.argv.slice(2))
 const targetIndex = process.argv.indexOf('--to')
@@ -131,8 +142,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       : await (async () => {
           const context = await getMongoContext(runtime)
           await assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: context.db, target })
-          const appDb = target === 'governance' ? withGoogleOAuthAuditCompatibility(context.db) : context.db
-          const plan = await runMigration({ db: appDb, ...(['summary-detail-v1', 'topic-taxonomy-v1'].includes(target) ? { writerMode: summaryDetailWriterMode } : {}) })
+          const auditValidator = ['governance', 'google-oauth'].includes(target) ? await preservedSourcePolicyAuditValidator(context.db) : undefined
+          const appDb = target === 'governance' ? withGoogleOAuthAuditCompatibility(context.db, auditValidator ? { auditValidator } : {}) : context.db
+          const plan = await runMigration({ db: appDb, ...(auditValidator ? { auditValidator } : {}), ...(['summary-detail-v1', 'topic-taxonomy-v1'].includes(target) ? { writerMode: summaryDetailWriterMode } : {}) })
           if (target === 'governance') {
             plan.push(...await runGovernanceHardeningMigration({ db: appDb }))
             plan.push(...await runGovernanceRetentionHardeningMigration({ db: appDb }))
@@ -141,7 +153,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
             plan.push(...await runProviderRoutingV2Migration({ db: appDb }))
             plan.push(...await runQaEvidenceFenceMigration({ db: appDb }))
             plan.push(...await runGovernanceCapabilityProbeMigration({ db: appDb }))
-            plan.push(...await runGoogleOAuthMigration({ db: context.db }))
+            plan.push(...await runGoogleOAuthMigration({ db: context.db, ...(auditValidator ? { auditValidator } : {}) }))
             const governanceDb = context.client.db('techpulse_governance')
             await runGovernanceDatabaseMigration({ db: governanceDb })
             plan.push(...await runGovernanceCapabilityProbeMigration({ db: governanceDb }))
