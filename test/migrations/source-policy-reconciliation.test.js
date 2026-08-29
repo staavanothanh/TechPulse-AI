@@ -45,11 +45,35 @@ describe('source-policy-reconciliation migration', () => {
     expect(verify).toContain("'source-policy-reconciliation'")
   })
 
-  it('verifies the sources and articles reconciliation paths under the target', () => {
-    const verify = readFileSync(new URL('../../scripts/db-verify.js', import.meta.url), 'utf8')
-    expect(verify).toMatch(/target === 'source-policy-reconciliation'\s*\?\s*\{ articles: \[\.\.\.ARTICLE_INDEXES\.articles, \.\.\.TOPIC_TAXONOMY_ARTICLE_INDEXES\], sources: SOURCE_INDEXES\.sources, adminAuditLogs:/)
-    expect(verify).toMatch(/target === 'source-policy-reconciliation' && name === 'articles'[\s\S]*SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR/)
-    expect(verify).toMatch(/target === 'source-policy-reconciliation' && name === 'sources'[\s\S]*SOURCE_COLLECTIONS\.sources\.validator, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR/)
+  it('verifies the complete indexing and source paths under the target', () => {
+    const verify = readFileSync(new URL('../../scripts/db-verify.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+    const collectionsStart = verify.indexOf("target === 'source-policy-reconciliation'\n                ? {\n                    ...INDEXING_JOB_COLLECTIONS")
+    const collectionsEnd = verify.indexOf("              : target === 'topic-taxonomy-v1'", collectionsStart)
+    const collectionsBranch = verify.slice(collectionsStart, collectionsEnd)
+    expect(collectionsStart).toBeGreaterThanOrEqual(0)
+    expect(collectionsBranch).toContain('articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }')
+    expect(collectionsBranch).toContain('sources: SOURCE_COLLECTIONS.sources')
+    expect(collectionsBranch).toContain('adminAuditLogs: { validator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR }')
+
+    const indexesStart = verify.indexOf("target === 'source-policy-reconciliation'\n                ? {", collectionsEnd)
+    const indexesEnd = verify.indexOf("              : target === 'summary-detail-v1'", indexesStart)
+    const indexesBranch = verify.slice(indexesStart, indexesEnd)
+    expect(indexesStart).toBeGreaterThan(collectionsStart)
+    expect(indexesBranch).toContain('...Object.fromEntries(Object.entries(INDEXING_JOB_INDEXES)')
+    expect(indexesBranch).toContain('...(INDEXING_DRAIN_PERFORMANCE_INDEXES[name] ?? [])')
+    expect(indexesBranch).toContain('articles: [...INDEXING_ARTICLE_INDEXES, ...ARTICLE_INDEXES.articles, ...TOPIC_TAXONOMY_ARTICLE_INDEXES]')
+    expect(indexesBranch).toContain('sources: SOURCE_INDEXES.sources')
+    expect(indexesBranch).toContain('adminAuditLogs: [...AUTH_CORE_INDEXES.adminAuditLogs, ...SOURCE_POLICY_RECONCILIATION_INDEXES]')
+
+    const validatorsStart = verify.indexOf("target === 'source-policy-reconciliation' && name === 'adminAuditLogs'")
+    const validatorsEnd = verify.indexOf("            : (target === 'auth-core' || target === 'google-oauth')", validatorsStart)
+    const validatorsBranch = verify.slice(validatorsStart, validatorsEnd)
+    expect(validatorsBranch).toContain("target === 'source-policy-reconciliation' && name === 'providerAdmissionStates'")
+    expect(validatorsBranch).toContain('PROVIDER_ADMISSION_STATE_VALIDATOR_V2')
+    expect(validatorsBranch).toContain("target === 'source-policy-reconciliation' && name === 'indexingJobs'")
+    expect(validatorsBranch).toContain('PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR')
+    expect(validatorsBranch).toContain("target === 'source-policy-reconciliation' && name === 'articles'")
+    expect(validatorsBranch).toContain("target === 'source-policy-reconciliation' && name === 'sources'")
   })
 
   it('binds the reconciliation migration to the indexing runtime attestation scope', () => {

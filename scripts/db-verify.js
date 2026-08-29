@@ -16,6 +16,8 @@ import {
   INDEXING_JOB_INDEXES,
 } from './migrations/indexing-jobs.js'
 import {
+  PROVIDER_ADMISSION_STATE_VALIDATOR_V2,
+  PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR,
   PROVIDER_ROUTING_V2_COLLECTIONS,
   PROVIDER_ROUTING_V2_INDEXES,
 } from './migrations/provider-routing-v2.js'
@@ -347,7 +349,12 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
               : target === 'summary-detail-v1'
                 ? { articles: { validator: SUMMARY_DETAIL_ARTICLE_VALIDATOR } }
               : target === 'source-policy-reconciliation'
-                ? { articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }, sources: SOURCE_COLLECTIONS.sources }
+                ? {
+                    ...INDEXING_JOB_COLLECTIONS,
+                    articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR },
+                    sources: SOURCE_COLLECTIONS.sources,
+                    adminAuditLogs: { validator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR },
+                  }
               : target === 'topic-taxonomy-v1'
                 ? { articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }, users: { validator: TOPIC_TAXONOMY_USERS_VALIDATOR } }
               : target === 'governance'
@@ -375,7 +382,12 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
               : target === 'governance' ? { ...GOVERNANCE_INDEXES, takedownRequests: [...GOVERNANCE_INDEXES.takedownRequests, ...GOVERNANCE_HARDENING_INDEXES.takedownRequests] }
               : target === 'google-oauth' ? GOOGLE_OAUTH_AUTH_INDEXES
               : target === 'source-policy-reconciliation'
-                ? { articles: [...ARTICLE_INDEXES.articles, ...TOPIC_TAXONOMY_ARTICLE_INDEXES], sources: SOURCE_INDEXES.sources, adminAuditLogs: [...AUTH_CORE_INDEXES.adminAuditLogs, ...SOURCE_POLICY_RECONCILIATION_INDEXES] }
+                ? {
+                    ...Object.fromEntries(Object.entries(INDEXING_JOB_INDEXES).map(([name, indexes]) => [name, [...indexes, ...(INDEXING_DRAIN_PERFORMANCE_INDEXES[name] ?? [])]])),
+                    articles: [...INDEXING_ARTICLE_INDEXES, ...ARTICLE_INDEXES.articles, ...TOPIC_TAXONOMY_ARTICLE_INDEXES],
+                    sources: SOURCE_INDEXES.sources,
+                    adminAuditLogs: [...AUTH_CORE_INDEXES.adminAuditLogs, ...SOURCE_POLICY_RECONCILIATION_INDEXES],
+                  }
               : target === 'summary-detail-v1'
                 ? { articles: ARTICLE_INDEXES.articles }
               : target === 'topic-taxonomy-v1'
@@ -398,6 +410,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
         const accepted =
           target === 'source-policy-reconciliation' && name === 'adminAuditLogs'
             ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+            : target === 'source-policy-reconciliation' && name === 'providerAdmissionStates'
+              ? [INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator, PROVIDER_ADMISSION_STATE_VALIDATOR_V2]
+            : target === 'source-policy-reconciliation' && name === 'indexingJobs'
+              ? [INDEXING_JOB_COLLECTIONS.indexingJobs.validator, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR]
             : target === 'source-policy-reconciliation' && name === 'articles'
               ? [SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
             : target === 'source-policy-reconciliation' && name === 'sources'
@@ -1018,7 +1034,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       target === 'articles' ||
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
-      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'summary-detail-v1' || target === 'topic-taxonomy-v1' || target === 'governance' || target === 'google-oauth'
+      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'summary-detail-v1' || target === 'topic-taxonomy-v1' || target === 'governance' || target === 'google-oauth' || target === 'source-policy-reconciliation'
         ? 'not-requested'
         : 'unavailable-local'
     const roleProblems = []
@@ -1053,7 +1069,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 { database: context.database, collection: 'articles', label: 'topic taxonomy article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
                 { database: context.database, collection: 'users', label: 'topic taxonomy user path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
               ]
-          : ['durable-jobs', 'indexing-jobs', 'indexing-drain-performance', 'chat-sessions'].includes(target)
+          : ['durable-jobs', 'indexing-jobs', 'indexing-drain-performance', 'chat-sessions', 'source-policy-reconciliation'].includes(target)
             ? []
             : [
                 { database: context.database, collection: 'adminAuditLogs', label: 'audit', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
@@ -1119,7 +1135,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       const probe = await probeProviderRoutingRoleCapabilities(context)
       for (const [capability, passed] of Object.entries(probe)) if (!passed) roleProblems.push(`provider-routing runtime capability failed: ${capability}`)
       roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
-    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs' || target === 'indexing-drain-performance')) {
+    } else if (requireRole && (target === 'articles' || target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'source-policy-reconciliation')) {
       roleStatus = 'not-requested'
     } else if (requireRole && target === 'chat-sessions') {
       const probe = await probeChatSessionsRoleCapabilities(context)

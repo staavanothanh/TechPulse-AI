@@ -67,6 +67,25 @@ describe('Step 9 indexing bootstrap readiness', () => {
     await expect(checkSourcePolicyReconciliationReady(readyContext({ auditValidator: INDEXING_JOB_AUDIT_VALIDATOR }))).resolves.toBe(false)
     await expect(checkSourcePolicyReconciliationReady(readyContext())).resolves.toBe(true)
   })
+  it('rethrows unrelated reconciliation readiness failures', async () => {
+    const failure = new Error('permission denied')
+    const ready = readyContext()
+    const context = {
+      ...ready,
+      db: {
+        ...ready.db,
+        collection: (name) => name === 'adminAuditLogs'
+          ? { indexes: vi.fn(async () => { throw failure }) }
+          : ready.db.collection(name),
+      },
+    }
+    await expect(checkSourcePolicyReconciliationReady(context)).rejects.toBe(failure)
+    const jobRuntime = { queueRegistry: { register: vi.fn() }, maintenanceRegistry: { register: vi.fn() }, coordinatorRunner: vi.fn(), leaseRepository: {}, cronMaterializers: [] }
+    await expect(createConfiguredIndexingRuntime({
+      context, jobRuntime, rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) },
+      providerRegistry: providerGraph(),
+    })).rejects.toBe(failure)
+  })
 
   it('registers indexing queue and cleanup into the shared Step 4 runtime', async () => {
     const registered = []
