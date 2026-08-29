@@ -276,4 +276,37 @@ describe('worker scheduling', () => {
       }),
     )
   })
+
+  it('skips coordinator and indexing drain entirely when prework exceeds the global deadline', async () => {
+    let currentMs = STARTED_AT.getTime()
+    const now = () => new Date(currentMs)
+
+    const slowMaterializer = vi.fn(async () => {
+      currentMs += 241_000
+    })
+
+    const jobRepository = {
+      materializeDailyIngestion: vi.fn(async () => ({ hasMore: false })),
+    }
+
+    const coordinatorRunner = vi.fn(async () => baseResult())
+    const indexingDrainRunner = vi.fn(async (res) => res)
+
+    const runner = createCronDueWorkRunner({
+      jobRepository,
+      coordinatorRunner,
+      indexingDrainRunner,
+      materializers: [slowMaterializer],
+      now,
+    })
+
+    const result = await runner()
+
+    expect(slowMaterializer).toHaveBeenCalledTimes(1)
+    expect(jobRepository.materializeDailyIngestion).not.toHaveBeenCalled()
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+    expect(indexingDrainRunner).not.toHaveBeenCalled()
+    expect(result.queues.ingestion.claimed).toBe(0)
+    expect(result.nextAvailableAt).toBeNull()
+  })
 })

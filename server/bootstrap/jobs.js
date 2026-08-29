@@ -3,7 +3,7 @@ import { MongoJobRepository } from '../repositories/mongo/job-repository.js'
 import { MongoLeaseRepository } from '../repositories/mongo/lease-repository.js'
 import { MongoSourceRepository } from '../repositories/mongo/source-repository.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../scripts/migrations/durable-jobs.js'
-import { createQueueRegistry } from '../jobs/queue-registry.js'
+import { createQueueRegistry, QUEUE_ORDER } from '../jobs/queue-registry.js'
 import { createIngestionQueueAdapter } from '../jobs/ingestion-queue.js'
 import { createAccountDeletionQueueAdapter } from '../jobs/account-deletion-queue.js'
 import { runDueWork } from '../jobs/due-work-coordinator.js'
@@ -18,6 +18,9 @@ import { MongoTakedownRepository } from '../repositories/mongo/takedown-reposito
 import { MongoAccountDeletionRepository } from '../repositories/mongo/account-deletion-repository.js'
 import { MongoAdminRepository } from '../repositories/mongo/admin-repository.js'
 import { assertGovernanceReady } from './governance-readiness.js'
+
+const EMPTY_QUEUE_COUNTERS = Object.freeze({ claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 })
+const QUEUE_RESPONSE_KEY = Object.freeze({ ingestion: 'ingestion', indexing: 'indexing', 'account-deletion': 'accountDeletion' })
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -172,39 +175,53 @@ export function createCronDueWorkRunner({
   maxMaterializationPages = MAX_DAILY_MATERIALIZATION_PAGES,
   materializationBudgetMs = DAILY_MATERIALIZATION_BUDGET_MS,
   materializers = [],
-  profile = CRON_DUE_WORK_PROFILE,
 } = {}) {
   if (!jobRepository || typeof coordinatorRunner !== 'function' || indexingDrainRunner !== undefined && typeof indexingDrainRunner !== 'function') throw new Error('Cron job dependencies are required')
   if (!Number.isInteger(materializationPageLimit) || materializationPageLimit < 1 || materializationPageLimit > DAILY_MATERIALIZATION_PAGE_LIMIT) throw new Error('Daily materialization page limit is invalid')
   if (!Number.isInteger(maxMaterializationPages) || maxMaterializationPages < 1) throw new Error('Daily materialization page cap is invalid')
   if (!Number.isFinite(materializationBudgetMs) || materializationBudgetMs <= 0) throw new Error('Daily materialization budget is invalid')
   if (!Array.isArray(materializers) || materializers.some((materializer) => typeof materializer !== 'function')) throw new Error('Cron materializers are invalid')
-  if (profile !== undefined && (!Number.isFinite(profile?.budgetMs) || profile.budgetMs <= 0)) throw new Error('Cron profile is invalid')
   return async () => {
     const startedAt = now()
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
-    const globalDeadline = new Date(startedAt.getTime() + (profile?.budgetMs ?? CRON_DUE_WORK_PROFILE.budgetMs))
+    const globalDeadline = new Date(startedAt.getTime() + CRON_DUE_WORK_PROFILE.budgetMs)
     const materializationDeadline = startedAt.getTime() + materializationBudgetMs
-    for (const materializer of materializers) await materializer()
+    for (const materializer of materializers) {
+      if (now().getTime() >= globalDeadline.getTime()) break
+      await materializer()
+    }
     let hasMore = true
     let pages = 0
     while (hasMore && pages < maxMaterializationPages) {
       const pageNow = now()
       if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
+      if (pageNow.getTime() >= globalDeadline.getTime()) break
       if (pages > 0 && pageNow.getTime() >= materializationDeadline) break
       const result = await jobRepository.materializeDailyIngestion({ now: pageNow, limit: materializationPageLimit })
       pages += 1
       hasMore = result?.hasMore === true
+      if (now().getTime() >= globalDeadline.getTime()) break
       if (hasMore && now().getTime() >= materializationDeadline) break
     }
-    const remainingBudgetMs = Math.max(1000, globalDeadline.getTime() - now().getTime())
+    const remainingBudgetMs = globalDeadline.getTime() - now().getTime()
+    if (remainingBudgetMs < 1000) {
+      return {
+        runId: 'cron-overdue-skip',
+        startedAt,
+        finishedAt: now(),
+        recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+        queues: Object.fromEntries(QUEUE_ORDER.map((name) => [QUEUE_RESPONSE_KEY[name], { ...EMPTY_QUEUE_COUNTERS }])),
+        nextAvailableAt: null,
+      }
+    }
     const coordinated = await coordinatorRunner({
       maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
       budgetMs: remainingBudgetMs,
     })
-    return typeof indexingDrainRunner === 'function'
-      ? indexingDrainRunner(coordinated, { deadline: globalDeadline, startedAt })
-      : coordinated
+    if (now().getTime() >= globalDeadline.getTime() || typeof indexingDrainRunner !== 'function') {
+      return coordinated
+    }
+    return indexingDrainRunner(coordinated, { deadline: globalDeadline, startedAt })
   }
 }
 
