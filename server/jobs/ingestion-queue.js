@@ -45,7 +45,14 @@ export function createIngestionQueueAdapter({ jobRepository, leaseRepository, ex
         if (error?.status === 409 && error?.code === 'conflict') return { status: 'deferred', claimed: false }
         throw error
       }
-      const claimed = await jobRepository.claimQueuedWithFence({ jobId: candidate.id, fence })
+      let claimed
+      try {
+        claimed = await jobRepository.claimQueuedWithFence({ jobId: candidate.id, fence })
+      } catch (error) {
+        await leaseRepository.release({ ...fence, ownerToken: token })
+        if (error?.status !== 409 || error?.code !== 'conflict') throw error
+        return { status: 'deferred', claimed: false }
+      }
       if (!claimed) {
         await leaseRepository.release({ ...fence, ownerToken: token })
         return { status: 'deferred', claimed: false }

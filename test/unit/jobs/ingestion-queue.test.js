@@ -49,6 +49,16 @@ describe('ingestion queue adapter', () => {
     expect(executor).not.toHaveBeenCalled()
   })
 
+  it('releases an acquired lease and defers candidate when claimQueuedWithFence throws a 409 conflict', async () => {
+    const fence = { key: 'ingestion:source:507f1f77bcf86cd799439012', jobId: '507f1f77bcf86cd799439011', ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
+    const conflict = Object.assign(new Error('Job is no longer claimable'), { status: 409, code: 'conflict' })
+    const jobRepository = { claimQueuedWithFence: vi.fn(async () => { throw conflict }) }
+    const leaseRepository = { acquire: vi.fn(async () => fence), release: vi.fn(async () => true) }
+    const adapter = createIngestionQueueAdapter({ jobRepository, leaseRepository, executor: vi.fn(), ownerToken: () => 'token' })
+    await expect(adapter.claimAndExecute({ candidate: { id: fence.jobId, sourceId: '507f1f77bcf86cd799439012' } })).resolves.toEqual({ status: 'deferred', claimed: false })
+    expect(leaseRepository.release).toHaveBeenCalledWith(expect.objectContaining({ key: fence.key, jobId: fence.jobId, ownerToken: 'token' }))
+  })
+
   it('passes the claimed lease generation to the ingestion executor', async () => {
     const fence = { key: 'ingestion:source:507f1f77bcf86cd799439012', jobId: '507f1f77bcf86cd799439011', ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2, expiresAt: new Date(Date.now() + 1000) }
     const jobRepository = { claimQueuedWithFence: vi.fn(async () => true), completeWithFence: vi.fn(async () => ({})) }
