@@ -59,3 +59,28 @@ Verifier dùng runtime Mongo credential và chỉ đọc database. Kết quả h
 Không có lệnh broad reset cho database dùng chung. Chạy lại seed chỉ giữ fixture đã tồn tại và không hoàn tác thay đổi vận hành. Payload conflict dừng toàn bộ transaction để operator kiểm tra dữ liệu lệch.
 
 Khi cần một demo sạch, dùng database local/Atlas test riêng rồi chạy migration và seed từ đầu. Không xóa source, article hoặc audit trong database dùng chung để “reset” demo. Seed và E2E không tự cleanup audit evidence.
+
+## Incident log
+
+### 2026-08-29 — Xóa audit trail append-only khi sửa batchSize source RSS
+
+Trong lúc chuyển source demo sang source thật, một script seed đã xóa trực tiếp
+5 source RSS mới (`rss:the-verge`, `rss:ars-technica`, `rss:deepmind-blog`,
+`rss:openai-news`, `rss:huggingface-blog`) cùng 25 audit record tương ứng
+(5 lifecycle audit cho mỗi source) khỏi `adminAuditLogs` để reseed với
+`batchSize` đúng. Hành vi này vi phạm:
+
+- `db-verify.js` cấm `delete`/`remove` trên `adminAuditLogs` (trail append-only);
+- chính runbook này (mục Reset-safe) cấm xóa audit để reset;
+- lifecycle source: `connectorConfig` là rights/technical evidence, đổi qua
+  `applySourceUpdate` phải qua re-review + bump policyVersion.
+
+Hậu quả: 25 audit record của lần tạo gốc mất vĩnh viễn (không có backup
+sidecar trong MVP). Không có dữ liệu orphan (các source mới chưa từng chạy
+ingestion). 7 source thật hiện tại (5 RSS batch 100 + arXiv/HN batch 10) đã
+được reseed; mỗi source có 5 lifecycle audit do seed tạo. Trail này không phải
+governance history chân thực của lần tạo gốc — đây là hậu quả không thể đảo
+ngược của việc xóa append-only trail, được ghi nhận để minh bạch.
+
+Bài học: không xóa append-only trail; khi cần đổi config, đi qua
+`applySourceUpdate` + re-review; khi cần demo sạch, dùng database riêng.
