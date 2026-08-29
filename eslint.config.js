@@ -10,6 +10,7 @@ const nodeGlobals = {
   globalThis: 'readonly',
   process: 'readonly',
   Response: 'readonly',
+  clearTimeout: 'readonly',
   setTimeout: 'readonly',
   structuredClone: 'readonly',
   URL: 'readonly',
