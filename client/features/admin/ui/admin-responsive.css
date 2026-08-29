@@ -105,6 +105,9 @@
   .redesign-admin .admin-jobs-action-slot {
     flex-basis: 100%;
   }
+  .redesign-admin .admin-jobs-action-slot .admin-inline-form {
+    flex-wrap: wrap;
+  }
   .redesign-admin .admin-jobs-action-slot .admin-inline-form > div {
     flex: 1 1 160px;
   }

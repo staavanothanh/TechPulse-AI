@@ -150,10 +150,10 @@
   margin: 0;
 }
 .redesign-admin .admin-jobs-action-slot .admin-inline-form {
-  align-items: flex-end;
+  flex-wrap: nowrap;
 }
 .redesign-admin .admin-jobs-action-slot .admin-inline-form > div {
-  flex: 0 1 190px;
+  flex: 1 1 150px;
   min-width: 0;
 }
 .redesign-admin .admin-jobs-action-slot .admin-inline-form > .admin-btn {
