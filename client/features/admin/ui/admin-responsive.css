@@ -102,6 +102,18 @@
   .redesign-admin .admin-toolbar label {
     width: 100%;
   }
+  .redesign-admin .admin-jobs-action-slot {
+    flex-basis: 100%;
+  }
+  .redesign-admin .admin-jobs-action-slot .admin-inline-form {
+    flex-wrap: wrap;
+  }
+  .redesign-admin .admin-jobs-action-slot .admin-inline-form > div {
+    flex: 1 1 160px;
+  }
+  .redesign-admin .admin-jobs-action-slot .admin-btn {
+    width: 100%;
+  }
   .redesign-admin .admin-toolbar .admin-btn {
     width: 100%;
   }

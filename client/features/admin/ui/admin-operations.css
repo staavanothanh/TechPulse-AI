@@ -136,14 +136,31 @@
   border-color: var(--admin-accent);
   outline: 2px solid var(--admin-accent-soft);
 }
+.redesign-admin .admin-jobs-action-slot {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
 .redesign-admin .admin-inline-form {
   display: flex;
   align-items: flex-end;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--admin-border);
+  margin: 0;
+}
+.redesign-admin .admin-jobs-action-slot .admin-inline-form {
+  flex-wrap: nowrap;
+}
+.redesign-admin .admin-jobs-action-slot .admin-inline-form > div {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+.redesign-admin .admin-jobs-action-slot .admin-inline-form > .admin-btn {
+  flex: none;
+}
+.redesign-admin .admin-jobs-action-slot .admin-form-hint {
+  flex-basis: 100%;
 }
 .redesign-admin .admin-inline-form > div {
   flex: 1 1 210px;
