@@ -27,6 +27,7 @@ ADR-0001..0009 backfill những quyết định đã được project owner ch�
 | [0021](0021-add-vietqr-donation-page.md) | Thêm trang ủng hộ công khai bằng VietQR không cố định số tiền | accepted | 2026-08-24 |
 | [0022](0022-defer-email-verification-and-google-account-linking.md) | Hoãn xác minh quyền sở hữu email và liên kết tài khoản Google | accepted | 2026-08-26 |
 | [0023](0023-profiled-iterative-due-work-orchestration.md) | Điều phối due-work theo profile, kẹp hạn chót toàn cục và cách ly lease candidate | accepted | 2026-08-29 |
+| [0024](0024-pause-temporary-fulltext-input.md) | Tạm dừng fulltext input, quay về policy v2 metadata-only | accepted | 2026-08-31 |
 
 ## Lifecycle
 
