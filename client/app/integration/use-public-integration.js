@@ -137,7 +137,7 @@ export function usePublicIntegration({
     onNavigate,
   })
   const activeArticleId = routeArticleId ?? articleId
-  const article = useArticle({
+  const articleState = useArticle({
     articleId: activeArticleId,
     contentApi,
     enabled: Boolean(user) && route === 'article',
@@ -145,6 +145,18 @@ export function usePublicIntegration({
     onBack: () => onNavigate?.(articleReturnRoute || 'feed', { back: true }),
   })
   const qa = useQa({ csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
+  const articleAskHandler = useCallback(
+    (targetArticle) => {
+      if (!targetArticle?.id) return
+      qa.handlers.onScopeArticleId(targetArticle.id)
+      onNavigate?.('qa', { articleId: targetArticle.id })
+    },
+    [qa, onNavigate],
+  )
+  const article = {
+    ...articleState,
+    onAskAboutArticle: articleAskHandler,
+  }
   const account = useAccount({ accountActions, expire, sessionNotice, csrfToken, user })
   return { feed, search, saved, article, qa, account, onLogout: account.onLogout }
 }
@@ -501,7 +513,7 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
   }
 }
 
-function useArticle({ articleId, contentApi, enabled, expire, onBack }) {
+function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAboutArticle }) {
   const [state, setState] = useState('loading')
   const [article, setArticle] = useState(null)
   const [error, setError] = useState(null)
@@ -547,7 +559,8 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack }) {
       active = false
     }
   }, [articleId, contentApi, enabled, expire])
-  return { state, article, error, onBack }
+
+  return { state, article, error, onBack, onAskAboutArticle }
 }
 
 export function useQa({ csrfToken, enabled, expire, qaApi, user }) {
@@ -765,6 +778,13 @@ export function useQa({ csrfToken, enabled, expire, qaApi, user }) {
         if (field === 'sessionId') sessionIdRef.current = value || undefined
         setScope((current) => ({ ...current, [field]: value }))
       },
+      onScopeArticleId: (articleId) =>
+        setScope((current) => ({ ...current, articleId })),
+      onClearArticleScope: () =>
+        setScope((current) => {
+          const { articleId: _removed, ...rest } = current
+          return rest
+        }),
     },
   }
 }
