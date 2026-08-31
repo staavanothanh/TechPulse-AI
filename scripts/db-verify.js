@@ -484,7 +484,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       if (governanceMetadataUnavailable) validatorProblems.push('techpulse_governance:metadata-unavailable')
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')
-      else if (auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR].some((validator) => stableJson(auditCollection.options?.validator) === stableJson(validator))) validatorProblems.push('adminAuditLogs:validator-definition:governance')
+      else if (auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(auditCollection.options?.validator) === stableJson(validator))) validatorProblems.push('adminAuditLogs:validator-definition:governance')
       for (const [name, definition] of governanceMetadataUnavailable ? [] : Object.entries(GOVERNANCE_DATABASE_COLLECTIONS)) {
         const collection = governanceMap.get(name)
         if (!collection) { missing.push(`techpulse_governance:${name}:collection`); continue }
