@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { safeExternalUrl, safeMediaUrl } from '../safe-url.js'
 import { articleTitle, formatDate, sourceDomain, sourceName, topicLabel } from './reader-format.js'
 
@@ -227,6 +227,51 @@ export function MediaImage({ src, alt = '', fallbackLabel = 'Ảnh nguồn khôn
   )
 }
 
+export function ArticleIdBadge({ id, label = 'Mã bài viết', length = 7, className = '' }) {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  if (!id && id !== 0) return null
+  const strId = String(id)
+  const displayText =
+    strId.length <= length + 4 ? strId : `${strId.slice(0, length)}…${strId.slice(-4)}`
+
+  async function handleCopy(event) {
+    event.stopPropagation()
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(strId)
+      }
+      setCopied(true)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <span className={`public-article-id${className ? ` ${className}` : ''}`} data-od-id={`article-id-${strId}`}>
+      <span className="public-article-id-label">{label}:</span>
+      <code className="public-article-id-value">{displayText}</code>
+      <button
+        className="public-text-action"
+        type="button"
+        onClick={handleCopy}
+        aria-label={`Sao chép mã bài viết ${strId}`}
+      >
+        {copied ? 'Đã chép' : 'Sao chép'}
+      </button>
+    </span>
+  )
+}
+
 export function ArticleCard({ article, busy = false, savedOverride, onOpenArticle, onSaveToggle }) {
   const saved = typeof savedOverride === 'boolean' ? savedOverride : Boolean(article?.isSaved)
   const sourceLabel = sourceName(article)
@@ -256,6 +301,7 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
         ) : null}
         {article?.sourceLanguage ? <span>{article.sourceLanguage}</span> : null}
       </div>
+      <ArticleIdBadge id={article?.id} className="public-card-article-id" />
       {mediaUrl ? (
         <figure className="public-card-media-figure">
           <MediaImage src={mediaUrl} alt={media?.altText || ''} fallbackLabel={`Ảnh nguồn: ${sourceLabel}`} />

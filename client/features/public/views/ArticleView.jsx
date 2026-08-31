@@ -1,5 +1,5 @@
 import { safeExternalUrl, safeMediaUrl } from '../safe-url.js'
-import { ErrorState, MediaImage, Skeleton, StateCard } from '../components/reader-primitives.jsx'
+import { ArticleIdBadge, ErrorState, MediaImage, Skeleton, StateCard } from '../components/reader-primitives.jsx'
 import { articleTitle, formatDate, sourceDomain, sourceName } from '../components/reader-format.js'
 
 export default function ArticleView({
@@ -8,6 +8,7 @@ export default function ArticleView({
   error,
   onBack,
   onOpenSource,
+  onAskAboutArticle,
 }) {
   if (state === 'loading')
     return (
@@ -73,6 +74,18 @@ export default function ArticleView({
           <span>{sourceName(article)}</span>
           {article.publishedAt ? (
             <time dateTime={article.publishedAt}>{formatDate(article.publishedAt)}</time>
+          ) : null}
+        </div>
+        <div className="public-detail-actions">
+          <ArticleIdBadge id={article.id} />
+          {onAskAboutArticle ? (
+            <button
+              className="public-btn public-btn-secondary"
+              type="button"
+              onClick={() => onAskAboutArticle(article)}
+            >
+              Hỏi về bài này
+            </button>
           ) : null}
         </div>
         {isRemoteImage ? (

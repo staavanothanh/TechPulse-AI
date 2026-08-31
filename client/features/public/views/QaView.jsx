@@ -142,6 +142,19 @@ export default function QaView({
         <aside className="public-qa-scope" aria-labelledby="public-qa-scope-title">
           <h2 id="public-qa-scope-title">Phạm vi nguồn</h2>
           <p className="public-form-note">Giới hạn nguồn truy xuất cho câu trả lời.</p>
+          {safeScope.articleId ? (
+            <div className="public-qa-article-selected">
+              <span>Đang hỏi về bài:</span>
+              <code>{safeScope.articleId}</code>
+              <button
+                className="public-text-action"
+                type="button"
+                onClick={() => handlers.onClearArticleScope?.()}
+              >
+                Bỏ chọn
+              </button>
+            </div>
+          ) : null}
           {hasScope ? null : (
             <p id="public-qa-scope-hint" className="public-form-note">
               Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.
