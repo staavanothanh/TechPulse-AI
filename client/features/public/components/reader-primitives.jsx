@@ -245,8 +245,8 @@ export function ArticleIdBadge({ id, label = 'Mã bài viết', length = 7, clas
   async function handleCopy(event) {
     event.stopPropagation()
     try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(strId)
+      if (typeof globalThis.navigator !== 'undefined' && globalThis.navigator.clipboard?.writeText) {
+        await globalThis.navigator.clipboard.writeText(strId)
       }
       setCopied(true)
       if (timerRef.current) clearTimeout(timerRef.current)

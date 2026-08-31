@@ -2,16 +2,6 @@ import React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { useQa, usePublicIntegration } from '../../client/app/integration/use-public-integration.js'
 
-function deferred() {
-  let resolve
-  let reject
-  const promise = new Promise((nextResolve, nextReject) => {
-    resolve = nextResolve
-    reject = nextReject
-  })
-  return { promise, resolve, reject }
-}
-
 function createHookRunner(hookFn) {
   let hookIdx = 0
   const hooks = []
@@ -136,8 +126,6 @@ describe('Q&A article scope from article detail', () => {
   })
 
   it('onAskAboutArticle navigates to qa and presets the article id in Q&A scope', async () => {
-    const qaApi = { listSessions: vi.fn(async () => ({ data: [] })) }
-    const expire = vi.fn()
     const onNavigate = vi.fn()
     const runner = createHookRunner(usePublicIntegration)
     runner.render({
@@ -159,8 +147,6 @@ describe('Q&A article scope from article detail', () => {
   })
 
   it('onAskAboutArticle ignores missing article id', async () => {
-    const qaApi = { listSessions: vi.fn(async () => ({ data: [] })) }
-    const expire = vi.fn()
     const onNavigate = vi.fn()
     const runner = createHookRunner(usePublicIntegration)
     runner.render({
