@@ -236,6 +236,19 @@ describe('RSS/Atom connector', () => {
     })).rejects.toMatchObject({ code: 'source_payload_rejected', retryable: false })
     expect(Date.now() - startedAt).toBeLessThan(220)
   })
+  it('keeps parser-local cap separate from an outer ingestion deadline', async () => {
+    const body = await fixture('valid-rss.xml')
+    await expect(createRssConnector({ workerDelayMs: 250, limits: { parseDeadlineMs: 100 } }).run({
+      source: source(),
+      payload: { body, contentType: 'application/rss+xml', url: 'https://feeds.example.test/rss.xml' },
+      deadline: new Date(Date.now() + 5_000),
+    })).rejects.toMatchObject({ code: 'source_payload_rejected', retryable: false })
+    await expect(createRssConnector({ workerDelayMs: 250, limits: { parseDeadlineMs: 1_000 } }).run({
+      source: source(),
+      payload: { body, contentType: 'application/rss+xml', url: 'https://feeds.example.test/rss.xml' },
+      deadline: new Date(Date.now() + 50),
+    })).rejects.toMatchObject({ code: 'ingestion_deadline_exceeded', retryable: false })
+  })
 
   it('maps a batch rejection to a redacted result and does not crash the batch', async () => {
     const connector = createRssConnector({ now: () => RETRIEVED_AT })

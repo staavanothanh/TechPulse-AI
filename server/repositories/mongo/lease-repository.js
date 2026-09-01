@@ -18,6 +18,15 @@ function validDate(value, label) {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new Error(`${label} is invalid`)
   return value
 }
+function operationOptions({ signal, deadline } = {}) {
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw new Error('Lease operation deadline is invalid')
+  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+  return {
+    ...(signal ? { signal } : {}),
+    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+  }
+}
 
 export class MongoLeaseRepository {
   constructor(context) {
@@ -28,16 +37,18 @@ export class MongoLeaseRepository {
 
   collection() { return this.db.collection('jobLeases') }
 
-  async acquire({ key, jobId, ownerToken, leaseMs = 30_000 } = {}) {
+  async acquire({ key, jobId, ownerToken, leaseMs = 30_000, signal, deadline } = {}) {
     assertCanonicalLeaseKey(key)
     const acquiredAt = validDate(this.clock(), 'Authoritative lease clock')
     if (!Number.isInteger(leaseMs) || leaseMs < 100 || leaseMs > 15 * 60 * 1000) throw new Error('Lease duration is invalid')
     const ownerTokenHash = tokenHash(ownerToken)
     const normalizedJobId = idValue(jobId)
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     await this.collection().updateOne(
       { key },
       { $setOnInsert: { _id: new ObjectId(), key, generationHighWater: 0, createdAt: acquiredAt, updatedAt: acquiredAt } },
-      { upsert: true },
+      { upsert: true, ...options },
     )
     const expiresAt = new Date(acquiredAt.getTime() + leaseMs)
     const document = await this.collection().findOneAndUpdate(
@@ -51,7 +62,7 @@ export class MongoLeaseRepository {
         },
         updatedAt: acquiredAt,
       } }],
-      { returnDocument: 'after' },
+      { returnDocument: 'after', ...options }
     )
     if (!document) throw new JobError(409, 'conflict', 'Logical resource already has an active lease')
     return {
@@ -61,40 +72,53 @@ export class MongoLeaseRepository {
     }
   }
 
-  async heartbeat({ key, jobId, leaseGeneration, ownerToken, ownerTokenHash: suppliedHash, leaseMs = 30_000 } = {}) {
+  async heartbeat({ key, jobId, leaseGeneration, ownerToken, ownerTokenHash: suppliedHash, leaseMs = 30_000, signal, deadline } = {}) {
     assertCanonicalLeaseKey(key)
     const heartbeatAt = validDate(this.clock(), 'Authoritative lease clock')
     if (!Number.isInteger(leaseMs) || leaseMs < 100 || leaseMs > 15 * 60 * 1000) throw new Error('Lease duration is invalid')
     const hash = suppliedHash ?? tokenHash(ownerToken)
-    const result = await this.collection().updateOne({
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const filter = {
       key,
       'activeOwner.jobId': idValue(jobId),
       'activeOwner.ownerTokenHash': hash,
       'activeOwner.leaseGeneration': leaseGeneration,
       'activeOwner.expiresAt': { $gt: heartbeatAt },
-    }, { $set: { 'activeOwner.heartbeatAt': heartbeatAt, 'activeOwner.expiresAt': new Date(heartbeatAt.getTime() + leaseMs), updatedAt: heartbeatAt } })
+    }
+    const update = { $set: { 'activeOwner.heartbeatAt': heartbeatAt, 'activeOwner.expiresAt': new Date(heartbeatAt.getTime() + leaseMs), updatedAt: heartbeatAt } }
+    const result = Object.keys(options).length > 0
+      ? await this.collection().updateOne(filter, update, options)
+      : await this.collection().updateOne(filter, update)
     return result.matchedCount === 1
   }
 
-  async release({ key, jobId, leaseGeneration, ownerToken, ownerTokenHash: suppliedHash, session } = {}) {
+  async release({ key, jobId, leaseGeneration, ownerToken, ownerTokenHash: suppliedHash, session, signal, deadline } = {}) {
     assertCanonicalLeaseKey(key)
     const releasedAt = validDate(this.clock(), 'Authoritative lease clock')
     const hash = suppliedHash ?? tokenHash(ownerToken)
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     const result = await this.collection().updateOne({
       key,
       'activeOwner.jobId': idValue(jobId),
       'activeOwner.ownerTokenHash': hash,
       'activeOwner.leaseGeneration': leaseGeneration,
       'activeOwner.expiresAt': { $gt: releasedAt },
-    }, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: releasedAt, updatedAt: releasedAt } }, { session })
+    }, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: releasedAt, updatedAt: releasedAt } }, { session, ...options })
     return result.matchedCount === 1
   }
 
-  async listExpired({ now = new Date(), limit = 10, namespace = 'ingestion:source:' } = {}) {
+  async listExpired({ now = new Date(), limit = 10, namespace = 'ingestion:source:', signal, deadline } = {}) {
     const authoritativeNow = validDate(now, 'Lease recovery time')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !['ingestion:source:', 'indexing:article:'].includes(namespace)) throw new Error('Lease recovery query is invalid')
     const key = namespace === 'indexing:article:' ? /^indexing:article:/ : /^ingestion:source:/
-    return this.collection().find({ key, 'activeOwner.expiresAt': { $lte: authoritativeNow } }).sort({ 'activeOwner.expiresAt': 1 }).hint('job_lease_expiry').limit(limit).toArray()
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const cursor = Object.keys(options).length > 0
+      ? this.collection().find({ key, 'activeOwner.expiresAt': { $lte: authoritativeNow } }, options)
+      : this.collection().find({ key, 'activeOwner.expiresAt': { $lte: authoritativeNow } })
+    return cursor.sort({ 'activeOwner.expiresAt': 1 }).hint('job_lease_expiry').limit(limit).toArray()
   }
 
   async clearExpiredReconciliation({ key, now = this.clock() } = {}) {

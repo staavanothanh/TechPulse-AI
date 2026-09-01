@@ -143,6 +143,51 @@ describe('live ingestion runtime adapters', () => {
     ).resolves.toMatchObject({ status: 'succeeded' })
     expect(commitIngestionBatch).toHaveBeenCalledOnce()
   })
+  it('forwards deadline and signal and emits ordered ingestion stages', async () => {
+    const currentSource = source({
+      operationalStatus: 'active', licenseStatus: 'metadata-only', policyVersion: 1, technicalCheck: { status: 'passed' },
+      llmInputScope: 'metadata', storageScope: { metadata: true, excerpt: false, summary: false, embedding: false },
+      mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false },
+      name: 'Test source', publisherName: 'Test publisher', domain: 'example.com',
+    })
+    const connectorRun = vi.fn(async () => ({ candidates: [{
+      sourceId: currentSource.id,
+      connectorType: 'rss',
+      externalId: 'runtime-stage-1',
+      titleOriginal: 'Runtime stage',
+      originalUrl: 'https://example.com/runtime-stage',
+      publishedAt: RETRIEVED_AT,
+      retrievedAt: RETRIEVED_AT,
+    }] }))
+    const commitIngestionBatch = vi.fn(async ({ checkpoint, counters }) => ({ status: 'succeeded', checkpoint, counters }))
+    const executor = createConfiguredIngestionExecutor({
+      sourceRepository: { findSourceById: vi.fn(async () => currentSource) },
+      articleRepository: { commitIngestionBatch },
+      connectorRegistry: { resolve: () => ({ run: connectorRun }) },
+      currentSourcePolicy: { content: vi.fn(async () => ({ allowed: true, policyVersion: 1 })) },
+      now: () => RETRIEVED_AT,
+    })
+    const controller = new globalThis.AbortController()
+    const deadline = new Date(RETRIEVED_AT.getTime() + 60_000)
+    const stages = []
+
+    await expect(executor({
+      job: { id: '507f1f77bcf86cd799439012', sourceId: currentSource.id, connectorType: 'rss', expectedSourcePolicyVersion: 1, batchSize: 1, checkpoint: {} },
+      fence: { key: `ingestion:source:${currentSource.id}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 },
+      now: RETRIEVED_AT,
+      signal: controller.signal,
+      deadline,
+      onStage: (event) => stages.push(event),
+    })).resolves.toMatchObject({ status: 'succeeded' })
+
+    expect(connectorRun).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 1, signal: controller.signal, deadline, onStage: expect.any(Function) }))
+    expect(stages.map(({ stage, status }) => `${stage}:${status}`)).toEqual([
+      'source_capture:started', 'source_capture:succeeded',
+      'connector:started', 'connector:succeeded',
+      'normalize_articles:started', 'normalize_articles:succeeded',
+      'commit:started', 'commit:succeeded',
+    ])
+  })
 
   it('bounds live connector execution to one page per leased job', async () => {
     const connectorRun = vi.fn(async () => ({ candidates: [] }))
@@ -170,6 +215,42 @@ describe('live ingestion runtime adapters', () => {
     })
 
     expect(connectorRun).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 30, maxPages: 1 }))
+  })
+  it('commits no more than the leased RSS batch size', async () => {
+    const currentSource = source({
+      connectorConfig: { kind: 'rss', feedUrl: 'https://example.com/feed.xml', batchSize: 2 },
+      operationalStatus: 'active', licenseStatus: 'metadata-only', policyVersion: 1, technicalCheck: { status: 'passed' },
+      llmInputScope: 'metadata', storageScope: { metadata: true, excerpt: false, summary: false, embedding: false },
+      mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false },
+      name: 'Test source', publisherName: 'Test publisher', domain: 'example.com',
+    })
+    const commits = []
+    const commitIngestionBatch = vi.fn(async ({ candidates, articles, checkpoint, counters }) => {
+      commits.push({ candidates, articles, checkpoint, counters })
+      return { status: 'succeeded', checkpoint, counters }
+    })
+    const executor = createConfiguredIngestionExecutor({
+      sourceRepository: { findSourceById: vi.fn(async () => currentSource) },
+      articleRepository: { commitIngestionBatch },
+      currentSourcePolicy: { content: vi.fn(async () => ({ allowed: true, policyVersion: 1 })) },
+      safeFetch: vi.fn(async () => response('application/rss+xml', '<rss><channel>'
+        + '<item><title>One</title><link>https://example.com/one</link><guid>one</guid><pubDate>Sat, 22 Aug 2026 00:00:00 GMT</pubDate></item>'
+        + '<item><title>Two</title><link>https://example.com/two</link><guid>two</guid><pubDate>Sat, 22 Aug 2026 00:00:00 GMT</pubDate></item>'
+        + '<item><title>Three</title><link>https://example.com/three</link><guid>three</guid><pubDate>Sat, 22 Aug 2026 00:00:00 GMT</pubDate></item>'
+        + '</channel></rss>')),
+      now: () => RETRIEVED_AT,
+    })
+
+    await expect(executor({
+      job: { id: '507f1f77bcf86cd799439012', sourceId: currentSource.id, connectorType: 'rss', expectedSourcePolicyVersion: 1, batchSize: 2, checkpoint: {} },
+      fence: { key: `ingestion:source:${currentSource.id}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 },
+      now: RETRIEVED_AT,
+    })).resolves.toMatchObject({ status: 'succeeded', counters: { fetched: 2 }, checkpoint: { processedCount: 2 } })
+    expect(commits).toHaveLength(1)
+    expect(commits[0].candidates).toHaveLength(2)
+    expect(commits[0].articles).toHaveLength(2)
+    expect(commits[0].counters).toEqual({ fetched: 2 })
+    expect(commits[0].checkpoint.processedCount).toBe(2)
   })
 
   it('rejects an ingestion commit result without counters and checkpoint', async () => {

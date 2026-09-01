@@ -11,6 +11,15 @@ function objectId(value) {
   if (typeof value === 'string' && ObjectId.isValid(value)) return new ObjectId(value)
   throw new Error('account deletion identifier is invalid')
 }
+function operationOptions({ signal, deadline } = {}) {
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw new Error('Account deletion operation deadline is invalid')
+  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+  return {
+    ...(signal ? { signal } : {}),
+    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+  }
+}
 
 function requestHash(value) {
   if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value))
@@ -61,13 +70,14 @@ export class MongoAccountDeletionRepository {
   auditLogs() {
     return this.collection('adminAuditLogs')
   }
-  withTransaction(work) {
+  withTransaction(work, transactionOptions = {}) {
     const session = this.client?.startSession?.()
     if (!session) throw new Error('Mongo transaction session is required')
     return session
       .withTransaction(() => work(session), {
         readConcern: { level: 'snapshot' },
         writeConcern: { w: 'majority' },
+        ...transactionOptions,
       })
       .finally(() => session.endSession())
   }
@@ -123,6 +133,7 @@ export class MongoAccountDeletionRepository {
     session,
     now = this.clock(),
     result = 'pending',
+    options = {},
   } = {}) {
     const rules = {
       account_deletion_requested: {
@@ -171,9 +182,9 @@ export class MongoAccountDeletionRepository {
       result,
       createdAt: now,
     }
-    const existing = await this.auditLogs().findOne({ eventId }, { session })
+    const existing = await this.auditLogs().findOne({ eventId }, { session, ...options })
     if (existing?.eventId === eventId) return existing
-    await this.auditLogs().insertOne(document, { session })
+    await this.auditLogs().insertOne(document, { session, ...options })
     return document
   }
   async revokeSessions(userId, options = {}) {
@@ -298,27 +309,31 @@ export class MongoAccountDeletionRepository {
       })
     return result
   }
-  async selectDue({ now = this.clock() } = {}) {
+  async selectDue({ now = this.clock(), signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     const filter = { status: 'queued', availableAt: { $lte: now } }
     const aged = await this.collection('accountDeletionRequests')
-      .find({ ...filter, agingEligibleAt: { $lte: now } })
+      .find({ ...filter, agingEligibleAt: { $lte: now } }, options)
       .sort({ agingEligibleAt: 1, availableAt: 1, requestedAt: 1, _id: 1 })
       .hint('account_deletion_aged')
       .limit(1)
       .next()
     if (aged) return aged
     return this.collection('accountDeletionRequests')
-      .find({ ...filter, agingEligibleAt: { $gt: now } })
+      .find({ ...filter, agingEligibleAt: { $gt: now } }, options)
       .sort({ priority: -1, availableAt: 1, requestedAt: 1, _id: 1 })
       .hint('account_deletion_normal')
       .limit(1)
       .next()
   }
-  async nextAvailableAt() {
+  async nextAvailableAt({ signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     return (
       (
         await this.collection('accountDeletionRequests')
-          .find({ status: 'queued' })
+          .find({ status: 'queued' }, options)
           .sort({ availableAt: 1, _id: 1 })
           .project({ availableAt: 1 })
           .limit(1)
@@ -326,9 +341,11 @@ export class MongoAccountDeletionRepository {
       )?.availableAt ?? null
     )
   }
-  async claim({ candidate, job = candidate, now = this.clock(), ownerToken } = {}) {
+  async claim({ candidate, job = candidate, now = this.clock(), ownerToken, signal, deadline } = {}) {
     if (!/^[a-f0-9]{64}$/.test(ownerToken ?? ''))
       throw new Error('Account deletion lease owner is invalid')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     const result = await this.collection('accountDeletionRequests').findOneAndUpdate(
       { _id: objectId(job._id ?? job.id), status: 'queued', availableAt: { $lte: now } },
       {
@@ -341,23 +358,44 @@ export class MongoAccountDeletionRepository {
         },
         $inc: { leaseGeneration: 1 },
       },
-      { returnDocument: 'after' },
+      { returnDocument: 'after', ...options },
     )
     return result
   }
-  async withCleanupTransaction(work) {
+  async deferClaimed({ job, now = this.clock(), ownerToken, delayMs = 5 * 60 * 1000, signal, deadline } = {}) {
+    if (!/^[a-f0-9]{64}$/.test(ownerToken ?? '')) throw new Error('Account deletion lease owner is invalid')
+    if (!Number.isInteger(delayMs) || delayMs < 1_000 || delayMs > 15 * 60 * 1000) throw new Error('Account deletion defer duration is invalid')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    return this.collection('accountDeletionRequests').findOneAndUpdate(
+      {
+        _id: objectId(job._id ?? job.id),
+        status: 'running',
+        leaseGeneration: job.leaseGeneration,
+        leaseOwner: ownerToken,
+        leaseExpiresAt: { $gt: now },
+      },
+      {
+        $set: { status: 'queued', availableAt: new Date(now.getTime() + delayMs), updatedAt: now },
+        $unset: { startedAt: '', leaseOwner: '', leaseExpiresAt: '' },
+      },
+      { returnDocument: 'after', ...options },
+    )
+  }
+  async withCleanupTransaction(work, transactionOptions = {}) {
     const session = this.client?.startSession?.()
     if (!session) throw new Error('Mongo transaction session is required')
     try {
       return await session.withTransaction(() => work(session), {
         readConcern: { level: 'snapshot' },
         writeConcern: { w: 'majority' },
+        ...transactionOptions,
       })
     } finally {
       await session.endSession()
     }
   }
-  async assertCleanupFence({ job, userId, now, session, allowDeleted = false } = {}) {
+  async assertCleanupFence({ job, userId, now, session, allowDeleted = false, options = {} } = {}) {
     const requestFilter = {
       _id: objectId(job._id ?? job.id),
       status: 'running',
@@ -368,22 +406,22 @@ export class MongoAccountDeletionRepository {
     const touched = await this.collection('accountDeletionRequests').updateOne(
       requestFilter,
       { $set: { updatedAt: now } },
-      { session },
+      { session, ...options },
     )
     if (touched.matchedCount !== 1)
       throw new Error('Account deletion lease fence is stale or expired')
     const userFilter = allowDeleted
       ? { _id: userId, status: { $in: ['deletion-pending', 'deleted'] } }
       : { _id: userId, status: 'deletion-pending' }
-    const user = await this.collection('users').findOne(userFilter, { session })
+    const user = await this.collection('users').findOne(userFilter, { session, ...options })
     if (!user) throw new Error('Account deletion user fence changed')
     return user
   }
-  async cleanupCollection({ job, userId, flag, collectionName, now, session } = {}) {
-    await this.assertCleanupFence({ job, userId, now, session })
+  async cleanupCollection({ job, userId, flag, collectionName, now, session, options = {} } = {}) {
+    await this.assertCleanupFence({ job, userId, now, session, options })
     const collection = this.collection(collectionName)
-    await collection.deleteMany({ userId }, { session })
-    const remaining = await collection.countDocuments({ userId }, { session })
+    await collection.deleteMany({ userId }, { session, ...options })
+    const remaining = await collection.countDocuments({ userId }, { session, ...options })
     if (remaining !== 0)
       throw new Error(`Account deletion ${collectionName} cleanup did not reach zero`)
     const checkpoint = await this.collection('accountDeletionRequests').updateOne(
@@ -395,23 +433,23 @@ export class MongoAccountDeletionRepository {
         leaseExpiresAt: { $gt: now },
       },
       { $set: { [`completion.${flag}`]: true, updatedAt: now } },
-      { session },
+      { session, ...options },
     )
     if (checkpoint.matchedCount !== 1)
       throw new Error('Account deletion cleanup checkpoint fence changed')
   }
-  async cleanupQuota({ job, userId, now, session } = {}) {
+  async cleanupQuota({ job, userId, now, session, options = {} } = {}) {
     if (!this.quotaKeyring?.versions?.length || typeof this.quotaKeyring.digest !== 'function')
       throw new Error('Quota key lifecycle configuration is unavailable')
-    await this.assertCleanupFence({ job, userId, now, session })
+    await this.assertCleanupFence({ job, userId, now, session, options })
     const hashes = this.quotaKeyring.versions.map((version) =>
       this.quotaKeyring.digest(userId.toHexString?.() ?? String(userId), version),
     )
     const buckets = this.collection('rateLimitBuckets')
-    await buckets.deleteMany({ subjectType: 'user', keyHash: { $in: hashes } }, { session })
+    await buckets.deleteMany({ subjectType: 'user', keyHash: { $in: hashes } }, { session, ...options })
     const remaining = await buckets.countDocuments(
       { subjectType: 'user', keyHash: { $in: hashes } },
-      { session },
+      { session, ...options },
     )
     if (remaining !== 0) throw new Error('Account deletion quota cleanup did not reach zero')
     const checkpoint = await this.collection('accountDeletionRequests').updateOne(
@@ -423,13 +461,13 @@ export class MongoAccountDeletionRepository {
         leaseExpiresAt: { $gt: now },
       },
       { $set: { 'completion.userQuotaDataDeleted': true, updatedAt: now } },
-      { session },
+      { session, ...options },
     )
     if (checkpoint.matchedCount !== 1)
-      throw new Error('Account deletion quota checkpoint fence changed')
+      throw new Error('Account deletion quota cleanup checkpoint fence changed')
   }
-  async anonymizeUser({ job, userId, now, session } = {}) {
-    const user = await this.assertCleanupFence({ job, userId, now, session, allowDeleted: true })
+  async anonymizeUser({ job, userId, now, session, options = {} } = {}) {
+    const user = await this.assertCleanupFence({ job, userId, now, session, allowDeleted: true, options })
     const deletionRequestId = objectId(job._id ?? job.id)
     if (user.status === 'deleted') {
       if (String(user.deletionRequestId) !== String(deletionRequestId))
@@ -448,7 +486,7 @@ export class MongoAccountDeletionRepository {
       const replaced = await this.collection('users').replaceOne(
         { _id: userId, status: 'deletion-pending' },
         tombstone,
-        { session },
+        { session, ...options },
       )
       if (replaced.matchedCount !== 1) throw new Error('Account deletion tombstone fence changed')
     }
@@ -461,13 +499,16 @@ export class MongoAccountDeletionRepository {
         leaseExpiresAt: { $gt: now },
       },
       { $set: { 'completion.identityAnonymized': true, updatedAt: now } },
-      { session },
+      { session, ...options },
     )
     if (checkpoint.matchedCount !== 1)
       throw new Error('Account deletion identity checkpoint fence changed')
   }
-  async applyCleanup({ job, now = this.clock() } = {}) {
+  async applyCleanup({ job, now = this.clock(), signal, deadline } = {}) {
     const userId = objectId(job.userId)
+    const options = operationOptions({ signal, deadline })
+    const transactionOptions = options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}
+    signal?.throwIfAborted?.()
     const completion = deletionCompletion(job.completion)
     const cleanupSteps = [
       ['sessionsDeleted', 'sessions'],
@@ -477,35 +518,42 @@ export class MongoAccountDeletionRepository {
     ]
     for (const [flag, collectionName] of cleanupSteps) {
       if (completion[flag]) continue
+      signal?.throwIfAborted?.()
       await this.withCleanupTransaction((session) =>
-        this.cleanupCollection({ job, userId, flag, collectionName, now, session }),
-      )
+        this.cleanupCollection({ job, userId, flag, collectionName, now, session, options })
+      , transactionOptions)
       completion[flag] = true
     }
     if (!completion.userQuotaDataDeleted) {
+      signal?.throwIfAborted?.()
       await this.withCleanupTransaction((session) =>
-        this.cleanupQuota({ job, userId, now, session }),
-      )
+        this.cleanupQuota({ job, userId, now, session, options })
+      , transactionOptions)
       completion.userQuotaDataDeleted = true
     }
     if (!completion.identityAnonymized) {
+      signal?.throwIfAborted?.()
       await this.withCleanupTransaction((session) =>
-        this.anonymizeUser({ job, userId, now, session }),
-      )
+        this.anonymizeUser({ job, userId, now, session, options })
+      , transactionOptions)
       completion.identityAnonymized = true
     }
     return deletionCompletion({ ...completion, sessionsRevoked: true })
   }
-  async complete({ job, completion, now = this.clock() } = {}) {
+  async complete({ job, completion, now = this.clock(), signal, deadline } = {}) {
     if (!canCompleteDeletion({ completion, error: null })) return false
     if (!this.governanceDb)
       throw new Error('Governance database is required for account deletion completion')
     const session = this.client?.startSession?.()
     if (!session) throw new Error('Mongo transaction session is required')
+    const options = operationOptions({ signal, deadline })
+    const transactionOptions = options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}
+    signal?.throwIfAborted?.()
     try {
       let matched = 0
       await session.withTransaction(
         async () => {
+          signal?.throwIfAborted?.()
           const result = await this.collection('accountDeletionRequests').updateOne(
             {
               _id: objectId(job._id ?? job.id),
@@ -525,7 +573,7 @@ export class MongoAccountDeletionRepository {
               },
               $unset: { leaseOwner: '', leaseExpiresAt: '', startedAt: '' },
             },
-            { session },
+            { session, ...options },
           )
           if (result.matchedCount !== 1)
             throw new Error('Account deletion completion fence changed')
@@ -546,7 +594,9 @@ export class MongoAccountDeletionRepository {
             session,
             now,
             result: 'succeeded',
+            options,
           })
+          signal?.throwIfAborted?.()
           await this.governanceDb
             .collection('governanceSuppressions')
             .insertOne(
@@ -562,19 +612,22 @@ export class MongoAccountDeletionRepository {
                 signature: this.governanceKeyring.digest(`suppression:${job._id}`),
                 createdAt: now,
               },
-              { session },
+              { session, ...options },
             )
           matched = 1
         },
-        { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } },
+        { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, ...transactionOptions },
       )
       return matched === 1
     } finally {
       await session.endSession()
     }
   }
-  async fail({ job, error, completion, now = this.clock() } = {}) {
+  async fail({ job, error, completion, now = this.clock(), signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     return this.withCleanupTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const requestId = objectId(job._id ?? job.id)
       const result = await this.collection('accountDeletionRequests').updateOne(
         {
@@ -588,7 +641,7 @@ export class MongoAccountDeletionRepository {
           $set: { status: 'failed', error, ...(completion ? { completion } : {}), updatedAt: now },
           $unset: { startedAt: '', leaseOwner: '', leaseExpiresAt: '' },
         },
-        { session },
+        { session, ...options },
       )
       if (result.matchedCount !== 1) return result
       await this.insertAudit({
@@ -601,32 +654,44 @@ export class MongoAccountDeletionRepository {
         session,
         now,
         result: 'failed',
+        options,
       })
       return result
-    })
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
   }
-  async recoverExpired({ now = this.clock(), limit = 10 } = {}) {
-    const rows = await this.collection('accountDeletionRequests')
-      .find({ status: 'running', leaseExpiresAt: { $type: 'date', $lte: now } })
+  async recoverExpired({ now = this.clock(), limit = 10, signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const filter = { status: 'running', leaseExpiresAt: { $type: 'date', $lte: now } }
+    const requests = this.collection('accountDeletionRequests')
+    const cursor = Object.keys(options).length > 0 ? requests.find(filter, options) : requests.find(filter)
+    const rows = await cursor
       .sort({ leaseExpiresAt: 1, _id: 1 })
       .limit(Math.min(100, Math.max(1, limit)))
       .toArray()
     let recovered = 0
     for (const row of rows) {
-      const result = await this.collection('accountDeletionRequests').updateOne(
-        {
+      signal?.throwIfAborted?.()
+      const update = {
+        $set: { status: 'queued', availableAt: now, error: null, updatedAt: now },
+        $unset: { startedAt: '', leaseOwner: '', leaseExpiresAt: '' },
+        $inc: { attempt: 1 },
+      }
+      const result = Object.keys(options).length > 0
+        ? await requests.updateOne({
           _id: row._id,
           status: 'running',
           leaseGeneration: row.leaseGeneration,
           leaseOwner: row.leaseOwner,
           leaseExpiresAt: row.leaseExpiresAt,
-        },
-        {
-          $set: { status: 'queued', availableAt: now, error: null, updatedAt: now },
-          $unset: { startedAt: '', leaseOwner: '', leaseExpiresAt: '' },
-          $inc: { attempt: 1 },
-        },
-      )
+        }, update, options)
+        : await requests.updateOne({
+          _id: row._id,
+          status: 'running',
+          leaseGeneration: row.leaseGeneration,
+          leaseOwner: row.leaseOwner,
+          leaseExpiresAt: row.leaseExpiresAt,
+        }, update)
       recovered += result.matchedCount ?? 0
     }
     return { inspected: rows.length, recovered, retriesCreated: 0, failed: rows.length - recovered }

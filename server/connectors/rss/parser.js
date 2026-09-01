@@ -70,7 +70,15 @@ function boundedWorkerDelay(value) {
   return value
 }
 
-function parseInWorker(xml, limits, workerDelayMs) {
+function parseInWorker(xml, limits, workerDelayMs, signal, deadline) {
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) return Promise.reject(sourcePayloadRejected())
+  const outerRemainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+  const outerDeadlineLimited = deadlineAt !== Number.POSITIVE_INFINITY && outerRemainingMs <= limits.parseDeadlineMs
+  const remainingMs = Math.min(limits.parseDeadlineMs, Math.max(0, outerRemainingMs))
+  const deadlineError = Object.assign(new Error('Ingestion execution deadline was exceeded'), { code: 'ingestion_deadline_exceeded', retryable: false })
+  if (signal?.aborted) return Promise.reject(signal.reason ?? deadlineError)
+  if (remainingMs === 0) return Promise.reject(outerDeadlineLimited ? deadlineError : sourcePayloadRejected())
   let worker
   try {
     worker = new Worker(new URL('./parse-worker.js', import.meta.url), { type: 'module' })
@@ -79,38 +87,41 @@ function parseInWorker(xml, limits, workerDelayMs) {
   }
   return new Promise((resolve, reject) => {
     let settled = false
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      void worker.terminate().catch(() => {})
-      reject(sourcePayloadRejected())
-    }, limits.parseDeadlineMs)
+    let abortHandler
     const finish = (handler) => (value) => {
       if (settled) return
       settled = true
       globalThis.clearTimeout(timer)
+      if (abortHandler) signal?.removeEventListener('abort', abortHandler)
       void worker.terminate().catch(() => {})
       handler(value)
     }
-    const rejectWorker = finish(() => reject(sourcePayloadRejected()))
-    worker.once('message', finish((message) => {
+    const rejectWorker = finish(reject)
+    const timer = setTimeout(() => rejectWorker(signal?.aborted ? signal.reason : outerDeadlineLimited ? deadlineError : sourcePayloadRejected()), remainingMs)
+    abortHandler = () => rejectWorker(signal.reason ?? deadlineError)
+    signal?.addEventListener('abort', abortHandler, { once: true })
+    worker.once('message', (message) => {
       if (!message?.ok || !Array.isArray(message.nodes)) {
-        reject(sourcePayloadRejected())
+        rejectWorker(sourcePayloadRejected())
         return
       }
-      resolve(message.nodes)
-    }))
+      if (Date.now() >= deadlineAt) {
+        rejectWorker(outerDeadlineLimited ? deadlineError : sourcePayloadRejected())
+        return
+      }
+      finish(resolve)(message.nodes)
+    })
     worker.once('error', rejectWorker)
     worker.once('exit', rejectWorker)
     try {
       worker.postMessage({ xml, limits, delayMs: workerDelayMs })
     } catch {
-      rejectWorker()
+      rejectWorker(sourcePayloadRejected())
     }
   })
 }
 
-export function parseRssAtom(payload, { parser: providedParser, limits: configuredLimits, workerDelayMs } = {}) {
+export function parseRssAtom(payload, { parser: providedParser, limits: configuredLimits, workerDelayMs, signal, deadline } = {}) {
   const limits = boundedLimits(configuredLimits)
   // Function-valued parser injection cannot cross the isolation boundary safely.
   if (providedParser !== undefined) throw sourcePayloadRejected()
@@ -120,7 +131,7 @@ export function parseRssAtom(payload, { parser: providedParser, limits: configur
   if (bytes.length === 0 || bytes.length > limits.maxPayloadBytes) throw sourcePayloadRejected()
   const xml = decodeUtf8(bytes)
   rejectHostileConstructs(xml)
-  return parseInWorker(xml, limits, delayMs).then((nodes) => {
+  return parseInWorker(xml, limits, delayMs, signal, deadline).then((nodes) => {
     const root = nodes.find((node) => node.localName === 'rss' || node.localName === 'feed')
     if (!root) throw new RssConnectorError('source_payload_rejected')
     return { nodes, root, contentType: meta.contentType, url: meta.url, retrievedXmlBytes: bytes.length, limits }

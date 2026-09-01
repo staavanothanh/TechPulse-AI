@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createJobService } from '../application/jobs/service.js'
 import { MongoJobRepository } from '../repositories/mongo/job-repository.js'
 import { MongoLeaseRepository } from '../repositories/mongo/lease-repository.js'
@@ -19,6 +20,8 @@ import { MongoTakedownRepository } from '../repositories/mongo/takedown-reposito
 import { MongoAccountDeletionRepository } from '../repositories/mongo/account-deletion-repository.js'
 import { MongoAdminRepository } from '../repositories/mongo/admin-repository.js'
 import { assertGovernanceReady } from './governance-readiness.js'
+import { runtimeFailure, settleBeforeDeadline } from '../jobs/runtime-bounds.js'
+import { safeEvent, startRuntimePhase } from '../jobs/runtime-trace.js'
 
 const EMPTY_QUEUE_COUNTERS = Object.freeze({ claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 })
 const QUEUE_RESPONSE_KEY = Object.freeze({ ingestion: 'ingestion', indexing: 'indexing', 'account-deletion': 'accountDeletion' })
@@ -57,7 +60,7 @@ export async function createConfiguredJobService({ context, now, rateLimitAdmiss
   }
 }
 
-export function createCoordinatorRunner({ queueRegistry, now = () => new Date(), maxJobs = 3, maxRecoveries = 3, budgetMs = 8000 } = {}) {
+export function createCoordinatorRunner({ queueRegistry, now = () => new Date(), maxJobs = 3, maxRecoveries = 3, budgetMs = 8000, runIdFactory = randomUUID } = {}) {
   if (!queueRegistry) throw new Error('Queue registry is required')
   return async (options = {}) => runDueWork({
     registry: queueRegistry,
@@ -65,9 +68,11 @@ export function createCoordinatorRunner({ queueRegistry, now = () => new Date(),
     maxRecoveries: options.maxRecoveries ?? maxRecoveries,
     budgetMs: options.budgetMs ?? budgetMs,
     now,
+    runId: options.runId ?? runIdFactory(),
+    deadline: options.deadline,
+    signal: options.signal,
   })
 }
-
 const ADMIN_TASK_PROFILES = Object.freeze([
   Object.freeze({ task: 'summary', maxClaims: 12, budgetMs: 150_000 }),
   Object.freeze({ task: 'embedding', maxClaims: 8, budgetMs: 150_000 }),
@@ -80,6 +85,8 @@ const CRON_TASK_PROFILES = Object.freeze([
 ])
 export const ADMIN_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 24, budgetMs: 150_000, taskProfiles: ADMIN_TASK_PROFILES })
 export const CRON_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 200, budgetMs: 240_000, taskProfiles: CRON_TASK_PROFILES })
+export const INGESTION_EXECUTION_TIMEOUT_MS = 60_000
+export const INGESTION_FINALIZATION_GRACE_MS = 5_000
 
 function queueAttempts(queues = {}) {
   return Object.values(queues).reduce((total, counters = {}) => total
@@ -89,6 +96,34 @@ function queueAttempts(queues = {}) {
 function mergeCounters(left = {}, right = {}) {
   return Object.fromEntries(['claimed', 'succeeded', 'partial', 'failed', 'deferred']
     .map((key) => [key, Math.max(0, Number(left[key] ?? 0)) + Math.max(0, Number(right[key] ?? 0))]))
+}
+async function runTracedPhase({ trace, stage, now, context, execute, successDetails = () => ({}) }) {
+  const phase = startRuntimePhase({ trace, stage, now, context })
+  try {
+    const result = await execute()
+    phase.succeed(successDetails(result))
+    return result
+  } catch (error) {
+    phase.fail(error)
+    throw error
+  }
+}
+async function runCronOperation({ operation, deadline, now }) {
+  const current = now()
+  if (!(current instanceof Date) || Number.isNaN(current.getTime())) throw new Error('Cron clock is invalid')
+  const remainingMs = Math.max(0, deadline.getTime() - current.getTime())
+  const controller = new globalThis.AbortController()
+  const settled = await settleBeforeDeadline(
+    Promise.resolve().then(() => operation({ signal: controller.signal, deadline })),
+    remainingMs,
+    {
+      timeoutError: () => runtimeFailure('runtime_error', 'Cron operation deadline was exceeded'),
+      onTimeout: (error) => controller.abort(error),
+    },
+  )
+  if (settled.kind === 'deadline') throw settled.error
+  if (!settled.settled) throw settled.error
+  return settled.value
 }
 
 function emptyTaskCounters() {
@@ -113,8 +148,9 @@ function allocateTaskClaims(taskProfiles, remainingClaims) {
   })
 }
 
-async function nextAvailableAt(queueRegistry, now) {
-  const values = await Promise.all(queueRegistry.registered().map((adapter) => adapter.nextAvailableAt({ now })))
+async function nextAvailableAt(queueRegistry, now, { signal, deadline } = {}) {
+  signal?.throwIfAborted?.()
+  const values = await Promise.all(queueRegistry.registered().map((adapter) => adapter.nextAvailableAt({ now, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}) })))
   const dates = values.filter(Boolean).map((value) => value instanceof Date ? value : new Date(value)).filter((value) => !Number.isNaN(value.getTime()))
   return dates.length > 0 ? new Date(Math.min(...dates.map((value) => value.getTime()))) : null
 }
@@ -126,7 +162,7 @@ export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now 
     const queue = queueRegistry.get('indexing')
     const remainingClaims = Math.max(0, profile.maxJobs - queueAttempts(baseResult.queues))
     const taskCounters = emptyTaskCounters()
-    if (!queue || remainingClaims === 0) return { ...baseResult, taskCounters, finishedAt: now(), nextAvailableAt: await nextAvailableAt(queueRegistry, now()) }
+    if (!queue || remainingClaims === 0) return { ...baseResult, taskCounters, finishedAt: now(), nextAvailableAt: await nextAvailableAt(queueRegistry, now, options) }
     const drainStartedAt = now()
     if (!(drainStartedAt instanceof Date) || Number.isNaN(drainStartedAt.getTime())) throw new Error('Due-work drain clock is invalid')
     const allocations = profile.taskProfiles
@@ -142,6 +178,8 @@ export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now 
       maxClaims,
       deadline: new Date(Math.min(drainStartedAt.getTime() + budgetMs, effectiveDeadline.getTime())),
       now,
+      runId: options.runId ?? baseResult.runId,
+      ...(options.signal ? { signal: options.signal } : {}),
     })()))
     const firstFailure = settled.find(({ status }) => status === 'rejected')
     if (firstFailure) throw firstFailure.reason
@@ -158,7 +196,7 @@ export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now 
         ...baseResult.queues,
         indexing: mergeCounters(baseResult.queues.indexing, drainCounters),
       },
-      nextAvailableAt: await nextAvailableAt(queueRegistry, now()),
+      nextAvailableAt: await nextAvailableAt(queueRegistry, now, options),
     }
   }
 }
@@ -176,57 +214,109 @@ export function createCronDueWorkRunner({
   maxMaterializationPages = MAX_DAILY_MATERIALIZATION_PAGES,
   materializationBudgetMs = DAILY_MATERIALIZATION_BUDGET_MS,
   materializers = [],
+  trace = () => {},
+  runIdFactory = randomUUID,
 } = {}) {
   if (!jobRepository || typeof coordinatorRunner !== 'function' || indexingDrainRunner !== undefined && typeof indexingDrainRunner !== 'function') throw new Error('Cron job dependencies are required')
   if (!Number.isInteger(materializationPageLimit) || materializationPageLimit < 1 || materializationPageLimit > DAILY_MATERIALIZATION_PAGE_LIMIT) throw new Error('Daily materialization page limit is invalid')
   if (!Number.isInteger(maxMaterializationPages) || maxMaterializationPages < 1) throw new Error('Daily materialization page cap is invalid')
   if (!Number.isFinite(materializationBudgetMs) || materializationBudgetMs <= 0) throw new Error('Daily materialization budget is invalid')
   if (!Array.isArray(materializers) || materializers.some((materializer) => typeof materializer !== 'function')) throw new Error('Cron materializers are invalid')
+  if (typeof trace !== 'function' || typeof runIdFactory !== 'function') throw new Error('Cron trace dependencies are invalid')
   return async () => {
     const startedAt = now()
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
     const globalDeadline = new Date(startedAt.getTime() + CRON_DUE_WORK_PROFILE.budgetMs)
-    const materializationDeadline = startedAt.getTime() + materializationBudgetMs
-    for (const materializer of materializers) {
-      if (now().getTime() >= globalDeadline.getTime()) break
-      await materializer()
-    }
-    let hasMore = true
-    let pages = 0
-    while (hasMore && pages < maxMaterializationPages) {
-      const pageNow = now()
-      if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
-      if (pageNow.getTime() >= globalDeadline.getTime()) break
-      if (pages > 0 && pageNow.getTime() >= materializationDeadline) break
-      const result = await jobRepository.materializeDailyIngestion({ now: pageNow, limit: materializationPageLimit })
-      pages += 1
-      hasMore = result?.hasMore === true
-      if (now().getTime() >= globalDeadline.getTime()) break
-      if (hasMore && now().getTime() >= materializationDeadline) break
-    }
-    const remainingBudgetMs = globalDeadline.getTime() - now().getTime()
-    if (remainingBudgetMs < 1000) {
-      return {
-        runId: 'cron-overdue-skip',
-        startedAt,
-        finishedAt: now(),
-        recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
-        queues: Object.fromEntries(QUEUE_ORDER.map((name) => [QUEUE_RESPONSE_KEY[name], { ...EMPTY_QUEUE_COUNTERS }])),
-        nextAvailableAt: null,
+    const materializationDeadline = new Date(Math.min(startedAt.getTime() + materializationBudgetMs, globalDeadline.getTime()))
+    const runId = runIdFactory()
+    const emitTrace = (event) => trace(safeEvent(event, now))
+    const cronPhase = startRuntimePhase({ trace: emitTrace, stage: 'cron', now, context: { runId, deadlineAt: globalDeadline } })
+    try {
+      let pages = 0
+      await runTracedPhase({
+        trace: emitTrace,
+        stage: 'cron.materialization',
+        now,
+        context: { runId, deadlineAt: globalDeadline },
+        execute: async () => {
+          let hasMore = true
+          for (const materializer of materializers) {
+            if (now().getTime() >= globalDeadline.getTime()) break
+            await runCronOperation({ operation: (options) => materializer(options), deadline: globalDeadline, now })
+          }
+          while (hasMore && pages < maxMaterializationPages) {
+            const pageNow = now()
+            if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
+            if (pageNow.getTime() >= materializationDeadline.getTime()) break
+            const result = await runCronOperation({
+              operation: (options) => jobRepository.materializeDailyIngestion({ now: pageNow, limit: materializationPageLimit, ...options }),
+              deadline: materializationDeadline,
+              now,
+            })
+            pages += 1
+            hasMore = result?.hasMore === true
+            if (now().getTime() >= materializationDeadline.getTime()) break
+          }
+        },
+        successDetails: () => ({ counters: { updated: pages } }),
+      })
+      const remainingBudgetMs = globalDeadline.getTime() - now().getTime()
+      if (remainingBudgetMs < 1000) {
+        const result = {
+          runId,
+          startedAt,
+          finishedAt: now(),
+          recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+          queues: Object.fromEntries(QUEUE_ORDER.map((name) => [QUEUE_RESPONSE_KEY[name], { ...EMPTY_QUEUE_COUNTERS }])),
+          nextAvailableAt: null,
+        }
+        cronPhase.timeout(undefined, { counters: { deferred: 1 } })
+        return result
       }
+      const coordinated = await runTracedPhase({
+        trace: emitTrace,
+        stage: 'cron.coordinator',
+        now,
+        context: { runId, deadlineAt: globalDeadline },
+        execute: () => runCronOperation({
+          operation: ({ signal, deadline }) => coordinatorRunner({
+            maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
+            budgetMs: remainingBudgetMs,
+            runId,
+            signal,
+            deadline,
+          }),
+          deadline: globalDeadline,
+          now,
+        }),
+        successDetails: (result) => ({ counters: { claimed: queueAttempts(result?.queues) } }),
+      })
+      if (now().getTime() >= globalDeadline.getTime() || typeof indexingDrainRunner !== 'function') {
+        cronPhase.succeed({ counters: coordinated?.queues?.indexing })
+        return coordinated
+      }
+      const result = await runTracedPhase({
+        trace: emitTrace,
+        stage: 'cron.indexing',
+        now,
+        context: { runId, deadlineAt: globalDeadline },
+        execute: () => runCronOperation({
+          operation: ({ signal, deadline }) => indexingDrainRunner(coordinated, { deadline, startedAt, runId, signal }),
+          deadline: globalDeadline,
+          now,
+        }),
+        successDetails: (value) => ({ counters: value?.queues?.indexing }),
+      })
+      cronPhase.succeed({ counters: result?.queues?.indexing })
+      return result
+    } catch (error) {
+      cronPhase.fail(error)
+      throw error
     }
-    const coordinated = await coordinatorRunner({
-      maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
-      budgetMs: remainingBudgetMs,
-    })
-    if (now().getTime() >= globalDeadline.getTime() || typeof indexingDrainRunner !== 'function') {
-      return coordinated
-    }
-    return indexingDrainRunner(coordinated, { deadline: globalDeadline, startedAt })
   }
 }
 
-export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb, maintenanceContext, verifyJobsSchema = assertDurableJobsReady, verifyGovernanceSchema = assertGovernanceReady } = {}) {
+export async function createConfiguredJobRuntime({ context, now = () => new Date(), executor, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb, maintenanceContext, verifyJobsSchema = assertDurableJobsReady, verifyGovernanceSchema = assertGovernanceReady, trace = () => {}, runIdFactory = randomUUID, ingestionExecutionTimeoutMs = INGESTION_EXECUTION_TIMEOUT_MS, ingestionFinalizationGraceMs = INGESTION_FINALIZATION_GRACE_MS } = {}) {
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   if (!quotaKeyring?.versions?.length || typeof quotaKeyring.digest !== 'function' || !governanceKeyring?.versions?.length || typeof governanceKeyring.digest !== 'function') throw new Error('Quota and governance keyrings are required')
   const jobRepository = new MongoJobRepository(context)
@@ -239,7 +329,7 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
   // runtime to callers.
   await verifyGovernanceSchema(context, { governanceDb: deletionGovernanceDb })
   const queueRegistry = createQueueRegistry()
-  queueRegistry.register(createIngestionQueueAdapter({ jobRepository, leaseRepository, executor }))
+  queueRegistry.register(createIngestionQueueAdapter({ jobRepository, leaseRepository, executor, trace, executionTimeoutMs: ingestionExecutionTimeoutMs, finalizationGraceMs: ingestionFinalizationGraceMs }))
   const maintenanceRegistry = createMaintenanceRegistry()
   const cronMaterializers = []
   maintenanceRegistry.register('purge-ingestion-jobs', ({ cutoff, limit }) => jobRepository.purgeDueIngestionJobs({ cutoff, limit }))
@@ -256,9 +346,9 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
   if (accountDeletionRepository) maintenanceRegistry.register('purge-account-deletion-workflows', ({ cutoff, limit }) => accountDeletionRepository.purge({ cutoff, limit }))
   if (adminAuditRepository) maintenanceRegistry.register('purge-audit-ip-hmac', ({ cutoff, limit }) => adminAuditRepository.purgeAuditIpHmac({ cutoff, limit }))
   const maintenanceRunner = createMaintenanceRunner({ registry: maintenanceRegistry, now })
-  const coordinatorRunner = createCoordinatorRunner({ queueRegistry, now })
   const adminIndexingDrainRunner = createProfiledIndexingDrainRunner({ queueRegistry, profile: ADMIN_DUE_WORK_PROFILE, now })
   const cronIndexingDrainRunner = createProfiledIndexingDrainRunner({ queueRegistry, profile: CRON_DUE_WORK_PROFILE, now })
+  const coordinatorRunner = createCoordinatorRunner({ queueRegistry, now, runIdFactory })
   const adminDueWorkRunner = async () => adminIndexingDrainRunner(await coordinatorRunner({ maxJobs: ADMIN_DUE_WORK_PROFILE.maxJobs, budgetMs: ADMIN_DUE_WORK_PROFILE.budgetMs }))
   const dueWorkRunner = createCronDueWorkRunner({
     jobRepository,
@@ -266,6 +356,8 @@ export async function createConfiguredJobRuntime({ context, now = () => new Date
     indexingDrainRunner: cronIndexingDrainRunner,
     now,
     materializers: cronMaterializers,
+    trace,
+    runIdFactory,
   })
   const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunner, runAdminDueWork: adminDueWorkRunner, verifySchema: verifyJobsSchema })
   return {

@@ -84,6 +84,33 @@ describe('article repository fence contract', () => {
     expect(indexingJobs.updateOne).toHaveBeenCalledTimes(2)
     expect(indexingJobs.updateOne.mock.calls.map(([, update]) => update.$setOnInsert.task)).toEqual(['summary', 'embedding'])
   })
+  it('passes abort and deadline options to every Mongo commit operation', async () => {
+    const { repository, source, articles, leases, jobs, indexingJobs, sources } = fakeCommitRepository()
+    const article = normalizeCandidateToArticle(makeCandidate(), { source, now: RETRIEVED_AT })
+    const controller = new AbortController()
+    await repository.commitIngestionBatch({
+      job: makeJob(),
+      fence: { key: `ingestion:source:${SOURCE_ID}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 },
+      source,
+      expectedSourcePolicyVersion: 3,
+      expectedConnectorConfig: source.connectorConfig,
+      candidates: [makeCandidate()],
+      articles: [article],
+      checkpoint: { processedCount: 1, lastExternalId: 'item-1' },
+      counters: { fetched: 1 },
+      retrievedAt: RETRIEVED_AT,
+      signal: controller.signal,
+      deadline: new Date(Date.now() + 5_000),
+    })
+
+    expect(leases.updateOne.mock.calls[0][2]).toEqual(expect.objectContaining({ session: {}, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(jobs.findOne.mock.calls[0][1]).toEqual(expect.objectContaining({ session: {}, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(sources.findOne.mock.calls[0][1]).toEqual(expect.objectContaining({ session: {}, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(articles.findOne.mock.calls[0][1]).toEqual(expect.objectContaining({ session: {}, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(articles.insertOne.mock.calls[0][1]).toEqual(expect.objectContaining({ session: {}, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(indexingJobs.updateOne.mock.calls[0][2]).toEqual(expect.objectContaining({ session: {}, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(jobs.updateOne.mock.calls[0][2]).toEqual(expect.objectContaining({ session: {}, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+  })
 
   it('fails closed at the lease CAS before source/article writes', async () => {
     const { repository, source, leases, sources, articles } = fakeCommitRepository({ leaseMatched: 0 })

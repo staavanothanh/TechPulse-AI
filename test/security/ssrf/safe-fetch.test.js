@@ -120,6 +120,51 @@ describe('SSRF-safe pinned source fetch', () => {
     expect(request).toHaveBeenCalledTimes(1)
     expect(lookup).toHaveBeenCalledTimes(2)
   })
+  it('classifies a caller deadline separately from the local fetch timeout', async () => {
+    const request = vi.fn()
+    const safeFetch = createSafeFetch({ lookup: () => new Promise(() => {}), request, limits: { timeoutMs: 500 } })
+    const result = await Promise.race([
+      safeFetch('https://example.com/feed.xml', { allowedContentTypes: ['application/rss+xml'], deadline: new Date(Date.now() + 25) }).catch((error) => error),
+      new Promise((resolve) => setTimeout(() => resolve('outer_timeout'), 150)),
+    ])
+    expect(result).toMatchObject({ code: 'ingestion_deadline_exceeded', retryable: false })
+    expect(request).not.toHaveBeenCalled()
+  })
+  it('interrupts a pending request when the ingestion signal aborts', async () => {
+    const controller = new globalThis.AbortController()
+    const request = vi.fn(() => new Promise(() => {}))
+    const safeFetch = createSafeFetch({ lookup: async () => [{ address: '93.184.216.34', family: 4 }], request, limits: { timeoutMs: 500 } })
+    const pending = safeFetch('https://example.com/feed.xml', { allowedContentTypes: ['application/rss+xml'], signal: controller.signal })
+    setTimeout(() => controller.abort(Object.assign(new Error('heartbeat details'), { code: 'lease_heartbeat_lost', retryable: true })), 10)
+    await expect(pending).rejects.toMatchObject({ code: 'lease_heartbeat_lost', retryable: true })
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }))
+  })
+  it('destroys a response body when abort lands after headers resolve', async () => {
+    const controller = new globalThis.AbortController()
+    const body = { destroy: vi.fn(), async *[Symbol.asyncIterator]() {} }
+    const reason = Object.assign(new Error('stream detail'), { code: 'lease_heartbeat_lost', retryable: true })
+    const request = vi.fn(async () => {
+      controller.abort(reason)
+      return { statusCode: 200, headers: { 'content-type': 'application/rss+xml' }, body }
+    })
+    const safeFetch = createSafeFetch({ lookup: async () => [{ address: '93.184.216.34', family: 4 }], request, limits: { timeoutMs: 500 } })
+
+    await expect(safeFetch('https://example.com/feed.xml', { allowedContentTypes: ['application/rss+xml'], signal: controller.signal })).rejects.toMatchObject({ code: 'lease_heartbeat_lost' })
+    expect(body.destroy).toHaveBeenCalled()
+  })
+  it('destroys a response body when the stream iterator fails', async () => {
+    const body = {
+      destroy: vi.fn(),
+      async *[Symbol.asyncIterator]() { throw new Error('provider stream detail') },
+    }
+    const safeFetch = createSafeFetch({
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      request: async () => ({ statusCode: 200, headers: { 'content-type': 'application/rss+xml' }, body }),
+    })
+
+    await expect(safeFetch('https://example.com/feed.xml', { allowedContentTypes: ['application/rss+xml'] })).rejects.toMatchObject({ code: 'source_fetch_failed', retryable: true })
+    expect(body.destroy).toHaveBeenCalled()
+  })
 
   it('enforces independent wire, decoded and expansion-ratio limits', async () => {
     const lookup = async () => [{ address: '93.184.216.34', family: 4 }]

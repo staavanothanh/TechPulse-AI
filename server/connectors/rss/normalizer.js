@@ -286,13 +286,15 @@ function normalizeItem(item, { source, feedUrl, feedType, retrievedAt, language,
   return Object.freeze(candidate)
 }
 
-export function normalizeRssAtom({ parsed, source, retrievedAt } = {}) {
+export function normalizeRssAtom({ parsed, source, retrievedAt, maxResults } = {}) {
   if (!parsed?.root || !validDate(asDate(retrievedAt))) throw sourceConfigRejected()
   const feedType = parsed.root.localName === 'feed' ? 'atom' : parsed.root.localName === 'rss' ? 'rss' : undefined
   if (!feedType) throw sourceConfigRejected()
   const feedUrl = feedUrlFor(source, parsed.url)
   const limits = parsed.limits ?? RSS_LIMITS
-  const candidates = itemNodes(parsed.root, feedType).map((item) => normalizeItem(item, {
+  const boundedMaxResults = maxResults ?? limits.maxItems
+  if (!Number.isInteger(boundedMaxResults) || boundedMaxResults < 1 || boundedMaxResults > limits.maxItems) throw sourceConfigRejected()
+  const candidates = itemNodes(parsed.root, feedType).slice(0, boundedMaxResults).map((item) => normalizeItem(item, {
     source,
     feedUrl,
     feedType,

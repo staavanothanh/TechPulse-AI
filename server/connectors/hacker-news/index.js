@@ -10,6 +10,7 @@ function retrievalDate(value, now) {
 
 function normalizeRequestError(error) {
   if (error instanceof HackerNewsConnectorError) return error
+  if (error?.code === 'ingestion_deadline_exceeded') return error
   if (error?.code === 'source_fetch_timeout' || error?.code === 'ETIMEDOUT' || error?.name === 'AbortError') return sourceFetchTimeout()
   if (Number.isInteger(error?.statusCode) || Number.isInteger(error?.status)) return sourceUpstreamStatus(Number(error.statusCode ?? error.status))
   return sourceFetchFailed()
@@ -49,30 +50,35 @@ export function createHackerNewsConnector({ now = () => new Date(), request, con
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > limits.concurrency) throw sourceConfigRejected()
   if (request !== undefined && typeof request !== 'function') throw sourceConfigRejected()
 
-  async function requestPayload({ source, stream, id, payload }) {
+  async function requestPayload({ source, stream, id, payload, signal, deadline }) {
+    if (signal?.aborted) throw signal.reason
     if (payload !== undefined) return payload
     if (typeof request !== 'function') throw sourceConfigRejected()
     try {
-      return await request({ url: endpointUrl(stream, id), kind: id === undefined ? 'stream' : 'item', stream, id, source })
+      return await request({ url: endpointUrl(stream, id), kind: id === undefined ? 'stream' : 'item', stream, id, source, signal, deadline })
     } catch (error) {
+      if (signal?.aborted) throw signal.reason ?? error
       throw normalizeRequestError(error)
     }
   }
 
-  async function run({ source, payload, ids, itemPayloads, items, retrievedAt, stream: configuredStream } = {}) {
+
+  async function run({ source, payload, ids, itemPayloads, items, retrievedAt, stream: configuredStream, signal, deadline } = {}) {
+    if (signal?.aborted) throw signal.reason
     const observedAt = retrievalDate(retrievedAt, now)
     const stream = validateHackerNewsSource(source, configuredStream ?? source?.connectorConfig?.hackerNewsStream)
     const batchSize = source?.connectorConfig?.batchSize ?? limits.maxBatchSize
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > limits.maxBatchSize) throw sourceConfigRejected()
     const metrics = { streamRequests: 0, itemRequests: 0, candidatesAccepted: 0, deletedItems: 0, missingItems: 0, invalidItems: 0, maxConcurrent: 0 }
     const inlineIds = Array.isArray(payload?.ids) ? payload.ids : undefined
-    const idPayload = ids ?? inlineIds ?? await requestPayload({ source, stream, payload: payload?.ids === undefined ? payload : payload.ids })
+    const idPayload = ids ?? inlineIds ?? await requestPayload({ source, stream, payload: payload?.ids === undefined ? payload : payload.ids, signal, deadline })
     if (ids === undefined && inlineIds === undefined && payload === undefined) metrics.streamRequests += 1
     let storyIds
     try { storyIds = parseIdList(idPayload, limits) } catch (error) { throw error instanceof HackerNewsConnectorError ? error : sourcePayloadRejected() }
     const boundedIds = storyIds.slice(0, batchSize)
     let active = 0
     const itemResults = await mapWithConcurrency(boundedIds, concurrency, async (id, index) => {
+      if (signal?.aborted) throw signal.reason
       const numericId = Number(id)
       if (!Number.isSafeInteger(numericId) || numericId < 1) {
         metrics.invalidItems += 1
@@ -90,8 +96,9 @@ export function createHackerNewsConnector({ now = () => new Date(), request, con
       try {
         let itemPayload
         try {
-          itemPayload = await requestPayload({ source, stream, id: numericId, payload: providedPayload })
+          itemPayload = await requestPayload({ source, stream, id: numericId, payload: providedPayload, signal, deadline })
         } catch (error) {
+          if (signal?.aborted) throw signal.reason ?? error
           if (error instanceof HackerNewsConnectorError && error.code === 'source_upstream_status' && error.upstreamStatus === 404) {
             metrics.missingItems += 1
             return undefined
@@ -126,6 +133,7 @@ export function createHackerNewsConnector({ now = () => new Date(), request, con
         active -= 1
       }
     })
+    if (signal?.aborted) throw signal.reason
     const candidates = itemResults.filter(Boolean)
     metrics.candidatesAccepted = candidates.length
     return Object.freeze({ stream, candidates: Object.freeze(candidates), retrievedAt: observedAt, metrics: Object.freeze(metrics) })

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { ObjectId } from 'mongodb'
 import { createJobAuditEvent, validateJobAuditInput } from '../../audit/job-writer.js'
 import { JobError, canonicalRequestHash, resolveIdempotentJob } from '../../domain/jobs/idempotency.js'
+import { safeErrorCode } from '../../jobs/runtime-trace.js'
 
 const STATUSES = new Set(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled'])
 const TERMINAL = new Set(['succeeded', 'partial', 'failed', 'cancelled'])
@@ -43,10 +44,22 @@ function dateValue(value, label = 'Job date') {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new Error(`${label} is invalid`)
   return value
 }
+function operationOptions({ signal, deadline } = {}) {
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw new Error('Job operation deadline is invalid')
+  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+  return {
+    ...(signal ? { signal } : {}),
+    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+  }
+}
+function transactionOptions(options = {}) {
+  return options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}
+}
 
 function safeErrorDocument(error) {
   if (!error) return undefined
-  const result = { code: String(error.code), message: String(error.message), retryable: Boolean(error.retryable), occurredAt: dateValue(error.occurredAt) }
+  const result = { code: safeErrorCode(error.code), message: 'Ingestion job did not complete safely', retryable: Boolean(error.retryable), occurredAt: dateValue(error.occurredAt) }
   if (Number.isInteger(error.upstreamStatus)) result.upstreamStatus = error.upstreamStatus
   return result
 }
@@ -98,6 +111,30 @@ function stableAudit(value) {
 function recoveryChildId(parentId, nextAttempt) {
   return new ObjectId(createHash('sha256').update(`ingestion-recovery:${parentId}:${nextAttempt}`).digest('hex').slice(0, 24))
 }
+function recoveryChildFor(parent, now) {
+  const parentId = parent._id.toHexString()
+  const nextAttempt = parent.attempt + 1
+  const child = {
+    ...parent,
+    _id: recoveryChildId(parentId, nextAttempt),
+    idempotencyKey: `system-recovery:${parentId}:${nextAttempt}`,
+    actorScope: 'system-recovery',
+    requestHash: canonicalRequestHash({ operation: 'lease-recovery', parentJobId: parentId, nextAttempt }),
+    trigger: 'retry',
+    parentJobId: parent._id,
+    status: 'queued',
+    attempt: nextAttempt,
+    availableAt: now,
+    agingEligibleAt: new Date(now.getTime() + 30 * 60 * 1000),
+    idempotencyExpiresAt: new Date(now.getTime() + 14 * DAY_MS),
+    leaseGeneration: 0,
+    counters: { fetched: 0, created: 0, updated: 0, duplicate: 0, skipped: 0, failed: 0 },
+    createdAt: now,
+    updatedAt: now,
+  }
+  for (const field of ['startedAt', 'heartbeatAt', 'finishedAt', 'purgeAfter', 'error', 'cancellationRequestedAt', 'checkpoint']) delete child[field]
+  return child
+}
 
 function purgeAfterFor(status, finishedAt, idempotencyExpiresAt) {
   const retentionDays = ['failed', 'partial'].includes(status) ? 30 : 14
@@ -118,11 +155,11 @@ export class MongoJobRepository {
   audits() { return this.db.collection('adminAuditLogs') }
   scheduleProgress() { return this.db.collection('ingestionScheduleProgress') }
 
-  async withTransaction(work) {
+  async withTransaction(work, transactionOptions = {}) {
     const session = this.client.startSession()
     try {
       let result
-      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })
+      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, ...transactionOptions })
       return result
     } finally { await session.endSession() }
   }
@@ -136,14 +173,14 @@ export class MongoJobRepository {
     return Boolean(user && activeSession)
   }
 
-  async insertAudit(audit, session) {
+  async insertAudit(audit, session, options = {}) {
     const safe = jobAuditDocument(audit)
-    const existing = await this.audits().findOne({ eventId: safe.eventId }, { session })
+    const existing = await this.audits().findOne({ eventId: safe.eventId }, { session, ...options })
     if (existing) {
       if (stableAudit(existing) !== stableAudit(safe)) throw new JobError(409, 'idempotency_mismatch', 'Job audit identity is already bound to another event')
       return existing
     }
-    await this.audits().insertOne(safe, { session })
+    await this.audits().insertOne(safe, { session, ...options })
     return safe
   }
 
@@ -242,9 +279,11 @@ export class MongoJobRepository {
     }
   }
 
-  async materializeDailyIngestion({ now = this.clock(), limit = 100 } = {}) {
+  async materializeDailyIngestion({ now = this.clock(), limit = 100, signal, deadline } = {}) {
     const materializedAt = dateValue(now, 'Scheduled materialization time')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Scheduled materialization limit is invalid')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     const period = materializedAt.toISOString().slice(0, 10)
     const eligibleSources = {
       operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] },
@@ -253,17 +292,19 @@ export class MongoJobRepository {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       try {
         return await this.withTransaction(async (session) => {
-          let progress = await this.scheduleProgress().findOne({ period }, { session })
+          signal?.throwIfAborted?.()
+          let progress = await this.scheduleProgress().findOne({ period }, { session, ...options })
           if (!progress) {
             progress = { _id: new ObjectId(), period, createdAt: materializedAt, updatedAt: materializedAt }
-            await this.scheduleProgress().insertOne(progress, { session })
+            await this.scheduleProgress().insertOne(progress, { session, ...options })
           }
           if (progress.completedAt) return { inspected: 0, created: 0, hasMore: false, period }
           const filter = progress.cursorSourceId ? { ...eligibleSources, _id: { $gt: progress.cursorSourceId } } : eligibleSources
-          const candidates = await this.sources().find(filter, { session }).sort({ _id: 1 }).limit(limit + 1).toArray()
+          const candidates = await this.sources().find(filter, { session, ...options }).sort({ _id: 1 }).limit(limit + 1).toArray()
           const selected = candidates.slice(0, limit)
           let created = 0
           for (const source of selected) {
+            signal?.throwIfAborted?.()
             const sourceId = source._id.toHexString()
             const job = {
               id: new ObjectId().toHexString(), idempotencyKey: `daily:${period}:${sourceId}`, actorScope: 'system-cron',
@@ -277,7 +318,7 @@ export class MongoJobRepository {
             const existing = await this.jobs().updateOne(
               { actorScope: job.actorScope, idempotencyKey: job.idempotencyKey },
               { $setOnInsert: jobDocument(job) },
-              { upsert: true, session },
+              { upsert: true, session, ...options },
             )
             if (existing.upsertedCount === 1) created += 1
           }
@@ -290,14 +331,14 @@ export class MongoJobRepository {
             ...(progress.cursorSourceId ? { cursorSourceId: progress.cursorSourceId } : { cursorSourceId: { $exists: false } }),
             completedAt: { $exists: false },
           }
-          const advanced = await this.scheduleProgress().updateOne(expectedProgress, update, { session })
+          const advanced = await this.scheduleProgress().updateOne(expectedProgress, update, { session, ...options })
           if (advanced.matchedCount !== 1) {
             const conflict = new Error('Scheduled materialization cursor changed concurrently')
             conflict.code = 'materialization_conflict'
             throw conflict
           }
           return { inspected: selected.length, created, hasMore, period }
-        })
+        }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
       } catch (error) {
         if (error?.code !== 11000 && error?.code !== 'materialization_conflict') throw error
       }
@@ -359,20 +400,22 @@ export class MongoJobRepository {
     return { jobs: page.map(serializeIngestionJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }
   }
 
-  async selectDueIngestion({ now = new Date(), excludeSourceIds = [] } = {}) {
-    const filter = { status: 'queued', availableAt: { $lte: now } }
-    if (Array.isArray(excludeSourceIds) && excludeSourceIds.length > 0) {
-      filter.sourceId = { $nin: excludeSourceIds.map((id) => idValue(id)) }
-    }
-    const aged = await this.jobs().find({ ...filter, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_aged').limit(1).next()
+  async selectDueIngestion({ now = new Date(), excludeSourceIds = [], signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const filter = { status: 'queued', availableAt: { $lte: now }, ...(Array.isArray(excludeSourceIds) && excludeSourceIds.length > 0 ? { sourceId: { $nin: excludeSourceIds.map((id) => idValue(id)) } } : {}) }
+    const aged = await this.jobs().find({ ...filter, agingEligibleAt: { $lte: now } }, options).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_aged').limit(1).next()
     if (aged) return serializeIngestionJob(aged)
-    return serializeIngestionJob(await this.jobs().find({ ...filter, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_normal').limit(1).next())
+    return serializeIngestionJob(await this.jobs().find({ ...filter, agingEligibleAt: { $gt: now } }, options).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_normal').limit(1).next())
   }
 
-  async nextAvailableAt() {
-    const document = await this.jobs().find({ status: 'queued' }).sort({ availableAt: 1, _id: 1 }).hint('ingestion_next_available').project({ availableAt: 1 }).limit(1).next()
+  async nextAvailableAt({ signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const document = await this.jobs().find({ status: 'queued' }, options).sort({ availableAt: 1, _id: 1 }).hint('ingestion_next_available').project({ availableAt: 1 }).limit(1).next()
     return document?.availableAt ?? null
   }
+
 
   async purgeDueIngestionJobs({ cutoff = new Date(), limit = 100 } = {}) {
     dateValue(cutoff, 'Retention cutoff')
@@ -389,37 +432,47 @@ export class MongoJobRepository {
     return { inspected: selected.length, affected: result.deletedCount, hasMore: candidates.length > limit }
   }
 
-  async claimQueuedWithFence({ jobId, fence } = {}) {
+  async claimQueuedWithFence({ jobId, fence, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative job clock')
+    const options = operationOptions({ signal, deadline })
+    const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+    if (deadlineAt !== Number.POSITIVE_INFINITY && now.getTime() >= deadlineAt) throw new JobError(409, 'conflict', 'Job admission deadline exceeded')
+    signal?.throwIfAborted?.()
+    const transactionOptions = options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const lease = await this.leases().updateOne({
         key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
-      }, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      }, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
       if (lease.matchedCount !== 1) return false
-      const job = await this.jobs().updateOne({ _id: idValue(jobId), status: 'queued', availableAt: { $lte: now } }, { $set: { status: 'running', leaseGeneration: fence.leaseGeneration, startedAt: now, heartbeatAt: now, updatedAt: now } }, { session })
+      signal?.throwIfAborted?.()
+      const job = await this.jobs().updateOne({ _id: idValue(jobId), status: 'queued', availableAt: { $lte: now } }, { $set: { status: 'running', leaseGeneration: fence.leaseGeneration, startedAt: now, heartbeatAt: now, updatedAt: now } }, { session, ...options })
       if (job.matchedCount !== 1) throw new JobError(409, 'conflict', 'Job is no longer claimable')
       return true
-    })
+    }, transactionOptions)
   }
 
-  async completeWithFence({ jobId, fence, status, error, checkpoint, counters } = {}) {
+  async completeWithFence({ jobId, fence, status, error, checkpoint, counters, signal, deadline } = {}) {
     if (!TERMINAL.has(status)) throw new Error('Terminal job status is invalid')
     const now = dateValue(this.clock(), 'Authoritative job clock')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const leaseFilter = {
         key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
       }
-      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
       if (touched.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease fence is stale or expired')
-      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session })
+      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, ...options })
       if (!current) throw new JobError(409, 'conflict', 'Lease fence no longer owns this job')
       const source = await this.sources().findOne({
         _id: current.sourceId, policyVersion: current.expectedSourcePolicyVersion,
         operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, connectorType: current.connectorType,
         [`connectorConfig.kind`]: current.connectorType,
-      }, { session, projection: { _id: 1 } })
+      }, { session, projection: { _id: 1 }, ...options })
       const policyMismatch = !source
       const finalStatus = policyMismatch ? 'failed' : status
       const set = { status: finalStatus, finishedAt: now, purgeAfter: purgeAfterFor(finalStatus, now, current.idempotencyExpiresAt), updatedAt: now }
@@ -429,35 +482,94 @@ export class MongoJobRepository {
         if (checkpoint) set.checkpoint = { ...checkpoint }
         if (counters) set.counters = { ...counters }
       }
-      await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, { $set: set }, { session })
-      const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session })
+      await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, { $set: set }, { session, ...options })
+      const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
       if (released.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease release fence failed')
-      return this.findIngestionJobById(jobId, { session })
-    })
+      return this.findIngestionJobById(jobId, { session, ...options })
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
+  }
+  async finalizeOrphanedAttempt({ jobId, fence, error, now = this.clock(), signal, deadline } = {}) {
+    const authoritativeNow = dateValue(now, 'Orphan finalization time')
+    if (!fence?.key || !Number.isInteger(fence.leaseGeneration)) throw new Error('Orphan finalization fence is invalid')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
+      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, ...options })
+      if (!current) return false
+      const lease = await this.leases().findOne({ key: fence.key }, { session, ...options })
+      if (!lease || Number(lease.generationHighWater) !== Number(fence.leaseGeneration)) return false
+      const owner = lease.activeOwner
+      if (owner && Number(owner.leaseGeneration) !== Number(fence.leaseGeneration)) return false
+      const leaseFilter = owner
+        ? {
+          key: fence.key, generationHighWater: fence.leaseGeneration, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash, 'activeOwner.leaseGeneration': fence.leaseGeneration,
+          ...(error?.code === 'lease_heartbeat_lost' ? {} : { 'activeOwner.expiresAt': { $lte: authoritativeNow } }),
+        }
+        : { key: fence.key, generationHighWater: fence.leaseGeneration, activeOwner: { $exists: false } }
+      const guardedLease = await this.leases().updateOne(
+        leaseFilter,
+        owner
+          ? { $unset: { activeOwner: '' }, $set: { lastReleasedAt: authoritativeNow, updatedAt: authoritativeNow } }
+          : { $set: { lastFenceValidatedAt: authoritativeNow, updatedAt: authoritativeNow } },
+        { session, ...options },
+      )
+      if (guardedLease.matchedCount !== 1) return false
+      const safe = safeErrorDocument({
+        code: error?.code ?? 'ingestion_completion_failed',
+        message: 'Ingestion job did not complete safely',
+        retryable: Boolean(error?.retryable),
+        occurredAt: authoritativeNow,
+        upstreamStatus: error?.upstreamStatus,
+      })
+      const updated = await this.jobs().updateOne(
+        { _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration },
+        { $set: { status: 'failed', error: safe, finishedAt: authoritativeNow, purgeAfter: purgeAfterFor('failed', authoritativeNow, current.idempotencyExpiresAt), updatedAt: authoritativeNow }, $unset: { heartbeatAt: '' } },
+        { session, ...options },
+      )
+      if (updated.matchedCount !== 1) throw new JobError(409, 'conflict', 'Orphaned job changed before finalization')
+      if (owner && safe.retryable === true && Number(current.attempt) < 3) {
+        const child = recoveryChildFor(current, authoritativeNow)
+        await this.jobs().updateOne({ parentJobId: child.parentJobId, attempt: child.attempt }, { $setOnInsert: child }, { upsert: true, session, ...options })
+      }
+      const audit = createJobAuditEvent({
+        actor: { id: 'system:due-work', role: 'system-worker' },
+        action: 'ingestion_job_lease_recovered',
+        targetId: current._id.toHexString(),
+        changedFields: ['status', 'error'],
+        reasonCode: 'lease_expired_recovered',
+        request: { serverRequestId: `orphan-finalization:${current._id.toHexString()}:${current.leaseGeneration}` },
+        createdAt: authoritativeNow,
+      })
+      await this.insertAudit(audit, session, options)
+      return true
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
   }
 
-  async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000 } = {}) {
+  async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative job clock')
     if (!Number.isInteger(delayMs) || delayMs < 1000 || delayMs > 15 * 60 * 1000) throw new Error('Job defer duration is invalid')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
       const leaseFilter = {
         key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
       }
-      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
       if (touched.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease fence is stale or expired')
-      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session })
+      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, ...options })
       if (!current) throw new JobError(409, 'conflict', 'Lease fence no longer owns this job')
       const cancelled = Boolean(current.cancellationRequestedAt)
       const update = cancelled
         ? { $set: { status: 'cancelled', finishedAt: now, purgeAfter: purgeAfterFor('cancelled', now, current.idempotencyExpiresAt), updatedAt: now }, $unset: { startedAt: '', heartbeatAt: '' } }
         : { $set: { status: 'queued', availableAt: new Date(now.getTime() + delayMs), leaseGeneration: 0, updatedAt: now }, $unset: { startedAt: '', heartbeatAt: '' } }
-      const job = await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, update, { session })
+      const job = await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, update, { session, ...options })
       if (job.matchedCount !== 1) throw new JobError(409, 'conflict', 'Job changed before defer')
-      const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session })
+      const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
       if (released.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease release fence failed')
-      return this.findIngestionJobById(jobId, { session })
-    })
+      return this.findIngestionJobById(jobId, { session, ...options })
+    }, transactionOptions(options))
   }
 
   async cancelIngestionJob({ jobId, actor, reasonCode, request, actorFence, now = new Date() } = {}) {
@@ -482,10 +594,13 @@ export class MongoJobRepository {
     })
   }
 
-  async recoverExpiredIngestion({ leaseRepository, now = new Date(), limit = 10 } = {}) {
-    const expired = await leaseRepository.listExpired({ now, limit, namespace: 'ingestion:source:' })
+  async recoverExpiredIngestion({ leaseRepository, now = new Date(), limit = 10, signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const expired = await leaseRepository.listExpired({ now, limit, namespace: 'ingestion:source:', signal, deadline })
     const summary = { inspected: expired.length, recovered: 0, retriesCreated: 0, failed: 0 }
     for (const snapshot of expired) {
+      signal?.throwIfAborted?.()
       try {
         const outcome = await this.withTransaction(async (session) => {
           const filter = {
@@ -495,11 +610,11 @@ export class MongoJobRepository {
             'activeOwner.leaseGeneration': snapshot.activeOwner.leaseGeneration,
             'activeOwner.expiresAt': { $lte: now },
           }
-          const parent = await this.jobs().findOne({ _id: snapshot.activeOwner.jobId, status: 'running', leaseGeneration: snapshot.activeOwner.leaseGeneration }, { session })
+          const parent = await this.jobs().findOne({ _id: snapshot.activeOwner.jobId, status: 'running', leaseGeneration: snapshot.activeOwner.leaseGeneration }, { session, ...options })
           let retriesCreated = 0
           if (parent) {
             const safe = { code: 'lease_expired', message: 'Job lease expired before completion', retryable: true, occurredAt: now }
-            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, { $set: { status: 'failed', error: safe, finishedAt: now, purgeAfter: purgeAfterFor('failed', now, parent.idempotencyExpiresAt), updatedAt: now } }, { session })
+            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, { $set: { status: 'failed', error: safe, finishedAt: now, purgeAfter: purgeAfterFor('failed', now, parent.idempotencyExpiresAt), updatedAt: now } }, { session, ...options })
             if (parent.attempt < 3) {
               const nextAttempt = parent.attempt + 1
               const key = `system-recovery:${parent._id.toHexString()}:${nextAttempt}`
@@ -510,41 +625,46 @@ export class MongoJobRepository {
                 leaseGeneration: 0, counters: { fetched: 0, created: 0, updated: 0, duplicate: 0, skipped: 0, failed: 0 }, createdAt: now, updatedAt: now,
               }
               for (const field of ['startedAt', 'heartbeatAt', 'finishedAt', 'purgeAfter', 'error', 'cancellationRequestedAt', 'checkpoint']) delete child[field]
-              const inserted = await this.jobs().updateOne({ parentJobId: child.parentJobId, attempt: child.attempt }, { $setOnInsert: child }, { upsert: true, session })
+              const inserted = await this.jobs().updateOne({ parentJobId: child.parentJobId, attempt: child.attempt }, { $setOnInsert: child }, { upsert: true, session, ...options })
               retriesCreated = inserted.upsertedCount === 1 ? 1 : 0
             }
             const audit = createJobAuditEvent({ actor: { id: 'system:due-work', role: 'system-worker' }, action: 'ingestion_job_lease_recovered', targetId: parent._id.toHexString(), changedFields: ['status', 'error'], reasonCode: 'lease_expired_recovered', request: { serverRequestId: `recovery:${parent._id.toHexString()}:${parent.leaseGeneration}` }, createdAt: now })
-            await this.insertAudit(audit, session)
+            await this.insertAudit(audit, session, options)
           }
-          const cleared = await this.leases().updateOne(filter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session })
+          const cleared = await this.leases().updateOne(filter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
           if (cleared.matchedCount !== 1) throw new JobError(409, 'conflict', 'Expired lease changed during recovery')
           return { recovered: 1, retriesCreated }
-        })
+        }, transactionOptions(options))
         summary.recovered += outcome.recovered
         summary.retriesCreated += outcome.retriesCreated
-      } catch { summary.failed += 1 }
+      } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') throw error
+        summary.failed += 1
+      }
     }
 
     // Recover orphaned running jobs whose lease was superseded or released
     const remainingSlots = Math.max(0, limit - summary.inspected)
     if (remainingSlots > 0) {
+      signal?.throwIfAborted?.()
       const runningCandidates = await this.jobs()
-        .find({ status: 'running' })
+        .find({ status: 'running' }, options)
         .sort({ updatedAt: 1, _id: 1 })
         .limit(remainingSlots)
         .toArray()
 
       for (const runningJob of runningCandidates) {
+        signal?.throwIfAborted?.()
         try {
           const outcome = await this.withTransaction(async (session) => {
             const currentJob = await this.jobs().findOne(
               { _id: runningJob._id, status: 'running', leaseGeneration: runningJob.leaseGeneration },
-              { session },
+              { session, ...options },
             )
             if (!currentJob) return { recovered: 0 }
 
             const leaseKey = `ingestion:source:${currentJob.sourceId.toHexString?.() ?? currentJob.sourceId}`
-            const lease = await this.leases().findOne({ key: leaseKey }, { session })
+            const lease = await this.leases().findOne({ key: leaseKey }, { session, ...options })
 
             const isOwned = lease?.activeOwner
               && String(lease.activeOwner.jobId) === String(currentJob._id)
@@ -570,7 +690,7 @@ export class MongoJobRepository {
                   updatedAt: now,
                 },
               },
-              { session },
+              { session, ...options },
             )
 
             const audit = createJobAuditEvent({
@@ -582,15 +702,16 @@ export class MongoJobRepository {
               request: { serverRequestId: `orphan-recovery:${currentJob._id.toHexString()}:${currentJob.leaseGeneration}` },
               createdAt: now,
             })
-            await this.insertAudit(audit, session)
+            await this.insertAudit(audit, session, options)
             return { recovered: 1 }
-          })
+          }, transactionOptions(options))
 
           if (outcome?.recovered) {
             summary.recovered += 1
             summary.inspected += 1
           }
-        } catch {
+        } catch (error) {
+          if (signal?.aborted || error?.name === 'AbortError') throw error
           summary.failed += 1
         }
       }
