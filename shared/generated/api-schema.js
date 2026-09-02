@@ -2317,6 +2317,9 @@ export const openApiDocument = {
           },
           {
             "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
         "requestBody": {
@@ -3817,7 +3820,7 @@ export const openApiDocument = {
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
         },
-        "description": "Scoped by authenticated actor/session and canonical request hash. Reusing a key for a different intent returns 409 idempotency_mismatch. The guarantee is 24 hours for grounded answers and at least 14 days for manual job/governance mutations; scheduled identities remain deterministic by target and period."
+        "description": "The server binds this key to the operation's documented idempotency scope and canonical request hash. Reusing a key for a different intent returns 409 idempotency_mismatch. The guarantee is 24 hours for grounded answers and at least 14 days for manual job/governance mutations; scheduled identities remain deterministic by target and period."
       },
       "CursorQuery": {
         "name": "cursor",

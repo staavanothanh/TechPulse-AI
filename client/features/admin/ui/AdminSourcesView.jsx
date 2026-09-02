@@ -32,6 +32,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
   const registryTabRef = useRef(null)
   const addSourceTabRef = useRef(null)
   const tabFocusTargetRef = useRef(null)
+  const confirmationTriggerRef = useRef(null)
 
   useEffect(() => {
     const target = tabFocusTargetRef.current
@@ -53,7 +54,8 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
     setTab(nextTab)
   }
 
-  function statusAction(source, operationalStatus) {
+  function statusAction(source, operationalStatus, trigger) {
+    if (trigger) confirmationTriggerRef.current = trigger
     setConfirmation({
       type: 'status',
       source,
@@ -254,7 +256,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                           size="small"
                           variant="secondary"
                           icon="activity"
-                          onClick={() => statusAction(selected, 'testing')}
+                          onClick={(event) => statusAction(selected, 'testing', event.currentTarget)}
                           disabled={mutation.busy}
                         >
                           Chuyển sang kiểm thử
@@ -265,7 +267,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                           size="small"
                           variant="primary"
                           icon="play"
-                          onClick={() => statusAction(selected, 'active')}
+                          onClick={(event) => statusAction(selected, 'active', event.currentTarget)}
                           disabled={mutation.busy}
                         >
                           Kích hoạt
@@ -276,7 +278,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                           size="small"
                           variant="secondary"
                           icon="pause"
-                          onClick={() => statusAction(selected, 'paused')}
+                          onClick={(event) => statusAction(selected, 'paused', event.currentTarget)}
                           disabled={mutation.busy}
                         >
                           Tạm dừng
@@ -295,13 +297,14 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                         size="small"
                         variant="secondary"
                         icon="refresh"
-                        onClick={() =>
+                        onClick={(event) => {
+                          confirmationTriggerRef.current = event.currentTarget
                           setConfirmation({
                             type: 'rereview',
                             source: selected,
                             reasonCode: 'source_policy_re_review_requested',
                           })
-                        }
+                        }}
                         disabled={mutation.busy}
                       >
                         Yêu cầu duyệt lại
@@ -336,6 +339,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                   }
                   reasonCode={confirmation?.reasonCode}
                   busy={mutation.busy}
+                  returnFocusRef={confirmationTriggerRef}
                   onCancel={() => setConfirmation(null)}
                   onConfirm={confirmSourceAction}
                 />

@@ -38,7 +38,7 @@ function JobRowActions({ job, kind, onRetry, onCancel, busy }) {
           size="small"
           variant="primary"
           icon="refresh"
-          onClick={() => onRetry(job, kind)}
+          onClick={(event) => onRetry(job, kind, event.currentTarget)}
           disabled={busy}
         >
           Thử lại
@@ -49,7 +49,7 @@ function JobRowActions({ job, kind, onRetry, onCancel, busy }) {
           size="small"
           variant="secondary"
           icon="pause"
-          onClick={() => onCancel(job, kind)}
+          onClick={(event) => onCancel(job, kind, event.currentTarget)}
           disabled={busy}
         >
           Yêu cầu dừng
@@ -196,7 +196,7 @@ export function JobList({
                         <button
                           type="button"
                           className="admin-btn-preview"
-                          onClick={() => onPreviewArticle?.(value)}
+                          onClick={(event) => onPreviewArticle?.(value, event.currentTarget)}
                           title={`Xem nhanh bài viết ${value}`}
                           aria-label={`Xem nhanh bài viết ${value}`}
                         >
@@ -414,6 +414,8 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
   )
   const [confirmation, setConfirmation] = useState(null)
   const [previewArticleId, setPreviewArticleId] = useState(null)
+  const confirmationTriggerRef = useRef(null)
+  const previewTriggerRef = useRef(null)
   const pollStartedAtRef = useRef(null)
   const ingestion = useAdminResource(api, 'listIngestionJobs', {
     enabled: tab === 'ingestion',
@@ -440,13 +442,18 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
   const indexingState = indexing.state
   const reloadIndexing = indexing.reload
   const pollErrorCountRef = useRef(0)
-  function actionFor(job, kind, action) {
+  function actionFor(job, kind, action, trigger) {
+    if (trigger) confirmationTriggerRef.current = trigger
     setConfirmation({
       job,
       kind,
       action,
       reasonCode: action === 'retry' ? 'job_retry_requested' : 'job_cancel_requested',
     })
+  }
+  function previewArticle(articleId, trigger) {
+    if (trigger) previewTriggerRef.current = trigger
+    setPreviewArticleId(articleId)
   }
   async function confirmJobAction() {
     if (!confirmation) return
@@ -678,9 +685,9 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
           loadMore={active.loadMore}
           loadingMore={active.loadingMore}
           kind={tab}
-          onRetry={(job, kind) => actionFor(job, kind, 'retry')}
-          onCancel={(job, kind) => actionFor(job, kind, 'cancel')}
-          onPreviewArticle={setPreviewArticleId}
+          onRetry={(job, kind, trigger) => actionFor(job, kind, 'retry', trigger)}
+          onCancel={(job, kind, trigger) => actionFor(job, kind, 'cancel', trigger)}
+          onPreviewArticle={previewArticle}
           busy={mutation.busy}
         />
       </Panel>
@@ -694,6 +701,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         }
         reasonCode={confirmation?.reasonCode}
         busy={mutation.busy}
+        returnFocusRef={confirmationTriggerRef}
         onCancel={() => setConfirmation(null)}
         onConfirm={confirmJobAction}
       />
@@ -701,6 +709,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         open={Boolean(previewArticleId)}
         articleId={previewArticleId}
         api={api}
+        returnFocusRef={previewTriggerRef}
         onClose={() => setPreviewArticleId(null)}
       />
     </div>

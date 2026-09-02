@@ -1,6 +1,6 @@
 # TechPulse AI — HTTP Contract Guide
 
-> Trạng thái: Contract-first security baseline v1.8; canonical OpenAPI có 56 operations
+> Trạng thái: Contract-first security baseline v1.8; canonical OpenAPI có 60 operations
 > Canonical artifact: [contracts/openapi.json](./contracts/openapi.json)  
 > Consumer: React user/admin application  
 > Provider: Node.js/Express API  
@@ -71,7 +71,7 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 - `413 payload_too_large` áp dụng cho target/body vượt giới hạn; `415 unsupported_media_type` áp dụng cho content type/encoding không được hỗ trợ.
 - State-changing cookie-auth request gửi `X-CSRF-Token`; common ingress đồng thời yêu cầu exact normalized browser `Origin` match.
 - `GET /api/v1/me` trả `{ user, csrfToken }` cho session còn hiệu lực; CSRF token không persist ở `localStorage`.
-- Grounded answer và manual ingestion/deletion/retry gửi `Idempotency-Key`; identity là actor/session scope + key + canonical request hash. Cùng intent trả cùng logical result, khác intent trả `409 idempotency_mismatch`. Answer receipt giữ 24 giờ; job/governance guarantee tối thiểu 14 ngày và owning record không được purge trước deadline này.
+- Grounded answer, article status/topics/media patch, manual ingestion/source-reconciliation/deletion/retry gửi `Idempotency-Key`; identity là actor/session scope + key + canonical request hash. Cùng intent trả cùng logical result, khác intent trả `409 idempotency_mismatch`. Answer receipt giữ 24 giờ; job/governance guarantee tối thiểu 14 ngày và owning record không được purge trước deadline này.
 - Sensitive admin mutation có action-specific allowlisted `reasonCode`; OpenAPI dùng const/conditional enum theo operation, domain trả `422` khi code không khớp changed fields/state. Không nhận free-form admin reason và không copy requester/account case text vào audit.
 - Mọi external URL được serialize/render dùng canonical `HttpsUrl`: HTTPS, không username/password credential; runtime parse URL thay vì chỉ tin `format: uri`/regex.
 - Ingestion/indexing job expose server-captured `expectedSourcePolicyVersion`; article/checkpoint/artifact commit phải match current source version/state/config hoặc discard output mà không advance checkpoint.
@@ -179,7 +179,7 @@ Expected behavior:
 
 Generator chạy không network/secret và generated diff phải được review. Cho đến khi scaffold tồn tại, JSON parse và local `$ref` audit là validation tối thiểu.
 
-TP-M01 là historical Step-1 gate và đã đóng. Canonical OpenAPI hiện có 56 operations, per-operation `x-persistence`, required `400|413|415` cho JSON-body operations và `503` cho Mongo-backed operations. Mọi thay đổi tiếp theo phải giữ lint/fixture/runtime response validation về zero drift.
+TP-M01 là historical Step-1 gate và đã đóng. Canonical OpenAPI hiện có 60 operations, per-operation `x-persistence`, required `400|413|415` cho JSON-body operations và `503` cho Mongo-backed operations. Mọi thay đổi tiếp theo phải giữ lint/fixture/runtime response validation về zero drift.
 
 ## 10. Contract acceptance gate
 

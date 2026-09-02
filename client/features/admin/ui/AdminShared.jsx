@@ -396,7 +396,7 @@ function Table({ label, columns, rows, emptyTitle, children }) {
 }
 
 function ResourceFrame({ resource, children, loadingLabel }) {
-  if (resource.state === 'loading') return <LoadingState label={loadingLabel} />
+  if (resource.state === 'loading' && resource.data == null) return <LoadingState label={loadingLabel} />
   if (resource.state === 'error')
     return <ErrorState message={resource.error} onRetry={resource.reload} />
   const meta = listMeta(resource.data)
@@ -419,6 +419,136 @@ function ResourceFrame({ resource, children, loadingLabel }) {
   )
 }
 
+export const ADMIN_DIALOG_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"]):not([disabled])'
+
+function canFocusDialogElement(element) {
+  if (!element || typeof element.focus !== 'function') return false
+  if (element.disabled || element.hasAttribute?.('disabled')) return false
+  if (element.isConnected === false) return false
+  return element.getAttribute?.('tabindex') !== '-1'
+}
+
+export function collectAdminDialogFocusables(dialog) {
+  return [...(dialog?.querySelectorAll?.(ADMIN_DIALOG_FOCUSABLE_SELECTOR) ?? [])].filter(
+    canFocusDialogElement,
+  )
+}
+
+export function adminDialogFocusAction({
+  key,
+  shiftKey = false,
+  activeElement,
+  focusables = [],
+  fallbackTarget,
+  escapeAllowed = true,
+} = {}) {
+  if (key === 'Escape') return escapeAllowed ? { type: 'close' } : null
+  if (key !== 'Tab') return null
+  if (focusables.length === 0) {
+    return fallbackTarget ? { type: 'focus', target: fallbackTarget } : null
+  }
+  const first = focusables[0]
+  const last = focusables.at(-1)
+  if (shiftKey && activeElement === first) return { type: 'focus', target: last }
+  if (!shiftKey && activeElement === last) return { type: 'focus', target: first }
+  return null
+}
+
+export function resolveDialogReturnTarget({ activeElement = null, explicitTarget = null } = {}) {
+  if (canFocusDialogElement(explicitTarget)) return explicitTarget
+  if (canFocusDialogElement(activeElement)) return activeElement
+  return null
+}
+
+function focusDialogElement(element) {
+  if (typeof element?.focus !== 'function') return
+  element.focus({ preventScroll: true })
+}
+
+function useAdminDialogFocus({
+  open,
+  onClose,
+  initialFocusRef,
+  returnFocusRef,
+  escapeAllowed = true,
+}) {
+  const dialogRef = useRef(null)
+  const returnFocusTargetRef = useRef(null)
+  const wasOpenRef = useRef(false)
+  const onCloseRef = useRef(onClose)
+  const escapeAllowedRef = useRef(escapeAllowed)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+    escapeAllowedRef.current = escapeAllowed
+  }, [escapeAllowed, onClose])
+
+  useEffect(() => {
+    if (!open) {
+      if (!wasOpenRef.current) return undefined
+      wasOpenRef.current = false
+      const returnTarget = returnFocusTargetRef.current
+      returnFocusTargetRef.current = null
+      if (returnTarget && (returnTarget.isConnected === undefined || returnTarget.isConnected)) {
+        focusDialogElement(returnTarget)
+      }
+      return undefined
+    }
+
+    if (wasOpenRef.current) return undefined
+    const documentRef = globalThis.document
+    returnFocusTargetRef.current = resolveDialogReturnTarget({
+      activeElement: documentRef?.activeElement,
+      explicitTarget: returnFocusRef?.current,
+    })
+    wasOpenRef.current = true
+    const initialCandidate = initialFocusRef?.current
+    const initialTarget = canFocusDialogElement(initialCandidate)
+      ? initialCandidate
+      : collectAdminDialogFocusables(dialogRef.current)[0]
+    focusDialogElement(initialTarget ?? dialogRef.current)
+    return undefined
+  }, [initialFocusRef, open, returnFocusRef])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const documentRef = globalThis.document
+    if (!documentRef?.addEventListener) return undefined
+    const onKeyDown = (event) => {
+      const dialog = dialogRef.current
+      const focusables = collectAdminDialogFocusables(dialog)
+      const action = adminDialogFocusAction({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        activeElement: documentRef.activeElement,
+        focusables,
+        fallbackTarget: dialog,
+        escapeAllowed: escapeAllowedRef.current,
+      })
+      if (!action) {
+        if (
+          event.key === 'Tab' &&
+          dialog &&
+          typeof dialog.contains === 'function' &&
+          !dialog.contains(documentRef.activeElement)
+        ) {
+          event.preventDefault()
+          focusDialogElement(focusables[0] ?? dialog)
+        }
+        return
+      }
+      event.preventDefault()
+      if (action.type === 'close') onCloseRef.current?.()
+      else focusDialogElement(action.target)
+    }
+    documentRef.addEventListener('keydown', onKeyDown)
+    return () => documentRef.removeEventListener('keydown', onKeyDown)
+  }, [open])
+
+  return dialogRef
+}
+
 export function AdminConfirmDialog({
   open = false,
   title,
@@ -427,38 +557,16 @@ export function AdminConfirmDialog({
   busy = false,
   onCancel,
   onConfirm,
+  returnFocusRef,
 }) {
-  const dialogRef = useRef(null)
   const cancelRef = useRef(null)
-  useEffect(() => {
-    if (open) cancelRef.current?.focus?.({ preventScroll: true })
-  }, [open])
-  useEffect(() => {
-    if (!open) return undefined
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape' && !busy) {
-        event.preventDefault()
-        onCancel?.()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const focusables = [
-        ...(dialogRef.current?.querySelectorAll?.('button:not([disabled])') ?? []),
-      ]
-      if (!focusables.length) return
-      const first = focusables[0]
-      const last = focusables[focusables.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [busy, onCancel, open])
+  const dialogRef = useAdminDialogFocus({
+    open,
+    onClose: onCancel,
+    initialFocusRef: cancelRef,
+    returnFocusRef,
+    escapeAllowed: !busy,
+  })
   if (!open) return null
   return (
     <div className="admin-confirm-scrim" role="presentation">
@@ -468,6 +576,7 @@ export function AdminConfirmDialog({
         aria-modal="true"
         aria-labelledby="admin-confirm-title"
         aria-describedby="admin-confirm-copy"
+        tabIndex={-1}
         ref={dialogRef}
       >
         <p className="admin-eyebrow">Xác nhận thao tác</p>
@@ -495,12 +604,18 @@ function ArticlePreviewDialog({
   articleId = null,
   api,
   onClose,
+  returnFocusRef,
 }) {
   const [loading, setLoading] = useState(false)
   const [article, setArticle] = useState(null)
   const [error, setError] = useState(null)
-  const dialogRef = useRef(null)
   const closeRef = useRef(null)
+  const dialogRef = useAdminDialogFocus({
+    open,
+    onClose,
+    initialFocusRef: closeRef,
+    returnFocusRef,
+  })
 
   useEffect(() => {
     if (!open || !articleId) {
@@ -550,21 +665,6 @@ function ArticlePreviewDialog({
     }
   }, [api, articleId, open])
 
-  useEffect(() => {
-    if (open) closeRef.current?.focus?.({ preventScroll: true })
-  }, [open, loading])
-
-  useEffect(() => {
-    if (!open) return undefined
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose?.()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose, open])
 
   if (!open) return null
 
@@ -575,6 +675,7 @@ function ArticlePreviewDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="admin-preview-title"
+        tabIndex={-1}
         ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
       >

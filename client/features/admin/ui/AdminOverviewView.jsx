@@ -18,6 +18,30 @@ function formatCount(value) {
   return Number.isFinite(Number(value)) ? new Intl.NumberFormat('vi-VN').format(Number(value)) : '0'
 }
 
+export const OVERVIEW_EXCEPTION_ROUTES = Object.freeze({
+  failedJobs: 'jobs',
+  failedIndexes: 'jobs',
+  queuedJobs: 'jobs',
+  openTakedowns: 'governance',
+  failedAccountDeletions: 'governance',
+  sourcesNeedingReview: 'sources',
+  activeSources: 'sources',
+  pausedSources: 'sources',
+  articlesNeedingReview: 'articles',
+})
+
+export function overviewExceptionRoute(key) {
+  if (typeof key === 'string' && OVERVIEW_EXCEPTION_ROUTES[key]) {
+    return OVERVIEW_EXCEPTION_ROUTES[key]
+  }
+  if (key === 'openTakedowns' || key === 'failedAccountDeletions') return 'governance'
+  if (typeof key === 'string' && (key.toLowerCase().includes('job') || key === 'failedIndexes')) {
+    return 'jobs'
+  }
+  if (typeof key === 'string' && key.toLowerCase().includes('source')) return 'sources'
+  return 'articles'
+}
+
 export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpired, cacheScope }) {
   const resource = useAdminResource(api, 'getAdminOverview', {
     initialData,
@@ -56,17 +80,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
                     className="admin-exception"
                     key={key}
                     type="button"
-                    onClick={() =>
-                      onNavigate?.(
-                        key === 'openTakedowns' || key === 'failedAccountDeletions'
-                          ? 'governance'
-                          : key.includes('Job') || key === 'failedIndexes'
-                            ? 'jobs'
-                            : key.includes('Source')
-                              ? 'sources'
-                              : 'articles',
-                      )
-                    }
+                    onClick={() => onNavigate?.(overviewExceptionRoute(key))}
                   >
                     <span>
                       <strong>{label}</strong>

@@ -6,9 +6,11 @@ import {
   AdminAuditView,
   AdminConfirmDialog,
   AdminJobsView,
+  AdminOverviewView,
   AdminSourcesView,
   AdminUsersView,
 } from '../../../client/features/admin/ui/AdminViews.jsx'
+import { ArticlePreviewDialog } from '../../../client/features/admin/ui/AdminShared.jsx'
 import { JobList, JobsActionBar } from '../../../client/features/admin/ui/AdminJobsView.jsx'
 import {
   AddSourcePanel,
@@ -27,6 +29,54 @@ import {
 } from '../../../client/features/admin/ui/admin-data.js'
 
 const session = { user: { id: 'admin-opaque', role: 'admin' }, csrfToken: 'csrf-in-memory' }
+function renderHookRunner(hookFn) {
+  let hookIdx = 0
+  const hooks = []
+  const dispatcher = {
+    useState(initial) {
+      const idx = hookIdx++
+      if (hooks[idx] === undefined) hooks[idx] = typeof initial === 'function' ? initial() : initial
+      return [hooks[idx], (next) => { hooks[idx] = typeof next === 'function' ? next(hooks[idx]) : next }]
+    },
+    useRef(initial) {
+      const idx = hookIdx++
+      if (hooks[idx] === undefined) hooks[idx] = { current: initial }
+      return hooks[idx]
+    },
+    useCallback(fn) { hookIdx++; return fn },
+    useMemo(fn) { hookIdx++; return fn() },
+    useEffect() { hookIdx++ },
+  }
+  return {
+    render(props) {
+      hookIdx = 0
+      const internals = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE
+      const previous = internals.H
+      internals.H = dispatcher
+      try {
+        return hookFn(props)
+      } finally {
+        internals.H = previous
+      }
+    },
+  }
+}
+
+function findElement(element, predicate) {
+  if (!element || typeof element !== 'object') return null
+  if (predicate(element)) return element
+  const children = element.props?.children
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      const found = findElement(child, predicate)
+      if (found) return found
+    }
+  } else if (children && typeof children === 'object') {
+    return findElement(children, predicate)
+  }
+  return null
+}
+
 
 describe('admin feature views', () => {
   it('keeps opaque cursor metadata alongside list response data', () => {
@@ -64,7 +114,7 @@ describe('admin feature views', () => {
       csrfToken: 'csrf-in-memory',
       pathParams: { articleId: 'article-opaque' },
       body: { status: 'hidden', reasonCode: 'article_status_changed' },
-      idempotencyIntent: 'status:article-opaque',
+      idempotencyIntent: 'status:article-opaque:hidden',
       idempotencyStore: keys,
     }
 
@@ -72,12 +122,12 @@ describe('admin feature views', () => {
       'network interrupted',
     )
     const firstKey = api.updateAdminArticle.mock.calls[0][0].headers['Idempotency-Key']
-    expect(firstKey).toBe(keys.get('status:article-opaque'))
+    expect(firstKey).toBe(keys.get('status:article-opaque:hidden'))
 
     await mutateAdmin(api, 'updateAdminArticle', options)
     const secondKey = api.updateAdminArticle.mock.calls[1][0].headers['Idempotency-Key']
     expect(secondKey).toBe(firstKey)
-    expect(keys.get('status:article-opaque')).toBeUndefined()
+    expect(keys.get('status:article-opaque:hidden')).toBeUndefined()
   })
 
   it('releases an idempotency key when the server reports a mismatched intent', async () => {
@@ -94,11 +144,11 @@ describe('admin feature views', () => {
         csrfToken: 'csrf-in-memory',
         pathParams: { articleId: 'article-opaque' },
         body: { status: 'hidden' },
-        idempotencyIntent: 'status:article-opaque',
+        idempotencyIntent: 'status:article-opaque:hidden',
         idempotencyStore: keys,
       }),
     ).rejects.toMatchObject({ status: 409, code: 'idempotency_mismatch' })
-    expect(keys.get('status:article-opaque')).toBeUndefined()
+    expect(keys.get('status:article-opaque:hidden')).toBeUndefined()
   })
 
   it('only exposes retry for server-eligible attempts across ingestion and indexing', () => {
@@ -127,6 +177,97 @@ describe('admin feature views', () => {
     expect(html).toContain('source_status_changed')
     expect(html).not.toContain('<textarea')
   })
+  it('keeps article action dialogs in the SSR tree with return-focus refs', () => {
+    const props = {
+      api: {},
+      session,
+      cacheScope: {},
+      initialData: {
+        data: [
+          {
+            id: 'article-focus',
+            sourceId: 'source-opaque',
+            titleOriginal: 'Bài viết focus',
+            status: 'published',
+            summaryStatus: 'ready',
+            embeddingStatus: 'ready',
+            updatedAt: '2026-08-19T08:30:00.000Z',
+          },
+        ],
+        meta: { hasNext: false },
+      },
+    }
+    const runner = renderHookRunner((input) => AdminArticlesView(input))
+    const tree = runner.render(props)
+    const confirmationDialog = findElement(tree, (element) => element?.type === AdminConfirmDialog)
+    const previewDialog = findElement(tree, (element) => element?.type === ArticlePreviewDialog)
+
+    expect(confirmationDialog).not.toBeNull()
+    expect(previewDialog).not.toBeNull()
+    expect(confirmationDialog.props.returnFocusRef).toBeDefined()
+    expect(previewDialog.props.returnFocusRef).toBeDefined()
+
+    const html = renderToStaticMarkup(React.createElement(AdminArticlesView, props))
+    expect(html).toContain('admin-articles-view')
+    expect(html).not.toContain('undefined')
+  })
+
+  it('uses next-status-specific intents and keeps ambiguous retries on the same key', async () => {
+    const article = (status) => ({
+      id: 'article-opaque',
+      sourceId: 'source-opaque',
+      titleOriginal: 'Bài viết status',
+      status,
+      summaryStatus: 'ready',
+      embeddingStatus: 'ready',
+      updatedAt: '2026-08-19T08:30:00.000Z',
+    })
+    const renderStatusConfirmation = (status, api) => {
+      const props = {
+        api,
+        session,
+        cacheScope: {},
+        initialData: { data: [article(status)], meta: { hasNext: false } },
+      }
+      const runner = renderHookRunner((input) => AdminArticlesView(input))
+      const tree = runner.render(props)
+      const table = findElement(tree, (element) => element?.props?.label === 'Danh sách articles')
+      const actionElement = table.props.children(article(status))
+      const actionTree = actionElement.type(actionElement.props)
+      const actionButton = findElement(
+        actionTree,
+        (element) => element?.props?.children === (status === 'published' ? 'Ẩn bài' : 'Hiện bài'),
+      )
+      const trigger = { focus: vi.fn() }
+      actionButton.props.onClick({ currentTarget: trigger })
+      const confirmedTree = runner.render(props)
+      const dialog = findElement(confirmedTree, (element) => element?.type === AdminConfirmDialog)
+      expect(dialog.props.open).toBe(true)
+      expect(dialog.props.returnFocusRef.current).toBe(trigger)
+      return dialog
+    }
+
+    const hiddenApi = {
+      updateAdminArticle: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('network interrupted'))
+        .mockResolvedValueOnce({ status: 204 }),
+    }
+    const hiddenDialog = renderStatusConfirmation('published', hiddenApi)
+    await hiddenDialog.props.onConfirm()
+    await hiddenDialog.props.onConfirm()
+    const hiddenKey = hiddenApi.updateAdminArticle.mock.calls[0][0].headers['Idempotency-Key']
+    expect(hiddenKey).toContain('status:article-opaque:hidden')
+    expect(hiddenApi.updateAdminArticle.mock.calls[1][0].headers['Idempotency-Key']).toBe(hiddenKey)
+
+    const publishedApi = { updateAdminArticle: vi.fn().mockResolvedValue({ status: 204 }) }
+    const publishedDialog = renderStatusConfirmation('hidden', publishedApi)
+    await publishedDialog.props.onConfirm()
+    const publishedKey = publishedApi.updateAdminArticle.mock.calls[0][0].headers['Idempotency-Key']
+    expect(publishedKey).toContain('status:article-opaque:published')
+    expect(publishedKey).not.toBe(hiddenKey)
+  })
+
 
   it('renders created and finished timestamps for ingestion and indexing jobs', () => {
     const createdAt = '2026-08-19T08:30:00.000Z'
@@ -197,6 +338,47 @@ describe('admin feature views', () => {
       expect(cells[3]).toContain('Chưa ghi nhận')
     }
   })
+  it('passes the indexing preview trigger through the JobList callback', () => {
+    const onPreviewArticle = vi.fn()
+    const row = {
+      id: 'indexing-job',
+      articleId: 'article-opaque',
+      sourceId: 'source-opaque',
+      task: 'embedding',
+      trigger: 'admin',
+      status: 'succeeded',
+      attempt: 1,
+      createdAt: '2026-08-19T08:30:00.000Z',
+      finishedAt: '2026-08-19T09:30:00.000Z',
+      error: null,
+    }
+    const tree = JobList({
+      data: { data: [row], meta: { hasNext: false } },
+      state: 'ready',
+      error: null,
+      reload: vi.fn(),
+      loadMore: vi.fn(),
+      loadingMore: false,
+      kind: 'indexing',
+      onRetry: vi.fn(),
+      onCancel: vi.fn(),
+      onPreviewArticle,
+      busy: false,
+    })
+    const table = tree.props.children
+    const articleColumn = table.props.columns.find((column) => column.key === 'articleId')
+    const cell = articleColumn.render(row.articleId, row)
+    const previewButton = findElement(
+      cell,
+      (element) => element?.type === 'button' && element?.props?.className === 'admin-btn-preview',
+    )
+    const trigger = { focus: vi.fn() }
+
+    expect(previewButton).not.toBeNull()
+    previewButton.props.onClick({ currentTarget: trigger })
+    expect(onPreviewArticle).toHaveBeenCalledWith(row.articleId, trigger)
+  })
+
 
   it('shows jobs as durable operational records with safe action affordances', () => {
     const html = renderToStaticMarkup(
@@ -583,5 +765,23 @@ describe('admin feature views', () => {
     expect(audit).toContain('article_status_changed')
     expect(audit).not.toContain('textarea')
     expect(audit).not.toContain('Xóa audit')
+  })
+
+  it('navigates to Source Registry when sourcesNeedingReview exception is selected', () => {
+    const onNavigate = vi.fn()
+    const runner = renderHookRunner((props) => AdminOverviewView(props))
+    const vdom = runner.render({
+      api: {},
+      initialData: { sourcesNeedingReview: 3 },
+      onNavigate,
+    })
+    const button = findElement(
+      vdom,
+      (el) => el?.type === 'button' && el?.key === 'sourcesNeedingReview',
+    )
+    expect(button).toBeDefined()
+    expect(button).not.toBeNull()
+    button.props.onClick()
+    expect(onNavigate).toHaveBeenCalledWith('sources')
   })
 })

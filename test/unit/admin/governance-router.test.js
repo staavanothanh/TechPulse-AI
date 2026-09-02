@@ -65,6 +65,27 @@ describe('admin governance HTTP boundaries', () => {
       expect(service.mergeDuplicateArticles).not.toHaveBeenCalled()
     } finally { await new Promise((resolve) => server.close(resolve)) }
   })
+  it('requires and forwards a validated idempotency key for article mutations', async () => {
+    const service = {
+      updateAdminArticle: vi.fn(async ({ patch }) => ({ ...article, status: patch.status })),
+    }
+    const app = createApp({ authService, adminGovernanceService: service })
+    const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)) })
+    try {
+      const origin = `http://127.0.0.1:${server.address().port}`
+      const headers = { Origin: 'http://localhost:3000', Cookie: `__Host-techpulse_session=${adminToken}`, 'X-CSRF-Token': 'csrf', 'Content-Type': 'application/json' }
+      const body = JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' })
+      const missing = await fetch(`${origin}/api/v1/admin/articles/${article.id}`, { method: 'PATCH', headers, body })
+      const invalid = await fetch(`${origin}/api/v1/admin/articles/${article.id}`, { method: 'PATCH', headers: { ...headers, 'Idempotency-Key': 'short' }, body })
+      const valid = await fetch(`${origin}/api/v1/admin/articles/${article.id}`, { method: 'PATCH', headers: { ...headers, 'Idempotency-Key': 'article-status-key-0001' }, body })
+      expect(missing.status).toBe(400)
+      expect(invalid.status).toBe(400)
+      expect(valid.status).toBe(200)
+      expect(service.updateAdminArticle).toHaveBeenCalledTimes(1)
+      expect(service.updateAdminArticle).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: 'article-status-key-0001' }))
+    } finally { await new Promise((resolve) => server.close(resolve)) }
+  })
+
 
   it('rejects missing or foreign browser Origin before an admin mutation', async () => {
     const service = { updateAdminArticle: vi.fn() }

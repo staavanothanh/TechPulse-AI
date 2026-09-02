@@ -64,8 +64,42 @@ describe('admin governance service', () => {
     }
     const service = createAdminGovernanceService({ repository: liveRepository(repository) })
 
-    await expect(service.updateAdminArticle({ auth: adminAuth, articleId: receiverArticle._id, patch: { status: 'hidden', reasonCode: 'article_status_changed' } })).resolves.toMatchObject({ id: receiverArticle._id, status: 'hidden' })
+    await expect(service.updateAdminArticle({ auth: adminAuth, articleId: receiverArticle._id, patch: { status: 'hidden', reasonCode: 'article_status_changed' }, idempotencyKey: 'service-status-key-0001' })).resolves.toMatchObject({ id: receiverArticle._id, status: 'hidden' })
   })
+  it('forwards the validated article idempotency key to the repository request identity', async () => {
+    const repository = {
+      article: { ...receiverArticle, status: 'hidden' },
+      updateAdminArticle: vi.fn(async (_articleId, input) => ({ ...receiverArticle, status: input.value })),
+    }
+    const service = createAdminGovernanceService({ repository: liveRepository(repository) })
+
+    await expect(service.updateAdminArticle({
+      auth: adminAuth,
+      articleId: receiverArticle._id,
+      patch: { status: 'hidden', reasonCode: 'article_status_changed' },
+      idempotencyKey: 'article-status-key-0001',
+      request: { requestId: 'request-correlation-0001' },
+    })).resolves.toMatchObject({ id: receiverArticle._id, status: 'hidden' })
+    expect(repository.updateAdminArticle).toHaveBeenCalledWith(
+      receiverArticle._id,
+      expect.objectContaining({
+        request: expect.objectContaining({
+          idempotencyKey: 'article-status-key-0001',
+          requestId: 'request-correlation-0001',
+        }),
+      }),
+    )
+  })
+  it('rejects missing or malformed article idempotency keys before repository mutation', async () => {
+    const repository = { updateAdminArticle: vi.fn() }
+    const service = createAdminGovernanceService({ repository: liveRepository(repository) })
+    const input = { auth: adminAuth, articleId: receiverArticle._id, patch: { status: 'hidden', reasonCode: 'article_status_changed' } }
+    await expect(service.updateAdminArticle(input)).rejects.toMatchObject({ status: 400, code: 'bad_request' })
+    await expect(service.updateAdminArticle({ ...input, idempotencyKey: 'short' })).rejects.toMatchObject({ status: 400, code: 'bad_request' })
+    expect(repository.updateAdminArticle).not.toHaveBeenCalled()
+  })
+
+
 
   it('preserves the repository receiver for duplicate merges', async () => {
     const repository = {
@@ -112,8 +146,8 @@ describe('admin governance service', () => {
   it('requires exactly one article mutation category and matching reason code', async () => {
     const repository = { updateAdminArticle: vi.fn() }
     const service = createAdminGovernanceService({ repository: liveRepository(repository) })
-    await expect(service.updateAdminArticle({ auth: adminAuth, articleId: '507f1f77bcf86cd799439010', patch: { status: 'hidden', topics: ['AI'], reasonCode: 'article_status_changed' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
-    await expect(service.updateAdminArticle({ auth: adminAuth, articleId: '507f1f77bcf86cd799439010', patch: { status: 'hidden', reasonCode: 'article_topics_changed' } })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+    await expect(service.updateAdminArticle({ auth: adminAuth, articleId: '507f1f77bcf86cd799439010', patch: { status: 'hidden', topics: ['AI'], reasonCode: 'article_status_changed' }, idempotencyKey: 'service-category-key-0001' })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+    await expect(service.updateAdminArticle({ auth: adminAuth, articleId: '507f1f77bcf86cd799439010', patch: { status: 'hidden', reasonCode: 'article_topics_changed' }, idempotencyKey: 'service-category-key-0002' })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
     expect(repository.updateAdminArticle).not.toHaveBeenCalled()
   })
 

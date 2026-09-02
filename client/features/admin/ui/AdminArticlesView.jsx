@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   formatAdminDate,
   listItems,
@@ -28,7 +28,7 @@ function ArticleActions({ article, onAction, busy }) {
         size="small"
         variant="secondary"
         icon={article.status === 'published' ? 'archive' : 'play'}
-        onClick={() => onAction(article, 'status')}
+        onClick={(event) => onAction(article, 'status', event.currentTarget)}
         disabled={busy}
       >
         {article.status === 'published' ? 'Ẩn bài' : 'Hiện bài'}
@@ -37,7 +37,7 @@ function ArticleActions({ article, onAction, busy }) {
         size="small"
         variant="secondary"
         icon="refresh"
-        onClick={() => onAction(article, 'summary')}
+        onClick={(event) => onAction(article, 'summary', event.currentTarget)}
         disabled={busy}
       >
         Regenerate summary
@@ -46,7 +46,7 @@ function ArticleActions({ article, onAction, busy }) {
         size="small"
         variant="secondary"
         icon="activity"
-        onClick={() => onAction(article, 'embedding')}
+        onClick={(event) => onAction(article, 'embedding', event.currentTarget)}
         disabled={busy}
       >
         Regenerate embedding
@@ -67,11 +67,14 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
   const mutation = useAdminMutation({ onSessionExpired, cacheScope })
   const [confirmation, setConfirmation] = useState(null)
   const [previewArticleId, setPreviewArticleId] = useState(null)
+  const confirmationTriggerRef = useRef(null)
+  const previewTriggerRef = useRef(null)
   function applyFilters(event) {
     event.preventDefault()
     setAppliedQuery({ ...draftQuery })
   }
-  function onAction(article, action) {
+  function onAction(article, action, trigger) {
+    if (trigger) confirmationTriggerRef.current = trigger
     if (action === 'status') {
       const next = article.status === 'published' ? 'hidden' : 'published'
       setConfirmation({ article, action, next, reasonCode: 'article_status_changed' })
@@ -89,6 +92,8 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
               csrfToken: session?.csrfToken,
               pathParams: { articleId: article.id },
               body: { status: next, reasonCode },
+              idempotencyStore: mutation.idempotencyStore,
+              idempotencyIntent: `status:${article.id}:${next}`,
             })
         : action === 'summary'
           ? () =>
@@ -200,7 +205,10 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
                         <button
                           type="button"
                           className="admin-btn-preview"
-                          onClick={() => setPreviewArticleId(value)}
+                          onClick={(event) => {
+                            previewTriggerRef.current = event.currentTarget
+                            setPreviewArticleId(value)
+                          }}
                           title={`Xem nhanh bài viết ${value}`}
                           aria-label={`Xem nhanh bài viết ${value}`}
                         >
@@ -260,6 +268,7 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
         }
         reasonCode={confirmation?.reasonCode}
         busy={mutation.busy}
+        returnFocusRef={confirmationTriggerRef}
         onCancel={() => setConfirmation(null)}
         onConfirm={confirmArticleAction}
       />
@@ -268,6 +277,7 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
         articleId={previewArticleId}
         api={api}
         onClose={() => setPreviewArticleId(null)}
+        returnFocusRef={previewTriggerRef}
       />
     </div>
   )
