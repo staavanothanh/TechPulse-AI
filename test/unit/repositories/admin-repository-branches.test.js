@@ -432,28 +432,34 @@ describe('MongoAdminRepository branch coverage', () => {
       updateInput({ category: 'status', value: 'hidden', reasonCode: 'article_status_changed' }),
     )
 
-    expect(hidden.collections.articles.updateOne.mock.calls[0][1]).toEqual(expect.objectContaining({
+    const update = hidden.collections.articles.updateOne.mock.calls[0][1]
+    expect(update).toEqual(expect.objectContaining({
       $set: expect.objectContaining({ status: 'hidden', hiddenReason: 'article_status_changed' }),
     }))
+    expect(update).not.toHaveProperty('$unset')
+    expect(hidden.collections.adminAuditLogs.insertOne).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonCode: 'article_status_changed', changedFields: ['status'] }),
+      expect.any(Object),
+    )
   })
 
-  it('xoa hiddenReason khi admin khoi phuc bai', async () => {
+  it.each(['processing', 'review-needed', 'published', 'removed'])('xoa hiddenReason khi admin chuyen sang %s', async (nextStatus) => {
     const restored = fixture({
       articleRows: [
         article(ARTICLE_ID, { status: 'hidden', hiddenReason: 'article_status_changed' }),
         article(ARTICLE_ID, { status: 'hidden', hiddenReason: 'article_status_changed' }),
-        article(ARTICLE_ID, { status: 'published' }),
+        article(ARTICLE_ID, { status: nextStatus }),
       ],
     })
     await restored.repository.updateAdminArticle(
       ARTICLE_ID,
-      updateInput({ category: 'status', value: 'published', reasonCode: 'article_status_changed' }),
+      updateInput({ category: 'status', value: nextStatus, reasonCode: 'article_status_changed' }),
     )
 
-    expect(restored.collections.articles.updateOne.mock.calls[0][1]).toEqual(expect.objectContaining({
-      $set: expect.objectContaining({ status: 'published' }),
-      $unset: { hiddenReason: '' },
-    }))
+    const update = restored.collections.articles.updateOne.mock.calls[0][1]
+    expect(update.$set).toEqual({ status: nextStatus, updatedAt: NOW })
+    expect(update.$unset).toEqual({ hiddenReason: '' })
+    expect(update.$set).not.toHaveProperty('hiddenReason')
   })
 
   it('covers merge actor, source and optimistic-write races', async () => {
