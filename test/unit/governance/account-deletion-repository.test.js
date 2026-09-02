@@ -74,6 +74,34 @@ describe('Mongo account deletion cleanup fencing', () => {
     await new MongoAccountDeletionRepository(fixture.context).list({})
     expect(find).toHaveBeenCalledWith({}, { projection: { _id: 1, status: 1, priority: 1, attempt: 1, availableAt: 1, completion: 1, error: 1, requestedAt: 1, startedAt: 1, completedAt: 1 } })
   })
+  it('passes abort and deadline options through account deletion claim', async () => {
+    const fixture = makeContext()
+    const requestCollection = {
+      findOneAndUpdate: vi.fn(async () => ({ ...fixture.request, status: 'running' })),
+    }
+    fixture.collections.set('accountDeletionRequests', requestCollection)
+    const repository = new MongoAccountDeletionRepository(fixture.context)
+    const controller = new AbortController()
+    const deadline = new Date(Date.now() + 5_000)
+
+    await repository.claim({ candidate: { _id: REQUEST_ID }, now: new Date('2026-08-13T00:30:00.000Z'), ownerToken: 'a'.repeat(64), signal: controller.signal, deadline })
+
+    expect(requestCollection.findOneAndUpdate.mock.calls[0][2]).toEqual(expect.objectContaining({ signal: controller.signal, maxTimeMS: expect.any(Number) }))
+  })
+  it('passes abort and deadline options through cleanup transactions', async () => {
+    const fixture = makeContext()
+    const repository = new MongoAccountDeletionRepository(fixture.context)
+    const controller = new AbortController()
+    const deadline = new Date(Date.now() + 5_000)
+
+    await repository.applyCleanup({ job: job(fixture.request), now: new Date('2026-08-13T00:30:00.000Z'), signal: controller.signal, deadline })
+
+    const deleteCall = fixture.calls.find(({ method }) => method === 'deleteMany')
+    const checkpointCall = fixture.calls.find(({ name, method, update }) => name === 'accountDeletionRequests' && method === 'updateOne' && update.$set?.['completion.sessionsDeleted'] === true)
+    expect(deleteCall.options).toEqual(expect.objectContaining({ session: fixture.session, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(checkpointCall.options).toEqual(expect.objectContaining({ session: fixture.session, signal: controller.signal, maxTimeMS: expect.any(Number) }))
+    expect(fixture.session.withTransaction.mock.calls[0][1]).toEqual(expect.objectContaining({ maxCommitTimeMS: expect.any(Number) }))
+  })
   it('rejects invalid account deletion list bounds and status before Mongo', async () => {
     const fixture = makeContext()
     const find = vi.fn()

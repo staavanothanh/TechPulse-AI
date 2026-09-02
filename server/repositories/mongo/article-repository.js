@@ -33,6 +33,22 @@ function dateValue(value, label = 'Article date') {
   if (Number.isNaN(date.getTime())) throw new ArticleError('article_invalid', `${label} is invalid`, { status: 422 })
   return date
 }
+function assertCommitAvailable({ signal, deadline, clock }) {
+  if (signal?.aborted) throw signal.reason ?? new ArticleError('ingestion_aborted', 'Ingestion execution was aborted', { retryable: false })
+  if (deadline !== undefined) {
+    const deadlineAt = dateValue(deadline, 'Ingestion commit deadline')
+    const current = dateValue(clock(), 'Ingestion commit clock')
+    if (current.getTime() >= deadlineAt.getTime()) throw new ArticleError('ingestion_deadline_exceeded', 'Ingestion execution deadline was exceeded', { retryable: false })
+  }
+}
+function operationOptions({ signal, deadline } = {}) {
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : dateValue(deadline, 'Article operation deadline').getTime()
+  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+  return {
+    ...(signal ? { signal } : {}),
+    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+  }
+}
 
 function nextDate(value, previous, label = 'Article date') {
   const candidate = dateValue(value, label)
@@ -532,12 +548,12 @@ export class MongoArticleRepository {
   users() { return this.collection('users') }
   sessions() { return this.collection('sessions') }
 
-  withTransaction(work) {
+  withTransaction(work, transactionOptions = {}) {
     const session = this.client.startSession()
     return (async () => {
       try {
         let result
-        await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })
+        await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, ...transactionOptions })
         return result
       } finally { await session.endSession() }
     })()
@@ -547,22 +563,22 @@ export class MongoArticleRepository {
     return { sourceId: source?.id ?? source?._id ?? source?.sourceId, policyVersion: source?.policyVersion, retrievedAt: retrievedAt instanceof Date ? retrievedAt : new Date(retrievedAt), candidates: candidates.map(safeCandidate) }
   }
 
-  async upsertCandidate({ article, session } = {}) {
+  async upsertCandidate({ article, session, options = {} } = {}) {
     const document = articleDocument(article)
     const filters = [{ canonicalUrlHash: document.canonicalUrlHash }]
     if (document.externalId) filters.unshift({ sourceId: document.sourceId, externalId: document.externalId })
-    const existing = await this.articles().findOne({ $or: filters }, { session })
+    const existing = await this.articles().findOne({ $or: filters }, { session, ...options })
     if (!existing) {
-      const possibleMatches = await this.articles().find({ status: { $ne: 'removed' } }, { session }).sort({ updatedAt: -1, _id: -1 }).limit(100).toArray()
+      const possibleMatches = await this.articles().find({ status: { $ne: 'removed' } }, { session, ...options }).sort({ updatedAt: -1, _id: -1 }).limit(100).toArray()
       if (possibleMatches.some((possible) => assessDedupe(serializeArticle(possible), serializeArticle(document)).decision === 'review-needed')) document.status = 'review-needed'
-      await this.articles().insertOne(document, { session })
+      await this.articles().insertOne(document, { session, ...options })
       return { article: serializeArticle(document), created: 1, updated: 0, duplicate: 0 }
     }
     if (existing.status === 'removed') return { article: serializeArticle(existing), created: 0, updated: 0, duplicate: 1 }
     const merged = articleDocument(mergeArticleRecords(serializeArticle(existing), serializeArticle(document)), existing._id)
     const mergedFields = { ...merged }
     delete mergedFields._id
-    const result = await this.articles().updateOne({ _id: existing._id }, { $set: mergedFields }, { session })
+    const result = await this.articles().updateOne({ _id: existing._id }, { $set: mergedFields }, { session, ...options })
     if (result.matchedCount !== 1) throw articleConflict()
     return { article: serializeArticle(merged), created: 0, updated: 1, duplicate: 1 }
   }
@@ -682,22 +698,27 @@ export class MongoArticleRepository {
     })
   }
 
-  async commitIngestionBatch({ job, fence, source, expectedSourcePolicyVersion, expectedConnectorConfig, candidates = [], articles, checkpoint, counters, retrievedAt } = {}) {
+  async commitIngestionBatch({ job, fence, source, expectedSourcePolicyVersion, expectedConnectorConfig, candidates = [], articles, checkpoint, counters, retrievedAt, signal, deadline } = {}) {
     commitFence(fence, job)
     if (!jobIdentifier(job)) throw leaseFenceStale()
     if (!job?.connectorType || !sameIdentifier(source?.id ?? source?._id ?? source?.sourceId, job?.sourceId)) throw policyVersionMismatch()
     const expectedVersion = expectedSourcePolicyVersion ?? job?.expectedSourcePolicyVersion
     const expectedConfig = expectedConnectorConfig ?? job?.expectedConnectorConfig ?? source?.connectorConfig
     if (!Number.isInteger(expectedVersion) || !expectedConfig) throw policyVersionMismatch()
+    assertCommitAvailable({ signal, deadline, clock: this.clock })
     const sanitized = this.sanitizeCommitInput({ source, candidates, retrievedAt })
-    const runCommit = () => this.withTransaction(async (session) => {
+    const runCommit = () => {
+      const commitOptions = operationOptions({ signal, deadline })
+      return this.withTransaction(async (session) => {
       const now = dateValue(this.clock(), 'Authoritative article clock')
+      assertCommitAvailable({ signal, deadline, clock: this.clock })
       const leaseFilter = { key: fence.key, 'activeOwner.jobId': idValue(jobIdentifier(job)), 'activeOwner.ownerTokenHash': fence.ownerTokenHash, 'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now } }
-      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...commitOptions })
       if (touched.matchedCount !== 1) throw leaseFenceStale()
-      const currentJob = await this.jobs().findOne({ _id: idValue(jobIdentifier(job)), status: 'running', leaseGeneration: fence.leaseGeneration }, { session })
+      const currentJob = await this.jobs().findOne({ _id: idValue(jobIdentifier(job)), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, ...commitOptions })
       if (!currentJob) throw leaseFenceStale()
-      const currentSource = await this.sources().findOne({ _id: idValue(source.id ?? source._id ?? source.sourceId), policyVersion: expectedVersion, operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, connectorType: job.connectorType, 'technicalCheck.status': 'passed' }, { session })
+      const currentSource = await this.sources().findOne({ _id: idValue(source.id ?? source._id ?? source.sourceId), policyVersion: expectedVersion, operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, connectorType: job.connectorType, 'technicalCheck.status': 'passed' }, { session, ...commitOptions })
+      assertCommitAvailable({ signal, deadline, clock: this.clock })
       if (!currentSource || stableJson(currentSource.connectorConfig) !== stableJson(expectedConfig)) throw policyVersionMismatch()
       const incomingCheckpoint = checkpoint ? safeCheckpoint(checkpoint) : undefined
       const currentCheckpoint = currentJob.checkpoint
@@ -708,9 +729,11 @@ export class MongoArticleRepository {
       const result = { created: 0, updated: 0, duplicate: 0, skipped: 0, failed: 0, fetched: replayedBatch ? 0 : sanitized.candidates.length, candidates: [] }
       const normalizedArticles = replayedBatch ? [] : Array.isArray(articles) ? articles : sanitized.candidates.map((candidate) => normalizeCandidateToArticle(candidate, { source: { ...source, id: currentSource._id?.toHexString?.() ?? String(currentSource._id ?? source.id ?? source.sourceId), policyVersion: currentSource.policyVersion }, now }))
       for (const article of normalizedArticles) {
+        assertCommitAvailable({ signal, deadline, clock: this.clock })
         try {
           assertArticleMatchesCurrent(article, currentSource)
-          const saved = await this.upsertCandidate({ article, session })
+          const saved = await this.upsertCandidate({ article, session, options: commitOptions })
+          assertCommitAvailable({ signal, deadline, clock: this.clock })
           result.created += saved.created
           result.updated += saved.updated
           result.duplicate += saved.duplicate
@@ -719,9 +742,10 @@ export class MongoArticleRepository {
             await this.indexingJobs().updateOne(
               { actorScope: indexingJob.actorScope, idempotencyKey: indexingJob.idempotencyKey },
               { $setOnInsert: indexingJobDocument(indexingJob) },
-              { upsert: true, session },
+              { upsert: true, session, ...commitOptions },
             )
           }
+          assertCommitAvailable({ signal, deadline, clock: this.clock })
         } catch (error) {
           if (error instanceof ArticleError && error.code === 'candidate_invalid') result.skipped += 1
           else throw error
@@ -729,12 +753,17 @@ export class MongoArticleRepository {
       }
       const nextCheckpoint = replayedBatch ? currentJob.checkpoint : incomingCheckpoint ?? currentJob.checkpoint
       const nextCounters = replayedBatch ? safeCounters(currentJob.counters) : addCounters(currentJob.counters, counterDelta(result, counters))
-      if (replayedBatch) return Object.freeze({ ...result, counters: nextCounters, checkpoint: nextCheckpoint, articles: Object.freeze(result.candidates) })
+      if (replayedBatch) {
+        assertCommitAvailable({ signal, deadline, clock: this.clock })
+        return Object.freeze({ ...result, counters: nextCounters, checkpoint: nextCheckpoint, articles: Object.freeze(result.candidates) })
+      }
+      assertCommitAvailable({ signal, deadline, clock: this.clock })
       const jobUpdate = { $set: { counters: nextCounters, updatedAt: now, ...(nextCheckpoint ? { checkpoint: nextCheckpoint } : {}) } }
-      const advanced = await this.jobs().updateOne({ _id: currentJob._id, status: 'running', leaseGeneration: fence.leaseGeneration }, jobUpdate, { session })
+      const advanced = await this.jobs().updateOne({ _id: currentJob._id, status: 'running', leaseGeneration: fence.leaseGeneration }, jobUpdate, { session, ...commitOptions })
       if (advanced.matchedCount !== 1) throw leaseFenceStale()
       return Object.freeze({ ...result, counters: nextCounters, checkpoint: nextCheckpoint, articles: Object.freeze(result.candidates) })
-    })
+      }, commitOptions.maxTimeMS ? { maxCommitTimeMS: commitOptions.maxTimeMS } : {})
+    }
     try {
       return await runCommit()
     } catch (error) {

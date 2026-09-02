@@ -24,7 +24,7 @@ export async function getMongoContext(runtimeConfig, environment = process.env) 
   current.uri = uri
   current.database = mongo.database
   current.promise = (async () => {
-    const client = new MongoClient(uri, { maxPoolSize: 10, serverSelectionTimeoutMS: 5_000 })
+    const client = new MongoClient(uri, { maxPoolSize: 10, serverSelectionTimeoutMS: 5_000, socketTimeoutMS: 15_000 })
     await client.connect()
     current.client = client
     return createMongoContext({ client, database: mongo.database })

@@ -309,4 +309,28 @@ describe('worker scheduling', () => {
     expect(result.queues.ingestion.claimed).toBe(0)
     expect(result.nextAvailableAt).toBeNull()
   })
+  it('correlates cron phases and forwards the same run id to the coordinator', async () => {
+    const trace = vi.fn()
+    const coordinatorRunner = vi.fn(async ({ runId }) => ({ ...baseResult(), runId }))
+    const indexingDrainRunner = vi.fn(async (result) => result)
+    const runner = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false, created: 1 })) },
+      coordinatorRunner,
+      indexingDrainRunner,
+      trace,
+      runIdFactory: () => 'cron-run-1',
+      now: () => STARTED_AT,
+    })
+
+    await runner()
+
+    expect(coordinatorRunner).toHaveBeenCalledWith(expect.objectContaining({ runId: 'cron-run-1' }))
+    expect(trace.mock.calls.map(([event]) => [event.stage, event.status])).toEqual(expect.arrayContaining([
+      ['cron', 'started'],
+      ['cron.materialization', 'succeeded'],
+      ['cron.coordinator', 'succeeded'],
+      ['cron.indexing', 'succeeded'],
+      ['cron', 'succeeded'],
+    ]))
+  })
 })

@@ -18,6 +18,56 @@ describe('Step 9 indexing queue adapter', () => {
     expect(jobRepository.completeWithFence).toHaveBeenCalledWith(expect.objectContaining({ status: 'succeeded', inputHash: 'b'.repeat(64) }))
     expect(result).toEqual({ status: 'succeeded', claimed: true })
   })
+  it('defers when lease admission outlives the indexing deadline', async () => {
+    const now = new Date('2026-08-10T00:00:00.000Z')
+    vi.useFakeTimers({ now })
+    try {
+      let receivedSignal
+      const leaseRepository = {
+        acquire: vi.fn(({ signal }) => {
+          receivedSignal = signal
+          return new Promise(() => {})
+        }),
+        release: vi.fn(async () => true),
+      }
+      const adapter = createIndexingQueueAdapter({
+        jobRepository: { claimQueuedWithFence: vi.fn(), deferWithFence: vi.fn() },
+        leaseRepository,
+        ownerToken: () => 'owner-token-value',
+      })
+
+      const run = adapter.claimAndExecute({ candidate, now, deadline: new Date(now.getTime() + 100) })
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(run).resolves.toEqual({ status: 'deferred', claimed: false })
+      expect(receivedSignal.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not wait forever when terminal indexing completion stalls', async () => {
+    vi.useFakeTimers()
+    try {
+      const fence = { key: `indexing:article:${candidate.articleId}`, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
+      const adapter = createIndexingQueueAdapter({
+        jobRepository: {
+          claimQueuedWithFence: vi.fn(async () => true),
+          completeWithFence: vi.fn(() => new Promise(() => {})),
+        },
+        leaseRepository: { acquire: vi.fn(async () => fence) },
+        executor: vi.fn(async () => ({ status: 'succeeded' })),
+        ownerToken: () => 'owner-token-value',
+      })
+
+      const run = adapter.claimAndExecute({ candidate })
+      await vi.advanceTimersByTimeAsync(0)
+      const rejection = expect(run).rejects.toMatchObject({ code: 'indexing_finalization_unresolved', retryable: false })
+      await vi.advanceTimersByTimeAsync(5_000)
+      await rejection
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('defers safely when no executor exists and never completes another task array', async () => {
     const jobRepository = { selectDueIndexing: vi.fn(), recoverExpiredIndexing: vi.fn(), nextAvailableAt: vi.fn(), claimQueuedWithFence: vi.fn(async () => true), deferWithFence: vi.fn(async () => ({ status: 'queued' })), completeWithFence: vi.fn() }
@@ -47,7 +97,7 @@ describe('Step 9 indexing queue adapter', () => {
     const adapter = createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, ownerToken: () => 'owner-token-value' })
 
     await expect(adapter.claimAndExecute({ candidate })).resolves.toEqual({ status: 'deferred', claimed: false })
-    expect(leaseRepository.release).toHaveBeenCalledWith({ ...fence, ownerToken: 'owner-token-value' })
+    expect(leaseRepository.release).toHaveBeenCalledWith(expect.objectContaining({ ...fence, ownerToken: 'owner-token-value' }))
     expect(executor).not.toHaveBeenCalled()
   })
 
@@ -59,7 +109,7 @@ describe('Step 9 indexing queue adapter', () => {
     const adapter = createIndexingQueueAdapter({ jobRepository, leaseRepository, ownerToken: () => 'owner-token-value' })
 
     await expect(adapter.claimAndExecute({ candidate })).rejects.toBe(failure)
-    expect(leaseRepository.release).toHaveBeenCalledWith({ ...fence, ownerToken: 'owner-token-value' })
+    expect(leaseRepository.release).toHaveBeenCalledWith(expect.objectContaining({ ...fence, ownerToken: 'owner-token-value' }))
   })
 
   it('defers provider admission denial before an external attempt and preserves Retry-After', async () => {
@@ -98,7 +148,7 @@ describe('Step 9 indexing queue adapter', () => {
       const run = adapter.claimAndExecute({ candidate })
       await Promise.resolve()
       await vi.advanceTimersByTimeAsync(1000)
-      expect(leaseRepository.heartbeat).toHaveBeenCalledWith({ key: fence.key, jobId: fence.jobId, leaseGeneration: fence.leaseGeneration, ownerToken: 'owner-token-value', leaseMs: 1000 })
+      expect(leaseRepository.heartbeat).toHaveBeenCalledWith(expect.objectContaining({ key: fence.key, jobId: fence.jobId, leaseGeneration: fence.leaseGeneration, ownerToken: 'owner-token-value', leaseMs: 1000 }))
       finish({ status: 'succeeded', inputHash: 'b'.repeat(64) })
       await expect(run).resolves.toEqual({ status: 'succeeded', claimed: true })
       const calls = leaseRepository.heartbeat.mock.calls.length
@@ -137,6 +187,38 @@ describe('Step 9 indexing queue adapter', () => {
       expect(receivedSignal.aborted).toBe(true)
       expect(jobRepository.completeWithFence).not.toHaveBeenCalled()
       expect(jobRepository.deferWithFence).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('fenced-completes as failed when the executor crosses its deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const fence = { key: `indexing:article:${candidate.articleId}`, jobId: candidate.id, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 2 }
+      const jobRepository = {
+        claimQueuedWithFence: vi.fn(async () => true),
+        completeWithFence: vi.fn(async () => true),
+        deferWithFence: vi.fn(),
+      }
+      const leaseRepository = {
+        acquire: vi.fn(async () => fence),
+        heartbeat: vi.fn(async () => true),
+        release: vi.fn(),
+      }
+      const executor = vi.fn(() => new Promise(() => {}))
+      const adapter = createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, ownerToken: () => 'owner-token-value' })
+      const now = new Date('2026-08-10T00:00:00.000Z')
+      const deadline = new Date(now.getTime() + 100)
+      const run = adapter.claimAndExecute({ candidate, now, deadline })
+
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(run).resolves.toEqual({ status: 'failed', claimed: true })
+      expect(jobRepository.completeWithFence).toHaveBeenCalledWith(expect.objectContaining({
+        jobId: candidate.id,
+        fence,
+        status: 'failed',
+        error: expect.objectContaining({ code: 'indexing_deadline_exceeded' }),
+      }))
     } finally {
       vi.useRealTimers()
     }

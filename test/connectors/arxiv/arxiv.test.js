@@ -6,6 +6,7 @@ import {
   normalizeArxivId,
   parseArxiv,
 } from '../../../server/connectors/arxiv/index.js'
+import { createSafeFetch } from '../../../server/infrastructure/http/safe-fetch.js'
 
 const FIXTURE_ROOT = new URL('../../fixtures/arxiv/', import.meta.url)
 const RETRIEVED_AT = new Date('2026-08-11T00:00:00.000Z')
@@ -80,6 +81,56 @@ describe('arXiv connector', () => {
     expect(sleep).not.toHaveBeenCalled()
     await createArxivConnector({ request, sleep, limits: { requestIntervalMs: 25, maxPages: 2, maxResults: 2 } }).run({ source: source() })
     expect(sleep).toHaveBeenCalledWith(25)
+  })
+  it('interrupts request backoff when the ingestion signal aborts', async () => {
+    const page = await fixture('page-1.xml')
+    const controller = new globalThis.AbortController()
+    const reason = Object.assign(new Error('heartbeat details'), { code: 'lease_heartbeat_lost', retryable: true })
+    const request = vi.fn(async () => ({ statusCode: 200, contentType: 'application/xml', body: page }))
+    const sleep = vi.fn(() => new Promise(() => {}))
+    const pending = createArxivConnector({ request, sleep, limits: { requestIntervalMs: 100, maxPages: 2, maxResults: 2 } }).run({ source: source(), signal: controller.signal })
+
+    await vi.waitFor(() => expect(sleep).toHaveBeenCalledWith(100))
+    controller.abort(reason)
+    await expect(pending).rejects.toMatchObject({ code: 'lease_heartbeat_lost', retryable: true })
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+  it('interrupts request backoff when the outer deadline expires', async () => {
+    const page = await fixture('page-1.xml')
+    const sleep = vi.fn(() => new Promise(() => {}))
+    const request = vi.fn(async () => ({ statusCode: 200, contentType: 'application/xml', body: page }))
+    const pending = createArxivConnector({ request, sleep, limits: { requestIntervalMs: 500, maxPages: 2, maxResults: 2 } }).run({ source: source(), deadline: new Date(Date.now() + 50) })
+
+    await expect(pending).rejects.toMatchObject({ code: 'ingestion_deadline_exceeded', retryable: false })
+    expect(sleep).toHaveBeenCalledWith(500)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+  it('clears the default backoff timer when the outer deadline expires', async () => {
+    vi.useFakeTimers()
+    try {
+      const page = await fixture('page-1.xml')
+      const request = vi.fn(async () => ({ statusCode: 200, contentType: 'application/xml', body: page }))
+      const pending = createArxivConnector({ request, limits: { requestIntervalMs: 500, maxPages: 2, maxResults: 2 } }).run({ source: source(), deadline: new Date(Date.now() + 50) })
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'ingestion_deadline_exceeded', retryable: false })
+
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(50)
+      await rejection
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('preserves a safe-fetch caller deadline failure', async () => {
+    const safeFetch = createSafeFetch({
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      request: () => new Promise(() => {}),
+      limits: { timeoutMs: 500 },
+    })
+    const connector = createArxivConnector({ request: ({ url, deadline }) => safeFetch(url, { allowedContentTypes: ['application/atom+xml'], deadline }) })
+
+    await expect(connector.run({ source: source(), deadline: new Date(Date.now() + 25) })).rejects.toMatchObject({ code: 'ingestion_deadline_exceeded', retryable: false })
   })
 
   it.each([

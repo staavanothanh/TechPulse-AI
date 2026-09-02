@@ -337,6 +337,23 @@ describe('MongoJobRepository', () => {
     await expect(stale.repository.completeWithFence({ jobId, fence: fence(), status: 'queued' })).rejects.toThrow(/terminal/i)
     await expect(stale.repository.completeWithFence({ jobId, fence: fence(), status: 'failed' })).rejects.toMatchObject({ status: 409 })
   })
+  it('redacts arbitrary terminal error code and message before persistence', async () => {
+    const running = serializedDocument({ status: 'running', leaseGeneration: 2 })
+    const fixture = createContext({
+      updateResults: { jobLeases: [{ matchedCount: 1 }, { matchedCount: 1 }], ingestionJobs: [{ matchedCount: 1 }] },
+      findOne: { ingestionJobs: [running], sources: [{ _id: sourceId, policyVersion: 3, operationalStatus: 'active', licenseStatus: 'metadata-only', connectorType: 'rss', connectorConfig: { kind: 'rss' } }] },
+    })
+
+    await fixture.repository.completeWithFence({
+      jobId,
+      fence: fence(),
+      status: 'failed',
+      error: { code: 'sk-proj-secret_token', message: 'https://secret.example/provider response', retryable: true, occurredAt: now },
+    })
+
+    const update = fixture.collections.get('ingestionJobs').updateOne.mock.calls[0][1]
+    expect(update.$set.error).toEqual({ code: 'worker_failed', message: 'Ingestion job did not complete safely', retryable: true, occurredAt: now })
+  })
 
   it('defers running jobs, cancels requested work, and rejects terminal cancellation', async () => {
     const running = serializedDocument({ status: 'running', leaseGeneration: 2 })
@@ -415,5 +432,117 @@ describe('MongoJobRepository', () => {
       }),
       expect.any(Object),
     )
+  })
+  it('terminalizes an expired attempt only for the exact owner generation', async () => {
+    const parent = serializedDocument({ status: 'running', leaseGeneration: 2 })
+    const owner = { jobId, ownerTokenHash: 'b'.repeat(64), leaseGeneration: 2, expiresAt: new Date(now.getTime() - 1000) }
+    const fixture = createContext({
+      findOne: { ingestionJobs: [parent], jobLeases: [{ key: `ingestion:source:${sourceId.toHexString()}`, generationHighWater: 2, activeOwner: owner }] },
+      updateResults: { ingestionJobs: [{ matchedCount: 1 }], jobLeases: [{ matchedCount: 1 }] },
+    })
+    const fence = { key: `ingestion:source:${sourceId.toHexString()}`, ownerTokenHash: owner.ownerTokenHash, leaseGeneration: owner.leaseGeneration }
+
+    await expect(fixture.repository.finalizeOrphanedAttempt({
+      jobId,
+      fence,
+      error: { code: 'ingestion_deadline_exceeded', retryable: false },
+      now,
+    })).resolves.toBe(true)
+    expect(fixture.collections.get('ingestionJobs').updateOne).toHaveBeenCalledWith(
+      { _id: jobId, status: 'running', leaseGeneration: 2 },
+      expect.objectContaining({ $set: expect.objectContaining({ status: 'failed', error: expect.objectContaining({ code: 'ingestion_deadline_exceeded', retryable: false }) }) }),
+      expect.objectContaining({ session: fixture.session }),
+    )
+    expect(fixture.collections.get('jobLeases').updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ key: fence.key, 'activeOwner.jobId': jobId, 'activeOwner.leaseGeneration': 2, 'activeOwner.expiresAt': { $lte: now } }),
+      expect.objectContaining({ $unset: { activeOwner: '' } }),
+      expect.objectContaining({ session: fixture.session }),
+    )
+  })
+  it('creates one deterministic retry child for retryable active-owner loss', async () => {
+    const parent = serializedDocument({ status: 'running', attempt: 1, leaseGeneration: 2 })
+    const owner = { jobId, ownerTokenHash: 'b'.repeat(64), leaseGeneration: 2, expiresAt: new Date(now.getTime() - 1000) }
+    const fixture = createContext({
+      findOne: { ingestionJobs: [parent], jobLeases: [{ key: `ingestion:source:${sourceId.toHexString()}`, generationHighWater: 2, activeOwner: owner }], adminAuditLogs: [null] },
+      updateResults: { ingestionJobs: [{ matchedCount: 1 }, { matchedCount: 1 }], jobLeases: [{ matchedCount: 1 }] },
+    })
+
+    await expect(fixture.repository.finalizeOrphanedAttempt({
+      jobId,
+      fence: { key: `ingestion:source:${sourceId.toHexString()}`, ownerTokenHash: owner.ownerTokenHash, leaseGeneration: owner.leaseGeneration },
+      error: { code: 'lease_heartbeat_lost', retryable: true },
+      now,
+    })).resolves.toBe(true)
+
+    const childUpdate = fixture.collections.get('ingestionJobs').updateOne.mock.calls[1]
+    expect(childUpdate[0]).toEqual({ parentJobId: jobId, attempt: 2 })
+    expect(childUpdate[1].$setOnInsert).toEqual(expect.objectContaining({ parentJobId: jobId, attempt: 2, status: 'queued', trigger: 'retry' }))
+    expect(childUpdate[2]).toEqual(expect.objectContaining({ upsert: true, session: fixture.session }))
+  })
+  it('does not write when same-generation owner token fails the CAS', async () => {
+    const parent = serializedDocument({ status: 'running', attempt: 1, leaseGeneration: 2 })
+    const fixture = createContext({
+      findOne: { ingestionJobs: [parent], jobLeases: [{ generationHighWater: 2, activeOwner: { jobId, ownerTokenHash: 'c'.repeat(64), leaseGeneration: 2 } }] },
+      updateResults: { jobLeases: [{ matchedCount: 0 }] },
+    })
+
+    await expect(fixture.repository.finalizeOrphanedAttempt({
+      jobId,
+      fence: { key: `ingestion:source:${sourceId.toHexString()}`, ownerTokenHash: 'b'.repeat(64), leaseGeneration: 2 },
+      error: { code: 'lease_heartbeat_lost', retryable: true },
+      now,
+    })).resolves.toBe(false)
+    expect(fixture.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
+    expect(fixture.collections.has('adminAuditLogs')).toBe(false)
+  })
+  it('does not finalize a generic completion error on an unexpired owner', async () => {
+    const parent = serializedDocument({ status: 'running', attempt: 1, leaseGeneration: 2 })
+    const owner = { jobId, ownerTokenHash: 'b'.repeat(64), leaseGeneration: 2, expiresAt: new Date(now.getTime() + 1_000) }
+    const fixture = createContext({
+      findOne: { ingestionJobs: [parent], jobLeases: [{ generationHighWater: 2, activeOwner: owner }] },
+      updateResults: { jobLeases: [{ matchedCount: 0 }] },
+    })
+
+    await expect(fixture.repository.finalizeOrphanedAttempt({
+      jobId,
+      fence: { key: `ingestion:source:${sourceId.toHexString()}`, ownerTokenHash: owner.ownerTokenHash, leaseGeneration: 2 },
+      error: { code: 'conflict', retryable: false },
+      now,
+    })).resolves.toBe(false)
+    expect(fixture.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
+    expect(fixture.collections.has('adminAuditLogs')).toBe(false)
+  })
+
+  it('refuses orphan finalization when a newer owner generation holds the lease', async () => {
+    const parent = serializedDocument({ status: 'running', leaseGeneration: 2 })
+    const fixture = createContext({
+      findOne: { ingestionJobs: [parent], jobLeases: [{ generationHighWater: 3, activeOwner: { jobId, ownerTokenHash: 'c'.repeat(64), leaseGeneration: 3, expiresAt: new Date(now.getTime() + 1000) } }] },
+      updateResults: { ingestionJobs: [], jobLeases: [] },
+    })
+
+    await expect(fixture.repository.finalizeOrphanedAttempt({
+      jobId,
+      fence: { key: `ingestion:source:${sourceId.toHexString()}`, ownerTokenHash: 'b'.repeat(64), leaseGeneration: 2 },
+      error: { code: 'ingestion_deadline_exceeded', retryable: false },
+      now,
+    })).resolves.toBe(false)
+    expect(fixture.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
+    expect(fixture.collections.get('jobLeases').updateOne).not.toHaveBeenCalled()
+  })
+  it('refuses orphan finalization when an ownerless lease has a newer generation', async () => {
+    const parent = serializedDocument({ status: 'running', leaseGeneration: 2 })
+    const fixture = createContext({
+      findOne: { ingestionJobs: [parent], jobLeases: [{ generationHighWater: 3 }] },
+      updateResults: { ingestionJobs: [], jobLeases: [] },
+    })
+
+    await expect(fixture.repository.finalizeOrphanedAttempt({
+      jobId,
+      fence: { key: `ingestion:source:${sourceId.toHexString()}`, ownerTokenHash: 'b'.repeat(64), leaseGeneration: 2 },
+      error: { code: 'ingestion_deadline_exceeded', retryable: false },
+      now,
+    })).resolves.toBe(false)
+    expect(fixture.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
+    expect(fixture.collections.get('jobLeases').updateOne).not.toHaveBeenCalled()
   })
 })

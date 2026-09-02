@@ -11,6 +11,7 @@ function retrievalDate(value, now) {
 
 function normalizeRequestError(error) {
   if (error instanceof ArxivConnectorError) return error
+  if (error?.code === 'ingestion_deadline_exceeded') return error
   if (error?.code === 'source_fetch_timeout' || error?.code === 'ETIMEDOUT' || error?.name === 'AbortError') return sourceFetchTimeout()
   if (Number.isInteger(error?.statusCode) || Number.isInteger(error?.status)) return sourceUpstreamStatus(Number(error.statusCode ?? error.status))
   return sourceFetchFailed()
@@ -27,32 +28,98 @@ function endpointUrl(query, start, maxResults) {
 function defaultSleep(delayMs) {
   return new Promise((resolve) => setTimeout(resolve, delayMs))
 }
+function ingestionDeadlineError() {
+  return Object.assign(new Error('Ingestion execution deadline was exceeded'), { code: 'ingestion_deadline_exceeded', retryable: false })
+}
+function ingestionAbortedError() {
+  return Object.assign(new Error('Ingestion execution was aborted'), { code: 'ingestion_aborted', retryable: false })
+}
+
+function abortReason(signal) {
+  return signal?.reason ?? ingestionAbortedError()
+}
+function cancellableSleep(delayMs, deadlineAt, signal) {
+  return new Promise((resolve, reject) => {
+    const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+    if (remainingMs <= 0) {
+      reject(ingestionDeadlineError())
+      return
+    }
+    const deadlineWins = remainingMs <= delayMs
+    let timer
+    let abortHandler
+    const finish = (callback, value) => {
+      globalThis.clearTimeout(timer)
+      if (abortHandler) signal?.removeEventListener('abort', abortHandler)
+      callback(value)
+    }
+    timer = setTimeout(() => finish(deadlineWins ? reject : resolve, deadlineWins ? ingestionDeadlineError() : undefined), Math.min(delayMs, remainingMs))
+    if (signal) {
+      abortHandler = () => finish(reject, abortReason(signal))
+      signal.addEventListener('abort', abortHandler, { once: true })
+      if (signal.aborted) abortHandler()
+    }
+  })
+}
+
+async function sleepWithCancellation(delayMs, sleep, signal, deadline) {
+  if (signal?.aborted) throw abortReason(signal)
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw sourceConfigRejected()
+  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+  if (remainingMs <= 0) throw ingestionDeadlineError()
+  if (sleep === defaultSleep) {
+    await cancellableSleep(delayMs, deadlineAt, signal)
+    return
+  }
+  const operation = Promise.resolve().then(() => sleep(delayMs))
+  operation.catch(() => {})
+  let timer
+  let abortHandler
+  const races = [operation]
+  if (deadlineAt !== Number.POSITIVE_INFINITY) races.push(new Promise((_, reject) => { timer = setTimeout(() => reject(ingestionDeadlineError()), remainingMs) }))
+  if (signal) races.push(new Promise((_, reject) => {
+    abortHandler = () => reject(abortReason(signal))
+    signal.addEventListener('abort', abortHandler, { once: true })
+  }))
+  try {
+    await Promise.race(races)
+  } finally {
+    globalThis.clearTimeout(timer)
+    if (abortHandler) signal.removeEventListener('abort', abortHandler)
+  }
+}
 
 export function createArxivConnector({ now = () => new Date(), request, sleep = defaultSleep, limits: configuredLimits } = {}) {
   const limits = boundedLimits(configuredLimits)
   if (request !== undefined && typeof request !== 'function') throw sourceConfigRejected()
   if (typeof sleep !== 'function') throw sourceConfigRejected()
 
-  async function fetchPage({ source, query, start, maxResults, pageIndex, payload }) {
+  async function fetchPage({ source, query, start, maxResults, pageIndex, payload, signal, deadline }) {
+    if (signal?.aborted) throw abortReason(signal)
     if (payload !== undefined) return parseArxivPage(payload, limits)
     if (typeof request !== 'function') throw sourceConfigRejected()
     const url = endpointUrl(query, start, maxResults)
     let response
     try {
-      response = await request({ url, query, start, maxResults, page: pageIndex, source })
+      response = await request({ url, query, start, maxResults, page: pageIndex, source, signal, deadline })
     } catch (error) {
+      if (signal?.aborted) throw abortReason(signal)
       throw normalizeRequestError(error)
     }
+    if (signal?.aborted) throw abortReason(signal)
     return parseArxivPage(response, limits)
   }
 
-  async function run({ source, payload, pages, responses, query: configuredQuery, retrievedAt, maxResults: configuredMaxResults, maxPages: configuredMaxPages } = {}) {
+  async function run({ source, payload, pages, responses, query: configuredQuery, retrievedAt, maxResults: configuredMaxResults, maxPages: configuredMaxPages, signal, deadline } = {}) {
     const observedAt = retrievalDate(retrievedAt, now)
     const query = validateArxivSource(source, configuredQuery ?? source?.connectorConfig?.arxivQuery)
     const maxResults = configuredMaxResults ?? source?.connectorConfig?.batchSize ?? 20
     if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > limits.maxResults) throw sourceConfigRejected()
     const maxPages = configuredMaxPages ?? limits.maxPages
     if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > limits.maxPages) throw sourceConfigRejected()
+    const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+    if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw sourceConfigRejected()
     const pageInputs = Array.isArray(pages) ? pages : Array.isArray(responses) ? responses : undefined
     const staticPayload = payload !== undefined && pageInputs === undefined
     const candidates = []
@@ -61,12 +128,16 @@ export function createArxivConnector({ now = () => new Date(), request, sleep = 
     let previousStart = -1
     let totalResults = Number.POSITIVE_INFINITY
     for (let pageIndex = 0; pageIndex < maxPages && start < totalResults && candidates.length < limits.maxEntries; pageIndex += 1) {
-      if (pageIndex > 0 && limits.requestIntervalMs > 0) await sleep(limits.requestIntervalMs)
+      if (signal?.aborted) throw abortReason(signal)
+      if (pageIndex > 0 && limits.requestIntervalMs > 0) await sleepWithCancellation(limits.requestIntervalMs, sleep, signal, deadline)
+      if (signal?.aborted) throw abortReason(signal)
+      if (deadlineAt !== Number.POSITIVE_INFINITY && Date.now() >= deadlineAt) throw ingestionDeadlineError()
       const pagePayload = pageInputs ? pageInputs[pageIndex] : pageIndex === 0 && payload !== undefined ? payload : undefined
       if (pageInputs && pagePayload === undefined) break
-      const page = await fetchPage({ source, query, start, maxResults, pageIndex, payload: pagePayload })
+      const page = await fetchPage({ source, query, start, maxResults, pageIndex, payload: pagePayload, signal, deadline })
       metrics.pagesFetched += 1
       if (!pageInputs && !staticPayload) metrics.requests += 1
+      if (signal?.aborted) throw abortReason(signal)
       if ((pageIndex > 0 && page.startIndex !== start) || page.startIndex <= previousStart) throw sourcePayloadRejected()
       const nextStart = page.startIndex + page.entries.length
       if (!Number.isSafeInteger(nextStart)) throw sourcePayloadRejected()

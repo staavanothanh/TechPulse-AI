@@ -85,6 +85,10 @@ describe('Hacker News connector', () => {
     expect(result).toMatchObject({ code: 'source_fetch_timeout', retryable: true })
     expect(result.message).not.toMatch(/socket|provider|secret|missing/)
   })
+  it('preserves an ingestion deadline failure from the request adapter', async () => {
+    const request = vi.fn(async () => { throw Object.assign(new Error('deadline detail'), { code: 'ingestion_deadline_exceeded', retryable: false }) })
+    await expect(createHackerNewsConnector({ request }).run({ source: source() })).rejects.toMatchObject({ code: 'ingestion_deadline_exceeded', retryable: false })
+  })
 
   it('returns safe counters for invalid item payloads without persisting response content', async () => {
     const request = vi.fn(async ({ kind }) => kind === 'stream'

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { deriveLeaseKey } from '../domain/jobs/lease-keys.js'
+import { monotonicNow, runtimeFailure, settleBeforeDeadline, settleWithinGrace } from './runtime-bounds.js'
 
 function safeOutcomeError(error, now) {
   if (!error) return undefined
@@ -13,6 +14,50 @@ function safeOutcomeError(error, now) {
 const MIN_DEFER_MS = 1_000
 const MAX_DEFER_MS = 15 * 60 * 1_000
 const DEFAULT_DEFER_MS = 5 * 60 * 1_000
+const FINALIZATION_GRACE_MS = 5_000
+
+function validDate(value, label) {
+  const result = value instanceof Date ? new Date(value) : new Date(value)
+  if (Number.isNaN(result.getTime())) throw new Error(`${label} is invalid`)
+  return result
+}
+
+function deadlineError() {
+  return runtimeFailure('indexing_deadline_exceeded', 'Indexing execution deadline was exceeded')
+}
+
+function finalizationError() {
+  return runtimeFailure('indexing_finalization_unresolved', 'Indexing terminal outcome could not be finalized')
+}
+
+function boundedFinalizationDeadline() {
+  return new Date(Date.now() + FINALIZATION_GRACE_MS)
+}
+
+async function runBoundedMutation(operation, { errorFactory = finalizationError } = {}) {
+  const controller = new globalThis.AbortController()
+  const finalizationDeadline = boundedFinalizationDeadline()
+  const operationPromise = Promise.resolve().then(() => operation({ signal: controller.signal, deadline: finalizationDeadline }))
+  const settled = await settleWithinGrace(operationPromise, FINALIZATION_GRACE_MS, { onTimeout: () => controller.abort(errorFactory()) })
+  if (settled.kind === 'operation' && settled.settled) return settled.value
+  if (settled.kind === 'operation') throw settled.error ?? errorFactory()
+  throw errorFactory()
+}
+
+async function releaseLease({ leaseRepository, fence, ownerToken }) {
+  if (typeof leaseRepository?.release !== 'function') return false
+  const settled = await runBoundedMutation(
+    ({ signal, deadline }) => leaseRepository.release({ ...fence, ownerToken, signal, deadline }),
+  )
+  return Boolean(settled)
+}
+
+async function deferJob({ jobRepository, candidate, fence, delayMs, incrementAttempt }) {
+  if (typeof jobRepository?.deferWithFence !== 'function') throw finalizationError()
+  return runBoundedMutation(
+    ({ signal, deadline }) => jobRepository.deferWithFence({ jobId: candidate.id, fence, delayMs, signal, deadline, ...(incrementAttempt === undefined ? {} : { incrementAttempt }) }),
+  )
+}
 
 function deferDelayMs(value) {
   const seconds = Number(value)
@@ -26,10 +71,16 @@ function externalAttempts(error) {
   return undefined
 }
 
-function shouldDeferOutcome(outcome) {
-  if (outcome?.status === 'deferred') return true
+function shouldDeferOutcome(outcome, candidate) {
+  const executionAttempt = Number.isInteger(candidate?.attempt) && candidate.attempt > 0 ? candidate.attempt : 1
+  if (outcome?.status === 'deferred') return executionAttempt < 3
   const attempts = externalAttempts(outcome?.error)
-  return Boolean(outcome?.error?.retryable) && attempts === 0
+  const durableRecovery = outcome?.error?.durableRecovery === true
+  return Boolean(outcome?.error?.retryable) && attempts === 0 && (executionAttempt < 3 || durableRecovery)
+}
+
+function shouldIncrementAttempt(error) {
+  return error?.durableRecovery !== true
 }
 
 function leaseHeartbeatError() {
@@ -38,26 +89,33 @@ function leaseHeartbeatError() {
     retryable: true,
   })
 }
+function leaseHeartbeatUnavailableError() {
+  return runtimeFailure('lease_heartbeat_unavailable', 'Indexing lease heartbeat could not be verified', true)
+}
+function isLeaseLost(error) {
+  return ['lease_heartbeat_lost', 'lease_heartbeat_unavailable'].includes(error?.code)
+}
 
-function startLeaseHeartbeat({ leaseRepository, fence, ownerToken, leaseMs }) {
+function startLeaseHeartbeat({ leaseRepository, fence, ownerToken, leaseMs, deadline }) {
   const controller = new globalThis.AbortController()
-  if (typeof leaseRepository?.heartbeat !== 'function') return { signal: controller.signal, stop() {} }
+  if (typeof leaseRepository?.heartbeat !== 'function') return { signal: controller.signal, abort: (reason) => controller.abort(reason), stop() {} }
   const intervalMs = Math.max(100, Math.floor(Number(leaseMs) / 3) || 100)
   let stopped = false
   let inFlight = false
   const timer = globalThis.setInterval(() => {
-    if (stopped || inFlight) return
+    if (stopped || inFlight || controller.signal.aborted) return
     inFlight = true
     Promise.resolve()
-      .then(() => leaseRepository.heartbeat({ key: fence.key, jobId: fence.jobId, leaseGeneration: fence.leaseGeneration, ownerToken, leaseMs }))
+      .then(() => leaseRepository.heartbeat({ key: fence.key, jobId: fence.jobId, leaseGeneration: fence.leaseGeneration, ownerToken, leaseMs, signal: controller.signal, ...(deadline ? { deadline } : {}) }))
       .then((owned) => { if (owned !== true && !controller.signal.aborted) controller.abort(leaseHeartbeatError()) })
-      .catch(() => { if (!controller.signal.aborted) controller.abort(leaseHeartbeatError()) })
+      .catch(() => { if (!controller.signal.aborted) controller.abort(leaseHeartbeatUnavailableError()) })
       .finally(() => { inFlight = false })
   }, intervalMs)
   timer.unref?.()
   return {
     signal: controller.signal,
-    stop() { stopped = true; globalThis.clearInterval(timer) },
+    abort: (reason) => controller.abort(reason),
+    stop() { stopped = true; globalThis.clearInterval(timer); controller.abort() },
   }
 }
 
@@ -66,66 +124,126 @@ export function createIndexingQueueAdapter({ jobRepository, leaseRepository, exe
   return Object.freeze({
     queueName: 'indexing',
     recoveryStrategy: 'terminal-parent-linked-retry',
-    selectDue: ({ now, task, tasks, excludeArticleIds } = {}) => jobRepository.selectDueIndexing({ now, task, tasks, excludeArticleIds }),
-    recoverExpired: ({ now, limit }) => jobRepository.recoverExpiredIndexing({ leaseRepository, now, limit }),
-    nextAvailableAt: () => jobRepository.nextAvailableAt(),
-    async claimAndExecute({ candidate, now = new Date(), deadline } = {}) {
+    selectDue: ({ now, task, tasks, excludeArticleIds, jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, signal, deadline } = {}) => jobRepository.selectDueIndexing({ now, task, tasks, excludeArticleIds, jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}) }),
+    recoverExpired: ({ now, limit, signal, deadline } = {}) => jobRepository.recoverExpiredIndexing({ leaseRepository, now, limit, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}) }),
+    nextAvailableAt: (input = {}) => jobRepository.nextAvailableAt(input),
+    async claimAndExecute({ candidate, now = new Date(), deadline, signal } = {}) {
+      if (signal?.aborted) return { status: 'deferred', claimed: false }
+      const startedAt = validDate(now, 'Indexing admission time')
+      const deadlineAt = deadline === undefined ? null : validDate(deadline, 'Indexing deadline')
+      const admissionStartedAt = monotonicNow()
+      const admissionWallStartedAt = Date.now()
+      const remainingAdmissionMs = () => deadlineAt === null
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, deadlineAt.getTime() - startedAt.getTime() - Math.max(0, monotonicNow() - admissionStartedAt, Date.now() - admissionWallStartedAt))
       const token = ownerToken()
-      let fence
-      try { fence = await leaseRepository.acquire({ key: deriveLeaseKey('indexing', candidate.articleId), jobId: candidate.id, ownerToken: token, now, leaseMs }) } catch (error) {
-        if (error?.status === 409 && error?.code === 'conflict') return { status: 'deferred', claimed: false }
-        throw error
+      if (remainingAdmissionMs() === 0) return { status: 'deferred', claimed: false }
+
+      const acquireController = new globalThis.AbortController()
+      signal?.addEventListener?.('abort', () => acquireController.abort(signal.reason), { once: true })
+      const acquireOperation = Promise.resolve().then(() => leaseRepository.acquire({ key: deriveLeaseKey('indexing', candidate.articleId), jobId: candidate.id, ownerToken: token, now: startedAt, leaseMs, signal: acquireController.signal, ...(deadlineAt ? { deadline: deadlineAt } : {}) }))
+      const acquired = await settleBeforeDeadline(acquireOperation, remainingAdmissionMs(), {
+        timeoutError: deadlineError,
+        onTimeout: (error) => acquireController.abort(error),
+        onLate: (result) => result.settled && result.value
+          ? releaseLease({ leaseRepository, fence: result.value, ownerToken: token })
+          : undefined,
+      })
+      if (acquired.kind === 'deadline') return { status: 'deferred', claimed: false }
+      if (!acquired.settled) {
+        if (acquired.error?.status === 409 && acquired.error?.code === 'conflict') return { status: 'deferred', claimed: false }
+        if (acquired.error?.code === 'indexing_deadline_exceeded' || remainingAdmissionMs() === 0) return { status: 'deferred', claimed: false }
+        throw acquired.error
       }
-      let claimed
-      try {
-        claimed = await jobRepository.claimQueuedWithFence({ jobId: candidate.id, fence })
-      } catch (error) {
-        await leaseRepository.release({ ...fence, ownerToken: token })
-        if (error?.status !== 409 || error?.code !== 'conflict') throw error
+      const fence = acquired.value
+      if (remainingAdmissionMs() === 0) {
+        await releaseLease({ leaseRepository, fence, ownerToken: token })
+        return { status: 'deferred', claimed: false }
+      }
+
+      const claimController = new globalThis.AbortController()
+      signal?.addEventListener?.('abort', () => claimController.abort(signal.reason), { once: true })
+      const claimOperation = Promise.resolve().then(() => jobRepository.claimQueuedWithFence({ jobId: candidate.id, fence, signal: claimController.signal, ...(deadlineAt ? { deadline: deadlineAt } : {}) }))
+      const claimedResult = await settleBeforeDeadline(claimOperation, remainingAdmissionMs(), {
+        timeoutError: deadlineError,
+        onTimeout: (error) => claimController.abort(error),
+        onLate: (result) => result.settled && result.value
+          ? deferJob({ jobRepository, candidate, fence, delayMs: DEFAULT_DEFER_MS })
+          : releaseLease({ leaseRepository, fence, ownerToken: token }),
+      })
+      if (claimedResult.kind === 'deadline') {
+        return { status: 'deferred', claimed: false }
+      }
+      if (!claimedResult.settled) {
+        await releaseLease({ leaseRepository, fence, ownerToken: token })
+        if (claimedResult.error?.status !== 409 || claimedResult.error?.code !== 'conflict') {
+          if (claimedResult.error?.code === 'indexing_deadline_exceeded' || remainingAdmissionMs() === 0) return { status: 'deferred', claimed: false }
+          throw claimedResult.error
+        }
+        return { status: 'deferred', claimed: false }
+      }
+      const claimed = claimedResult.value
+      if (remainingAdmissionMs() === 0) {
+        if (claimed) {
+          await deferJob({ jobRepository, candidate, fence, delayMs: DEFAULT_DEFER_MS })
+          return { status: 'deferred', claimed: true }
+        }
+        await releaseLease({ leaseRepository, fence, ownerToken: token })
         return { status: 'deferred', claimed: false }
       }
       if (!claimed) {
-        await leaseRepository.release({ ...fence, ownerToken: token })
+        await releaseLease({ leaseRepository, fence, ownerToken: token })
         return { status: 'deferred', claimed: false }
       }
+
       if (typeof executor !== 'function') {
-        const deferred = await jobRepository.deferWithFence({ jobId: candidate.id, fence, delayMs: DEFAULT_DEFER_MS })
+        const deferred = await deferJob({ jobRepository, candidate, fence, delayMs: DEFAULT_DEFER_MS })
         return { status: deferred?.status === 'cancelled' ? 'partial' : 'deferred', claimed: true }
       }
-      if (typeof jobRepository.cancellationRequestedWithFence === 'function' && await jobRepository.cancellationRequestedWithFence({ jobId: candidate.id, fence })) {
-        await jobRepository.completeWithFence({ jobId: candidate.id, fence, status: 'cancelled' })
+      const cancellationRequested = typeof jobRepository.cancellationRequestedWithFence === 'function'
+        && await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.cancellationRequestedWithFence({ jobId: candidate.id, fence, signal, deadline: operationDeadline }))
+      if (cancellationRequested) {
+        await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.completeWithFence({ jobId: candidate.id, fence, status: 'cancelled', signal, deadline: operationDeadline }))
         return { status: 'partial', claimed: true }
       }
-      const heartbeat = startLeaseHeartbeat({ leaseRepository, fence, ownerToken: token, leaseMs })
+      const heartbeat = startLeaseHeartbeat({ leaseRepository, fence, ownerToken: token, leaseMs, ...(deadlineAt ? { deadline: deadlineAt } : {}) })
+      signal?.addEventListener?.('abort', () => heartbeat.abort(signal.reason), { once: true })
       try {
         let outcome
         try {
-          outcome = await executor({
+          const executionOperation = Promise.resolve().then(() => executor({
             job: { ...candidate, leaseGeneration: fence.leaseGeneration },
             fence,
             ownerToken: token,
-            now,
-            deadline,
+            now: startedAt,
+            deadline: deadlineAt ?? deadline,
             signal: heartbeat.signal,
+          }))
+          const execution = await settleBeforeDeadline(executionOperation, deadlineAt ? Math.max(0, deadlineAt.getTime() - Date.now()) : Number.POSITIVE_INFINITY, {
+            timeoutError: deadlineError,
+            onTimeout: (error) => heartbeat.abort(error),
           })
+          if (execution.kind === 'deadline') throw execution.error
+          if (!execution.settled) throw execution.error
+          outcome = execution.value
         } catch (error) {
-          if (heartbeat.signal.aborted) throw heartbeat.signal.reason ?? leaseHeartbeatError()
-          if (shouldDeferOutcome({ error })) {
+          if (isLeaseLost(heartbeat.signal.reason ?? error)) throw heartbeat.signal.reason ?? error
+          if (shouldDeferOutcome({ error }, candidate)) {
             const delayMs = deferDelayMs(error.retryAfterSeconds)
-            const deferred = await jobRepository.deferWithFence({ jobId: candidate.id, fence, delayMs })
+            const deferred = await deferJob({ jobRepository, candidate, fence, delayMs, incrementAttempt: shouldIncrementAttempt(error) })
             return { status: deferred?.status === 'cancelled' ? 'partial' : 'deferred', claimed: true, retryAfterSeconds: Math.ceil(delayMs / 1_000) }
           }
           outcome = { status: 'failed', error: { code: error?.code ?? 'worker_failed', retryable: Boolean(error?.retryable), upstreamStatus: error?.upstreamStatus } }
         }
-        if (heartbeat.signal.aborted) throw heartbeat.signal.reason ?? leaseHeartbeatError()
-        if (shouldDeferOutcome(outcome)) {
+        if (isLeaseLost(heartbeat.signal.reason)) throw heartbeat.signal.reason
+        if (shouldDeferOutcome(outcome, candidate)) {
           const delayMs = deferDelayMs(outcome.retryAfterSeconds ?? outcome.error?.retryAfterSeconds)
-          const deferred = await jobRepository.deferWithFence({ jobId: candidate.id, fence, delayMs })
+          const deferred = await deferJob({ jobRepository, candidate, fence, delayMs, incrementAttempt: shouldIncrementAttempt(outcome.error) })
           return { status: deferred?.status === 'cancelled' ? 'partial' : 'deferred', claimed: true, retryAfterSeconds: Math.ceil(delayMs / 1_000) }
         }
         const status = ['succeeded', 'partial', 'failed', 'cancelled'].includes(outcome?.status) ? outcome.status : 'failed'
         const finishedAt = new Date()
-        await jobRepository.completeWithFence({ jobId: candidate.id, fence, status, error: safeOutcomeError(outcome?.error, finishedAt), inputHash: outcome?.inputHash })
+        await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.completeWithFence({ jobId: candidate.id, fence, status, error: safeOutcomeError(outcome?.error, finishedAt), inputHash: outcome?.inputHash, signal, deadline: operationDeadline }))
         return { status: status === 'cancelled' ? 'partial' : status, claimed: true }
       } finally {
         heartbeat.stop()

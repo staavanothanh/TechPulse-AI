@@ -237,4 +237,100 @@ describe('bounded cross-queue fairness', () => {
     expect(result.queues.ingestion.claimed).toBe(1)
     expect(result.queues.indexing.claimed).toBe(1)
   })
+  it('passes one run correlation and bounded deadline into each claimed job', async () => {
+    const registry = createQueueRegistry()
+    const candidate = { id: 'ingestion-1', sourceId: 'source-1', availableAt: new Date('2026-08-10T00:00:00.000Z') }
+    const ingestion = adapter('ingestion', 1)
+    ingestion.selectDue = vi.fn(async () => candidate)
+    ingestion.claimAndExecute = vi.fn(async () => ({ status: 'succeeded', claimed: true }))
+    registry.register(ingestion)
+
+    await runDueWork({
+      registry,
+      runId: 'cron-run-1',
+      maxJobs: 1,
+      maxRecoveries: 0,
+      budgetMs: 1_000,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    expect(ingestion.claimAndExecute).toHaveBeenCalledWith(expect.objectContaining({
+      candidate,
+      runId: 'cron-run-1',
+      deadline: new Date('2026-08-10T00:00:00.750Z'),
+    }))
+  })
+  it('uses claim-time now so late spill work cannot outlive the absolute deadline', async () => {
+    const registry = createQueueRegistry()
+    let currentMs = new Date('2026-08-10T00:00:00.000Z').getTime()
+    let remaining = 2
+    const calls = []
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => remaining > 0 ? { id: `job-${remaining}`, sourceId: `source-${remaining}`, availableAt: new Date(currentMs) } : null),
+      claimAndExecute: vi.fn(async (input) => {
+        calls.push(input)
+        remaining -= 1
+        currentMs += 700
+        return { status: 'succeeded', claimed: true }
+      }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    await runDueWork({ registry, maxJobs: 2, maxRecoveries: 0, budgetMs: 1_000, runId: 'cron-run-1', now: () => new Date(currentMs) })
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0].now).toEqual(new Date('2026-08-10T00:00:00.000Z'))
+    expect(calls[1].now).toEqual(new Date('2026-08-10T00:00:00.700Z'))
+    expect(calls[1].deadline).toEqual(new Date('2026-08-10T00:00:00.750Z'))
+  })
+  it('does not claim a reserved candidate selected after the safety deadline', async () => {
+    const registry = createQueueRegistry()
+    let currentMs = new Date('2026-08-10T00:00:00.000Z').getTime()
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => {
+        currentMs += 800
+        return { id: 'late-job', sourceId: 'late-source', availableAt: new Date(currentMs) }
+      }),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    await runDueWork({ registry, maxJobs: 1, maxRecoveries: 0, budgetMs: 1_000, now: () => new Date(currentMs) })
+
+    expect(ingestion.selectDue).toHaveBeenCalledOnce()
+    expect(ingestion.claimAndExecute).not.toHaveBeenCalled()
+  })
+
+  it('does not claim a spill candidate selected after the safety deadline', async () => {
+    const registry = createQueueRegistry()
+    let currentMs = new Date('2026-08-10T00:00:00.000Z').getTime()
+    let selectCalls = 0
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => {
+        selectCalls += 1
+        if (selectCalls === 2) currentMs += 800
+        return selectCalls <= 2 ? { id: `spill-job-${selectCalls}`, sourceId: `spill-source-${selectCalls}`, availableAt: new Date(currentMs) } : null
+      }),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    await runDueWork({ registry, maxJobs: 2, maxRecoveries: 0, budgetMs: 1_000, now: () => new Date(currentMs) })
+
+    expect(ingestion.claimAndExecute).toHaveBeenCalledOnce()
+    expect(ingestion.claimAndExecute.mock.calls[0][0].candidate.id).toBe('spill-job-1')
+    expect(selectCalls).toBe(2)
+  })
 })

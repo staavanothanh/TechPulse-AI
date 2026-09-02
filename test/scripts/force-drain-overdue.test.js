@@ -129,6 +129,30 @@ describe('force indexing drain script', () => {
     expect(fixture.claimAndExecute).not.toHaveBeenCalled()
   })
 
+  it('forwards exact job scope and rejects an out-of-scope candidate', async () => {
+    const allowedId = 'a'.repeat(24)
+    const allowedFixture = queueFixture({ jobs: [candidate(allowedId, 'article-a', 'summary')] })
+    const allowedResult = await runForceDrain({
+      options: parseArgs(['--confirm', '--confirm-database=test_db', '--max-claims=1']),
+      environment: { MONGODB_DATABASE: 'test_db' },
+      runtime: { database: 'test_db', queue: allowedFixture.queue },
+      scope: { jobIds: [allowedId] },
+      now: () => NOW,
+    })
+    expect(allowedResult.counters).toEqual({ claimed: 1, succeeded: 1, partial: 0, failed: 0, deferred: 0 })
+    expect(allowedFixture.selectDue).toHaveBeenCalledWith(expect.objectContaining({ jobIds: [allowedId] }))
+
+    const blockedFixture = queueFixture({ jobs: [candidate('b'.repeat(24), 'article-b', 'summary')] })
+    await expect(runForceDrain({
+      options: parseArgs(['--confirm', '--confirm-database=test_db', '--max-claims=1']),
+      environment: { MONGODB_DATABASE: 'test_db' },
+      runtime: { database: 'test_db', queue: blockedFixture.queue },
+      scope: { jobIds: [allowedId] },
+      now: () => NOW,
+    })).rejects.toThrow(/out-of-scope/i)
+    expect(blockedFixture.claimAndExecute).not.toHaveBeenCalled()
+  })
+
   it('rejects a mismatched database before loading a mutating runtime', async () => {
     const loadRuntime = vi.fn(async () => { throw new Error('runtime must not load') })
     await expect(runForceDrain({

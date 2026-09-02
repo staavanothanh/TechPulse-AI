@@ -15,6 +15,24 @@ describe('ingestion article pipeline', () => {
     expect(articleRepository.commitIngestionBatch).toHaveBeenCalledWith(expect.objectContaining({ job: makeJob(), expectedSourcePolicyVersion: 3, expectedConnectorConfig: source.connectorConfig, checkpoint: expect.objectContaining({ processedCount: 1 }) }))
     expect(result).toMatchObject({ created: 1 })
   })
+  it('forwards abort and deadline options to source policy reads', async () => {
+    const source = makeSource()
+    const findSourceById = vi.fn(async () => source)
+    const service = createIngestionService({
+      connectorRegistry: { resolve: vi.fn(() => ({ run: vi.fn(async () => ({ candidates: [], retrievedAt: RETRIEVED_AT })) })) },
+      sourceRepository: { findSourceById },
+      articleRepository: { commitIngestionBatch: vi.fn(async () => ({ created: 0, updated: 0, duplicate: 0, skipped: 0 })) },
+      now: () => RETRIEVED_AT,
+    })
+    const controller = new AbortController()
+    const deadline = new Date(RETRIEVED_AT.getTime() + 5_000)
+
+    await service.execute({ job: makeJob(), fence: { key: 'ingestion:source:507f1f77bcf86cd799439011', ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }, signal: controller.signal, deadline })
+
+    expect(findSourceById).toHaveBeenCalledTimes(2)
+    expect(findSourceById.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: controller.signal, deadline }))
+    expect(findSourceById.mock.calls[1][1]).toEqual(expect.objectContaining({ signal: controller.signal, deadline }))
+  })
 
   it('fails closed when policy/config changes after fetch and never advances article/checkpoint writes', async () => {
     const original = makeSource()

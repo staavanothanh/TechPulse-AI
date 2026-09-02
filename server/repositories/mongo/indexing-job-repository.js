@@ -63,6 +63,18 @@ function dateValue(value, label = 'Indexing job date') {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new Error(`${label} is invalid`)
   return value
 }
+function operationOptions({ signal, deadline } = {}) {
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw new Error('Indexing operation deadline is invalid')
+  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+  return {
+    ...(signal ? { signal } : {}),
+    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+  }
+}
+function transactionOptions(options = {}) {
+  return options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}
+}
 
 function dueTaskFilter({ task, tasks } = {}) {
   const requested = task === undefined ? tasks : [task]
@@ -79,6 +91,28 @@ function excludedArticleIds(values) {
     const id = idValue(value)
     return [id.toHexString(), id]
   })).values()]
+}
+function indexingScopeFilter({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger } = {}) {
+  const filter = {}
+  if (jobIds !== undefined) {
+    if (!Array.isArray(jobIds) || jobIds.length > 5_000) throw new Error('Indexing job scope is invalid')
+    const ids = [...new Map(jobIds.map((value) => {
+      const id = idValue(value)
+      return [id.toHexString(), id]
+    })).values()]
+    filter._id = { $in: ids }
+  }
+  if (sourceId !== undefined) filter.sourceId = idValue(sourceId)
+  if (expectedSourcePolicyVersion !== undefined) {
+    if (!Number.isInteger(expectedSourcePolicyVersion) || expectedSourcePolicyVersion < 1) throw new Error('Indexing policy scope is invalid')
+    filter.expectedSourcePolicyVersion = expectedSourcePolicyVersion
+  }
+  for (const [field, value] of [['actorScope', actorScope], ['trigger', trigger]]) {
+    if (value === undefined) continue
+    if (typeof value !== 'string' || value.length < 1 || value.length > 512) throw new Error(`Indexing ${field} scope is invalid`)
+    filter[field] = value
+  }
+  return filter
 }
 
 function safeErrorDocument(error) {
@@ -231,11 +265,11 @@ export class MongoIndexingJobRepository {
   articles() { return this.db.collection('articles') }
   audits() { return this.db.collection('adminAuditLogs') }
 
-  async withTransaction(work) {
+  async withTransaction(work, transactionOptions = {}) {
     const session = this.client.startSession()
     try {
       let result
-      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })
+      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, ...transactionOptions })
       return result
     } finally { await session.endSession() }
   }
@@ -480,25 +514,32 @@ export class MongoIndexingJobRepository {
     return { jobs: page.map(serializeIndexingJob), hasNext, nextCursor: hasNext ? Buffer.from(JSON.stringify({ createdAt: page.at(-1).createdAt.toISOString(), id: page.at(-1)._id.toHexString() })).toString('base64url') : null }
   }
 
-  async selectDueIndexing({ now = new Date(), task, tasks, excludeArticleIds } = {}) {
+  async selectDueIndexing({ now = new Date(), task, tasks, excludeArticleIds, jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, signal, deadline } = {}) {
     dateValue(now, 'Indexing due clock')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     const taskFilter = dueTaskFilter({ task, tasks })
     const excluded = excludedArticleIds(excludeArticleIds)
+    const scope = indexingScopeFilter({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger })
     const common = {
       status: 'queued',
       availableAt: { $lte: now },
+      ...scope,
       ...(taskFilter ? { task: taskFilter } : {}),
       ...(excluded.length > 0 ? { articleId: { $nin: excluded } } : {}),
     }
     const agedIndex = taskFilter ? 'indexing_drain_task_aged' : 'indexing_due_aged'
     const normalIndex = taskFilter ? 'indexing_drain_task_normal' : 'indexing_due_normal'
-    const aged = await this.jobs().find({ ...common, agingEligibleAt: { $lte: now } }).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint(agedIndex).limit(1).next()
+    const aged = await this.jobs().find({ ...common, agingEligibleAt: { $lte: now } }, options).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint(agedIndex).limit(1).next()
     if (aged) return serializeIndexingJob(aged)
-    return serializeIndexingJob(await this.jobs().find({ ...common, agingEligibleAt: { $gt: now } }).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint(normalIndex).limit(1).next())
-  }
+    return serializeIndexingJob(await this.jobs().find({ ...common, agingEligibleAt: { $gt: now } }, options).sort({ priority: -1, availableAt: 1, createdAt: 1, _id: 1 }).hint(normalIndex).limit(1).next())
 
-  async nextAvailableAt() {
-    const document = await this.jobs().find({ status: 'queued' }).sort({ availableAt: 1, _id: 1 }).hint('indexing_next_available').project({ availableAt: 1 }).limit(1).next()
+  }
+  async nextAvailableAt({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, signal, deadline } = {}) {
+    const scope = indexingScopeFilter({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger })
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const document = await this.jobs().find({ status: 'queued', ...scope }, options).sort({ availableAt: 1, _id: 1 }).hint('indexing_next_available').project({ availableAt: 1 }).limit(1).next()
     return document?.availableAt ?? null
   }
 
@@ -513,47 +554,59 @@ export class MongoIndexingJobRepository {
     return { inspected: selected.length, affected: result.deletedCount, hasMore: candidates.length > limit }
   }
 
-  async claimQueuedWithFence({ jobId, fence } = {}) {
+  async claimQueuedWithFence({ jobId, fence, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
+    const options = operationOptions({ signal, deadline })
+    const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
+    if (deadlineAt !== Number.POSITIVE_INFINITY && now.getTime() >= deadlineAt) throw new JobError(409, 'conflict', 'Indexing admission deadline exceeded')
+    signal?.throwIfAborted?.()
+    const transactionOptions = options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const lease = await this.leases().updateOne({
         key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
-      }, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      }, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
       if (lease.matchedCount !== 1) return false
-      const job = await this.jobs().updateOne({ _id: idValue(jobId), status: 'queued', availableAt: { $lte: now } }, { $set: { status: 'running', leaseGeneration: fence.leaseGeneration, startedAt: now, heartbeatAt: now, updatedAt: now } }, { session })
-      if (job.matchedCount !== 1) throw new JobError(409, 'conflict', 'Indexing job is no longer claimable')
+      signal?.throwIfAborted?.()
+      const claimed = await this.jobs().updateOne({ _id: idValue(jobId), status: 'queued', availableAt: { $lte: now } }, { $set: { status: 'running', leaseGeneration: fence.leaseGeneration, startedAt: now, heartbeatAt: now, updatedAt: now } }, { session, ...options })
+      if (claimed.matchedCount !== 1) throw new JobError(409, 'conflict', 'Indexing job is no longer claimable')
       return true
-    })
+    }, transactionOptions)
   }
-
-  async cancellationRequestedWithFence({ jobId, fence } = {}) {
+  async cancellationRequestedWithFence({ jobId, fence, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const lease = await this.leases().updateOne({
         key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
-      }, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      }, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
       if (lease.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease fence is stale or expired')
-      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, projection: { cancellationRequestedAt: 1 } })
+      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, projection: { cancellationRequestedAt: 1 }, ...options })
       if (!current) throw new JobError(409, 'conflict', 'Indexing job changed before provider call')
       return Boolean(current.cancellationRequestedAt)
-    })
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
   }
 
-  async completeWithFence({ jobId, fence, status, error, inputHash } = {}) {
+  async completeWithFence({ jobId, fence, status, error, inputHash, signal, deadline } = {}) {
     if (!TERMINAL.has(status)) throw new Error('Terminal indexing status is invalid')
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const leaseFilter = {
         key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
       }
-      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
       if (touched.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease fence is stale or expired')
-      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session })
+      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, ...options })
       if (!current) throw new JobError(409, 'conflict', 'Lease fence no longer owns this indexing job')
-      const source = await this.sources().findOne({ _id: current.sourceId, policyVersion: current.expectedSourcePolicyVersion }, { session, projection: { _id: 1, operationalStatus: 1, licenseStatus: 1, technicalCheck: 1 } })
+      const source = await this.sources().findOne({ _id: current.sourceId, policyVersion: current.expectedSourcePolicyVersion }, { session, projection: { _id: 1, operationalStatus: 1, licenseStatus: 1, technicalCheck: 1 }, ...options })
       const policyMismatch = !source || current.task !== 'visibility-reconcile' && (source.operationalStatus !== 'active' || !['permitted', 'metadata-only'].includes(source.licenseStatus) || source.technicalCheck?.status !== 'passed')
       const finalStatus = policyMismatch ? 'failed' : status
       const set = { status: finalStatus, finishedAt: now, purgeAfter: purgeAfterForIndexing(finalStatus, now, current.idempotencyExpiresAt), updatedAt: now }
@@ -562,30 +615,33 @@ export class MongoIndexingJobRepository {
         if (error) set.error = safeErrorDocument(error)
         if (typeof inputHash === 'string' && /^[a-f0-9]{64}$/.test(inputHash)) set.inputHash = inputHash
       }
-      await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, { $set: set }, { session })
-      const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session })
+      await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, { $set: set }, { session, ...options })
+      const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
       if (released.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease release fence failed')
-      return this.findIndexingJobById(jobId, { session })
-    })
+      return this.findIndexingJobById(jobId, { session, ...options })
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
   }
 
-  async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000 } = {}) {
+  async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000, incrementAttempt = false, signal, deadline } = {}) {
     if (!Number.isInteger(delayMs) || delayMs < 1_000 || delayMs > 15 * 60 * 1_000) throw new Error('Indexing defer delay is invalid')
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const leaseFilter = { key: fence.key, 'activeOwner.jobId': idValue(jobId), 'activeOwner.ownerTokenHash': fence.ownerTokenHash, 'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now } }
-      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session })
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
       if (touched.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease fence is stale or expired')
-      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session })
+      const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, ...options })
       if (!current) throw new JobError(409, 'conflict', 'Indexing job changed before defer')
       const cancelled = Boolean(current.cancellationRequestedAt)
       const update = cancelled
         ? { $set: { status: 'cancelled', finishedAt: now, purgeAfter: purgeAfterForIndexing('cancelled', now, current.idempotencyExpiresAt), updatedAt: now }, $unset: { startedAt: '', heartbeatAt: '' } }
-        : { $set: { status: 'queued', availableAt: new Date(now.getTime() + delayMs), leaseGeneration: 0, updatedAt: now }, $unset: { startedAt: '', heartbeatAt: '' } }
-      await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, update, { session })
-      await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session })
-      return this.findIndexingJobById(jobId, { session })
-    })
+        : { $set: { status: 'queued', availableAt: new Date(now.getTime() + delayMs), leaseGeneration: 0, updatedAt: now }, ...(incrementAttempt ? { $inc: { attempt: 1 } } : {}), $unset: { startedAt: '', heartbeatAt: '' } }
+      await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, update, { session, ...options })
+      await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
+      return this.findIndexingJobById(jobId, { session, ...options })
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
   }
 
   async cancelIndexingJob({ jobId, actor, reasonCode, request, actorFence, now = new Date() } = {}) {
@@ -610,30 +666,39 @@ export class MongoIndexingJobRepository {
     })
   }
 
-  async recoverExpiredIndexing({ leaseRepository, now = new Date(), limit = 10 } = {}) {
-    const expired = await leaseRepository.listExpired({ now, limit, namespace: 'indexing:article:' })
+  async recoverExpiredIndexing({ leaseRepository, now = new Date(), limit = 10, signal, deadline } = {}) {
+    const options = operationOptions({ signal, deadline })
+    signal?.throwIfAborted?.()
+    const expired = await leaseRepository.listExpired({ now, limit, namespace: 'indexing:article:', signal, deadline })
     const summary = { inspected: expired.length, recovered: 0, retriesCreated: 0, failed: 0 }
     for (const snapshot of expired) {
+      signal?.throwIfAborted?.()
       try {
         const outcome = await this.withTransaction(async (session) => {
-          const filter = { _id: snapshot._id, key: snapshot.key, 'activeOwner.jobId': snapshot.activeOwner.jobId, 'activeOwner.ownerTokenHash': snapshot.activeOwner.ownerTokenHash, 'activeOwner.leaseGeneration': snapshot.activeOwner.leaseGeneration, 'activeOwner.expiresAt': { $lte: now } }
-          const parent = await this.jobs().findOne({ _id: snapshot.activeOwner.jobId, status: 'running', leaseGeneration: snapshot.activeOwner.leaseGeneration }, { session })
+          const filter = {
+            _id: snapshot._id, key: snapshot.key,
+            'activeOwner.jobId': snapshot.activeOwner.jobId,
+            'activeOwner.ownerTokenHash': snapshot.activeOwner.ownerTokenHash,
+            'activeOwner.leaseGeneration': snapshot.activeOwner.leaseGeneration,
+            'activeOwner.expiresAt': { $lte: now },
+          }
+          const parent = await this.jobs().findOne({ _id: snapshot.activeOwner.jobId, status: 'running', leaseGeneration: snapshot.activeOwner.leaseGeneration }, { session, ...options })
           let retriesCreated = 0
           if (parent) {
-            const safe = { code: 'lease_expired', message: 'Indexing lease expired before completion', retryable: true, occurredAt: now }
             const cancelled = Boolean(parent.cancellationRequestedAt)
             const terminalStatus = cancelled ? 'cancelled' : 'failed'
+            const terminalError = cancelled ? undefined : safeErrorDocument({ code: 'lease_expired', message: 'Indexing job lease expired before completion', retryable: true, occurredAt: now })
             const terminalUpdate = {
               $set: {
                 status: terminalStatus,
-                ...(!cancelled ? { error: safe } : {}),
+                ...(terminalError ? { error: terminalError } : {}),
                 finishedAt: now,
                 purgeAfter: purgeAfterForIndexing(terminalStatus, now, parent.idempotencyExpiresAt),
                 updatedAt: now,
               },
               ...(cancelled ? { $unset: { error: '' } } : {}),
             }
-            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, terminalUpdate, { session })
+            await this.jobs().updateOne({ _id: parent._id, status: 'running', leaseGeneration: parent.leaseGeneration }, terminalUpdate, { session, ...options })
             const willRetry = !cancelled && parent.attempt < 3
             if (willRetry) {
               const nextAttempt = parent.attempt + 1
@@ -644,21 +709,24 @@ export class MongoIndexingJobRepository {
                 leaseGeneration: 0, createdAt: now, updatedAt: now,
               }
               for (const field of ['startedAt', 'heartbeatAt', 'finishedAt', 'purgeAfter', 'error', 'cancellationRequestedAt', 'inputHash']) delete child[field]
-              const inserted = await this.jobs().updateOne({ parentJobId: child.parentJobId, attempt: child.attempt }, { $setOnInsert: child }, { upsert: true, session })
+              const inserted = await this.jobs().updateOne({ parentJobId: child.parentJobId, attempt: child.attempt }, { $setOnInsert: child }, { upsert: true, session, ...options })
               retriesCreated = inserted.upsertedCount === 1 ? 1 : 0
             }
             const artifactRecovery = expiredArtifactRecovery(parent, now, willRetry || cancelled)
-            if (artifactRecovery) await this.articles().updateOne(artifactRecovery.filter, artifactRecovery.update, { session })
+            if (artifactRecovery) await this.articles().updateOne(artifactRecovery.filter, artifactRecovery.update, { session, ...options })
             const audit = createJobAuditEvent({ actor: { id: 'system:due-work', role: 'system-worker' }, action: 'indexing_job_lease_recovered', targetId: parent._id.toHexString(), changedFields: ['status', 'error'], reasonCode: 'lease_expired_recovered', request: { serverRequestId: `recovery:${parent._id.toHexString()}:${parent.leaseGeneration}` }, createdAt: now })
-            await this.insertAudit(audit, session)
+            await this.insertAudit(audit, session, options)
           }
-          const cleared = await this.leases().updateOne(filter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session })
+          const cleared = await this.leases().updateOne(filter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
           if (cleared.matchedCount !== 1) throw new JobError(409, 'conflict', 'Expired indexing lease changed during recovery')
           return { recovered: 1, retriesCreated }
-        })
+        }, transactionOptions(options))
         summary.recovered += outcome.recovered
         summary.retriesCreated += outcome.retriesCreated
-      } catch { summary.failed += 1 }
+      } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') throw error
+        summary.failed += 1
+      }
     }
     return summary
   }

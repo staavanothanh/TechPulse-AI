@@ -23,6 +23,8 @@ const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
 const { createRateLimitAdmission } = await import('./security/rate-limit-admission.js')
 const { closeMaintenanceMongoContext, getMaintenanceMongoContext } = await import('./maintenance/mongo-context.js')
+const { createRuntimeTracer } = await import('./jobs/runtime-trace.js')
+const runtimeTrace = createRuntimeTracer()
 let authService
 let sourceService
 let jobService
@@ -57,7 +59,7 @@ try {
   const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
   try { sourceService = (await createConfiguredSourceService({ context: configured.context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
   try {
-    const jobs = await createConfiguredJobRuntime({ context: configured.context, executor: createConfiguredIngestionExecutor({ context: configured.context, providerRegistry: runtime.providerRegistry }), rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring, maintenanceContext })
+    const jobs = await createConfiguredJobRuntime({ context: configured.context, executor: createConfiguredIngestionExecutor({ context: configured.context, providerRegistry: runtime.providerRegistry }), rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring, maintenanceContext, trace: runtimeTrace })
     jobService = jobs.jobService
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner

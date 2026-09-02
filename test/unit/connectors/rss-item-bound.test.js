@@ -34,6 +34,31 @@ describe('RSS feed item bound', () => {
     expect(result.candidates[99].externalId).toBe('story-100')
     expect(result.candidates.some((candidate) => candidate.externalId === 'story-101')).toBe(false)
   })
+  it('honors maxResults before normalizing later items', async () => {
+    const body = feedWithItems(3)
+    const connector = createRssConnector({ now: () => RETRIEVED_AT })
+
+    const result = await connector.run({
+      source: {
+        id: 'source-1',
+        sourceKey: 'rss:bounded-batch',
+        connectorType: 'rss',
+        connectorConfig: { kind: 'rss', feedUrl: 'https://news.example.com/feed.xml', batchSize: 2 },
+      },
+      payload: { body, contentType: 'application/rss+xml', url: 'https://news.example.com/feed.xml' },
+      maxResults: 2,
+    })
+
+    expect(result.candidates).toHaveLength(2)
+    expect(result.candidates.map(({ externalId }) => externalId)).toEqual(['story-1', 'story-2'])
+  })
+  it.each([0, -1, 101, 1.5])('rejects invalid maxResults %s before normalization', async (maxResults) => {
+    await expect(createRssConnector({ now: () => RETRIEVED_AT }).run({
+      source: { id: 'source-1', sourceKey: 'rss:invalid-batch', connectorType: 'rss', connectorConfig: { kind: 'rss', feedUrl: 'https://news.example.com/feed.xml' } },
+      payload: { body: feedWithItems(1), contentType: 'application/rss+xml', url: 'https://news.example.com/feed.xml' },
+      maxResults,
+    })).rejects.toMatchObject({ code: 'source_config_rejected' })
+  })
 
   it('keeps all items when the feed has at most maxItems', async () => {
     const body = feedWithItems(100)
