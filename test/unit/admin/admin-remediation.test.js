@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { createApp } from '../../../server/app.js'
 import { ARTICLE_PROJECTION, MongoAdminRepository } from '../../../server/repositories/mongo/admin-repository.js'
+import { canonicalRequestHash } from '../../../server/domain/jobs/idempotency.js'
 
 const adminToken = 'admin-remediation-session'
 const adminAuthService = {
@@ -63,7 +65,7 @@ describe('Step 11 backend remediation regressions', () => {
     const client = { startSession: vi.fn(() => ({ withTransaction: vi.fn(async (work) => work(session)), endSession: vi.fn(async () => {}) })) }
     const repository = new MongoAdminRepository({ db: { collection: (name) => collections.get(name) }, client, now: () => new Date('2026-01-02') })
     await expect(repository.updateAdminArticle(article._id.toHexString(), { category: 'topics', value: ['security'], actor: { id: '507f1f77bcf86cd799439001', role: 'admin' }, actorFence: { userId: '507f1f77bcf86cd799439001', sessionId: '507f1f77bcf86cd799439002', sessionVersion: 4 }, reasonCode: 'article_topics_changed', request: { serverRequestId: 'admin-remediation-audit-denied' }, rateLimitAdmission: allowAdmission })).rejects.toThrow('audit write denied')
-    expect(articleUpdate).toHaveBeenCalled()
+    expect(articleUpdate).not.toHaveBeenCalled()
     expect(audit.insertOne).toHaveBeenCalledTimes(1)
   })
 
@@ -108,6 +110,42 @@ describe('Step 11 backend remediation regressions', () => {
     })).rejects.toMatchObject({ status: 409, code: 'idempotency_mismatch' })
   })
 
+  it('replays a legacy duplicate merge audit identity after scoped article claims', async () => {
+    const canonicalId = '507f1f77bcf86cd799439010'
+    const duplicateId = '507f1f77bcf86cd799439012'
+    const actorId = '507f1f77bcf86cd799439001'
+    const reasonCode = 'duplicate_merge_confirmed'
+    const idempotencyKey = 'merge-legacy-key-123'
+    const requestHash = canonicalRequestHash({ operation: 'duplicate-merge', canonicalArticleId: canonicalId, duplicateArticleIds: [duplicateId], reasonCode })
+    const eventIdentity = `${idempotencyKey}:${requestHash}`
+    const legacyEventId = `admin:${createHash('sha256').update(`${reasonCode}\u0000${canonicalId}\u0000${eventIdentity}\u0000${actorId}`).digest('hex')}`
+    const canonical = { _id: { toHexString: () => canonicalId }, updatedAt: new Date('2026-01-01') }
+    const prior = { eventId: legacyEventId, targetId: canonicalId, requestId: idempotencyKey, action: reasonCode, actorId, reasonCode, changedFields: ['provenance', 'status'] }
+    const findAudit = vi.fn(async (filter) => filter?.requestId ? prior : null)
+    const articleFindOne = vi.fn(async () => canonical)
+    const collections = new Map([
+      ['articles', { findOne: articleFindOne, updateOne: vi.fn(), updateMany: vi.fn() }],
+      ['users', { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }],
+      ['sessions', { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }],
+      ['adminAuditLogs', { findOne: findAudit, insertOne: vi.fn() }],
+    ])
+    const repository = new MongoAdminRepository({ db: { collection: (name) => collections.get(name) }, client: { startSession: () => ({ withTransaction: async (work) => work({}), endSession: async () => {} }) }, now: () => new Date('2026-01-02') })
+
+    await expect(repository.mergeDuplicateArticles({
+      canonicalArticleId: canonicalId,
+      duplicateArticleIds: [duplicateId],
+      actor: { id: actorId },
+      actorFence: { userId: actorId, sessionId: '507f1f77bcf86cd799439002', sessionVersion: 4 },
+      reasonCode,
+      idempotencyKey,
+      request: { serverRequestId: 'admin-merge-legacy-replay' },
+      rateLimitAdmission: allowAdmission,
+    })).resolves.toMatchObject({ canonical })
+    expect(collections.get('articles').updateOne).not.toHaveBeenCalled()
+    expect(collections.get('articles').updateMany).not.toHaveBeenCalled()
+    expect(collections.get('adminAuditLogs').insertOne).not.toHaveBeenCalled()
+  })
+
   it('fences duplicate merge against the current source lifecycle before article writes', async () => {
     const canonicalId = new (await import('mongodb')).ObjectId('507f1f77bcf86cd799439010')
     const duplicateId = new (await import('mongodb')).ObjectId('507f1f77bcf86cd799439012')
@@ -143,6 +181,7 @@ describe('Step 11 backend remediation regressions', () => {
       ['articles', { findOne: vi.fn(async () => article), updateOne: articleUpdate }],
       ['users', { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }],
       ['sessions', { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }],
+      ['adminAuditLogs', { findOne: vi.fn(async () => null), insertOne: vi.fn(async () => ({})) }],
     ])
     const repository = new MongoAdminRepository({ db: { collection: (name) => collections.get(name) }, client: { startSession: () => ({ withTransaction: async (work) => work({}), endSession: async () => {} }) }, now: () => new Date('2026-01-02') })
     const input = { category: 'topics', value: ['security'], actor: { id: '507f1f77bcf86cd799439001' }, actorFence: { userId: '507f1f77bcf86cd799439001', sessionId: '507f1f77bcf86cd799439002', sessionVersion: 4 }, reasonCode: 'article_topics_changed', request: { serverRequestId: 'admin-admission-fail-closed' } }

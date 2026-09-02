@@ -768,53 +768,6 @@ describe('admin feature views', () => {
   })
 
   it('navigates to Source Registry when sourcesNeedingReview exception is selected', () => {
-    function renderHookRunner(hookFn) {
-      let hookIdx = 0
-      const hooks = []
-      const dispatcher = {
-        useState(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) hooks[idx] = typeof initial === 'function' ? initial() : initial
-          return [hooks[idx], (next) => { hooks[idx] = typeof next === 'function' ? next(hooks[idx]) : next }]
-        },
-        useRef(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) hooks[idx] = { current: initial }
-          return hooks[idx]
-        },
-        useCallback(fn) { hookIdx++; return fn },
-        useMemo(fn) { hookIdx++; return fn() },
-        useEffect() { hookIdx++ },
-      }
-      return {
-        render(props) {
-          hookIdx = 0
-          const prev = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H
-          React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = dispatcher
-          try {
-            return hookFn(props)
-          } finally {
-            React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = prev
-          }
-        },
-      }
-    }
-
-    function findElement(element, predicate) {
-      if (!element || typeof element !== 'object') return null
-      if (predicate(element)) return element
-      const children = element.props?.children
-      if (Array.isArray(children)) {
-        for (const child of children) {
-          const found = findElement(child, predicate)
-          if (found) return found
-        }
-      } else if (children && typeof children === 'object') {
-        return findElement(children, predicate)
-      }
-      return null
-    }
-
     const onNavigate = vi.fn()
     const runner = renderHookRunner((props) => AdminOverviewView(props))
     const vdom = runner.render({

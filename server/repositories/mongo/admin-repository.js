@@ -108,7 +108,9 @@ function idempotencyMismatch(message = 'Admin audit identity collision') {
 }
 
 function adminAuditEventId({ reasonCode, targetId, requestId, actorId, actorScope, eventIdentity = requestId }) {
-  return `admin:${createHash('sha256').update(`${reasonCode}\u0000${String(targetId)}\u0000${String(eventIdentity)}\u0000${String(actorId)}\u0000${String(actorScope ?? '')}`).digest('hex')}`
+  const baseIdentity = `${reasonCode}\u0000${String(targetId)}\u0000${String(eventIdentity)}\u0000${String(actorId)}`
+  const identity = actorScope === undefined || actorScope === null ? baseIdentity : `${baseIdentity}\u0000${String(actorScope)}`
+  return `admin:${createHash('sha256').update(identity).digest('hex')}`
 }
 function auditIdentityMatches(existing, expected) {
   return String(existing?.eventId) === String(expected.eventId)

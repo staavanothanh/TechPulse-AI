@@ -518,7 +518,7 @@ Canonical observable contract nằm ở [contracts/openapi.json](./contracts/ope
 - `413` cho request target/body vượt bound; `415` cho non-JSON hoặc non-identity content encoding;
 - `GET /api/v1/me` bootstrap session-bound CSRF token; mutation cookie-auth yêu cầu header và không dùng localStorage;
 - admin mutation yêu cầu CSRF và action-specific allowlisted `reasonCode` khi operation nhạy cảm; requester/account case text không được copy vào audit;
-- grounded answer, article status/topics/media patch, duplicate merge và manual job/source-reconciliation/deletion/retry hỗ trợ `Idempotency-Key`; reuse khác request hash trả `409 idempotency_mismatch`; answer window 24 giờ, job/governance tối thiểu 14 ngày.
+- grounded answer, article status/topics/media patch và manual job/source-reconciliation/deletion/retry hỗ trợ `Idempotency-Key`; reuse khác request hash trả `409 idempotency_mismatch`; answer window 24 giờ, job/governance tối thiểu 14 ngày.
 - Vercel Cron dùng protected `GET /api/internal/cron/due-work`; manual admin trigger vẫn là POST;
 - maintenance dùng protected fixed-enum `GET /api/internal/maintenance/{taskName}`; browser/admin auth và caller filter/cutoff bị reject;
 - stable error code dùng enum trong OpenAPI; client không branch theo message;

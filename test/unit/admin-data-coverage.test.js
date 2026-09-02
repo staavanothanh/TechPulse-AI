@@ -37,7 +37,120 @@ function fetchResponse(data = { ok: true }) {
   return { ok: true, json: vi.fn(async () => data), headers: { get: vi.fn(() => null) } }
 }
 
+function createHookRunner(hookFn) {
+  let hookIdx = 0
+  const hooks = []
+  const effectCleanups = []
+  let pendingEffects = []
+  let rerenderPending = false
+  let rendering = false
+  let disposed = false
+
+  const dispatcher = {
+    useState(initial) {
+      const idx = hookIdx++
+      if (hooks[idx] === undefined) hooks[idx] = typeof initial === 'function' ? initial() : initial
+      const setState = (next) => {
+        if (disposed) return
+        const val = typeof next === 'function' ? next(hooks[idx]) : next
+        if (Object.is(hooks[idx], val)) return
+        hooks[idx] = val
+        if (rendering) {
+          rerenderPending = true
+          return
+        }
+        render()
+      }
+      return [hooks[idx], setState]
+    },
+    useRef(initial) {
+      const idx = hookIdx++
+      if (hooks[idx] === undefined) hooks[idx] = { current: initial }
+      return hooks[idx]
+    },
+    useCallback(fn, deps) {
+      const idx = hookIdx++
+      const previous = hooks[idx]
+      if (previous && deps && previous.deps.every((value, index) => Object.is(value, deps[index]))) return previous.fn
+      hooks[idx] = { fn, deps }
+      return fn
+    },
+    useMemo(fn, deps) {
+      const idx = hookIdx++
+      const previous = hooks[idx]
+      if (previous && deps && previous.deps.every((value, index) => Object.is(value, deps[index]))) return previous.value
+      const value = fn()
+      hooks[idx] = { value, deps }
+      return value
+    },
+    useEffect(effect, deps) {
+      const idx = hookIdx++
+      const previous = hooks[idx]
+      const changed = !previous || !deps || !previous.deps || !previous.deps.every((value, index) => Object.is(value, deps[index]))
+      hooks[idx] = { deps }
+      if (changed) pendingEffects.push({ idx, effect })
+    },
+  }
+
+  let currentProps
+  let latestResult
+  function render(props = currentProps) {
+    if (disposed) return latestResult
+    currentProps = props
+    do {
+      rerenderPending = false
+      hookIdx = 0
+      pendingEffects = []
+      rendering = true
+      try {
+        const internals = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE
+        const previous = internals.H
+        internals.H = dispatcher
+        try {
+          latestResult = hookFn(currentProps, dispatcher)
+        } finally {
+          internals.H = previous
+        }
+        const effects = pendingEffects
+        pendingEffects = []
+        for (const { idx, effect } of effects) {
+          effectCleanups[idx]?.()
+          const cleanup = effect()
+          effectCleanups[idx] = typeof cleanup === 'function' ? cleanup : undefined
+        }
+      } finally {
+        rendering = false
+      }
+    } while (rerenderPending && !disposed)
+    return latestResult
+  }
+  function unmount() {
+    if (disposed) return
+    disposed = true
+    rerenderPending = false
+    pendingEffects = []
+    for (const cleanup of effectCleanups) cleanup?.()
+    effectCleanups.length = 0
+  }
+  return { render, unmount, get current() { return latestResult } }
+}
 describe('admin-data helpers and cache requests', () => {
+  it('queues effect state updates until cleanup registration completes', () => {
+    const events = []
+    const runner = createHookRunner((_, dispatcher) => {
+      const [value, setValue] = dispatcher.useState(0)
+      dispatcher.useEffect(() => {
+        events.push(`effect:${value}`)
+        if (value === 0) setValue(1)
+        return () => events.push(`cleanup:${value}`)
+      }, [value])
+      return value
+    })
+
+    expect(runner.render()).toBe(1)
+    runner.unmount()
+    expect(events).toEqual(['effect:0', 'cleanup:0', 'effect:1', 'cleanup:1'])
+  })
   it('normalizes due-work payloads and aggregates bounded counters', () => {
     const run = normalizeDueWorkRun({
       data: {
@@ -327,96 +440,6 @@ describe('admin-data helpers and cache requests', () => {
   })
 
   it('guards pagination across status changes and preserves a newer query loading lock', async () => {
-    function createHookRunner(hookFn) {
-      let hookIdx = 0
-      const hooks = []
-      const effectCleanups = []
-      let pendingEffects = []
-
-      const dispatcher = {
-        useState(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) {
-            hooks[idx] = typeof initial === 'function' ? initial() : initial
-          }
-          const setState = (next) => {
-            const val = typeof next === 'function' ? next(hooks[idx]) : next
-            hooks[idx] = val
-            render()
-          }
-          return [hooks[idx], setState]
-        },
-        useRef(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) {
-            hooks[idx] = { current: initial }
-          }
-          return hooks[idx]
-        },
-        useCallback(fn, deps) {
-          const idx = hookIdx++
-          const prev = hooks[idx]
-          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
-            return prev.fn
-          }
-          hooks[idx] = { fn, deps }
-          return fn
-        },
-        useMemo(fn, deps) {
-          const idx = hookIdx++
-          const prev = hooks[idx]
-          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
-            return prev.val
-          }
-          const val = fn()
-          hooks[idx] = { val, deps }
-          return val
-        },
-        useEffect(effect, deps) {
-          const idx = hookIdx++
-          const prev = hooks[idx]
-          let hasChanged = true
-          if (prev && deps && prev.deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
-            hasChanged = false
-          }
-          hooks[idx] = { effect, deps }
-          if (hasChanged) {
-            pendingEffects.push({ idx, effect })
-          }
-        },
-      }
-
-      let currentProps
-      let latestResult
-
-      function render(props = currentProps) {
-        currentProps = props
-        hookIdx = 0
-        pendingEffects = []
-        const prevH = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H
-        React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = dispatcher
-        try {
-          latestResult = hookFn(props)
-        } finally {
-          React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = prevH
-        }
-        for (const { idx, effect } of pendingEffects) {
-          if (typeof effectCleanups[idx] === 'function') {
-            effectCleanups[idx]()
-          }
-          const cleanup = effect()
-          effectCleanups[idx] = typeof cleanup === 'function' ? cleanup : undefined
-        }
-        return latestResult
-      }
-
-      return {
-        render,
-        get current() {
-          return latestResult
-        },
-      }
-    }
 
     const scope = {}
     clearAdminResourceCache(scope)
@@ -466,10 +489,10 @@ describe('admin-data helpers and cache requests', () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = fetchImpl
 
+    const runner = createHookRunner((props) =>
+      useAdminResource(api, 'listAdminArticles', props),
+    )
     try {
-      const runner = createHookRunner((props) =>
-        useAdminResource(api, 'listAdminArticles', props),
-      )
 
       runner.render({
         initialData: {
@@ -556,102 +579,13 @@ describe('admin-data helpers and cache requests', () => {
         expect.objectContaining({ id: 'article-hidden-2', status: 'hidden' }),
       ])
     } finally {
+      runner.unmount()
       globalThis.fetch = originalFetch
       clearAdminResourceCache(scope)
     }
   })
 
   it('combines items and updates cache during valid same-query pagination', async () => {
-    function createHookRunner(hookFn) {
-      let hookIdx = 0
-      const hooks = []
-      const effectCleanups = []
-      let pendingEffects = []
-
-      const dispatcher = {
-        useState(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) {
-            hooks[idx] = typeof initial === 'function' ? initial() : initial
-          }
-          const setState = (next) => {
-            const val = typeof next === 'function' ? next(hooks[idx]) : next
-            hooks[idx] = val
-            render()
-          }
-          return [hooks[idx], setState]
-        },
-        useRef(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) {
-            hooks[idx] = { current: initial }
-          }
-          return hooks[idx]
-        },
-        useCallback(fn, deps) {
-          const idx = hookIdx++
-          const prev = hooks[idx]
-          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
-            return prev.fn
-          }
-          hooks[idx] = { fn, deps }
-          return fn
-        },
-        useMemo(fn, deps) {
-          const idx = hookIdx++
-          const prev = hooks[idx]
-          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
-            return prev.val
-          }
-          const val = fn()
-          hooks[idx] = { val, deps }
-          return val
-        },
-        useEffect(effect, deps) {
-          const idx = hookIdx++
-          const prev = hooks[idx]
-          let hasChanged = true
-          if (prev && deps && prev.deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
-            hasChanged = false
-          }
-          hooks[idx] = { effect, deps }
-          if (hasChanged) {
-            pendingEffects.push({ idx, effect })
-          }
-        },
-      }
-
-      let currentProps
-      let latestResult
-
-      function render(props = currentProps) {
-        currentProps = props
-        hookIdx = 0
-        pendingEffects = []
-        const prevH = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H
-        React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = dispatcher
-        try {
-          latestResult = hookFn(props)
-        } finally {
-          React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = prevH
-        }
-        for (const { idx, effect } of pendingEffects) {
-          if (typeof effectCleanups[idx] === 'function') {
-            effectCleanups[idx]()
-          }
-          const cleanup = effect()
-          effectCleanups[idx] = typeof cleanup === 'function' ? cleanup : undefined
-        }
-        return latestResult
-      }
-
-      return {
-        render,
-        get current() {
-          return latestResult
-        },
-      }
-    }
 
     const scope = {}
     clearAdminResourceCache(scope)
@@ -684,10 +618,10 @@ describe('admin-data helpers and cache requests', () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = fetchImpl
 
+    const runner = createHookRunner((props) =>
+      useAdminResource(api, 'listAdminArticles', props),
+    )
     try {
-      const runner = createHookRunner((props) =>
-        useAdminResource(api, 'listAdminArticles', props),
-      )
       runner.render({
         initialData: {
           data: [{ id: 'article-1', status: 'published' }],
@@ -720,74 +654,13 @@ describe('admin-data helpers and cache requests', () => {
         expect.objectContaining({ id: 'article-2' }),
       ])
     } finally {
+      runner.unmount()
       globalThis.fetch = originalFetch
       clearAdminResourceCache(scope)
     }
   })
 
   it('invalidates pagination when the cache scope changes', async () => {
-    function createHookRunner(hookFn) {
-      let hookIdx = 0
-      const hooks = []
-      const effectCleanups = []
-      let pendingEffects = []
-      const dispatcher = {
-        useState(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) hooks[idx] = typeof initial === 'function' ? initial() : initial
-          const setState = (next) => {
-            hooks[idx] = typeof next === 'function' ? next(hooks[idx]) : next
-            render()
-          }
-          return [hooks[idx], setState]
-        },
-        useRef(initial) {
-          const idx = hookIdx++
-          if (hooks[idx] === undefined) hooks[idx] = { current: initial }
-          return hooks[idx]
-        },
-        useCallback(fn, deps) {
-          const idx = hookIdx++
-          const previous = hooks[idx]
-          if (previous && deps && previous.deps.every((value, index) => Object.is(value, deps[index]))) return previous.fn
-          hooks[idx] = { fn, deps }
-          return fn
-        },
-        useMemo(fn, deps) {
-          const idx = hookIdx++
-          const previous = hooks[idx]
-          if (previous && deps && previous.deps.every((value, index) => Object.is(value, deps[index]))) return previous.value
-          const value = fn()
-          hooks[idx] = { value, deps }
-          return value
-        },
-        useEffect(effect, deps) {
-          const idx = hookIdx++
-          const previous = hooks[idx]
-          const changed = !previous || !deps || !previous.deps || !previous.deps.every((value, index) => Object.is(value, deps[index]))
-          hooks[idx] = { deps }
-          if (changed) pendingEffects.push({ idx, effect })
-        },
-      }
-      let props
-      let result
-      function render(nextProps = props) {
-        props = nextProps
-        hookIdx = 0
-        pendingEffects = []
-        const internals = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE
-        const previous = internals.H
-        internals.H = dispatcher
-        try { result = hookFn(props) } finally { internals.H = previous }
-        for (const { idx, effect } of pendingEffects) {
-          effectCleanups[idx]?.()
-          const cleanup = effect()
-          effectCleanups[idx] = typeof cleanup === 'function' ? cleanup : undefined
-        }
-        return result
-      }
-      return { render, get current() { return result } }
-    }
 
     const scopeA = {}
     const scopeB = {}
@@ -817,8 +690,8 @@ describe('admin-data helpers and cache requests', () => {
     })
     const originalFetch = globalThis.fetch
     globalThis.fetch = fetchImpl
+    const runner = createHookRunner((props) => useAdminResource(api, 'listAdminArticles', props))
     try {
-      const runner = createHookRunner((props) => useAdminResource(api, 'listAdminArticles', props))
       runner.render({
         initialData: { data: [{ id: 'article-a1', status: 'published' }], meta: { hasNext: true, nextCursor: 'cursor-a' } },
         cacheScope: scopeA,
@@ -834,6 +707,7 @@ describe('admin-data helpers and cache requests', () => {
       expect(cursorRequests).toBe(1)
       expect(listItems(runner.current.data)).toEqual([expect.objectContaining({ id: 'article-b1' })])
     } finally {
+      runner.unmount()
       globalThis.fetch = originalFetch
       clearAdminResourceCache(scopeA)
       clearAdminResourceCache(scopeB)
