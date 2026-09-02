@@ -6,9 +6,30 @@ export function dialogFocusAction({ key, shiftKey = false, activeElement, focusa
   if (key === 'Escape') return { type: 'close' }
   if (key !== 'Tab') return null
   if (focusables.length === 0) return fallbackTarget ? { type: 'focus', target: fallbackTarget } : null
-  if (!shiftKey && activeElement === focusables.at(-1)) return { type: 'focus', target: focusables[0] }
-  if (shiftKey && activeElement === focusables[0]) return { type: 'focus', target: focusables.at(-1) }
+  const first = focusables[0]
+  const last = focusables.at(-1)
+  if (!focusables.includes(activeElement)) return { type: 'focus', target: shiftKey ? last : first }
+  if (!shiftKey && activeElement === last) return { type: 'focus', target: first }
+  if (shiftKey && activeElement === first) return { type: 'focus', target: last }
   return null
+}
+
+export function bindDialogFocus(eventTarget, { getActiveElement, getFocusables, fallbackTarget, onClose } = {}) {
+  const onKeyDown = (event) => {
+    const action = dialogFocusAction({
+      key: event.key,
+      shiftKey: event.shiftKey,
+      activeElement: getActiveElement?.(),
+      focusables: getFocusables?.() ?? [],
+      fallbackTarget,
+    })
+    if (!action) return
+    event.preventDefault()
+    if (action.type === 'close') onClose?.()
+    else action.target?.focus?.()
+  }
+  eventTarget?.addEventListener?.('keydown', onKeyDown, true)
+  return () => eventTarget?.removeEventListener?.('keydown', onKeyDown, true)
 }
 
 export function useDialogFocus(open, onClose) {
@@ -22,16 +43,14 @@ export function useDialogFocus(open, onClose) {
     const focusables = () => [...(dialog?.querySelectorAll(FOCUSABLE) ?? [])].filter((element) => typeof element?.focus === 'function')
     const first = focusables()[0] ?? dialog
     first?.focus?.()
-    const onKeyDown = (event) => {
-      const action = dialogFocusAction({ key: event.key, shiftKey: event.shiftKey, activeElement: document.activeElement, focusables: focusables(), fallbackTarget: dialog })
-      if (!action) return
-      event.preventDefault()
-      if (action.type === 'close') onClose?.()
-      else action.target.focus()
-    }
-    dialog?.addEventListener('keydown', onKeyDown)
+    const unbindKeyboard = bindDialogFocus(document, {
+      getActiveElement: () => document.activeElement,
+      getFocusables: focusables,
+      fallbackTarget: dialog,
+      onClose,
+    })
     return () => {
-      dialog?.removeEventListener('keydown', onKeyDown)
+      unbindKeyboard()
       returnFocusRef.current?.focus?.()
     }
   }, [open, onClose])

@@ -670,10 +670,10 @@ type ChatSessionDocument = {
               status: "available";
               articleId: ObjectId;
               sourceId: ObjectId;
+              sourceName?: string;
               originalUrl: string;
               titleOriginal: string;
               publishedAt: Date;
-            }
           | {
               id: string;
               status: "unavailable";

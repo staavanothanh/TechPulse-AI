@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { PageHeading } from '../components/reader-primitives.jsx'
 import { TOPICS } from '../components/reader-format.js'
 import { resolveTopic } from '../../../../shared/topic-catalog.js'
+import { useDialogFocus } from '../../qa/dialog-focus.js'
 
 export default function AccountView({
   user = null,
@@ -16,6 +17,12 @@ export default function AccountView({
   error = null,
 }) {
   const [deletionConfirmationOpen, setDeletionConfirmationOpen] = useState(false)
+  const closeDeletionConfirmation = useCallback(() => setDeletionConfirmationOpen(false), [])
+  const confirmDeletion = useCallback(() => {
+    closeDeletionConfirmation()
+    void onRequestDeletion?.()
+  }, [closeDeletionConfirmation, onRequestDeletion])
+  const deletionDialogRef = useDialogFocus(deletionConfirmationOpen, closeDeletionConfirmation)
   const selected = Array.isArray(user?.topicPreferences) ? user.topicPreferences : []
   const baseOptions = Array.isArray(topics) ? topics : TOPICS
   const isTopicSelected = (topic) => {
@@ -113,14 +120,17 @@ export default function AccountView({
       {deletionConfirmationOpen ? (
         <div className="public-dialog-backdrop" role="presentation">
           <section
+            ref={deletionDialogRef}
             className="public-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="public-delete-account-title"
+            aria-describedby="public-delete-account-description"
+            tabIndex={-1}
           >
             <p className="public-eyebrow">Xác nhận yêu cầu</p>
             <h2 id="public-delete-account-title">Yêu cầu xóa tài khoản?</h2>
-            <p>
+            <p id="public-delete-account-description">
               Phiên hiện tại sẽ bị thu hồi và quy trình làm sạch dữ liệu sẽ bắt đầu. Thao tác này
               không thể hoàn tác.
             </p>
@@ -128,7 +138,7 @@ export default function AccountView({
               <button
                 className="public-btn public-btn-secondary"
                 type="button"
-                onClick={() => setDeletionConfirmationOpen(false)}
+                onClick={closeDeletionConfirmation}
               >
                 Quay lại
               </button>
@@ -136,10 +146,7 @@ export default function AccountView({
                 className="public-btn public-btn-danger"
                 type="button"
                 disabled={deleting}
-                onClick={() => {
-                  setDeletionConfirmationOpen(false)
-                  void onRequestDeletion?.()
-                }}
+                onClick={confirmDeletion}
               >
                 {deleting ? 'Đang gửi...' : 'Xác nhận xóa'}
               </button>

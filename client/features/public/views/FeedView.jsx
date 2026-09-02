@@ -4,12 +4,57 @@ import {
   FilterField,
   PageHeading,
   Pagination,
+  SaveErrorNotice,
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
 import { EMPTY_FILTERS } from '../components/reader-format.js'
 
 const MAX_DIRECT_PAGE = 10_000
+
+function sourceOption(source) {
+  if (typeof source === 'string') {
+    const id = source.trim()
+    return id ? { id, name: id } : null
+  }
+  if (!source || typeof source !== 'object') return null
+  const id = typeof source.id === 'string' && source.id.trim()
+    ? source.id.trim()
+    : typeof source.sourceId === 'string' && source.sourceId.trim()
+      ? source.sourceId.trim()
+      : ''
+  if (!id) return null
+  const name = typeof source.name === 'string' && source.name.trim()
+    ? source.name.trim()
+    : typeof source.sourceName === 'string' && source.sourceName.trim()
+      ? source.sourceName.trim()
+      : id
+  return { id, name }
+}
+
+function articleSource(article) {
+  if (!article || typeof article !== 'object') return null
+  if (article.source) return article.source
+  if (article.sourceId || article.sourceName) {
+    return { sourceId: article.sourceId, sourceName: article.sourceName }
+  }
+  return null
+}
+
+function collectSourceItems(sources, articles) {
+  const candidates = [
+    ...(Array.isArray(sources) ? sources : []),
+    ...(Array.isArray(articles) ? articles.map(articleSource) : []),
+  ]
+  return Array.from(
+    new Map(
+      candidates
+        .map(sourceOption)
+        .filter(Boolean)
+        .map((source) => [source.id, source]),
+    ).values(),
+  )
+}
 
 export default function FeedView({
   state = 'loading',
@@ -23,11 +68,12 @@ export default function FeedView({
   pendingArticleId,
   applying = false,
   savedOverrides = {},
+  saveError = null,
   handlers = {},
 }) {
   const nextFilters = { ...EMPTY_FILTERS, ...filters }
   const hasFilters = Object.values(nextFilters).some(Boolean)
-  const sourceItems = Array.isArray(sources) ? sources : []
+  const sourceItems = collectSourceItems(sources, articles)
   const totalItems = Number(meta.totalItems)
   const totalPages = Number.isFinite(totalItems) && totalItems > 0 ? Math.ceil(totalItems / 10) : undefined
   return (
@@ -57,6 +103,11 @@ export default function FeedView({
           id="public-feed-results"
           aria-busy={state === 'loading' ? 'true' : 'false'}
         >
+          <SaveErrorNotice
+            error={saveError}
+            onRetry={handlers.onSaveRetry}
+            onDismiss={handlers.onDismissSaveError}
+          />
           {state === 'loading' ? (
             <>
               <Skeleton label="Đang tải feed" />

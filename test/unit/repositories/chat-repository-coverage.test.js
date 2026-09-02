@@ -252,6 +252,25 @@ describe('chat repository coverage contracts', () => {
       ),
     ).toBeNull()
   })
+  it('preserves an optional bounded source label for available history and strips it after redaction', () => {
+    const stored = historicalCitationDocument(validCitation({ sourceName: 'Nguon editorial' }))
+
+    expect(stored).toMatchObject({ sourceName: 'Nguon editorial' })
+    expect(historicalCitation(stored)).toMatchObject({ sourceName: 'Nguon editorial' })
+    expect(historicalCitationDocument(validCitation({ sourceName: 'x'.repeat(121) })).sourceName).toHaveLength(120)
+
+    const redacted = redactHistoricalCitation(stored, { article: { ...ARTICLE, status: 'hidden' }, source: SOURCE })
+    expect(redacted).not.toHaveProperty('sourceName')
+  })
+  it('hydrates a missing historical source label from the current visible source', () => {
+    const stored = historicalCitationDocument(validCitation())
+
+    expect(redactHistoricalCitation(stored, { article: ARTICLE, source: SOURCE })).toMatchObject({
+      status: 'available',
+      sourceName: SOURCE.name,
+    })
+    expect(redactHistoricalCitation(stored, { article: { ...ARTICLE, status: 'removed' }, source: SOURCE })).not.toHaveProperty('sourceName')
+  })
 
   it('lists sessions with a stable cursor and enforces actor and limit gates', async () => {
     const rows = [

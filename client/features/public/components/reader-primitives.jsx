@@ -49,6 +49,27 @@ export function ErrorState({ title, error, onRetry }) {
     />
   )
 }
+export function SaveErrorNotice({ error, onRetry, onDismiss }) {
+  if (!error) return null
+  const message = typeof error === 'string' ? error : error?.message
+  return (
+    <div className="public-save-error" role="alert" aria-live="assertive" aria-atomic="true">
+      <p>{message || 'Không thể cập nhật bài đã lưu. Vui lòng thử lại.'}</p>
+      <div className="public-dialog-actions">
+        {onRetry ? (
+          <button className="public-btn public-btn-secondary" type="button" onClick={onRetry}>
+            Thử lại lưu bài
+          </button>
+        ) : null}
+        {onDismiss ? (
+          <button className="public-text-action" type="button" onClick={onDismiss}>
+            Đóng
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
 
 export function Skeleton({ label = 'Đang tải nội dung' }) {
   return (

@@ -73,7 +73,7 @@ describe('Step 8 content HTTP boundary', () => {
 
   it('limits browser image loads to self and exact reviewed HTTPS hosts', async () => {
     const response = await fetch(`${origin}/api/v1/articles`, { headers: headers() })
-    expect(response.headers.get('content-security-policy')).toBe("base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' https://cdn.example.com https://media.example.com")
+    expect(response.headers.get('content-security-policy')).toBe("base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' https://cdn.example.com https://img.vietqr.io https://media.example.com")
     expect(response.headers.get('content-security-policy')).not.toMatch(/https:\s|\*\.|https:\/\/\*/)
   })
 

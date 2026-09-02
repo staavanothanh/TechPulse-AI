@@ -113,6 +113,15 @@ function publicScope(scope = {}) {
   return result
 }
 
+const MAX_HISTORICAL_SOURCE_NAME_LENGTH = 120
+
+function historicalSourceName(citation) {
+  if (citation?.sourceName === undefined || citation.sourceName === null || citation.sourceName === '') return undefined
+  if (typeof citation.sourceName !== 'string') throw new Error('Historical citation source name is invalid')
+  const value = citation.sourceName.trim()
+  return value ? value.slice(0, MAX_HISTORICAL_SOURCE_NAME_LENGTH) : undefined
+}
+
 function historicalCitation(citation) {
   if (!citation || typeof citation.id !== 'string') throw new Error('Historical citation is invalid')
   if (citation.status === 'unavailable') {
@@ -124,6 +133,7 @@ function historicalCitation(citation) {
   if (citation.status !== 'available') throw new Error('Historical citation status is invalid')
   const parsedUrl = new URL(citation.originalUrl)
   if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password) throw new Error('Historical citation URL is invalid')
+  const sourceName = historicalSourceName(citation)
   return {
     id: citation.id,
     status: 'available',
@@ -132,13 +142,16 @@ function historicalCitation(citation) {
     originalUrl: parsedUrl.toString(),
     titleOriginal: String(citation.titleOriginal),
     publishedAt: dateValue(citation.publishedAt).toISOString(),
+    ...(sourceName ? { sourceName } : {}),
   }
 }
+
 
 function historicalCitationDocument(citation) {
   if (!citation || typeof citation.id !== 'string') throw new Error('Historical citation is invalid')
   const parsedUrl = new URL(citation.originalUrl)
   if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password || !citation.articleId || !citation.sourceId || typeof citation.titleOriginal !== 'string' || !citation.titleOriginal) throw new Error('Historical citation is invalid')
+  const sourceName = historicalSourceName(citation)
   return {
     id: citation.id,
     status: 'available',
@@ -147,12 +160,16 @@ function historicalCitationDocument(citation) {
     originalUrl: parsedUrl.toString(),
     titleOriginal: citation.titleOriginal.slice(0, 500),
     publishedAt: dateValue(citation.publishedAt),
+    ...(sourceName ? { sourceName } : {}),
   }
 }
 
 function redactHistoricalCitation(citation, { article, source } = {}) {
   if (citation?.status !== 'available') return historicalCitation(citation)
-  if (canUseQnaEvidence(article, source)) return historicalCitation(citation)
+  if (canUseQnaEvidence(article, source)) {
+    const sourceName = historicalSourceName(citation) ?? historicalSourceName({ sourceName: source?.name })
+    return historicalCitation(sourceName ? { ...citation, sourceName } : citation)
+  }
   const reason = article?.status === 'hidden' || article?.status === 'removed' ? 'takedown' : source ? 'source-policy' : 'article-removed'
   return { id: citation.id, status: 'unavailable', articleId: citation.articleId, sourceId: citation.sourceId, unavailableReason: reason }
 }
@@ -165,11 +182,12 @@ function publicAnswerCitation(citation, article, source) {
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null
     originalUrl = parsed.toString()
   } catch { return null }
+  const sourceName = historicalSourceName(citation) ?? (typeof source?.name === 'string' ? historicalSourceName({ sourceName: source.name }) : undefined) ?? ''
   return {
     id: citation.id,
     articleId: idString(article._id ?? article.id ?? citation.articleId),
     sourceId: idString(source._id ?? source.id ?? citation.sourceId),
-    sourceName: typeof source.name === 'string' ? source.name : '',
+    sourceName,
     titleOriginal: String(article.titleOriginal ?? citation.titleOriginal ?? ''),
     originalUrl,
     author: typeof article.author === 'string' ? article.author : null,

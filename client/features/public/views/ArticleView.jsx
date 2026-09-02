@@ -7,6 +7,7 @@ export default function ArticleView({
   article = null,
   error,
   onBack,
+  onRetry,
   onOpenSource,
   onAskAboutArticle,
 }) {
@@ -22,7 +23,7 @@ export default function ArticleView({
         <button className="public-back" type="button" onClick={onBack}>
           Quay lại
         </button>
-        <ErrorState title="Không thể tải bài viết" error={error} />
+        <ErrorState title="Không thể tải bài viết" error={error} onRetry={onRetry} />
       </section>
     )
   if (!article)
