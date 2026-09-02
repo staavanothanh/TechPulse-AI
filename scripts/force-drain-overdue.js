@@ -28,6 +28,7 @@ export const FORCE_DRAIN_USAGE = 'node --env-file-if-exists=.env scripts/force-d
 
 const MIN_BUDGET_MS = 1_000
 const TASK_SET = new Set(ALLOWED_TASKS)
+const MAX_SCOPE_JOB_IDS = 5_000
 const DATABASE_NAME = /^[A-Za-z0-9][A-Za-z0-9_]{0,62}$/
 
 function invalidArguments(message) {
@@ -118,6 +119,35 @@ function validateQueue(queue) {
   }
   return queue
 }
+function normalizedScope(scope) {
+  if (scope === undefined) return undefined
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw invalidArguments('force drain scope is invalid')
+  const result = {}
+  if (scope.sourceId !== undefined) {
+    if (typeof scope.sourceId !== 'string' || !/^[a-f0-9]{24}$/i.test(scope.sourceId)) throw invalidArguments('force drain source scope is invalid')
+    result.sourceId = scope.sourceId.toLowerCase()
+  }
+  if (scope.jobIds !== undefined) {
+    if (!Array.isArray(scope.jobIds) || scope.jobIds.length > MAX_SCOPE_JOB_IDS || scope.jobIds.some((value) => typeof value !== 'string' || !/^[a-f0-9]{24}$/i.test(value))) throw invalidArguments('force drain job ID scope is invalid')
+    result.jobIds = [...new Set(scope.jobIds.map((value) => value.toLowerCase()))]
+  }
+  if (scope.expectedSourcePolicyVersion !== undefined) result.expectedSourcePolicyVersion = integerOption(scope.expectedSourcePolicyVersion, 'force drain policy scope', 1, Number.MAX_SAFE_INTEGER)
+  for (const field of ['actorScope', 'trigger']) {
+    if (scope[field] !== undefined) {
+      if (typeof scope[field] !== 'string' || scope[field].length < 1 || scope[field].length > 512) throw invalidArguments(`force drain ${field} scope is invalid`)
+      result[field] = scope[field]
+    }
+  }
+  if (Object.keys(result).length === 0) throw invalidArguments('force drain scope is empty')
+  return Object.freeze(result)
+}
+
+function matchesScope(candidate, scope) {
+  if (!scope) return true
+  return Object.entries(scope).every(([field, expected]) => field === 'jobIds'
+    ? expected.includes(String(candidate?.id ?? '').toLowerCase())
+    : String(candidate?.[field] ?? '') === String(expected))
+}
 
 function candidateIsDue(candidate, now) {
   if (candidate?.status !== 'queued') return false
@@ -132,7 +162,7 @@ function candidateIdentity(candidate) {
   return { id: String(candidate.id), articleId: String(candidate.articleId) }
 }
 
-function indexingTaskQueue(queue) {
+function indexingTaskQueue(queue, scope) {
   const source = validateQueue(queue)
   return Object.freeze({
     queueName: source.queueName ?? 'indexing',
@@ -140,19 +170,21 @@ function indexingTaskQueue(queue) {
       const task = input.task ?? (Array.isArray(input.tasks) && input.tasks.length === 1 ? input.tasks[0] : undefined)
       if (!TASK_SET.has(task)) return null
       const now = asDate(input.now, 'indexing selection clock')
-      const candidate = await source.selectDue({ ...input, task, tasks: undefined })
+      const candidate = await source.selectDue({ ...input, ...scope, task, tasks: undefined })
       if (!candidate) return null
+      if (!matchesScope(candidate, scope)) throw invalidArguments('force drain queue returned an out-of-scope candidate')
       if (candidate.task !== task) throw new Error('indexing candidate task is invalid')
       return candidateIsDue(candidate, now) ? candidate : null
     },
     claimAndExecute: async (input = {}) => {
       const candidate = input.candidate
+      if (!matchesScope(candidate, scope)) throw invalidArguments('force drain queue received an out-of-scope candidate')
       if (!TASK_SET.has(candidate?.task)) throw new Error('indexing candidate task is invalid')
       const identity = candidateIdentity(candidate)
       if (!candidateIsDue(candidate, asDate(input.now, 'indexing claim clock'))) throw new Error('indexing candidate is not due')
       return source.claimAndExecute({ ...input, candidate: { ...candidate, id: identity.id, articleId: identity.articleId } })
     },
-    nextAvailableAt: (input = {}) => source.nextAvailableAt(input),
+    nextAvailableAt: (input = {}) => source.nextAvailableAt({ ...input, ...scope }),
   })
 }
 
@@ -199,7 +231,7 @@ function readOnlyIndexingQueue(repository) {
     queueName: 'indexing',
     selectDue: (input = {}) => repository.selectDueIndexing(input),
     claimAndExecute: async () => { throw Object.assign(new Error('force drain dry-run is read-only'), { code: 'force_drain_read_only' }) },
-    nextAvailableAt: () => repository.nextAvailableAt(),
+    nextAvailableAt: (input = {}) => repository.nextAvailableAt(input),
   })
 }
 
@@ -222,11 +254,11 @@ export async function closeConfiguredRuntime(runtime) {
   try { await closeMongoConnection() } catch { /* cleanup is best effort */ }
 }
 
-async function previewDue({ queue, maxClaims, budgetMs, now }) {
+async function previewDue({ queue, maxClaims, budgetMs, now, scope }) {
   const clock = validateClock(now)
   const startedAt = clock()
   const deadline = new Date(startedAt.getTime() + budgetMs)
-  const taskQueue = indexingTaskQueue(queue)
+  const taskQueue = indexingTaskQueue(queue, scope)
   const byTask = Object.fromEntries(ALLOWED_TASKS.map((task) => [task, 0]))
   const seenByTask = new Map(ALLOWED_TASKS.map((task) => [task, new Set()]))
   let due = 0
@@ -263,11 +295,11 @@ async function previewDue({ queue, maxClaims, budgetMs, now }) {
 
 export const previewDueIndexing = previewDue
 
-async function executeDrain({ queue, maxClaims, budgetMs, now }) {
+async function executeDrain({ queue, maxClaims, budgetMs, now, scope }) {
   const clock = validateClock(now)
   const startedAt = clock()
   const deadline = new Date(startedAt.getTime() + budgetMs)
-  return createIndexingDrainRunner({ queue: indexingTaskQueue(queue), tasks: ALLOWED_TASKS, maxClaims, deadline, now: clock })()
+  return createIndexingDrainRunner({ queue: indexingTaskQueue(queue, scope), tasks: ALLOWED_TASKS, maxClaims, deadline, now: clock })()
 }
 
 export const executeForceDrain = executeDrain
@@ -285,8 +317,9 @@ function reportBase(options, runtime) {
   }
 }
 
-export async function runForceDrain({ options, environment = process.env, factories, runtime, loadRuntime = createConfiguredRuntime, loadReadOnlyRuntime = createConfiguredReadOnlyRuntime, now = () => new Date() } = {}) {
+export async function runForceDrain({ options, environment = process.env, factories, runtime, scope, loadRuntime = createConfiguredRuntime, loadReadOnlyRuntime = createConfiguredReadOnlyRuntime, now = () => new Date() } = {}) {
   const normalized = normalizedOptions(options)
+  const drainScope = normalizedScope(scope)
   const ownsRuntime = runtime === undefined
   if (!normalized.dryRun) {
     const configuredDatabase = environment?.MONGODB_DATABASE
@@ -298,7 +331,7 @@ export async function runForceDrain({ options, environment = process.env, factor
     if (!normalized.dryRun && runtimeDatabase(configured) !== normalized.confirmDatabase) throw invalidArguments('confirm-database does not match the configured runtime database')
     const queue = queueFromRuntime(configured)
     if (normalized.dryRun) {
-      const preview = await previewDue({ queue, maxClaims: normalized.maxClaims, budgetMs: normalized.budgetMs, now })
+      const preview = await previewDue({ queue, maxClaims: normalized.maxClaims, budgetMs: normalized.budgetMs, now, scope: drainScope })
       return {
         ok: true,
         mode: 'dry-run',
@@ -311,7 +344,7 @@ export async function runForceDrain({ options, environment = process.env, factor
         nextAvailableAt: preview.nextAvailableAt,
       }
     }
-    const drain = await executeDrain({ queue, maxClaims: normalized.maxClaims, budgetMs: normalized.budgetMs, now })
+    const drain = await executeDrain({ queue, maxClaims: normalized.maxClaims, budgetMs: normalized.budgetMs, now, scope: drainScope })
     return {
       ok: true,
       mode: 'execute',

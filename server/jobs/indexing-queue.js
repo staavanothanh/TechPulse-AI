@@ -71,10 +71,16 @@ function externalAttempts(error) {
   return undefined
 }
 
-function shouldDeferOutcome(outcome) {
-  if (outcome?.status === 'deferred') return true
+function shouldDeferOutcome(outcome, candidate) {
+  const executionAttempt = Number.isInteger(candidate?.attempt) && candidate.attempt > 0 ? candidate.attempt : 1
+  if (outcome?.status === 'deferred') return executionAttempt < 3
   const attempts = externalAttempts(outcome?.error)
-  return Boolean(outcome?.error?.retryable) && attempts === 0
+  const durableRecovery = outcome?.error?.durableRecovery === true
+  return Boolean(outcome?.error?.retryable) && attempts === 0 && (executionAttempt < 3 || durableRecovery)
+}
+
+function shouldIncrementAttempt(error) {
+  return error?.durableRecovery !== true
 }
 
 function leaseHeartbeatError() {

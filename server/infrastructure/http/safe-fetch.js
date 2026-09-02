@@ -5,6 +5,18 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib'
 
 const DEFAULT_LIMITS = Object.freeze({ wireBytes: 1024 * 1024, decodedBytes: 4 * 1024 * 1024, expansionRatio: 20, redirects: 3, timeoutMs: 8000 })
 const REDIRECTS = new Set([301, 302, 303, 307, 308])
+function normalizedAllowedHosts(values) {
+  if (values === undefined) return null
+  if (!Array.isArray(values) || values.length === 0) throw new SafeFetchError('source_content_host_blocked', 'Source content host allowlist is invalid')
+  const normalized = values.map((value) => String(value ?? '').trim().replace(/\.$/, '').toLowerCase())
+  if (normalized.some((value) => !value || isIP(value) !== 0 || !value.includes('.') || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(value))) throw new SafeFetchError('source_content_host_blocked', 'Source content host allowlist is invalid')
+  return new Set(normalized)
+}
+
+function assertAllowedHost(url, allowedHosts) {
+  if (url.port) throw new SafeFetchError('source_content_host_blocked', 'Source content URL must use the default HTTPS port')
+  if (allowedHosts && !allowedHosts.has(url.hostname.replace(/\.$/, '').toLowerCase())) throw new SafeFetchError('source_content_host_blocked', 'Source content host is outside the reviewed allowlist')
+}
 
 export class SafeFetchError extends Error {
   constructor(code, message, { retryable = false, upstreamStatus } = {}) {

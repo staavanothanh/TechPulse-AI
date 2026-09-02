@@ -234,7 +234,8 @@ describe('MongoIndexingJobRepository', () => {
     await expect(fixture.repository.listIndexingJobs({ cursor: 'bad' })).rejects.toMatchObject({ status: 422 })
 
     const due = createContext({ findResults: { indexingJobs: [[], [row]] } })
-    await expect(due.repository.selectDueIndexing({ now, tasks: ['summary', 'embedding'], excludeArticleIds: [articleId.toHexString()] })).resolves.toEqual(expect.objectContaining({ id: jobId.toHexString() }))
+    await expect(due.repository.selectDueIndexing({ now, tasks: ['summary', 'embedding'], excludeArticleIds: [articleId.toHexString()], jobIds: [jobId.toHexString()] })).resolves.toEqual(expect.objectContaining({ id: jobId.toHexString() }))
+    expect(due.collections.get('indexingJobs').find).toHaveBeenCalledWith(expect.objectContaining({ _id: { $in: [jobId] } }), {})
     await expect(due.repository.nextAvailableAt()).resolves.toBeNull()
     const purge = createContext({ findResults: { indexingJobs: [[{ _id: jobId }]] }, deleteResults: { indexingJobs: [{ deletedCount: 1 }] } })
     await expect(purge.repository.purgeDueIndexingJobs({ cutoff: now, limit: 1 })).resolves.toEqual({ inspected: 1, affected: 1, hasMore: false })

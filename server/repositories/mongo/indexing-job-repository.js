@@ -92,6 +92,28 @@ function excludedArticleIds(values) {
     return [id.toHexString(), id]
   })).values()]
 }
+function indexingScopeFilter({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger } = {}) {
+  const filter = {}
+  if (jobIds !== undefined) {
+    if (!Array.isArray(jobIds) || jobIds.length > 5_000) throw new Error('Indexing job scope is invalid')
+    const ids = [...new Map(jobIds.map((value) => {
+      const id = idValue(value)
+      return [id.toHexString(), id]
+    })).values()]
+    filter._id = { $in: ids }
+  }
+  if (sourceId !== undefined) filter.sourceId = idValue(sourceId)
+  if (expectedSourcePolicyVersion !== undefined) {
+    if (!Number.isInteger(expectedSourcePolicyVersion) || expectedSourcePolicyVersion < 1) throw new Error('Indexing policy scope is invalid')
+    filter.expectedSourcePolicyVersion = expectedSourcePolicyVersion
+  }
+  for (const [field, value] of [['actorScope', actorScope], ['trigger', trigger]]) {
+    if (value === undefined) continue
+    if (typeof value !== 'string' || value.length < 1 || value.length > 512) throw new Error(`Indexing ${field} scope is invalid`)
+    filter[field] = value
+  }
+  return filter
+}
 
 function safeErrorDocument(error) {
   if (!error) return undefined
@@ -498,9 +520,11 @@ export class MongoIndexingJobRepository {
     signal?.throwIfAborted?.()
     const taskFilter = dueTaskFilter({ task, tasks })
     const excluded = excludedArticleIds(excludeArticleIds)
+    const scope = indexingScopeFilter({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger })
     const common = {
       status: 'queued',
       availableAt: { $lte: now },
+      ...scope,
       ...(taskFilter ? { task: taskFilter } : {}),
       ...(excluded.length > 0 ? { articleId: { $nin: excluded } } : {}),
     }
