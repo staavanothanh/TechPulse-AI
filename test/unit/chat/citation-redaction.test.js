@@ -8,7 +8,7 @@ describe('Step 10 historical citation persistence and read redaction', () => {
   const available = { id: 'C1', articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), sourceName: 'Nguồn public-only', author: 'Tác giả public-only', sourceLanguage: 'vi', titleOriginal: 'Bài hợp lệ', originalUrl: 'https://example.test/article', publishedAt: '2026-08-12T00:00:00.000Z' }
 
   it('persists only the strict available historical union from a public answer citation', () => {
-    expect(historicalCitationDocument(available)).toEqual({ id: 'C1', status: 'available', articleId, sourceId, titleOriginal: 'Bài hợp lệ', originalUrl: 'https://example.test/article', publishedAt: new Date('2026-08-12T00:00:00.000Z') })
+    expect(historicalCitationDocument(available)).toEqual({ id: 'C1', status: 'available', articleId, sourceId, titleOriginal: 'Bài hợp lệ', originalUrl: 'https://example.test/article', publishedAt: new Date('2026-08-12T00:00:00.000Z'), sourceName: 'Nguồn public-only' })
   })
 
   it('bounds a persisted historical title even when the public citation title is longer', () => {
@@ -65,6 +65,29 @@ describe('Step 10 historical citation persistence and read redaction', () => {
     expect(result).toMatchObject({ status: 'answered', paragraphs: [{ citationIds: ['C1'] }], citations: [{ id: 'C1', sourceName: 'Nguồn public-only', originalUrl: available.originalUrl }] })
     expect(result).not.toHaveProperty('role')
   })
+  it('replay preserves a valid historical source label after the current source is renamed', async () => {
+    const userId = new ObjectId('507f1f77bcf86cd799439013')
+    const sessionId = new ObjectId('507f1f77bcf86cd799439014')
+    const chatSessionId = new ObjectId('507f1f77bcf86cd799439015')
+    const current = new Date('2026-08-12T00:00:00.000Z')
+    const historical = historicalCitationDocument({ ...available, sourceName: 'Nguồn lưu trữ' })
+    const document = { _id: chatSessionId, userId, messageCount: 2, createdAt: current, updatedAt: current, expiresAt: new Date('2026-09-11T00:00:00.000Z'), messages: [{ id: 'u1', role: 'user', text: 'Câu hỏi', createdAt: current }, { id: 'answer-1', role: 'assistant', status: 'answered', paragraphs: [{ text: 'Kết luận.', citationIds: ['C1'] }], citations: [historical], refusalReason: null, createdAt: current }] }
+    const db = { collection: (name) => ({
+      findOne: async () => {
+        if (name === 'users') return { _id: userId }
+        if (name === 'sessions') return { _id: sessionId }
+        if (name === 'chatSessions') return document
+        if (name === 'articles') return { _id: articleId, sourceId, status: 'published', evidenceEligible: true, rightsSnapshot: { sourcePolicyVersion: 1, licenseStatus: 'permitted', llmInputScope: 'excerpt' }, titleOriginal: 'Bài hợp lệ', originalUrl: available.originalUrl, publishedAt: available.publishedAt, sourceLanguage: 'vi' }
+        if (name === 'sources') return { _id: sourceId, name: 'Nguồn hiện tại đã đổi tên', authorityTier: 'editorial', operationalStatus: 'active', licenseStatus: 'permitted', policyVersion: 1, llmInputScope: 'excerpt', storageScope: { metadata: true, excerpt: true, summary: true, embedding: true }, mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false, evidenceNote: null }, technicalCheck: { status: 'passed' } }
+        return null
+      },
+    }) }
+    const repository = new MongoChatRepository({ db, client: {}, now: () => current })
+    const result = await repository.getAnswerResult({ actor: { userId, actorFence: { sessionId, sessionVersion: 1 } }, chatSessionId, messageId: 'answer-1', now: current })
+
+    expect(result).toMatchObject({ status: 'answered', citations: [{ id: 'C1', sourceName: 'Nguồn lưu trữ' }] })
+  })
+
 
   it('replay projects refused history without the assistant chat-message role', async () => {
     const userId = new ObjectId('507f1f77bcf86cd799439013')

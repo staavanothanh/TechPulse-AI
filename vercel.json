@@ -8,6 +8,26 @@
       "maxDuration": 300
     }
   },
+  "headers": [
+    {
+      "source": "/donate",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' https://img.vietqr.io"
+        }
+      ]
+    },
+    {
+      "source": "/donate/",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' https://img.vietqr.io"
+        }
+      ]
+    }
+  ],
   "routes": [
     {
       "src": "^/api(?:/.*)?$",

@@ -4,6 +4,7 @@ import {
   FilterField,
   PageHeading,
   Pagination,
+  SaveErrorNotice,
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
@@ -18,9 +19,18 @@ export default function SearchView({
   page = 1,
   pendingArticleId,
   savedOverrides = {},
+  saveError = null,
   handlers = {},
 }) {
-  const current = { q: '', mode: 'hybrid', topic: '', sourceId: '', publishedAfter: '', ...query }
+  const current = {
+    q: '',
+    mode: 'hybrid',
+    topic: '',
+    sourceId: '',
+    publishedAfter: '',
+    publishedBefore: '',
+    ...query,
+  }
   return (
     <section
       className="public-view public-search-view"
@@ -89,6 +99,14 @@ export default function SearchView({
           error={errors.publishedAfter}
           type="datetime-local"
         />
+        <FilterField
+          id="public-search-before"
+          label="Đến ngày"
+          value={current.publishedBefore}
+          onChange={(value) => handlers.onQueryChange?.('publishedBefore', value)}
+          error={errors.publishedBefore}
+          type="datetime-local"
+        />
       </div>
       <SearchMeta meta={meta} mode={current.mode} visible={state === 'ready'} />
       <div
@@ -96,6 +114,11 @@ export default function SearchView({
         id="public-search-results"
         aria-busy={state === 'loading' ? 'true' : 'false'}
       >
+        <SaveErrorNotice
+          error={saveError}
+          onRetry={handlers.onSaveRetry}
+          onDismiss={handlers.onDismissSaveError}
+        />
         {state === 'initial' ? (
           <StateCard
             eyebrow="Sẵn sàng tìm"

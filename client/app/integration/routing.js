@@ -14,6 +14,11 @@ export const ADMIN_ROUTES = Object.freeze(
     'deletions',
   ]),
 )
+const ARTICLE_ID_PATTERN = /^[0-9a-fA-F]{24}$/
+
+function validArticleId(value) {
+  return typeof value === 'string' && ARTICLE_ID_PATTERN.test(value) ? value : null
+}
 
 export function normalizePublicRoute(route) {
   return PUBLIC_ROUTES.has(route) ? route : 'feed'
@@ -69,6 +74,9 @@ export function parsePublicPath(pathname, search = '') {
         publishedBefore: params.get('publishedBefore') || '',
       }
     }
+    if (root === 'qa' && search) {
+      result.articleId = validArticleId(new URLSearchParams(search).get('articleId'))
+    }
     return result
   }
   return { route: 'feed', articleId: null }
@@ -98,6 +106,9 @@ export function publicRouteToPath(route, { articleId, searchParams } = {}) {
     if (searchParams.publishedBefore) params.set('publishedBefore', searchParams.publishedBefore)
     const queryString = params.toString()
     return queryString ? `/search?${queryString}` : '/search'
+  }
+  if (normalized === 'qa' && validArticleId(articleId)) {
+    return `/qa?articleId=${encodeURIComponent(articleId)}`
   }
   if (normalized === 'feed') return '/feed'
   return `/${normalized}`

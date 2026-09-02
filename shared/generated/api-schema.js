@@ -8672,6 +8672,11 @@ export const openApiDocument = {
           "sourceId": {
             "type": "string"
           },
+          "sourceName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
           "originalUrl": {
             "$ref": "#/components/schemas/HttpsUrl"
           },

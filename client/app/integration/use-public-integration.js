@@ -34,6 +34,9 @@ function toggleTopicValue(current, topic) {
 function queryValues(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== ''))
 }
+function searchQueryKey(value = {}) {
+  return JSON.stringify(Object.keys(EMPTY_QUERY).map((field) => value[field] ?? ''))
+}
 
 function responseData(response, fallback) {
   return response?.data ?? fallback
@@ -42,6 +45,48 @@ function responseData(response, fallback) {
 function responseMeta(response) {
   return response?.meta ?? { hasNext: false, nextCursor: null }
 }
+function sourceOptionFromSource(source) {
+  const rawId = source?.id ?? source?._id
+  const id = rawId?.toHexString?.() ?? rawId
+  if (id === undefined || id === null || String(id).trim() === '') return null
+  const normalizedId = String(id).trim()
+  const name = typeof source?.name === 'string' && source.name.trim() ? source.name.trim() : normalizedId
+  return { id: normalizedId, name }
+}
+
+function sourceOptionFromArticle(article) {
+  const option = sourceOptionFromSource(article?.source)
+  if (option) return option
+  const rawId = article?.sourceId
+  if (rawId === undefined || rawId === null || String(rawId).trim() === '') return null
+  const id = String(rawId).trim()
+  const name = typeof article?.sourceName === 'string' && article.sourceName.trim() ? article.sourceName.trim() : id
+  return { id, name }
+}
+
+function mergeSourceOptions(current, articles, metadataSources = []) {
+  const byId = new Map(current.map((source) => [source.id, source]))
+  for (const option of metadataSources.map(sourceOptionFromSource).filter(Boolean)) {
+    const previous = byId.get(option.id)
+    if (!previous || previous.name === previous.id) byId.set(option.id, option)
+  }
+  for (const option of articles.map(sourceOptionFromArticle).filter(Boolean)) {
+    const previous = byId.get(option.id)
+    if (!previous || previous.name === previous.id) byId.set(option.id, option)
+  }
+  return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+}
+const QA_ARTICLE_ID_PATTERN = /^[0-9a-fA-F]{24}$/
+
+function validQaArticleId(value) {
+  return typeof value === 'string' && QA_ARTICLE_ID_PATTERN.test(value) ? value : null
+}
+function qaScopeForArticle(scope, articleId) {
+  const { articleId: _previousArticleId, sessionId: _previousSessionId, ...rest } = scope
+  return articleId ? { ...rest, articleId } : rest
+}
+
+
 
 export function usePublicIntegration({
   api,
@@ -144,7 +189,17 @@ export function usePublicIntegration({
     expire,
     onBack: () => onNavigate?.(articleReturnRoute || 'feed', { back: true }),
   })
-  const qa = useQa({ csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
+  const qaState = useQa({ articleId: routeArticleId, csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
+  const qa = {
+    ...qaState,
+    handlers: {
+      ...qaState.handlers,
+      onClearArticleScope: () => {
+        qaState.handlers.onClearArticleScope()
+        onNavigate?.('qa')
+      },
+    },
+  }
   const articleAskHandler = useCallback(
     (targetArticle) => {
       if (!targetArticle?.id) return
@@ -172,6 +227,7 @@ function useFeed({
 }) {
   const [state, setState] = useState('loading')
   const [articles, setArticles] = useState([])
+  const [sources, setSources] = useState([])
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [applied, setApplied] = useState(EMPTY_FILTERS)
   const [errors, setErrors] = useState({})
@@ -181,6 +237,9 @@ function useFeed({
   const [cursors, setCursors] = useState([null])
   const [applying, setApplying] = useState(false)
   const [pendingArticleId, setPendingArticleId] = useState(null)
+  const [saveError, setSaveError] = useState(null)
+  const failedSave = useRef(null)
+  const saveInFlightRef = useRef(false)
   const requestSequence = useRef(0)
   const failedRequest = useRef(null)
   const hasAttemptedRef = useRef(false)
@@ -204,7 +263,9 @@ function useFeed({
         const resolvedPage = lastPage && Number.isFinite(responseTotalItems)
           ? Math.max(1, Math.ceil(responseTotalItems / PAGE_SIZE))
           : targetPage
-        setArticles(responseData(response, []))
+        const nextArticles = responseData(response, [])
+        setArticles(nextArticles)
+        setSources((current) => mergeSourceOptions(current, nextArticles, nextMeta.sources ?? response?.sources ?? []))
         setMeta(nextMeta)
         setPage(resolvedPage)
         setCursors((current) => {
@@ -236,14 +297,31 @@ function useFeed({
   }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save(article, nextSaved) {
+    if (saveInFlightRef.current) return
+    saveInFlightRef.current = true
     setPendingArticleId(article.id)
+    setSaveError(null)
+    failedSave.current = { article, nextSaved }
     try {
       await toggleSave(article, nextSaved)
-    } catch {
-      /* The view keeps its current state and session recovery owns auth failures. */
+      failedSave.current = null
+      setSaveError(null)
+    } catch (requestError) {
+      setSaveError(requestError)
     } finally {
       setPendingArticleId(null)
+      saveInFlightRef.current = false
     }
+  }
+
+  function dismissSaveError() {
+    failedSave.current = null
+    setSaveError(null)
+  }
+
+  function retrySave() {
+    const failed = failedSave.current
+    return failed ? save(failed.article, failed.nextSaved) : undefined
   }
 
   function submit(event) {
@@ -299,6 +377,7 @@ function useFeed({
   return {
     state,
     articles,
+    sources,
     filters,
     errors,
     error,
@@ -306,6 +385,7 @@ function useFeed({
     page,
     applying,
     pendingArticleId,
+    saveError,
     savedOverrides,
     handlers: {
       onFilterChange: (field, value) => setFilters((current) => ({ ...current, [field]: value })),
@@ -318,6 +398,8 @@ function useFeed({
       onLastPage: () => goToPage(Math.ceil(Number(meta.totalItems) / PAGE_SIZE)),
       onPageChange: (value) => goToPage(value),
       onSaveToggle: save,
+      onSaveRetry: retrySave,
+      onDismissSaveError: dismissSaveError,
       onOpenArticle: openArticle,
       onOpenSearch: () => onNavigate?.('search'),
     },
@@ -343,9 +425,15 @@ function useSearch({
   const [page, setPage] = useState(1)
   const [cursors, setCursors] = useState([null])
   const [pendingArticleId, setPendingArticleId] = useState(null)
-  const hasHydratedRef = useRef(false)
+  const [saveError, setSaveError] = useState(null)
+  const failedSave = useRef(null)
+  const saveInFlightRef = useRef(false)
+  const hydratedQueryKeyRef = useRef(null)
+  const requestSequence = useRef(0)
   const run = useCallback(
     async (values, targetPage = 1, cursor = null) => {
+      const sequence = requestSequence.current + 1
+      requestSequence.current = sequence
       setState('loading')
       setError(null)
       try {
@@ -354,16 +442,19 @@ function useSearch({
           ...queryValues(values),
           ...(cursor ? { cursor } : {}),
         })
+        if (sequence !== requestSequence.current) return null
+        const nextMeta = responseMeta(response)
         setResults(responseData(response, []))
-        setMeta(responseMeta(response))
+        setMeta(nextMeta)
         setPage(targetPage)
         setCursors((current) => {
           const next = current.slice(0, targetPage)
-          next[targetPage - 1] = responseMeta(response).nextCursor ?? null
+          next[targetPage - 1] = nextMeta.nextCursor ?? null
           return next
         })
         setState('ready')
       } catch (requestError) {
+        if (sequence !== requestSequence.current) return null
         expire(requestError)
         setError(requestError)
         setState('error')
@@ -373,24 +464,55 @@ function useSearch({
   )
 
   async function save(article, nextSaved) {
+    if (saveInFlightRef.current) return
+    saveInFlightRef.current = true
     setPendingArticleId(article.id)
+    setSaveError(null)
+    failedSave.current = { article, nextSaved }
     try {
       await toggleSave(article, nextSaved)
-    } catch {
-      /* Session recovery and the existing saved state remain authoritative. */
+      failedSave.current = null
+      setSaveError(null)
+    } catch (requestError) {
+      setSaveError(requestError)
     } finally {
       setPendingArticleId(null)
+      saveInFlightRef.current = false
     }
   }
 
+  function dismissSaveError() {
+    failedSave.current = null
+    setSaveError(null)
+  }
+
+  function retrySave() {
+    const failed = failedSave.current
+    return failed ? save(failed.article, failed.nextSaved) : undefined
+  }
+
   useEffect(() => {
-    if (initialParams?.q && !hasHydratedRef.current) {
-      hasHydratedRef.current = true
-      const initialQuery = { ...EMPTY_QUERY, ...initialParams }
+    const initialQuery = { ...EMPTY_QUERY, ...(initialParams || {}) }
+    const initialKey = searchQueryKey(initialQuery)
+    if (!initialQuery.q) {
+      if (hydratedQueryKeyRef.current === initialKey) return
+      hydratedQueryKeyRef.current = initialKey
+      requestSequence.current += 1
       setQuery(initialQuery)
-      setSubmitted(initialQuery)
-      void run(initialQuery)
+      setSubmitted(null)
+      setResults([])
+      setMeta({ hasNext: false, nextCursor: null })
+      setPage(1)
+      setErrors({})
+      setError(null)
+      setState('initial')
+      return
     }
+    if (hydratedQueryKeyRef.current === initialKey) return
+    hydratedQueryKeyRef.current = initialKey
+    setQuery(initialQuery)
+    setSubmitted(initialQuery)
+    void run(initialQuery)
   }, [initialParams, run])
 
   function submit(event) {
@@ -398,6 +520,7 @@ function useSearch({
     const validation = validateSearchInput(query)
     setErrors(validation.errors)
     if (!validation.valid) return
+    hydratedQueryKeyRef.current = searchQueryKey(query)
     setSubmitted({ ...query })
     onSearchSubmit?.(query)
     void run(query)
@@ -411,6 +534,7 @@ function useSearch({
     errors,
     error,
     page,
+    saveError,
     pendingArticleId,
     savedOverrides,
     handlers: {
@@ -421,6 +545,8 @@ function useSearch({
         page > 1 && submitted && run(submitted, page - 1, page > 2 ? cursors[page - 3] : null),
       onNextPage: () => meta.hasNext && submitted && run(submitted, page + 1, cursors[page - 1]),
       onSaveToggle: save,
+      onSaveRetry: retrySave,
+      onDismissSaveError: dismissSaveError,
       onOpenArticle: openArticle,
     },
   }
@@ -431,10 +557,13 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
   const [articles, setArticles] = useState([])
   const [meta, setMeta] = useState({ hasNext: false, nextCursor: null, page: 1 })
   const [error, setError] = useState(null)
+  const [saveError, setSaveError] = useState(null)
   const [pendingArticleId, setPendingArticleId] = useState(null)
   const [clearOpen, setClearOpen] = useState(false)
   const [clearBusy, setClearBusy] = useState(false)
   const hasAttemptedRef = useRef(false)
+  const failedSave = useRef(null)
+  const saveInFlightRef = useRef(false)
   const load = useCallback(async () => {
     setState('loading')
     setError(null)
@@ -461,25 +590,33 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
   }, [enabled, load])
 
   async function unsave(article) {
-    if (!csrfToken) return
+    if (!csrfToken || saveInFlightRef.current) return
+    saveInFlightRef.current = true
     setPendingArticleId(article.id)
+    setSaveError(null)
+    failedSave.current = { article, nextSaved: false }
     try {
       await contentApi.unsaveArticle(article.id, csrfToken)
+      failedSave.current = null
       setArticles((current) => current.filter((item) => item.id !== article.id))
       markSaved(article.id, false)
     } catch (requestError) {
       expire(requestError)
-      setError(requestError)
+      setSaveError(requestError)
     } finally {
       setPendingArticleId(null)
+      saveInFlightRef.current = false
     }
   }
 
   async function clear() {
     if (!csrfToken) return
     setClearBusy(true)
+    setSaveError(null)
+    failedSave.current = { clear: true }
     try {
       await contentApi.clearSavedArticles(csrfToken)
+      failedSave.current = null
       articles.forEach((item) => markSaved(item.id, false))
       setArticles([])
       setMeta({ hasNext: false, nextCursor: null, page: 1 })
@@ -487,10 +624,22 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
       setState('ready')
     } catch (requestError) {
       expire(requestError)
-      setError(requestError)
+      setSaveError(requestError)
     } finally {
       setClearBusy(false)
     }
+  }
+
+  function dismissSaveError() {
+    failedSave.current = null
+    setSaveError(null)
+  }
+
+  function retrySave() {
+    const failed = failedSave.current
+    if (!failed) return undefined
+    if (failed.clear) return clear()
+    return unsave(failed.article)
   }
 
   return {
@@ -498,6 +647,7 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
     articles,
     meta,
     error,
+    saveError,
     pendingArticleId,
     clearOpen,
     handlers: {
@@ -508,6 +658,8 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
       onOpenClear: () => setClearOpen(true),
       onCancelClear: () => setClearOpen(false),
       onConfirmClear: clear,
+      onSaveRetry: retrySave,
+      onDismissSaveError: dismissSaveError,
       clearBusy,
     },
   }
@@ -518,6 +670,7 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
   const [article, setArticle] = useState(null)
   const [error, setError] = useState(null)
   const articleCacheRef = useRef(new Map())
+  const [retryRequest, setRetryRequest] = useState({ articleId: null, count: 0 })
 
   useEffect(() => {
     let active = true
@@ -526,7 +679,8 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
         active = false
       }
 
-    if (articleCacheRef.current.has(articleId)) {
+    const bypassCache = retryRequest.articleId === articleId && retryRequest.count > 0
+    if (!bypassCache && articleCacheRef.current.has(articleId)) {
       setArticle(articleCacheRef.current.get(articleId))
       setState('ready')
       setError(null)
@@ -546,6 +700,7 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
           if (item) articleCacheRef.current.set(articleId, item)
           setArticle(item)
           setState('ready')
+          setRetryRequest((current) => current.articleId === articleId ? { articleId: null, count: 0 } : current)
         }
       })
       .catch((requestError) => {
@@ -558,23 +713,35 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
     return () => {
       active = false
     }
-  }, [articleId, contentApi, enabled, expire])
+  }, [articleId, contentApi, enabled, expire, retryRequest])
 
-  return { state, article, error, onBack, onAskAboutArticle }
+  function retry() {
+    if (!enabled || !articleId) return false
+    setRetryRequest((current) => current.articleId === articleId
+      ? { articleId, count: current.count + 1 }
+      : { articleId, count: 1 })
+    return true
+  }
+  return { state, article, error, onBack, onAskAboutArticle, onRetry: retry }
 }
 
-export function useQa({ csrfToken, enabled, expire, qaApi, user }) {
+export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user }) {
   const [state, setState] = useState('empty')
   const [sessions, setSessions] = useState([])
   const [messages, setMessages] = useState([])
+  const initialArticleId = validQaArticleId(routeArticleId)
   const [scope, setScope] = useState(() => ({
     topics: Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : [],
+    ...(initialArticleId ? { articleId: initialArticleId } : {}),
   }))
   const [error, setError] = useState(null)
   const sessionIdRef = useRef(undefined)
   const queueTailRef = useRef(null)
   const epochRef = useRef(0)
   const listEpochRef = useRef(0)
+  const routeArticleRef = useRef(initialArticleId)
+  const routeArticleChanged = routeArticleRef.current !== initialArticleId
+
   const identityKey = JSON.stringify([user?.id ?? user?._id ?? null, csrfToken ?? null])
   const identityRef = useRef(identityKey)
   const identityChanged = identityRef.current !== identityKey
@@ -589,11 +756,35 @@ export function useQa({ csrfToken, enabled, expire, qaApi, user }) {
     const nextTopics = Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : []
     setSessions([])
     setMessages([])
-    setScope({ topics: nextTopics })
+    setScope({ topics: nextTopics, ...(enabled && initialArticleId ? { articleId: initialArticleId } : {}) })
     setState('empty')
     setError(null)
     return undefined
   }, [identityChanged, identityKey])
+  useEffect(() => {
+    if (!routeArticleChanged || routeArticleRef.current === initialArticleId) return undefined
+    routeArticleRef.current = initialArticleId
+    epochRef.current += 1
+    listEpochRef.current += 1
+    sessionIdRef.current = undefined
+    setSessions([])
+    setMessages([])
+    setScope((current) => qaScopeForArticle(current, initialArticleId))
+    setState('empty')
+    setError(null)
+    return undefined
+  }, [initialArticleId, routeArticleChanged])
+
+  useEffect(() => {
+    if (!enabled) return undefined
+    setScope((current) => {
+      if (initialArticleId) return current.articleId === initialArticleId ? current : { ...current, articleId: initialArticleId }
+      if (!Object.prototype.hasOwnProperty.call(current, 'articleId')) return current
+      const { articleId: _removed, ...rest } = current
+      return rest
+    })
+    return undefined
+  }, [enabled, initialArticleId])
 
   function trackQueue(taskPromise) {
     let tail
@@ -660,8 +851,9 @@ export function useQa({ csrfToken, enabled, expire, qaApi, user }) {
   async function ask(payload) {
     const validation = validateQuestionScope(payload.question, payload)
     if (!validation.valid) {
+      const hasPriorConversation = messages.length > 0 || Boolean(sessionIdRef.current)
       setError(new Error(validation.message))
-      setState('error')
+      if (!hasPriorConversation) setState('error')
       return
     }
     const epoch = epochRef.current
@@ -743,13 +935,15 @@ export function useQa({ csrfToken, enabled, expire, qaApi, user }) {
     return enqueue(runClear)
   }
 
-  const displayState = identityChanged ? 'empty' : state
-  const displaySessions = identityChanged ? [] : sessions
-  const displayMessages = identityChanged ? [] : messages
+  const displayState = identityChanged || routeArticleChanged ? 'empty' : state
+  const displaySessions = identityChanged || routeArticleChanged ? [] : sessions
+  const displayMessages = identityChanged || routeArticleChanged ? [] : messages
   const displayScope = identityChanged
-    ? { topics: Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : [] }
-    : scope
-  const displayError = identityChanged ? null : error
+    ? { topics: Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : [], ...(enabled && initialArticleId ? { articleId: initialArticleId } : {}) }
+    : routeArticleChanged
+      ? qaScopeForArticle(scope, initialArticleId)
+      : scope
+  const displayError = identityChanged || routeArticleChanged ? null : error
   return {
     state: displayState,
     sessions: displaySessions,

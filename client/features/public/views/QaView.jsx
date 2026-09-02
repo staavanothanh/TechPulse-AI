@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   ErrorState,
   FilterField,
@@ -11,6 +11,7 @@ import { safeExternalUrl } from '../safe-url.js'
 import { hasQaScope } from '../../qa/qa-validation.js'
 import { handleQaQuestionKeyDown } from '../../qa/qa-keyboard.js'
 import { topicsMatch } from '../../../../shared/topic-catalog.js'
+import { useDialogFocus } from '../../qa/dialog-focus.js'
 
 export default function QaView({
   state = 'empty',
@@ -23,8 +24,16 @@ export default function QaView({
   handlers = {},
 }) {
   const [question, setQuestion] = useState('')
+  const [questionError, setQuestionError] = useState('')
   const [selectedCitation, setSelectedCitation] = useState(null)
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
+  const closeCitation = useCallback(() => setSelectedCitation(null), [])
+  const closeClearConfirmation = useCallback(() => setClearConfirmationOpen(false), [])
+  const confirmClearSessions = useCallback(() => {
+    closeClearConfirmation()
+    void handlers.onClearSessions?.()
+  }, [closeClearConfirmation, handlers.onClearSessions])
+  const clearDialogRef = useDialogFocus(clearConfirmationOpen, closeClearConfirmation)
   const safeScope = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope : {}
   const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
@@ -34,6 +43,11 @@ export default function QaView({
     if (!event.defaultPrevented) event.preventDefault()
     const value = question.trim()
     if (!value || value.length > 1000 || !hasScope || state === 'loading') return
+    if (value.length < 3) {
+      setQuestionError('Câu hỏi cần ít nhất 3 ký tự.')
+      return
+    }
+    setQuestionError('')
     const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, value]) => key !== 'topics' || value.length > 0))
     onAsk?.({ ...askScope, question: value })
     setQuestion('')
@@ -116,12 +130,22 @@ export default function QaView({
                   id="public-qa-question"
                   className="public-input public-textarea"
                   value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  aria-describedby="public-qa-composer-hint"
+                  onChange={(event) => {
+                    setQuestion(event.target.value)
+                    if (questionError) setQuestionError('')
+                  }}
+                  aria-invalid={Boolean(questionError)}
+                  aria-describedby={`public-qa-composer-hint${questionError ? ' public-qa-question-error' : ''}`}
                   onKeyDown={(event) => handleQaQuestionKeyDown(event, submit)}
+                  minLength={3}
                   maxLength={1000}
                   placeholder="Nhập câu hỏi về công nghệ"
                 />
+                {questionError ? (
+                  <small id="public-qa-question-error" className="public-field-error" role="alert">
+                    {questionError}
+                  </small>
+                ) : null}
               </label>
               <div className="public-composer-foot">
                 <span id="public-qa-composer-hint">
@@ -197,33 +221,33 @@ export default function QaView({
           />
         </aside>
       </div>
-      <CitationDrawer citation={selectedCitation} onClose={() => setSelectedCitation(null)} />
+      <CitationDrawer citation={selectedCitation} onClose={closeCitation} />
       {clearConfirmationOpen ? (
         <div className="public-dialog-backdrop" role="presentation">
           <section
+            ref={clearDialogRef}
             className="public-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="public-clear-sessions-title"
+            aria-describedby="public-clear-sessions-description"
+            tabIndex={-1}
           >
             <p className="public-eyebrow">Xác nhận xóa</p>
             <h2 id="public-clear-sessions-title">Xóa toàn bộ lịch sử hỏi đáp?</h2>
-            <p>Thao tác này sẽ xóa các phiên hỏi đáp của tài khoản và không thể hoàn tác.</p>
+            <p id="public-clear-sessions-description">Thao tác này sẽ xóa các phiên hỏi đáp của tài khoản và không thể hoàn tác.</p>
             <div className="public-dialog-actions">
               <button
                 className="public-btn public-btn-secondary"
                 type="button"
-                onClick={() => setClearConfirmationOpen(false)}
+                onClick={closeClearConfirmation}
               >
                 Quay lại
               </button>
               <button
                 className="public-btn public-btn-danger"
                 type="button"
-                onClick={() => {
-                  setClearConfirmationOpen(false)
-                  void handlers.onClearSessions?.()
-                }}
+                onClick={confirmClearSessions}
               >
                 Xóa lịch sử
               </button>
@@ -235,36 +259,53 @@ export default function QaView({
   )
 }
 
+function isHistoricalCitation(citation) {
+  return citation?.status === 'available' || citation?.status === 'unavailable'
+}
+
+function citationChipLabel(citation) {
+  const sourceLabel = citation?.sourceName || citation?.titleOriginal || (citation?.status === 'unavailable' ? 'Nguồn lịch sử' : 'Nguồn')
+  return isHistoricalCitation(citation) ? `Citation lịch sử · ${sourceLabel}` : sourceLabel
+}
 function CitationDrawer({ citation, onClose }) {
+  const dialogRef = useDialogFocus(Boolean(citation), onClose)
   if (!citation) return null
   const url = citation.status === 'unavailable' ? null : safeExternalUrl(citation.originalUrl)
+  const historical = isHistoricalCitation(citation)
+  const sourceLabel = citation.sourceName || (citation.status === 'unavailable' ? 'Nguồn lịch sử' : citation.titleOriginal || 'Nguồn kiểm chứng')
+
   return (
     <div
       className="public-dialog-backdrop"
       role="presentation"
       onClick={onClose}
-      onKeyDown={(event) => event.key === 'Escape' && onClose?.()}
     >
       <aside
+        ref={dialogRef}
         className="public-dialog public-citation-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="public-citation-title"
+        aria-describedby={historical ? 'public-citation-status' : undefined}
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="public-dialog-heading">
           <div>
-            <p className="public-eyebrow">Nguồn kiểm chứng</p>
-            <h2 id="public-citation-title">{citation.sourceName || 'Nguồn lịch sử'}</h2>
+            <p className="public-eyebrow">{historical ? 'Citation lịch sử' : 'Nguồn kiểm chứng'}</p>
+            <h2 id="public-citation-title">{sourceLabel}</h2>
           </div>
           <button className="public-text-action" type="button" onClick={onClose}>
             Đóng
           </button>
         </div>
         {citation.status === 'unavailable' ? (
-          <p className="public-muted">Nguồn lịch sử không còn khả dụng.</p>
+          <p id="public-citation-status" className="public-muted">Nguồn lịch sử không còn khả dụng.</p>
         ) : (
           <>
+            {citation.status === 'available' ? (
+              <p id="public-citation-status" className="public-form-note">Nguồn còn khả dụng</p>
+            ) : null}
             <h3>{citation.titleOriginal || 'Bài viết nguồn'}</h3>
             <dl className="public-fact-list">
               {citation.publishedAt ? (
@@ -352,7 +393,7 @@ function MessageThread({ messages, onCitation }) {
                             onClick={() => onCitation?.(citation)}
                           >
                             [{citationIndex + 1}]{' '}
-                            {citation.sourceName || citation.titleOriginal || 'Nguồn'}
+                            {citationChipLabel(citation)}
                           </button>
                         ) : null
                       })}
@@ -368,4 +409,4 @@ function MessageThread({ messages, onCitation }) {
   )
 }
 
-export { QaView }
+export { QaView, CitationDrawer }
