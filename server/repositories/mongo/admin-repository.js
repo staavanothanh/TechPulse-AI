@@ -252,8 +252,14 @@ export class MongoAdminRepository {
     } else if (category === 'status') {
       if (!['processing', 'review-needed', 'published', 'hidden', 'removed'].includes(nextValue) || current.status === 'removed' && nextValue !== 'removed') { const error = new Error('Article status transition is invalid'); error.status = 409; error.code = 'conflict'; throw error }
       set.status = nextValue
-      if (nextValue === 'hidden') set.leadMediaStatus = current.leadMedia ? 'hidden' : 'none'
+      if (nextValue === 'hidden') {
+        set.hiddenReason = reasonCode
+        set.leadMediaStatus = current.leadMedia ? 'hidden' : 'none'
+      }
     }
+    const articleUpdate = category === 'status' && nextValue !== 'hidden'
+      ? { $set: set, $unset: { hiddenReason: '' } }
+      : { $set: set }
     if (!actorFence || !Number.isInteger(actorFence.sessionVersion) || !actorFence.sessionId || !actorFence.userId) { const error = new Error('Authenticated admin session is required'); error.status = 401; error.code = 'unauthorized'; throw error }
     return this.withTransaction(async (session) => {
       const userFence = await this.users().updateOne({ _id: objectId(actorFence.userId), role: 'admin', status: 'active', sessionVersion: actorFence.sessionVersion }, { $set: { updatedAt: now } }, { session })
@@ -274,7 +280,7 @@ export class MongoAdminRepository {
         const sourceFence = await sourceCollection.updateOne({ _id: source._id, policyVersion: source.policyVersion, ...(source.updatedAt ? { updatedAt: source.updatedAt } : {}) }, { $set: { updatedAt: now } }, { session })
         if (sourceFence.matchedCount !== 1) { const error = new Error('Current source policy changed'); error.status = 409; error.code = 'conflict'; throw error }
       }
-      const result = await this.articles().updateOne({ _id, updatedAt: transactionalArticle.updatedAt }, { $set: set }, { session })
+      const result = await this.articles().updateOne({ _id, updatedAt: transactionalArticle.updatedAt }, articleUpdate, { session })
       if (result.matchedCount !== 1) { const error = new Error('Article changed before update'); error.status = 409; error.code = 'conflict'; throw error }
       const jobs = this.indexingJobs()
       if (jobs && typeof jobs.updateOne === 'function') {
