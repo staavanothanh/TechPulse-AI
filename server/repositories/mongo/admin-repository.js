@@ -94,8 +94,21 @@ function decodeCursor(value) {
 function encodeCursor(value) { return Buffer.from(JSON.stringify({ id: value._id.toHexString(), at: value.updatedAt.toISOString() }), 'utf8').toString('base64url') }
 function encodeAuditCursor(value) { return Buffer.from(JSON.stringify({ id: value._id.toHexString(), at: value.createdAt.toISOString() }), 'utf8').toString('base64url') }
 
-function adminAuditEventId({ reasonCode, targetId, requestId, actorId, eventIdentity = requestId }) {
-  return `admin:${createHash('sha256').update(`${reasonCode}\u0000${String(targetId)}\u0000${String(eventIdentity)}\u0000${String(actorId)}`).digest('hex')}`
+function requestIdentity(request) {
+  const headerIdentity = typeof request?.get === 'function' ? request.get('Idempotency-Key') : undefined
+  const identity = request?.idempotencyKey ?? headerIdentity ?? request?.requestId ?? request?.serverRequestId
+  return identity === undefined || identity === null || identity === '' ? null : String(identity)
+}
+
+function idempotencyMismatch(message = 'Admin audit identity collision') {
+  const error = new Error(message)
+  error.status = 409
+  error.code = 'idempotency_mismatch'
+  return error
+}
+
+function adminAuditEventId({ reasonCode, targetId, requestId, actorId, actorScope, eventIdentity = requestId }) {
+  return `admin:${createHash('sha256').update(`${reasonCode}\u0000${String(targetId)}\u0000${String(eventIdentity)}\u0000${String(actorId)}\u0000${String(actorScope ?? '')}`).digest('hex')}`
 }
 function auditIdentityMatches(existing, expected) {
   return String(existing?.eventId) === String(expected.eventId)
@@ -106,6 +119,20 @@ function auditIdentityMatches(existing, expected) {
     && existing?.reasonCode === expected.reasonCode
     && String(existing?.requestId) === String(expected.requestId)
     && JSON.stringify(existing?.changedFields ?? []) === JSON.stringify(expected.changedFields ?? [])
+}
+function auditActorScope(actorFence) {
+  if (!actorFence?.userId || !actorFence?.sessionId || !Number.isInteger(actorFence.sessionVersion)) return null
+  return `admin:${String(actorFence.userId)}:session:${String(actorFence.sessionId)}:v${actorFence.sessionVersion}`
+}
+
+function deterministicAuditClaimId({ operation, actorFence, requestId }) {
+  const actorScope = auditActorScope(actorFence)
+  if (!actorScope || !requestId) return null
+  return deterministicObjectId(`${String(operation)}\u0000${actorScope}\u0000${String(requestId)}`)
+}
+
+function isDuplicateKeyError(error) {
+  return error?.code === 11000 || error?.codeName === 'DuplicateKey' || /duplicate key/i.test(String(error?.message ?? ''))
 }
 
 
@@ -124,9 +151,9 @@ function reconciliationJob({ article, source, category, nextValue, actorFence, r
     throw error
   }
   const valueHash = canonicalRequestHash(nextValue)
-  const requestId = String(request?.requestId ?? request?.serverRequestId ?? `${category}:${valueHash.slice(0, 16)}`)
-  const identity = `admin:${articleId.toHexString()}:${policyVersion}:${category}:${requestId}:${valueHash.slice(0, 16)}`
+  const requestId = requestIdentity(request) ?? `${category}:${valueHash.slice(0, 16)}`
   const actorScope = `admin:${String(actorFence.userId)}:session:${String(actorFence.sessionId)}:v${actorFence.sessionVersion}`
+  const identity = `admin:${actorScope}:${articleId.toHexString()}:${policyVersion}:${category}:${requestId}:${valueHash.slice(0, 16)}`
   const requestHash = canonicalRequestHash({ operation: 'admin-article-reconciliation', articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), policyVersion, category, value: nextValue })
   return indexingJobDocument({
     id: deterministicObjectId(identity).toHexString(), idempotencyKey: identity, actorScope, requestHash,
@@ -161,7 +188,7 @@ export class MongoAdminRepository {
   }
   auditLogs() { return this.collection('adminAuditLogs') }
 
-  async insertAdminAudit({ actor, targetId, reasonCode, changedFields, request, now } = {}, session) {
+  async insertAdminAudit({ actor, targetId, reasonCode, changedFields, request, now } = {}, session, options = {}) {
     const allowed = new Map([
       ['article_status_changed', ['status']], ['article_topics_changed', ['topics']], ['article_media_visibility_changed', ['leadMediaStatus']],
       ['duplicate_merge_confirmed', ['provenance', 'status']],
@@ -169,17 +196,34 @@ export class MongoAdminRepository {
     const expected = allowed.get(reasonCode)
     if (!expected || expected.length !== changedFields?.length || expected.some((field, index) => field !== changedFields[index])) throw new Error('Admin audit reason or fields are not allowlisted')
     const actorId = actor?._id ?? actor?.id
-    const requestId = request?.requestId ?? request?.serverRequestId ?? request?.idempotencyKey
+    const requestId = requestIdentity(request)
     if (!actorId || !requestId) throw new Error('Admin audit identity is invalid')
-    const eventId = adminAuditEventId({ reasonCode, targetId, requestId, actorId, eventIdentity: request?.eventIdentity })
-    const document = { _id: new ObjectId(), eventId, actorType: 'admin', actorId: objectId(actorId), action: reasonCode, targetType: 'article', targetId: objectId(targetId), changedFields: [...changedFields], reasonCode, requestId: String(requestId), result: 'succeeded', createdAt: date(now ?? this.clock()) }
-    const existing = await this.auditLogs().findOne({ eventId }, { session })
-    if (existing) {
-      if (!auditIdentityMatches(existing, document)) throw new Error('Admin audit identity collision')
-      return existing
+    const actorScope = auditActorScope(request?.actorFence)
+    const claimId = deterministicAuditClaimId({ operation: request?.auditOperation ?? 'admin-audit', actorFence: request?.actorFence, requestId })
+    const eventId = adminAuditEventId({ reasonCode, targetId, requestId, actorId, actorScope, eventIdentity: request?.eventIdentity })
+    const document = {
+      _id: new ObjectId(), eventId, actorType: 'admin', actorId: objectId(actorId), action: reasonCode, targetType: 'article', targetId: objectId(targetId),
+      changedFields: [...changedFields], reasonCode, requestId, result: 'succeeded', createdAt: date(now ?? this.clock()),
     }
-    await this.auditLogs().insertOne(document, { session })
-    return document
+    const result = (value, replayed) => options.returnMetadata ? { document: value, replayed } : value
+    const auditLogs = this.auditLogs()
+    const existing = await auditLogs.findOne(claimId ? { _id: claimId } : { requestId }, { session })
+    if (existing) {
+      if (!auditIdentityMatches(existing, document)) throw idempotencyMismatch()
+      return result(existing, true)
+    }
+    if (claimId && typeof auditLogs.updateOne === 'function') {
+      const claimDocument = { ...document, _id: claimId }
+      const claim = await auditLogs.updateOne({ _id: claimId }, { $setOnInsert: claimDocument }, { upsert: true, session })
+      if (claim?.upsertedCount === 1 || claim?.upsertedId) return result(claimDocument, false)
+      const existingClaim = await auditLogs.findOne({ _id: claimId }, { session })
+      if (!existingClaim) throw new Error('Admin audit claim was not persisted')
+      if (!auditIdentityMatches(existingClaim, claimDocument)) throw idempotencyMismatch()
+      return result(existingClaim, true)
+    }
+
+    await auditLogs.insertOne(document, { session })
+    return result(document, false)
   }
 
   async withTransaction(work) {
@@ -240,6 +284,9 @@ export class MongoAdminRepository {
     const current = await this.articles().findOne({ _id }, { projection: ARTICLE_PROJECTION })
     if (!current) return null
     const now = date(this.clock(), 'Article update date')
+    const requestId = requestIdentity(request)
+    const requestHash = canonicalRequestHash({ operation: 'admin-article-update', articleId: _id.toHexString(), category, value: nextValue, reasonCode })
+    const eventIdentity = requestId ? `${requestId}:${requestHash}` : requestHash
     const set = { updatedAt: now }
     if (category === 'topics') {
       set.topics = [...nextValue]
@@ -261,35 +308,61 @@ export class MongoAdminRepository {
       ? { $set: set, $unset: { hiddenReason: '' } }
       : { $set: set }
     if (!actorFence || !Number.isInteger(actorFence.sessionVersion) || !actorFence.sessionId || !actorFence.userId) { const error = new Error('Authenticated admin session is required'); error.status = 401; error.code = 'unauthorized'; throw error }
-    return this.withTransaction(async (session) => {
-      const userFence = await this.users().updateOne({ _id: objectId(actorFence.userId), role: 'admin', status: 'active', sessionVersion: actorFence.sessionVersion }, { $set: { updatedAt: now } }, { session })
-      if (userFence.matchedCount !== 1) { const error = new Error('Admin session is no longer active'); error.status = 401; error.code = 'unauthorized'; throw error }
-      const sessionFence = await this.collection('sessions').updateOne({ _id: objectId(actorFence.sessionId), userId: objectId(actorFence.userId), userSessionVersion: actorFence.sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, { $set: { lastSeenAt: now } }, { session })
-      if (sessionFence.matchedCount !== 1) { const error = new Error('Admin session is no longer active'); error.status = 401; error.code = 'unauthorized'; throw error }
-      if (!rateLimitAdmission?.reserve) { const error = new Error('Admin admission is unavailable'); error.status = 503; error.code = 'service_unavailable'; throw error }
-      let admission
-      try { admission = await rateLimitAdmission.reserve({ scope: 'admin-trigger', subject: String(actorFence.userId), session }) } catch { const error = new Error('Admin admission is unavailable'); error.status = 503; error.code = 'service_unavailable'; throw error }
-      if (admission && admission.allowed === false) { const error = new Error('Too many manual admin requests'); error.status = 429; error.code = 'rate_limit_exceeded'; error.retryAfter = admission.retryAfterSeconds; throw error }
-      const transactionalArticle = await this.articles().findOne({ _id }, { projection: ARTICLE_PROJECTION, session })
-      if (!transactionalArticle || transactionalArticle.updatedAt?.getTime?.() !== current.updatedAt?.getTime?.()) { const error = new Error('Article changed before update'); error.status = 409; error.code = 'conflict'; throw error }
-      const sourceCollection = this.sources()
-      let source = { _id: transactionalArticle.sourceId, policyVersion: transactionalArticle.rightsSnapshot?.sourcePolicyVersion }
-      if (sourceCollection && typeof sourceCollection.findOne === 'function') {
-        source = await sourceCollection.findOne({ _id: objectId(transactionalArticle.sourceId, 'Source identifier'), policyVersion: transactionalArticle.rightsSnapshot?.sourcePolicyVersion }, { session, projection: { _id: 1, policyVersion: 1, updatedAt: 1, operationalStatus: 1, licenseStatus: 1, llmInputScope: 1 } })
-        if (!source) { const error = new Error('Current source policy changed'); error.status = 409; error.code = 'conflict'; throw error }
-        const sourceFence = await sourceCollection.updateOne({ _id: source._id, policyVersion: source.policyVersion, ...(source.updatedAt ? { updatedAt: source.updatedAt } : {}) }, { $set: { updatedAt: now } }, { session })
-        if (sourceFence.matchedCount !== 1) { const error = new Error('Current source policy changed'); error.status = 409; error.code = 'conflict'; throw error }
+    const actorId = actor?._id ?? actor?.id
+    const auditRequest = { ...(request ?? {}), requestId, serverRequestId: request?.serverRequestId, idempotencyKey: request?.idempotencyKey, eventIdentity, actorFence, auditOperation: 'admin-article-update' }
+    const auditReasonValid = (category === 'status' && reasonCode === 'article_status_changed') || (category === 'topics' && reasonCode === 'article_topics_changed') || (category === 'leadMediaStatus' && reasonCode === 'article_media_visibility_changed')
+    const claimAudit = (session) => this.insertAdminAudit({ actor, targetId: _id, reasonCode, changedFields: [category], request: auditRequest, now }, session, { returnMetadata: true })
+    try {
+      return await this.withTransaction(async (session) => {
+        if (!rateLimitAdmission?.reserve) { const error = new Error('Admin admission is unavailable'); error.status = 503; error.code = 'service_unavailable'; throw error }
+        let auditResult
+        if (auditReasonValid) {
+          auditResult = await claimAudit(session)
+          if (auditResult.replayed) return this.findAdminArticle(_id, { session })
+        }
+        const userFence = await this.users().updateOne({ _id: objectId(actorFence.userId), role: 'admin', status: 'active', sessionVersion: actorFence.sessionVersion }, { $set: { updatedAt: now } }, { session })
+        if (userFence.matchedCount !== 1) { const error = new Error('Admin session is no longer active'); error.status = 401; error.code = 'unauthorized'; throw error }
+        const sessionFence = await this.collection('sessions').updateOne({ _id: objectId(actorFence.sessionId), userId: objectId(actorFence.userId), userSessionVersion: actorFence.sessionVersion, status: 'active', expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } }, { $set: { lastSeenAt: now } }, { session })
+        if (sessionFence.matchedCount !== 1) { const error = new Error('Admin session is no longer active'); error.status = 401; error.code = 'unauthorized'; throw error }
+        let admission
+        try { admission = await rateLimitAdmission.reserve({ scope: 'admin-trigger', subject: String(actorFence.userId), session }) } catch { const error = new Error('Admin admission is unavailable'); error.status = 503; error.code = 'service_unavailable'; throw error }
+        if (admission && admission.allowed === false) { const error = new Error('Too many manual admin requests'); error.status = 429; error.code = 'rate_limit_exceeded'; error.retryAfter = admission.retryAfterSeconds; throw error }
+        const transactionalArticle = await this.articles().findOne({ _id }, { projection: ARTICLE_PROJECTION, session })
+        if (!transactionalArticle || transactionalArticle.updatedAt?.getTime?.() !== current.updatedAt?.getTime?.()) { const error = new Error('Article changed before update'); error.status = 409; error.code = 'conflict'; throw error }
+        if (!auditReasonValid) await claimAudit(session)
+        const sourceCollection = this.sources()
+        let source = { _id: transactionalArticle.sourceId, policyVersion: transactionalArticle.rightsSnapshot?.sourcePolicyVersion }
+        const hasSourceCollection = sourceCollection && typeof sourceCollection.findOne === 'function'
+        if (hasSourceCollection) {
+          source = await sourceCollection.findOne({ _id: objectId(transactionalArticle.sourceId, 'Source identifier'), policyVersion: transactionalArticle.rightsSnapshot?.sourcePolicyVersion }, { session, projection: { _id: 1, policyVersion: 1, updatedAt: 1, operationalStatus: 1, licenseStatus: 1, llmInputScope: 1 } })
+          if (!source) { const error = new Error('Current source policy changed'); error.status = 409; error.code = 'conflict'; throw error }
+        }
+        if (hasSourceCollection) {
+          const sourceFence = await sourceCollection.updateOne({ _id: source._id, policyVersion: source.policyVersion, ...(source.updatedAt ? { updatedAt: source.updatedAt } : {}) }, { $set: { updatedAt: now } }, { session })
+          if (sourceFence.matchedCount !== 1) { const error = new Error('Current source policy changed'); error.status = 409; error.code = 'conflict'; throw error }
+        }
+        const result = await this.articles().updateOne({ _id, updatedAt: transactionalArticle.updatedAt }, articleUpdate, { session })
+        if (result.matchedCount !== 1) { const error = new Error('Article changed before update'); error.status = 409; error.code = 'conflict'; throw error }
+        const jobs = this.indexingJobs()
+        if (jobs && typeof jobs.updateOne === 'function') {
+          const job = reconciliationJob({ article: transactionalArticle, source, category, nextValue, actorFence, request, now })
+          await jobs.updateOne({ actorScope: job.actorScope, idempotencyKey: job.idempotencyKey }, { $setOnInsert: job }, { upsert: true, session })
+        }
+        return this.findAdminArticle(_id, { session })
+      })
+    } catch (error) {
+      if (!isDuplicateKeyError(error) || !actorId || !requestId) throw error
+      const claimId = deterministicAuditClaimId({ operation: 'admin-article-update', actorFence, requestId })
+      if (!claimId) throw error
+      const existing = await this.auditLogs().findOne({ _id: claimId })
+      if (!existing) throw error
+      const expectedAudit = {
+        eventId: adminAuditEventId({ reasonCode, targetId: _id, requestId, actorId, actorScope: auditActorScope(actorFence), eventIdentity }), actorId, action: reasonCode,
+        targetType: 'article', targetId: _id, reasonCode, requestId, changedFields: [category],
       }
-      const result = await this.articles().updateOne({ _id, updatedAt: transactionalArticle.updatedAt }, articleUpdate, { session })
-      if (result.matchedCount !== 1) { const error = new Error('Article changed before update'); error.status = 409; error.code = 'conflict'; throw error }
-      const jobs = this.indexingJobs()
-      if (jobs && typeof jobs.updateOne === 'function') {
-        const job = reconciliationJob({ article: transactionalArticle, source, category, nextValue, actorFence, request, now })
-        await jobs.updateOne({ actorScope: job.actorScope, idempotencyKey: job.idempotencyKey }, { $setOnInsert: job }, { upsert: true, session })
-      }
-      await this.insertAdminAudit({ actor, targetId: _id, reasonCode, changedFields: [category], request: { requestId: request?.requestId, serverRequestId: request?.serverRequestId, idempotencyKey: request?.idempotencyKey, eventIdentity: canonicalRequestHash({ operation: 'admin-article-update', articleId: _id.toHexString(), category, value: nextValue, reasonCode }) }, now }, session)
-      return this.findAdminArticle(_id, { session })
-    })
+      if (!auditIdentityMatches(existing, expectedAudit)) throw idempotencyMismatch()
+      return this.findAdminArticle(_id)
+    }
   }
 
   async mergeDuplicateArticles({ canonicalArticleId, duplicateArticleIds, actorFence, actor, request, idempotencyKey, rateLimitAdmission, reasonCode } = {}) {

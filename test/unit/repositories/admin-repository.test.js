@@ -59,7 +59,7 @@ function createContext({ findOne = {}, findResults = {}, aggregateResults = {}, 
       findOne: vi.fn(async () => take(findOne, name, null)),
       find: vi.fn(() => cursor(take(findResults, name, []))),
       aggregate: vi.fn(() => aggregateCursor(take(aggregateResults, name, []))),
-      updateOne: vi.fn(async () => take(updateResults, name, { matchedCount: 1, modifiedCount: 1 })),
+      updateOne: vi.fn(async (filter) => take(updateResults, name, name === 'adminAuditLogs' ? { matchedCount: 0, modifiedCount: 0, upsertedCount: 1, upsertedId: filter?._id } : { matchedCount: 1, modifiedCount: 1 })),
       updateMany: vi.fn(async () => take(updateManyResults, name, { matchedCount: 1, modifiedCount: 1 })),
       insertOne: vi.fn(async () => take(insertResults, name, { acknowledged: true })),
     }
@@ -79,6 +79,146 @@ function actorFence() {
 }
 
 const actor = { _id: adminId, role: 'admin' }
+
+function createStatefulArticleContext({ initialStatus = 'published' } = {}) {
+  const state = { article: article(articleId, { status: initialStatus }), audits: [], jobs: [] }
+  const matches = (document, filter = {}) => Object.entries(filter).every(([key, expected]) => String(document?.[key]) === String(expected))
+  const articles = {
+    findOne: vi.fn(async () => state.article),
+    find: vi.fn(() => cursor([])),
+    updateOne: vi.fn(async (filter, update) => {
+      if (String(filter?._id) !== articleId.toHexString() || state.article.updatedAt?.getTime?.() !== filter?.updatedAt?.getTime?.()) return { matchedCount: 0 }
+      state.article = { ...state.article, ...(update?.$set ?? {}) }
+      for (const key of Object.keys(update?.$unset ?? {})) delete state.article[key]
+      return { matchedCount: 1 }
+    }),
+  }
+  const sources = {
+    findOne: vi.fn(async () => source()),
+    updateOne: vi.fn(async () => ({ matchedCount: 1 })),
+  }
+  const users = { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }
+  const sessions = { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }
+  const indexingJobs = {
+    updateOne: vi.fn(async (filter, update) => {
+      const existing = state.jobs.find((job) => matches(job, filter))
+      const candidate = update?.$setOnInsert ?? {}
+      if (!existing && state.jobs.some((job) => String(job._id) === String(candidate._id))) {
+        const error = new Error('E11000 duplicate key')
+        error.code = 11000
+        throw error
+      }
+      if (!existing) state.jobs.push({ ...candidate })
+      return { matchedCount: existing ? 1 : 0, upsertedCount: existing ? 0 : 1 }
+    }),
+  }
+  const adminAuditLogs = {
+    findOne: vi.fn(async (filter) => state.audits.find((audit) => matches(audit, filter)) ?? null),
+    updateOne: vi.fn(async (filter, update) => {
+      const existing = state.audits.find((audit) => matches(audit, filter))
+      if (existing) return { matchedCount: 1, upsertedCount: 0 }
+      const document = { ...(update?.$setOnInsert ?? {}) }
+      if (state.audits.some((audit) => String(audit._id) === String(document._id))) {
+        const error = new Error('E11000 duplicate key')
+        error.code = 11000
+        throw error
+      }
+      state.audits.push(document)
+      return { matchedCount: 0, upsertedCount: 1, upsertedId: document._id }
+    }),
+    insertOne: vi.fn(async (document) => { state.audits.push({ ...document }); return { acknowledged: true } }),
+  }
+  const collections = new Map([
+    ['articles', articles], ['sources', sources], ['users', users], ['sessions', sessions],
+    ['indexingJobs', indexingJobs], ['adminAuditLogs', adminAuditLogs],
+  ])
+  const session = { withTransaction: vi.fn(async (work) => work(session)), endSession: vi.fn(async () => {}) }
+  const repository = new MongoAdminRepository({ db: { collection: (name) => collections.get(name) }, client: { startSession: vi.fn(() => session) }, now: () => now })
+  return { repository, state, collections, session }
+}
+
+function createConcurrentArticleContext() {
+  const state = {
+    articles: new Map([[articleId.toHexString(), article()], [duplicateId.toHexString(), article(duplicateId)]]),
+    audits: [],
+    jobs: [],
+  }
+  const matches = (document, filter = {}) => Object.entries(filter).every(([key, expected]) => {
+    if (key === '_id') return String(document?._id) === String(expected)
+    if (key === 'updatedAt') return document?.updatedAt?.getTime?.() === expected?.getTime?.()
+    return String(document?.[key]) === String(expected)
+  })
+  const articles = {
+    findOne: vi.fn(async (filter) => [...state.articles.values()].find((item) => matches(item, filter)) ?? null),
+    find: vi.fn(() => cursor([])),
+    updateOne: vi.fn(async (filter, update) => {
+      const current = [...state.articles.values()].find((item) => matches(item, filter))
+      if (!current) return { matchedCount: 0 }
+      const next = { ...current, ...(update?.$set ?? {}) }
+      for (const key of Object.keys(update?.$unset ?? {})) delete next[key]
+      state.articles.set(next._id.toHexString(), next)
+      return { matchedCount: 1 }
+    }),
+  }
+  const sources = {
+    findOne: vi.fn(async () => source()),
+    updateOne: vi.fn(async () => ({ matchedCount: 1 })),
+  }
+  const users = { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }
+  const sessions = { updateOne: vi.fn(async () => ({ matchedCount: 1 })) }
+  const indexingJobs = {
+    updateOne: vi.fn(async (filter, update) => {
+      const existing = state.jobs.find((job) => matches(job, filter))
+      if (!existing) state.jobs.push({ ...(update?.$setOnInsert ?? {}) })
+      return { matchedCount: existing ? 1 : 0, upsertedCount: existing ? 0 : 1 }
+    }),
+  }
+  let requestReads = 0
+  let releaseRequestReads
+  const requestReadsReady = new Promise((resolve) => { releaseRequestReads = resolve })
+  const adminAuditLogs = {
+    findOne: vi.fn(async (filter) => {
+      if (filter?.requestId) {
+        requestReads += 1
+        if (requestReads === 2) releaseRequestReads()
+        await requestReadsReady
+        return null
+      }
+      return state.audits.find((audit) => matches(audit, filter)) ?? null
+    }),
+    updateOne: vi.fn(async (filter, update) => {
+      const existing = state.audits.find((audit) => matches(audit, filter))
+      if (existing) return { matchedCount: 1, upsertedCount: 0 }
+      const document = { ...(update?.$setOnInsert ?? {}) }
+      if (state.audits.some((audit) => String(audit._id) === String(document._id))) {
+        const error = new Error('E11000 duplicate key')
+        error.code = 11000
+        throw error
+      }
+      state.audits.push(document)
+      return { matchedCount: 0, upsertedCount: 1, upsertedId: document._id }
+    }),
+    insertOne: vi.fn(async (document) => {
+      if (state.audits.some((audit) => String(audit._id) === String(document._id))) {
+        const error = new Error('E11000 duplicate key')
+        error.code = 11000
+        throw error
+      }
+      state.audits.push({ ...document })
+      return { acknowledged: true }
+    }),
+  }
+  const collections = new Map([
+    ['articles', articles], ['sources', sources], ['users', users], ['sessions', sessions],
+    ['indexingJobs', indexingJobs], ['adminAuditLogs', adminAuditLogs],
+  ])
+  const makeSession = () => {
+    const session = { withTransaction: vi.fn(async (work) => work(session)), endSession: vi.fn(async () => {}) }
+    return session
+  }
+  const repository = new MongoAdminRepository({ db: { collection: (name) => collections.get(name) }, client: { startSession: vi.fn(makeSession) }, now: () => now })
+  return { repository, state, collections }
+}
 
 describe('MongoAdminRepository', () => {
   it('computes overview metrics and exposes immutable pipeline constants', async () => {
@@ -189,5 +329,106 @@ describe('MongoAdminRepository', () => {
     await expect(fixture.repository.purgeAuditIpHmac({ cutoff: now, limit: 1 })).resolves.toEqual({ inspected: 1, affected: 1, hasMore: true })
     const empty = createContext({ findResults: { adminAuditLogs: [[]] } })
     await expect(empty.repository.purgeAuditIpHmac({ cutoff: now, limit: 0 })).resolves.toEqual({ inspected: 0, affected: 0, hasMore: false })
+  })
+  const updateStatus = (repository, status, requestId, fence = actorFence()) => repository.updateAdminArticle(articleId, {
+    category: 'status', value: status, actorFence: fence, actor,
+    request: { requestId }, rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) },
+    reasonCode: 'article_status_changed',
+  })
+
+  it('writes one reconciliation intent and audit for the first status request', async () => {
+    const fixture = createStatefulArticleContext()
+    await expect(updateStatus(fixture.repository, 'hidden', 'status-first-request')).resolves.toMatchObject({ status: 'hidden' })
+    expect(fixture.state.audits).toHaveLength(1)
+    expect(fixture.state.audits[0]).toMatchObject({ action: 'article_status_changed', requestId: 'status-first-request' })
+    expect(fixture.state.audits[0]).not.toHaveProperty('actorScope')
+    expect(fixture.state.jobs).toHaveLength(1)
+    expect(fixture.state.jobs[0]).toMatchObject({ task: 'visibility-reconcile', trigger: 'admin', idempotencyKey: expect.stringContaining('status-first-request') })
+  })
+
+  it('reuses an exact status request audit and reconciliation intent without duplicate writes', async () => {
+    const fixture = createStatefulArticleContext()
+    await updateStatus(fixture.repository, 'hidden', 'status-replay-request')
+    await expect(updateStatus(fixture.repository, 'hidden', 'status-replay-request')).resolves.toMatchObject({ status: 'hidden' })
+    expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('sources').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('indexingJobs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('adminAuditLogs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.state.audits).toHaveLength(1)
+    expect(fixture.state.jobs).toHaveLength(1)
+  })
+
+  it('replays an exact request before consuming rate-limit admission or touching mutable fences', async () => {
+    const fixture = createStatefulArticleContext()
+    const reserve = vi.fn(async () => ({ allowed: true }))
+    const admission = { reserve }
+    await fixture.repository.updateAdminArticle(articleId, {
+      category: 'status', value: 'hidden', actorFence: actorFence(), actor,
+      request: { requestId: 'status-admission-replay' }, rateLimitAdmission: admission,
+      reasonCode: 'article_status_changed',
+    })
+    expect(reserve).toHaveBeenCalledTimes(1)
+    await expect(fixture.repository.updateAdminArticle(articleId, {
+      category: 'status', value: 'hidden', actorFence: actorFence(), actor,
+      request: { requestId: 'status-admission-replay' }, rateLimitAdmission: admission,
+      reasonCode: 'article_status_changed',
+    })).resolves.toMatchObject({ status: 'hidden' })
+    expect(reserve).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('users').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('sessions').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('adminAuditLogs').updateOne).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a reused status request identity when the payload changes', async () => {
+    const fixture = createStatefulArticleContext()
+    await updateStatus(fixture.repository, 'hidden', 'status-mismatch-request')
+    await expect(updateStatus(fixture.repository, 'published', 'status-mismatch-request')).rejects.toMatchObject({ status: 409, code: 'idempotency_mismatch' })
+    expect(fixture.state.article.status).toBe('hidden')
+    expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('indexingJobs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('adminAuditLogs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.state.audits).toHaveLength(1)
+    expect(fixture.state.jobs).toHaveLength(1)
+  })
+
+  it('supports hidden to published to hidden with distinct request and event identities', async () => {
+    const fixture = createStatefulArticleContext()
+    await expect(updateStatus(fixture.repository, 'hidden', 'status-roundtrip-hidden-1')).resolves.toMatchObject({ status: 'hidden' })
+    await expect(updateStatus(fixture.repository, 'published', 'status-roundtrip-published')).resolves.toMatchObject({ status: 'published' })
+    await expect(updateStatus(fixture.repository, 'hidden', 'status-roundtrip-hidden-2')).resolves.toMatchObject({ status: 'hidden' })
+    expect(fixture.state.audits).toHaveLength(3)
+    expect(new Set(fixture.state.audits.map(({ eventId }) => eventId)).size).toBe(3)
+    expect(fixture.state.audits.map(({ requestId }) => requestId)).toEqual([
+      'status-roundtrip-hidden-1', 'status-roundtrip-published', 'status-roundtrip-hidden-2',
+    ])
+    expect(fixture.state.jobs).toHaveLength(3)
+    expect(new Set(fixture.state.jobs.map(({ _id }) => String(_id))).size).toBe(3)
+  })
+  it('binds a concurrent article request identity before a second domain commit', async () => {
+    const fixture = createConcurrentArticleContext()
+    const request = { requestId: 'concurrent-status-key' }
+    const options = { actorFence: actorFence(), actor, request, rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) }, reasonCode: 'article_status_changed' }
+    const results = await Promise.allSettled([
+      fixture.repository.updateAdminArticle(articleId, { ...options, category: 'status', value: 'hidden' }),
+      fixture.repository.updateAdminArticle(duplicateId, { ...options, category: 'status', value: 'published' }),
+    ])
+
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter(({ status, reason }) => status === 'rejected' && reason?.code === 'idempotency_mismatch')).toHaveLength(1)
+    expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('indexingJobs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.state.audits).toHaveLength(1)
+    expect(fixture.state.jobs).toHaveLength(1)
+  })
+
+  it('keeps reconciliation job identities scoped to the actor session', async () => {
+    const fixture = createStatefulArticleContext()
+    const secondSessionFence = { ...actorFence(), sessionId: new ObjectId('507f1f77bcf86cd799439016') }
+    await updateStatus(fixture.repository, 'hidden', 'status-shared-key', actorFence())
+    await updateStatus(fixture.repository, 'hidden', 'status-shared-key', secondSessionFence)
+    expect(fixture.state.audits).toHaveLength(2)
+    expect(fixture.state.jobs).toHaveLength(2)
+    expect(new Set(fixture.state.jobs.map(({ _id }) => String(_id))).size).toBe(2)
   })
 })

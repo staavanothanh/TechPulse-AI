@@ -56,6 +56,8 @@ describe('generated contract boundary', () => {
     const answerOperation = operations.find(({ operationId }) => operationId === 'createGroundedAnswer')
     expect(answerOperation.requiredHeaders).toEqual(['X-CSRF-Token', 'Idempotency-Key'])
     expect(answerOperation.browserManagedHeaders).toEqual(['Origin'])
+    const articleOperation = operations.find(({ operationId }) => operationId === 'updateAdminArticle')
+    expect(articleOperation.requiredHeaders).toEqual(['X-CSRF-Token', 'Idempotency-Key'])
   })
 
   it('requires bearer auth for generated machine operations', async () => {

@@ -2239,6 +2239,9 @@
           },
           {
             "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
         "requestBody": {

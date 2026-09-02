@@ -60,7 +60,8 @@ export function createAdminGovernanceRouter({ adminGovernanceService, authServic
   router.patch('/api/v1/admin/articles/:articleId', admin, csrf, asyncRoute(async (req, res) => {
     validateBody('AdminArticleUpdateRequest', req.body)
     validateArticlePatch(req.body)
-    const data = await service.updateAdminArticle({ auth: req.auth, articleId: req.params.articleId, patch: req.body, csrfToken: req.get('X-CSRF-Token'), request: req })
+    const key = idempotencyKey(req)
+    const data = await service.updateAdminArticle({ auth: req.auth, articleId: req.params.articleId, patch: req.body, idempotencyKey: key, csrfToken: req.get('X-CSRF-Token'), request: req })
     sendValidated(res, 200, 'AdminArticleResponse', { data })
   }))
   router.post('/api/v1/admin/duplicate-merges', admin, csrf, asyncRoute(async (req, res) => {

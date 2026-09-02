@@ -1,3 +1,4 @@
+import React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import {
   OVERVIEW_METRICS,
@@ -24,6 +25,7 @@ import {
   stableQueryKey,
   statusLabel,
   statusTone,
+  useAdminResource,
 } from '../../client/features/admin/ui/admin-data.js'
 
 const response = (data, headers = new Map()) => ({
@@ -322,5 +324,519 @@ describe('admin-data helpers and cache requests', () => {
     await expect(failing.promise).rejects.toThrow('network')
     failing.release()
     invalidateAdminResourceCache(scope)
+  })
+
+  it('guards pagination across status changes and preserves a newer query loading lock', async () => {
+    function createHookRunner(hookFn) {
+      let hookIdx = 0
+      const hooks = []
+      const effectCleanups = []
+      let pendingEffects = []
+
+      const dispatcher = {
+        useState(initial) {
+          const idx = hookIdx++
+          if (hooks[idx] === undefined) {
+            hooks[idx] = typeof initial === 'function' ? initial() : initial
+          }
+          const setState = (next) => {
+            const val = typeof next === 'function' ? next(hooks[idx]) : next
+            hooks[idx] = val
+            render()
+          }
+          return [hooks[idx], setState]
+        },
+        useRef(initial) {
+          const idx = hookIdx++
+          if (hooks[idx] === undefined) {
+            hooks[idx] = { current: initial }
+          }
+          return hooks[idx]
+        },
+        useCallback(fn, deps) {
+          const idx = hookIdx++
+          const prev = hooks[idx]
+          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
+            return prev.fn
+          }
+          hooks[idx] = { fn, deps }
+          return fn
+        },
+        useMemo(fn, deps) {
+          const idx = hookIdx++
+          const prev = hooks[idx]
+          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
+            return prev.val
+          }
+          const val = fn()
+          hooks[idx] = { val, deps }
+          return val
+        },
+        useEffect(effect, deps) {
+          const idx = hookIdx++
+          const prev = hooks[idx]
+          let hasChanged = true
+          if (prev && deps && prev.deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
+            hasChanged = false
+          }
+          hooks[idx] = { effect, deps }
+          if (hasChanged) {
+            pendingEffects.push({ idx, effect })
+          }
+        },
+      }
+
+      let currentProps
+      let latestResult
+
+      function render(props = currentProps) {
+        currentProps = props
+        hookIdx = 0
+        pendingEffects = []
+        const prevH = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H
+        React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = dispatcher
+        try {
+          latestResult = hookFn(props)
+        } finally {
+          React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = prevH
+        }
+        for (const { idx, effect } of pendingEffects) {
+          if (typeof effectCleanups[idx] === 'function') {
+            effectCleanups[idx]()
+          }
+          const cleanup = effect()
+          effectCleanups[idx] = typeof cleanup === 'function' ? cleanup : undefined
+        }
+        return latestResult
+      }
+
+      return {
+        render,
+        get current() {
+          return latestResult
+        },
+      }
+    }
+
+    const scope = {}
+    clearAdminResourceCache(scope)
+
+    let resolveOldLoadMore
+    const oldLoadMorePromise = new Promise((resolve) => {
+      resolveOldLoadMore = resolve
+    })
+    let resolveNewLoadMore
+    const newLoadMoreResponse = new Promise((resolve) => {
+      resolveNewLoadMore = resolve
+    })
+
+    const api = {
+      listAdminArticles: vi.fn(async ({ fetchImpl, signal }) => {
+        const res = await fetchImpl('https://techpulse.test/api/v1/admin/articles', { signal })
+        return res.json()
+      }),
+    }
+
+    const fetchImpl = vi.fn(async (url) => {
+      const parsed = new URL(url)
+      if (parsed.searchParams.get('cursor') === 'cursor-old') {
+        return oldLoadMorePromise
+      }
+      if (parsed.searchParams.get('cursor') === 'cursor-new') {
+        return newLoadMoreResponse
+      }
+      if (parsed.searchParams.get('status') === 'hidden') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'article-hidden-1', status: 'hidden' }],
+            meta: { hasNext: true, nextCursor: 'cursor-new' },
+          }),
+        }
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'article-published-1', status: 'published' }],
+          meta: { hasNext: true, nextCursor: 'cursor-old' },
+        }),
+      }
+    })
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchImpl
+
+    try {
+      const runner = createHookRunner((props) =>
+        useAdminResource(api, 'listAdminArticles', props),
+      )
+
+      runner.render({
+        initialData: {
+          data: [{ id: 'article-published-1', status: 'published' }],
+          meta: { hasNext: true, nextCursor: 'cursor-old' },
+        },
+        query: {},
+        cacheScope: scope,
+      })
+
+      const oldPagePromise = runner.current.loadMore()
+      expect(
+        fetchImpl.mock.calls.filter(
+          ([url]) => new URL(url).searchParams.get('cursor') === 'cursor-old',
+        ),
+      ).toHaveLength(1)
+
+      runner.render({
+        query: { status: 'hidden' },
+        cacheScope: scope,
+      })
+
+      expect(await runner.current.loadMore()).toBe(false)
+      expect(
+        fetchImpl.mock.calls.filter(
+          ([url]) => new URL(url).searchParams.get('cursor') === 'cursor-old',
+        ),
+      ).toHaveLength(1)
+      expect(
+        fetchImpl.mock.calls.filter(
+          ([url]) => new URL(url).searchParams.get('cursor') === 'cursor-new',
+        ),
+      ).toHaveLength(0)
+
+      await new Promise((r) => setTimeout(r, 300))
+      await new Promise((r) => setTimeout(r, 50))
+
+      const newQueryLoadMorePromise = runner.current.loadMore()
+      expect(runner.current.loadingMore).toBe(true)
+      expect(
+        fetchImpl.mock.calls.filter(
+          ([url]) => new URL(url).searchParams.get('cursor') === 'cursor-new',
+        ),
+      ).toHaveLength(1)
+
+      resolveOldLoadMore({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'article-published-2', status: 'published' }],
+          meta: { hasNext: false },
+        }),
+      })
+
+      expect(await oldPagePromise).toBe(false)
+      expect(runner.current.loadingMore).toBe(true)
+      const blockedWhileCurrentRequestPending = runner.current.loadMore()
+      expect(await blockedWhileCurrentRequestPending).toBe(false)
+
+      const filteredCache = acquireAdminResourceRequest({
+        scope,
+        api,
+        operation: 'listAdminArticles',
+        query: { status: 'hidden' },
+        fetchImpl,
+      })
+      expect(filteredCache.cached).toBe(true)
+      expect(listItems(await filteredCache.promise)).toEqual([
+        expect.objectContaining({ id: 'article-hidden-1', status: 'hidden' }),
+      ])
+      filteredCache.release()
+
+      resolveNewLoadMore({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'article-hidden-2', status: 'hidden' }],
+          meta: { hasNext: false },
+        }),
+      })
+
+      expect(await newQueryLoadMorePromise).toBe(true)
+      expect(runner.current.loadingMore).toBe(false)
+      expect(listItems(runner.current.data)).toEqual([
+        expect.objectContaining({ id: 'article-hidden-1', status: 'hidden' }),
+        expect.objectContaining({ id: 'article-hidden-2', status: 'hidden' }),
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+      clearAdminResourceCache(scope)
+    }
+  })
+
+  it('combines items and updates cache during valid same-query pagination', async () => {
+    function createHookRunner(hookFn) {
+      let hookIdx = 0
+      const hooks = []
+      const effectCleanups = []
+      let pendingEffects = []
+
+      const dispatcher = {
+        useState(initial) {
+          const idx = hookIdx++
+          if (hooks[idx] === undefined) {
+            hooks[idx] = typeof initial === 'function' ? initial() : initial
+          }
+          const setState = (next) => {
+            const val = typeof next === 'function' ? next(hooks[idx]) : next
+            hooks[idx] = val
+            render()
+          }
+          return [hooks[idx], setState]
+        },
+        useRef(initial) {
+          const idx = hookIdx++
+          if (hooks[idx] === undefined) {
+            hooks[idx] = { current: initial }
+          }
+          return hooks[idx]
+        },
+        useCallback(fn, deps) {
+          const idx = hookIdx++
+          const prev = hooks[idx]
+          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
+            return prev.fn
+          }
+          hooks[idx] = { fn, deps }
+          return fn
+        },
+        useMemo(fn, deps) {
+          const idx = hookIdx++
+          const prev = hooks[idx]
+          if (prev && deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
+            return prev.val
+          }
+          const val = fn()
+          hooks[idx] = { val, deps }
+          return val
+        },
+        useEffect(effect, deps) {
+          const idx = hookIdx++
+          const prev = hooks[idx]
+          let hasChanged = true
+          if (prev && deps && prev.deps && prev.deps.every((d, i) => Object.is(d, deps[i]))) {
+            hasChanged = false
+          }
+          hooks[idx] = { effect, deps }
+          if (hasChanged) {
+            pendingEffects.push({ idx, effect })
+          }
+        },
+      }
+
+      let currentProps
+      let latestResult
+
+      function render(props = currentProps) {
+        currentProps = props
+        hookIdx = 0
+        pendingEffects = []
+        const prevH = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H
+        React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = dispatcher
+        try {
+          latestResult = hookFn(props)
+        } finally {
+          React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.H = prevH
+        }
+        for (const { idx, effect } of pendingEffects) {
+          if (typeof effectCleanups[idx] === 'function') {
+            effectCleanups[idx]()
+          }
+          const cleanup = effect()
+          effectCleanups[idx] = typeof cleanup === 'function' ? cleanup : undefined
+        }
+        return latestResult
+      }
+
+      return {
+        render,
+        get current() {
+          return latestResult
+        },
+      }
+    }
+
+    const scope = {}
+    clearAdminResourceCache(scope)
+    const api = {
+      listAdminArticles: vi.fn(async ({ fetchImpl, signal }) => {
+        const res = await fetchImpl('https://techpulse.test/api/v1/admin/articles', { signal })
+        return res.json()
+      }),
+    }
+    const fetchImpl = vi.fn(async (url) => {
+      const parsed = new URL(url)
+      if (parsed.searchParams.get('cursor') === 'cursor-1') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'article-2', status: 'published' }],
+            meta: { hasNext: false },
+          }),
+        }
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'article-1', status: 'published' }],
+          meta: { hasNext: true, nextCursor: 'cursor-1' },
+        }),
+      }
+    })
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchImpl
+
+    try {
+      const runner = createHookRunner((props) =>
+        useAdminResource(api, 'listAdminArticles', props),
+      )
+      runner.render({
+        initialData: {
+          data: [{ id: 'article-1', status: 'published' }],
+          meta: { hasNext: true, nextCursor: 'cursor-1' },
+        },
+        query: {},
+        cacheScope: scope,
+      })
+
+      const ok = await runner.current.loadMore()
+      expect(ok).toBe(true)
+      expect(listItems(runner.current.data)).toEqual([
+        expect.objectContaining({ id: 'article-1' }),
+        expect.objectContaining({ id: 'article-2' }),
+      ])
+      expect(listMeta(runner.current.data)).toEqual({ hasNext: false })
+
+      const cached = acquireAdminResourceRequest({
+        scope,
+        api,
+        operation: 'listAdminArticles',
+        query: {},
+        fetchImpl,
+      })
+      expect(cached.cached).toBe(true)
+      const cachedData = await cached.promise
+      cached.release()
+      expect(listItems(cachedData)).toEqual([
+        expect.objectContaining({ id: 'article-1' }),
+        expect.objectContaining({ id: 'article-2' }),
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+      clearAdminResourceCache(scope)
+    }
+  })
+
+  it('invalidates pagination when the cache scope changes', async () => {
+    function createHookRunner(hookFn) {
+      let hookIdx = 0
+      const hooks = []
+      const effectCleanups = []
+      let pendingEffects = []
+      const dispatcher = {
+        useState(initial) {
+          const idx = hookIdx++
+          if (hooks[idx] === undefined) hooks[idx] = typeof initial === 'function' ? initial() : initial
+          const setState = (next) => {
+            hooks[idx] = typeof next === 'function' ? next(hooks[idx]) : next
+            render()
+          }
+          return [hooks[idx], setState]
+        },
+        useRef(initial) {
+          const idx = hookIdx++
+          if (hooks[idx] === undefined) hooks[idx] = { current: initial }
+          return hooks[idx]
+        },
+        useCallback(fn, deps) {
+          const idx = hookIdx++
+          const previous = hooks[idx]
+          if (previous && deps && previous.deps.every((value, index) => Object.is(value, deps[index]))) return previous.fn
+          hooks[idx] = { fn, deps }
+          return fn
+        },
+        useMemo(fn, deps) {
+          const idx = hookIdx++
+          const previous = hooks[idx]
+          if (previous && deps && previous.deps.every((value, index) => Object.is(value, deps[index]))) return previous.value
+          const value = fn()
+          hooks[idx] = { value, deps }
+          return value
+        },
+        useEffect(effect, deps) {
+          const idx = hookIdx++
+          const previous = hooks[idx]
+          const changed = !previous || !deps || !previous.deps || !previous.deps.every((value, index) => Object.is(value, deps[index]))
+          hooks[idx] = { deps }
+          if (changed) pendingEffects.push({ idx, effect })
+        },
+      }
+      let props
+      let result
+      function render(nextProps = props) {
+        props = nextProps
+        hookIdx = 0
+        pendingEffects = []
+        const internals = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE
+        const previous = internals.H
+        internals.H = dispatcher
+        try { result = hookFn(props) } finally { internals.H = previous }
+        for (const { idx, effect } of pendingEffects) {
+          effectCleanups[idx]?.()
+          const cleanup = effect()
+          effectCleanups[idx] = typeof cleanup === 'function' ? cleanup : undefined
+        }
+        return result
+      }
+      return { render, get current() { return result } }
+    }
+
+    const scopeA = {}
+    const scopeB = {}
+    clearAdminResourceCache(scopeA)
+    clearAdminResourceCache(scopeB)
+    let resolveOldPage
+    let resolveNewPage
+    const oldPage = new Promise((resolve) => { resolveOldPage = resolve })
+    const newPage = new Promise((resolve) => { resolveNewPage = resolve })
+    let cursorRequests = 0
+    const api = {
+      listAdminArticles: vi.fn(async ({ fetchImpl, signal }) => {
+        const response = await fetchImpl('https://techpulse.test/api/v1/admin/articles', { signal })
+        return response.json()
+      }),
+    }
+    const fetchImpl = vi.fn(async (url) => {
+      const parsed = new URL(url)
+      if (parsed.searchParams.get('cursor') === 'cursor-a') {
+        cursorRequests += 1
+        return cursorRequests === 1 ? oldPage : newPage
+      }
+      return {
+        ok: true,
+        json: async () => ({ data: [{ id: 'article-b1', status: 'published' }], meta: { hasNext: false } }),
+      }
+    })
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchImpl
+    try {
+      const runner = createHookRunner((props) => useAdminResource(api, 'listAdminArticles', props))
+      runner.render({
+        initialData: { data: [{ id: 'article-a1', status: 'published' }], meta: { hasNext: true, nextCursor: 'cursor-a' } },
+        cacheScope: scopeA,
+      })
+      const oldResult = runner.current.loadMore()
+      runner.render({ cacheScope: scopeB })
+      const newResult = runner.current.loadMore()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      resolveOldPage({ ok: true, json: async () => ({ data: [{ id: 'article-a2' }], meta: { hasNext: false } }) })
+      resolveNewPage({ ok: true, json: async () => ({ data: [{ id: 'article-b2' }], meta: { hasNext: false } }) })
+      expect(await oldResult).toBe(false)
+      expect(await newResult).toBe(false)
+      expect(cursorRequests).toBe(1)
+      expect(listItems(runner.current.data)).toEqual([expect.objectContaining({ id: 'article-b1' })])
+    } finally {
+      globalThis.fetch = originalFetch
+      clearAdminResourceCache(scopeA)
+      clearAdminResourceCache(scopeB)
+    }
   })
 })

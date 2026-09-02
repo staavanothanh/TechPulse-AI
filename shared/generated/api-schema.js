@@ -2317,6 +2317,9 @@ export const openApiDocument = {
           },
           {
             "$ref": "#/components/parameters/BrowserOriginHeader"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
           }
         ],
         "requestBody": {

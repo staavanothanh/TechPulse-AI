@@ -1,5 +1,12 @@
 import { ObjectId } from 'mongodb'
 
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
+
+function requireIdempotencyKey(value) {
+  if (typeof value !== 'string' || !IDEMPOTENCY_KEY.test(value)) throw new AdminGovernanceError(400, 'bad_request', 'Idempotency-Key is invalid')
+  return value
+}
+
 export class AdminGovernanceError extends Error {
   constructor(status, code, message, options = {}) {
     super(message)
@@ -170,11 +177,13 @@ export function createAdminGovernanceService({ repository, rateLimitAdmission } 
       if (!item) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(item, true)
     },
-    async updateAdminArticle({ auth, articleId: value, patch, request } = {}) {
+    async updateAdminArticle({ auth, articleId: value, patch, idempotencyKey, request } = {}) {
       const user = await requireLiveAdmin(auth, repo)
+      const key = requireIdempotencyKey(idempotencyKey)
       const id = articleId(value)
       const category = validateArticlePatch(patch)
-      const item = await (repo.updateAdminArticle ?? unavailable).call(repo, id, { category, value: patch[category], reasonCode: patch.reasonCode, actor: user, actorFence: { userId: user.id ?? user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request, rateLimitAdmission })
+      const requestWithIdentity = { requestId: request?.requestId, serverRequestId: request?.serverRequestId, idempotencyKey: key }
+      const item = await (repo.updateAdminArticle ?? unavailable).call(repo, id, { category, value: patch[category], reasonCode: patch.reasonCode, actor: user, actorFence: { userId: user.id ?? user._id, sessionId: auth.session?.id ?? auth.session?._id, sessionVersion: auth.session?.userSessionVersion }, request: requestWithIdentity, rateLimitAdmission })
       if (!item) throw new AdminGovernanceError(404, 'not_found', 'Article not found')
       return safeArticle(item)
     },

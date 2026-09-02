@@ -126,12 +126,12 @@ function readAdminResourceCache(scope, operation, query) {
   return entry?.dataSet ? { hit: true, data: entry.data } : { hit: false, data: null }
 }
 
-function seedAdminResourceCache(scope, operation, query, data) {
+function seedAdminResourceCache(scope, operation, query, data, { overwrite = false } = {}) {
   const cache = getResourceCache(scope)
   if (!cache) return
   const key = resourceCacheKey(operation, query)
   const entry = cache.entries.get(key) ?? { dataSet: false, data: null, inFlight: null }
-  if (entry.dataSet) return
+  if (entry.dataSet && !overwrite) return
   entry.data = data
   entry.dataSet = true
   cache.entries.set(key, entry)
@@ -524,8 +524,28 @@ export function useAdminResource(
   const seededQueryKeyRef = useRef(hasSeed ? queryKey : null)
   const didSeedRef = useRef(false)
   const consumedReloadKeyRef = useRef(0)
+  const dataRef = useRef(data)
+  dataRef.current = data
+
+  const resourceIdentity = { api, cacheScope, operation, queryKey, reloadKey }
+  const queryGenerationRef = useRef(0)
+  const currentIdentityRef = useRef(resourceIdentity)
+  const dataIdentityRef = useRef(resourceIdentity)
+  if (
+    currentIdentityRef.current.api !== api ||
+    currentIdentityRef.current.cacheScope !== cacheScope ||
+    currentIdentityRef.current.operation !== operation ||
+    currentIdentityRef.current.queryKey !== queryKey ||
+    currentIdentityRef.current.reloadKey !== reloadKey
+  ) {
+    currentIdentityRef.current = resourceIdentity
+    dataIdentityRef.current = null
+    queryGenerationRef.current += 1
+  }
 
   useEffect(() => {
+    loadingMoreRef.current = false
+    setLoadingMore(false)
     let active = true
     let request
     if (!enabled) {
@@ -542,6 +562,7 @@ export function useAdminResource(
       reloadKey === 0
     if (shouldUseSeed) {
       didSeedRef.current = true
+      dataIdentityRef.current = resourceIdentity
       seedAdminResourceCache(cacheScope, operation, stableQuery, initialData)
       setData(initialData)
       setState('ready')
@@ -564,6 +585,7 @@ export function useAdminResource(
       if (request.cached) {
         request.promise.then((response) => {
           if (!active) return
+          dataIdentityRef.current = resourceIdentity
           setData(response)
           setError(null)
           setState('ready')
@@ -575,6 +597,7 @@ export function useAdminResource(
       void request.promise
         .then((response) => {
           if (!active) return
+          dataIdentityRef.current = resourceIdentity
           setData(response)
           setState('ready')
         })
@@ -595,19 +618,50 @@ export function useAdminResource(
   }, [api, cacheScope, cachedHit, enabled, initialData, onSessionExpired, operation, queryKey, reloadKey, stableQuery])
 
   const loadMore = useCallback(async () => {
-    const meta = listMeta(data)
-    if (loadingMoreRef.current || !meta.hasNext || !meta.nextCursor) return false
+    const meta = listMeta(dataRef.current)
+    const dataIdentity = dataIdentityRef.current
+    if (
+      !dataIdentity ||
+      dataIdentity.queryKey !== queryKey ||
+      dataIdentity.reloadKey !== reloadKey ||
+      loadingMoreRef.current ||
+      !meta.hasNext ||
+      !meta.nextCursor
+    ) return false
     loadingMoreRef.current = true
     setLoadingMore(true)
+    const requestGeneration = queryGenerationRef.current
+    const requestQueryKey = queryKey
+    const requestReloadKey = reloadKey
+    const requestQuery = stableQuery
+    const requestApi = api
+    const requestCacheScope = cacheScope
+    const requestOperation = operation
     const request = acquireAdminResourceRequest({
       scope: cacheScope,
       api,
       operation,
-      query: { ...stableQuery, cursor: meta.nextCursor },
+      query: { ...requestQuery, cursor: meta.nextCursor },
     })
     try {
       const response = await request.promise
-      const currentItems = listItems(data)
+      const dataIdentity = dataIdentityRef.current
+      if (
+        queryGenerationRef.current !== requestGeneration ||
+        requestApi !== api ||
+        requestCacheScope !== cacheScope ||
+        requestOperation !== operation ||
+        queryKey !== requestQueryKey ||
+        !dataIdentity ||
+        dataIdentity.api !== requestApi ||
+        dataIdentity.cacheScope !== requestCacheScope ||
+        dataIdentity.operation !== requestOperation ||
+        dataIdentity.queryKey !== requestQueryKey ||
+        dataIdentity.reloadKey !== requestReloadKey
+      ) {
+        return false
+      }
+      const currentItems = listItems(dataRef.current)
       const nextItems = listItems(response)
       const combined = {
         ...(response && typeof response === 'object' && !Array.isArray(response) ? response : {}),
@@ -615,9 +669,25 @@ export function useAdminResource(
         meta: listMeta(response),
       }
       setData(combined)
-      seedAdminResourceCache(cacheScope, operation, stableQuery, combined)
+      seedAdminResourceCache(cacheScope, operation, requestQuery, combined, { overwrite: true })
       return true
     } catch (requestError) {
+      const dataIdentity = dataIdentityRef.current
+      if (
+        queryGenerationRef.current !== requestGeneration ||
+        requestApi !== api ||
+        requestCacheScope !== cacheScope ||
+        requestOperation !== operation ||
+        queryKey !== requestQueryKey ||
+        !dataIdentity ||
+        dataIdentity.api !== requestApi ||
+        dataIdentity.cacheScope !== requestCacheScope ||
+        dataIdentity.operation !== requestOperation ||
+        dataIdentity.queryKey !== requestQueryKey ||
+        dataIdentity.reloadKey !== requestReloadKey
+      ) {
+        return false
+      }
       if (isAbortError(requestError)) return false
       if (isSessionExpired(requestError))
         onSessionExpired?.('Phiên đăng nhập đã hết hạn khi tải thêm dữ liệu admin.')
@@ -625,10 +695,19 @@ export function useAdminResource(
       return false
     } finally {
       request.release()
-      loadingMoreRef.current = false
-      setLoadingMore(false)
+      if (
+        queryGenerationRef.current === requestGeneration &&
+        currentIdentityRef.current.api === requestApi &&
+        currentIdentityRef.current.cacheScope === requestCacheScope &&
+        currentIdentityRef.current.operation === requestOperation &&
+        currentIdentityRef.current.queryKey === requestQueryKey &&
+        currentIdentityRef.current.reloadKey === requestReloadKey
+      ) {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
     }
-  }, [api, cacheScope, data, onSessionExpired, operation, stableQuery])
+  }, [api, cacheScope, onSessionExpired, operation, queryKey, reloadKey, stableQuery])
 
   const reload = useCallback(() => {
     invalidateAdminResourceCache(cacheScope, { operation })

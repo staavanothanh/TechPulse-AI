@@ -424,7 +424,8 @@ const operations = [
     "method": "PATCH",
     "path": "/api/v1/admin/articles/{articleId}",
     "requiredHeaders": [
-      "X-CSRF-Token"
+      "X-CSRF-Token",
+      "Idempotency-Key"
     ],
     "browserManagedHeaders": [
       "Origin"

@@ -112,6 +112,7 @@ export async function runAdminGovernanceContractFixtures({ document } = {}) {
   const adminCookie = `__Host-techpulse_session=${ADMIN_TOKEN}`
   const userCookie = `__Host-techpulse_session=${USER_TOKEN}`
   const jsonHeaders = { Origin: 'http://localhost:3000', Cookie: adminCookie, 'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json' }
+  const articleMutationHeaders = (key) => ({ ...jsonHeaders, 'Idempotency-Key': key })
   let cases = 0
   const request = async (operationId, path, init, status) => {
     const response = await globalThis.fetch(`${origin}${path}`, init)
@@ -128,11 +129,11 @@ export async function runAdminGovernanceContractFixtures({ document } = {}) {
     await request('listAdminArticles', '/api/v1/admin/articles?status=hidden', { headers: { Cookie: adminCookie } }, 422)
     await request('getAdminArticle', `/api/v1/admin/articles/${ARTICLE_ID}`, { headers: { Cookie: adminCookie } }, 200)
     await request('getAdminArticle', '/api/v1/admin/articles/507f1f77bcf86cd799439099', { headers: { Cookie: adminCookie } }, 404)
-    await request('updateAdminArticle', `/api/v1/admin/articles/${ARTICLE_ID}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 200)
-    await request('updateAdminArticle', `/api/v1/admin/articles/${CONFLICT_ARTICLE_ID}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 409)
-    await request('updateAdminArticle', `/api/v1/admin/articles/${LIMITED_ARTICLE_ID}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 429)
-    await request('updateAdminArticle', `/api/v1/admin/articles/${UNAVAILABLE_ARTICLE_ID}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 503)
-    await request('updateAdminArticle', `/api/v1/admin/articles/${ARTICLE_ID}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ status: 'hidden', topics: ['AI'], reasonCode: 'article_status_changed' }) }, 422)
+    await request('updateAdminArticle', `/api/v1/admin/articles/${ARTICLE_ID}`, { method: 'PATCH', headers: articleMutationHeaders('contract-article-status-0001'), body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 200)
+    await request('updateAdminArticle', `/api/v1/admin/articles/${CONFLICT_ARTICLE_ID}`, { method: 'PATCH', headers: articleMutationHeaders('contract-article-status-0002'), body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 409)
+    await request('updateAdminArticle', `/api/v1/admin/articles/${LIMITED_ARTICLE_ID}`, { method: 'PATCH', headers: articleMutationHeaders('contract-article-status-0003'), body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 429)
+    await request('updateAdminArticle', `/api/v1/admin/articles/${UNAVAILABLE_ARTICLE_ID}`, { method: 'PATCH', headers: articleMutationHeaders('contract-article-status-0004'), body: JSON.stringify({ status: 'hidden', reasonCode: 'article_status_changed' }) }, 503)
+    await request('updateAdminArticle', `/api/v1/admin/articles/${ARTICLE_ID}`, { method: 'PATCH', headers: articleMutationHeaders('contract-article-status-0005'), body: JSON.stringify({ status: 'hidden', topics: ['AI'], reasonCode: 'article_status_changed' }) }, 422)
     await request('mergeDuplicateArticles', '/api/v1/admin/duplicate-merges', { method: 'POST', headers: { ...jsonHeaders, 'Idempotency-Key': 'contract-duplicate-merge-0001' }, body: JSON.stringify({ canonicalArticleId: ARTICLE_ID, duplicateArticleIds: ['507f1f77bcf86cd799439019'], reasonCode: 'duplicate_merge_confirmed' }) }, 200)
     await request('listTakedownRequests', '/api/v1/admin/takedown-requests', { headers: { Cookie: adminCookie } }, 200)
     await request('createTakedownRequest', '/api/v1/admin/takedown-requests', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ requesterName: 'Đại diện', requesterContact: 'rights@example.com', targetType: 'article', targetIds: [ARTICLE_ID], reason: 'Yêu cầu quyền nội dung', requestedScope: ['summary', 'embedding'] }) }, 201)

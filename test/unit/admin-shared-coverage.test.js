@@ -2,8 +2,10 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  ADMIN_DIALOG_FOCUSABLE_SELECTOR,
   AdminButton,
   AdminConfirmDialog,
+  ArticlePreviewDialog,
   EmptyState,
   ErrorState,
   Icon,
@@ -13,6 +15,9 @@ import {
   ResourceFrame,
   StatusBadge,
   Table,
+  adminDialogFocusAction,
+  collectAdminDialogFocusables,
+  resolveDialogReturnTarget,
 } from '../../client/features/admin/ui/AdminShared.jsx'
 
 function el(type, props, ...children) {
@@ -129,6 +134,23 @@ describe('AdminShared render states', () => {
         el(
           ResourceFrame,
           {
+            resource: {
+              state: 'loading',
+              data: { meta: { hasNext: false } },
+              loadMore: vi.fn(),
+              loadingMore: false,
+            },
+            loadingLabel: 'Refreshing resources',
+          },
+          el('p', null, 'Existing rows remain mounted'),
+        ),
+      ),
+    ).toContain('Existing rows remain mounted')
+    expect(
+      render(
+        el(
+          ResourceFrame,
+          {
             resource: { state: 'error', error: 'Failed', reload: vi.fn() },
             loadingLabel: 'Loading',
           },
@@ -193,4 +215,86 @@ describe('AdminShared render states', () => {
       'Đang xử lý',
     )
   })
-})
+  it('covers all enabled dialog controls, gated Escape, and dynamic return targets', () => {
+    const link = { focus: vi.fn(), disabled: false, getAttribute: () => null }
+    const button = { focus: vi.fn(), disabled: false, getAttribute: () => null }
+    const input = { focus: vi.fn(), disabled: false, getAttribute: () => null }
+    const textarea = { focus: vi.fn(), disabled: false, getAttribute: () => null }
+    const select = { focus: vi.fn(), disabled: false, getAttribute: () => null }
+    const custom = { focus: vi.fn(), disabled: false, getAttribute: () => '0' }
+    const disabled = { focus: vi.fn(), disabled: true, getAttribute: () => null }
+    const untabbable = { focus: vi.fn(), disabled: false, getAttribute: () => '-1' }
+    const dialog = {
+      querySelectorAll: vi.fn(() => [
+        link,
+        button,
+        input,
+        textarea,
+        select,
+        custom,
+        disabled,
+        untabbable,
+      ]),
+    }
+
+    const focusables = collectAdminDialogFocusables(dialog)
+
+    expect(dialog.querySelectorAll).toHaveBeenCalledWith(ADMIN_DIALOG_FOCUSABLE_SELECTOR)
+    expect(focusables).toEqual([link, button, input, textarea, select, custom])
+    expect(adminDialogFocusAction({ key: 'Tab', activeElement: custom, focusables })).toEqual({
+      type: 'focus',
+      target: link,
+    })
+    expect(
+      adminDialogFocusAction({ key: 'Tab', shiftKey: true, activeElement: link, focusables }),
+    ).toEqual({ type: 'focus', target: custom })
+    expect(adminDialogFocusAction({ key: 'Tab', activeElement: input, focusables })).toBeNull()
+    expect(adminDialogFocusAction({ key: 'Escape', escapeAllowed: true })).toEqual({
+      type: 'close',
+    })
+    expect(adminDialogFocusAction({ key: 'Escape', escapeAllowed: false })).toBeNull()
+    const dialogFallback = { focus: vi.fn() }
+    expect(
+      adminDialogFocusAction({ key: 'Tab', focusables: [], fallbackTarget: dialogFallback }),
+    ).toEqual({ type: 'focus', target: dialogFallback })
+
+    const jobsTrigger = { focus: vi.fn(), isConnected: true }
+    const sourceRegistryTrigger = { focus: vi.fn(), isConnected: true }
+    expect(resolveDialogReturnTarget({ activeElement: jobsTrigger })).toBe(jobsTrigger)
+    expect(resolveDialogReturnTarget({ explicitTarget: jobsTrigger })).toBe(jobsTrigger)
+    expect(resolveDialogReturnTarget({ activeElement: sourceRegistryTrigger })).toBe(
+      sourceRegistryTrigger,
+    )
+    expect(resolveDialogReturnTarget({ explicitTarget: sourceRegistryTrigger })).toBe(
+      sourceRegistryTrigger,
+    )
+    const detachedTrigger = { focus: vi.fn(), isConnected: false }
+    expect(
+      resolveDialogReturnTarget({ activeElement: jobsTrigger, explicitTarget: detachedTrigger }),
+    ).toBe(jobsTrigger)
+    for (const trigger of [jobsTrigger, sourceRegistryTrigger]) {
+      resolveDialogReturnTarget({ explicitTarget: trigger })?.focus({ preventScroll: true })
+      expect(trigger.focus).toHaveBeenCalledWith({ preventScroll: true })
+    }
+  })
+
+  it('keeps both admin dialogs SSR-safe and keyboard-fallback focusable', () => {
+    expect(() =>
+      render(
+        el(AdminConfirmDialog, {
+          open: true,
+          title: 'Confirm',
+          consequence: 'Consequence',
+          reasonCode: 'reason',
+          onCancel: vi.fn(),
+          onConfirm: vi.fn(),
+        }),
+      ),
+    ).not.toThrow()
+    const preview = render(
+      el(ArticlePreviewDialog, { open: true, articleId: 'article-1', api: {} }),
+    )
+    expect(preview).toContain('role="dialog"')
+    expect(preview).toContain('tabindex="-1"')
+  })
+ })
