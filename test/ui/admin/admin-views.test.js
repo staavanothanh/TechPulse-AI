@@ -9,7 +9,7 @@ import {
   AdminSourcesView,
   AdminUsersView,
 } from '../../../client/features/admin/ui/AdminViews.jsx'
-import { JobsActionBar } from '../../../client/features/admin/ui/AdminJobsView.jsx'
+import { JobList, JobsActionBar } from '../../../client/features/admin/ui/AdminJobsView.jsx'
 import {
   AddSourcePanel,
   SourceCreateForm,
@@ -20,6 +20,7 @@ import {
   artifactJobRequest,
   createIdempotencyKey,
   createIdempotencyKeyStore,
+  formatAdminDate,
   isAdminJobRetryable,
   listMeta,
   mutateAdmin,
@@ -125,6 +126,76 @@ describe('admin feature views', () => {
     expect(html).toContain('role="dialog"')
     expect(html).toContain('source_status_changed')
     expect(html).not.toContain('<textarea')
+  })
+
+  it('renders created and finished timestamps for ingestion and indexing jobs', () => {
+    const createdAt = '2026-08-19T08:30:00.000Z'
+    const finishedAt = '2026-08-19T09:45:00.000Z'
+    const renderJobList = (kind, overrides = {}) =>
+      renderToStaticMarkup(
+        React.createElement(JobList, {
+          data: {
+            data: [
+              {
+                id: `${kind}-job`,
+                sourceId: 'source-opaque',
+                articleId: 'article-opaque',
+                connectorType: 'rss',
+                trigger: 'cron',
+                task: 'embedding',
+                status: 'succeeded',
+                attempt: 1,
+                batchSize: 20,
+                counters: { fetched: 1, created: 1, failed: 0 },
+                error: null,
+                createdAt,
+                finishedAt,
+                ...overrides,
+              },
+            ],
+            meta: { hasNext: false },
+          },
+          state: 'ready',
+          error: null,
+          reload: vi.fn(),
+          loadMore: vi.fn(),
+          loadingMore: false,
+          kind,
+          onRetry: vi.fn(),
+          onCancel: vi.fn(),
+          onPreviewArticle: vi.fn(),
+          busy: false,
+        }),
+      )
+    const firstRowCells = (html) => {
+      const body = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? ''
+      return [...body.matchAll(/<td(?:\s[^>]*)?>([\s\S]*?)<\/td>/g)].map((match) => match[1])
+    }
+
+    const ingestionHtml = renderJobList('ingestion', {
+      status: 'failed',
+      attempt: 2,
+      error: { code: 'connector_timeout', message: 'Timeout', retryable: true },
+    })
+    const indexingHtml = renderJobList('indexing', { status: 'queued' })
+
+    for (const html of [ingestionHtml, indexingHtml]) {
+      const cells = firstRowCells(html)
+      expect(html).toContain('<th>Tạo lúc</th>')
+      expect(html).toContain('<th>Hoàn thành lúc</th>')
+      expect(cells[2]).toContain(`dateTime="${createdAt}"`)
+      expect(cells[2]).toContain(formatAdminDate(createdAt))
+      expect(cells[3]).toContain(`dateTime="${finishedAt}"`)
+      expect(cells[3]).toContain(formatAdminDate(finishedAt))
+    }
+
+    expect(ingestionHtml).toContain('Thử lại')
+    expect(indexingHtml).toContain('Yêu cầu dừng')
+
+    for (const kind of ['ingestion', 'indexing']) {
+      const cells = firstRowCells(renderJobList(kind, { finishedAt: null }))
+      expect(cells[3]).toContain('Chưa ghi nhận')
+    }
   })
 
   it('shows jobs as durable operational records with safe action affordances', () => {

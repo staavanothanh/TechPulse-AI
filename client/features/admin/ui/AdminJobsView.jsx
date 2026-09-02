@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   aggregateDueWorkCounters,
   artifactJobRequest,
+  formatAdminDate,
   isAdminJobRetryable,
   listItems,
   mutateAdmin,
@@ -58,7 +59,32 @@ function JobRowActions({ job, kind, onRetry, onCancel, busy }) {
   )
 }
 
-function JobList({
+function JobTimestamp({ value }) {
+  const formatted = formatAdminDate(value)
+  if (!value || formatted === 'Không xác định') {
+    return <span className="admin-muted admin-job-time">{formatted}</span>
+  }
+  return (
+    <time className="admin-job-time" dateTime={value}>
+      {formatted}
+    </time>
+  )
+}
+
+const JOB_TIME_COLUMNS = Object.freeze([
+  {
+    key: 'createdAt',
+    label: 'Tạo lúc',
+    render: (value) => <JobTimestamp value={value} />,
+  },
+  {
+    key: 'finishedAt',
+    label: 'Hoàn thành lúc',
+    render: (value) => <JobTimestamp value={value} />,
+  },
+])
+
+export function JobList({
   data,
   state,
   error,
@@ -105,6 +131,7 @@ function JobList({
                   label: 'Trạng thái',
                   render: (value) => <StatusBadge value={value} />,
                 },
+                ...JOB_TIME_COLUMNS,
                 {
                   key: 'sourceId',
                   label: 'Nguồn crawl',
@@ -158,6 +185,7 @@ function JobList({
                   label: 'Trạng thái',
                   render: (value) => <StatusBadge value={value} />,
                 },
+                ...JOB_TIME_COLUMNS,
                 {
                   key: 'articleId',
                   label: 'Article',

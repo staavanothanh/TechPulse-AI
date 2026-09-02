@@ -228,6 +228,9 @@
   color: var(--admin-muted);
   font-size: 11.5px;
 }
+.redesign-admin .admin-job-time {
+  white-space: nowrap;
+}
 .redesign-admin .admin-safe-error {
   color: var(--admin-danger);
 }
