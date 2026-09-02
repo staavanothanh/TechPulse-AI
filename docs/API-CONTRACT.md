@@ -1,6 +1,6 @@
 # TechPulse AI — HTTP Contract Guide
 
-> Trạng thái: Contract-first security baseline v1.8; canonical OpenAPI có 56 operations
+> Trạng thái: Contract-first security baseline v1.8; canonical OpenAPI có 60 operations
 > Canonical artifact: [contracts/openapi.json](./contracts/openapi.json)  
 > Consumer: React user/admin application  
 > Provider: Node.js/Express API  
@@ -179,7 +179,7 @@ Expected behavior:
 
 Generator chạy không network/secret và generated diff phải được review. Cho đến khi scaffold tồn tại, JSON parse và local `$ref` audit là validation tối thiểu.
 
-TP-M01 là historical Step-1 gate và đã đóng. Canonical OpenAPI hiện có 56 operations, per-operation `x-persistence`, required `400|413|415` cho JSON-body operations và `503` cho Mongo-backed operations. Mọi thay đổi tiếp theo phải giữ lint/fixture/runtime response validation về zero drift.
+TP-M01 là historical Step-1 gate và đã đóng. Canonical OpenAPI hiện có 60 operations, per-operation `x-persistence`, required `400|413|415` cho JSON-body operations và `503` cho Mongo-backed operations. Mọi thay đổi tiếp theo phải giữ lint/fixture/runtime response validation về zero drift.
 
 ## 10. Contract acceptance gate
 
