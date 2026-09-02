@@ -425,6 +425,37 @@ describe('MongoAdminRepository branch coverage', () => {
     ).rejects.toMatchObject({ code: 'conflict', status: 409 })
   })
 
+  it('luu hiddenReason khi admin an bai', async () => {
+    const hidden = fixture({ articleRows: [article(), article(), article()] })
+    await hidden.repository.updateAdminArticle(
+      ARTICLE_ID,
+      updateInput({ category: 'status', value: 'hidden', reasonCode: 'article_status_changed' }),
+    )
+
+    expect(hidden.collections.articles.updateOne.mock.calls[0][1]).toEqual(expect.objectContaining({
+      $set: expect.objectContaining({ status: 'hidden', hiddenReason: 'article_status_changed' }),
+    }))
+  })
+
+  it('xoa hiddenReason khi admin khoi phuc bai', async () => {
+    const restored = fixture({
+      articleRows: [
+        article(ARTICLE_ID, { status: 'hidden', hiddenReason: 'article_status_changed' }),
+        article(ARTICLE_ID, { status: 'hidden', hiddenReason: 'article_status_changed' }),
+        article(ARTICLE_ID, { status: 'published' }),
+      ],
+    })
+    await restored.repository.updateAdminArticle(
+      ARTICLE_ID,
+      updateInput({ category: 'status', value: 'published', reasonCode: 'article_status_changed' }),
+    )
+
+    expect(restored.collections.articles.updateOne.mock.calls[0][1]).toEqual(expect.objectContaining({
+      $set: expect.objectContaining({ status: 'published' }),
+      $unset: { hiddenReason: '' },
+    }))
+  })
+
   it('covers merge actor, source and optimistic-write races', async () => {
     const base = {
       canonicalArticleId: ARTICLE_ID,
