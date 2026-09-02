@@ -167,18 +167,35 @@ describe('admin feature views', () => {
           busy: false,
         }),
       )
+    const firstRowCells = (html) => {
+      const body = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? ''
+      return [...body.matchAll(/<td(?:\s[^>]*)?>([\s\S]*?)<\/td>/g)].map((match) => match[1])
+    }
 
-    const ingestionHtml = renderJobList('ingestion')
-    const incompleteHtml = renderJobList('indexing', { finishedAt: null })
-    const indexingHtml = renderJobList('indexing')
+    const ingestionHtml = renderJobList('ingestion', {
+      status: 'failed',
+      attempt: 2,
+      error: { code: 'connector_timeout', message: 'Timeout', retryable: true },
+    })
+    const indexingHtml = renderJobList('indexing', { status: 'queued' })
 
     for (const html of [ingestionHtml, indexingHtml]) {
-      expect(html).toContain('Tạo lúc')
-      expect(html).toContain('Hoàn thành lúc')
-      expect(html).toContain(formatAdminDate(createdAt))
-      expect(html).toContain(formatAdminDate(finishedAt))
+      const cells = firstRowCells(html)
+      expect(html).toContain('<th>Tạo lúc</th>')
+      expect(html).toContain('<th>Hoàn thành lúc</th>')
+      expect(cells[2]).toContain(`dateTime="${createdAt}"`)
+      expect(cells[2]).toContain(formatAdminDate(createdAt))
+      expect(cells[3]).toContain(`dateTime="${finishedAt}"`)
+      expect(cells[3]).toContain(formatAdminDate(finishedAt))
     }
-    expect(incompleteHtml).toContain('Chưa ghi nhận')
+
+    expect(ingestionHtml).toContain('Thử lại')
+    expect(indexingHtml).toContain('Yêu cầu dừng')
+
+    for (const kind of ['ingestion', 'indexing']) {
+      const cells = firstRowCells(renderJobList(kind, { finishedAt: null }))
+      expect(cells[3]).toContain('Chưa ghi nhận')
+    }
   })
 
   it('shows jobs as durable operational records with safe action affordances', () => {
