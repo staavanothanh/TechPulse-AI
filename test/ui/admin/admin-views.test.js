@@ -169,6 +169,7 @@ describe('admin feature views', () => {
       )
 
     const ingestionHtml = renderJobList('ingestion')
+    const incompleteHtml = renderJobList('indexing', { finishedAt: null })
     const indexingHtml = renderJobList('indexing')
 
     for (const html of [ingestionHtml, indexingHtml]) {
@@ -177,6 +178,7 @@ describe('admin feature views', () => {
       expect(html).toContain(formatAdminDate(createdAt))
       expect(html).toContain(formatAdminDate(finishedAt))
     }
+    expect(incompleteHtml).toContain('Chưa ghi nhận')
   })
 
   it('shows jobs as durable operational records with safe action affordances', () => {
