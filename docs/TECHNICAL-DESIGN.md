@@ -190,6 +190,7 @@ Admin POST ingestion trigger
 → derive/validate actor-scoped idempotency key + request hash
 → atomically create/reuse + admission + audit record
 → invoke shared queue coordinator only (không materialize cron intent ngoài request)
+- Admin article status/topics/media mutation dùng cùng actor-scoped idempotency key và append-only audit claim trước article/source/reconciliation writes; client giữ nguyên key qua ambiguous retry nhưng tạo key mới cho next-status intent.
 
 Selected job
 → acquire persistent lease ownership; increment generationHighWater
@@ -517,7 +518,7 @@ Canonical observable contract nằm ở [contracts/openapi.json](./contracts/ope
 - `413` cho request target/body vượt bound; `415` cho non-JSON hoặc non-identity content encoding;
 - `GET /api/v1/me` bootstrap session-bound CSRF token; mutation cookie-auth yêu cầu header và không dùng localStorage;
 - admin mutation yêu cầu CSRF và action-specific allowlisted `reasonCode` khi operation nhạy cảm; requester/account case text không được copy vào audit;
-- grounded answer và manual job/deletion/retry hỗ trợ `Idempotency-Key`; reuse khác request hash trả `409 idempotency_mismatch`; answer window 24 giờ, job/governance tối thiểu 14 ngày;
+- grounded answer, article status/topics/media patch, duplicate merge và manual job/source-reconciliation/deletion/retry hỗ trợ `Idempotency-Key`; reuse khác request hash trả `409 idempotency_mismatch`; answer window 24 giờ, job/governance tối thiểu 14 ngày.
 - Vercel Cron dùng protected `GET /api/internal/cron/due-work`; manual admin trigger vẫn là POST;
 - maintenance dùng protected fixed-enum `GET /api/internal/maintenance/{taskName}`; browser/admin auth và caller filter/cutoff bị reject;
 - stable error code dùng enum trong OpenAPI; client không branch theo message;

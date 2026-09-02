@@ -212,14 +212,10 @@ export class MongoAdminRepository {
       if (!auditIdentityMatches(existing, document)) throw idempotencyMismatch()
       return result(existing, true)
     }
-    if (claimId && typeof auditLogs.updateOne === 'function') {
+    if (claimId && typeof auditLogs.insertOne === 'function') {
       const claimDocument = { ...document, _id: claimId }
-      const claim = await auditLogs.updateOne({ _id: claimId }, { $setOnInsert: claimDocument }, { upsert: true, session })
-      if (claim?.upsertedCount === 1 || claim?.upsertedId) return result(claimDocument, false)
-      const existingClaim = await auditLogs.findOne({ _id: claimId }, { session })
-      if (!existingClaim) throw new Error('Admin audit claim was not persisted')
-      if (!auditIdentityMatches(existingClaim, claimDocument)) throw idempotencyMismatch()
-      return result(existingClaim, true)
+      await auditLogs.insertOne(claimDocument, { session })
+      return result(claimDocument, false)
     }
 
     await auditLogs.insertOne(document, { session })

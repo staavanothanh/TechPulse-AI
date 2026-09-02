@@ -353,7 +353,7 @@ describe('MongoAdminRepository', () => {
     expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
     expect(fixture.collections.get('sources').updateOne).toHaveBeenCalledTimes(1)
     expect(fixture.collections.get('indexingJobs').updateOne).toHaveBeenCalledTimes(1)
-    expect(fixture.collections.get('adminAuditLogs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('adminAuditLogs').insertOne).toHaveBeenCalledTimes(1)
     expect(fixture.state.audits).toHaveLength(1)
     expect(fixture.state.jobs).toHaveLength(1)
   })
@@ -377,7 +377,7 @@ describe('MongoAdminRepository', () => {
     expect(fixture.collections.get('users').updateOne).toHaveBeenCalledTimes(1)
     expect(fixture.collections.get('sessions').updateOne).toHaveBeenCalledTimes(1)
     expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
-    expect(fixture.collections.get('adminAuditLogs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('adminAuditLogs').insertOne).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a reused status request identity when the payload changes', async () => {
@@ -387,7 +387,7 @@ describe('MongoAdminRepository', () => {
     expect(fixture.state.article.status).toBe('hidden')
     expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
     expect(fixture.collections.get('indexingJobs').updateOne).toHaveBeenCalledTimes(1)
-    expect(fixture.collections.get('adminAuditLogs').updateOne).toHaveBeenCalledTimes(1)
+    expect(fixture.collections.get('adminAuditLogs').insertOne).toHaveBeenCalledTimes(1)
     expect(fixture.state.audits).toHaveLength(1)
     expect(fixture.state.jobs).toHaveLength(1)
   })
@@ -430,5 +430,15 @@ describe('MongoAdminRepository', () => {
     expect(fixture.state.audits).toHaveLength(2)
     expect(fixture.state.jobs).toHaveLength(2)
     expect(new Set(fixture.state.jobs.map(({ _id }) => String(_id))).size).toBe(2)
+  })
+
+  it('supports exact replay with the insert-only audit role', async () => {
+    const fixture = createStatefulArticleContext()
+    const auditLogs = fixture.collections.get('adminAuditLogs')
+    auditLogs.updateOne = undefined
+    await updateStatus(fixture.repository, 'hidden', 'insert-only-status-key')
+    await updateStatus(fixture.repository, 'hidden', 'insert-only-status-key')
+    expect(fixture.collections.get('articles').updateOne).toHaveBeenCalledTimes(1)
+    expect(auditLogs.insertOne).toHaveBeenCalledTimes(1)
   })
 })
