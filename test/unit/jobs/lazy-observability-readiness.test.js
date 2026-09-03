@@ -34,6 +34,7 @@ function mockRuntimeModules({ readiness } = {}) {
   vi.doMock('../../../server/repositories/mongo/cron-event-repository.js', () => ({ MongoCronEventRepository }))
   vi.doMock('../../../server/jobs/runtime-trace.js', () => ({
     createRuntimeTracer: vi.fn(() => vi.fn()),
+    reportRuntimeTraceDegraded: vi.fn(),
   }))
   return { order, assertCronObservabilityReady, createConfiguredJobRuntime, MongoCronEventRepository }
 }

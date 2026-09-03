@@ -8,7 +8,7 @@ describe('audit HMAC maintenance credential boundary', () => {
       PUBLIC_APP_ORIGINS: 'http://localhost:3000', MONGODB_URI_ENV: 'MONGODB_URI', MONGODB_DATABASE: 'techpulse_app',
       MONGODB_MAINTENANCE_URI_ENV: 'MONGODB_MAINTENANCE_URI', QUOTA_HMAC_CURRENT_KEY_ENV: 'QUOTA', QUOTA_HMAC_RETIRING_KEY_ENVS: '',
       GOVERNANCE_SIGNING_CURRENT_KEY_ENV: 'GOVERNANCE', GOVERNANCE_SIGNING_RETIRING_KEY_ENVS: '', OFFLINE_CHECKPOINT_KEY_IDS: 'checkpoint-current',
-      PROVIDER_ADMISSION_DOMAINS_JSON: '[]', INTERNAL_MACHINE_SECRET_ENV: 'CRON_SECRET',
+      PROVIDER_ADMISSION_DOMAINS_JSON: '[]', INTERNAL_MACHINE_SECRET_ENV: 'CRON_SECRET', CRON_SECRET: 'test-machine-secret-0123456789abcd',
     }
     expect(validateRuntimeConfiguration(environment).maintenanceMongo).toEqual({ uriEnv: 'MONGODB_MAINTENANCE_URI', database: 'techpulse_app' })
     expect(() => validateRuntimeConfiguration({ ...environment, MONGODB_MAINTENANCE_URI_ENV: 'MONGODB_URI' })).toThrow(/separate/i)
