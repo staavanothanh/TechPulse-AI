@@ -34,6 +34,7 @@ describe('Vercel deployment contract', () => {
     expect(cron.schedule).toBe('0 21 * * *')
   })
 
+
   it('allows the due-work function to run for the bounded five-minute drain window', () => {
     expect(vercelConfig.functions?.['api/index.js']).toEqual(expect.objectContaining({ maxDuration: 300 }))
   })

@@ -7,6 +7,7 @@ import {
   listItems,
   mutateAdmin,
   normalizeDueWorkRun,
+  normalizeLifecycleEventQuery,
   runAdminDueWork,
   useAdminMutation,
   useAdminResource,
@@ -234,6 +235,131 @@ export function JobList({
     </ResourceFrame>
   )
 }
+export function EventList({
+  data,
+  state,
+  error,
+  reload,
+  loadMore,
+  loadingMore,
+}) {
+  const rows = listItems(data)
+  const resource = { state, error, reload, data, loadMore, loadingMore }
+  return (
+    <ResourceFrame
+      resource={resource}
+      loadingLabel="Đang tải lifecycle events…"
+    >
+      <Table
+        label="Lifecycle events"
+        rows={rows}
+        emptyTitle="Chưa có event nào."
+        columns={[
+          {
+            key: 'eventId',
+            label: 'Event',
+            render: (value, row) => (
+              <div className="admin-cell-resource">
+                <strong className="admin-cell-primary">{row.stage}</strong>
+                <small className="admin-cell-sub">
+                  <span>Event: </span>
+                  <CompactId id={value} label="Event ID" length={8} />
+                  {row.elapsedMs !== null && row.elapsedMs !== undefined ? (
+                    <span> · {row.elapsedMs}ms</span>
+                  ) : null}
+                </small>
+              </div>
+            ),
+          },
+          {
+            key: 'status',
+            label: 'Trạng thái',
+            render: (value) => <StatusBadge value={value} />,
+          },
+          {
+            key: 'occurredAt',
+            label: 'Thời gian',
+            render: (value) => <JobTimestamp value={value} />,
+          },
+          {
+            key: 'runId',
+            label: 'Run / Queue / Task',
+            render: (value, row) => (
+              <div className="admin-cell-resource">
+                <strong className="admin-cell-primary">
+                  {row.queueName ? row.queueName : 'cron'}
+                  {row.task ? ` · ${row.task}` : ''}
+                </strong>
+                <small className="admin-cell-sub">
+                  {value ? (
+                    <>
+                      <span>Run: </span>
+                      <CompactId id={value} label="Run ID" length={8} />
+                    </>
+                  ) : (
+                    <span>Không có runId</span>
+                  )}
+                </small>
+              </div>
+            ),
+          },
+          {
+            key: 'jobId',
+            label: 'Job / Source / Article',
+            render: (value, row) => (
+              <div className="admin-cell-resource">
+                <small className="admin-cell-sub">
+                  {value ? (
+                    <>
+                      <span>Job: </span>
+                      <CompactId id={value} label="Job ID" length={8} />
+                    </>
+                  ) : null}
+                  {row.articleId ? (
+                    <>
+                      <span> · Art: </span>
+                      <CompactId id={row.articleId} label="Article ID" length={8} />
+                    </>
+                  ) : null}
+                  {row.sourceId ? (
+                    <>
+                      <span> · Src: </span>
+                      <CompactId id={row.sourceId} label="Source ID" length={8} />
+                    </>
+                  ) : null}
+                </small>
+              </div>
+            ),
+          },
+          {
+            key: 'error',
+            label: 'Chi tiết / Lỗi',
+            render: (value, row) => {
+              if (value) {
+                return (
+                  <span className="admin-safe-error">
+                    {value.code}: {value.retryable ? 'retryable' : 'non-retryable'}
+                  </span>
+                )
+              }
+              if (row.counters) {
+                const items = Object.entries(row.counters)
+                  .filter(([, v]) => v > 0)
+                  .map(([k, v]) => `${k}:${v}`)
+                return items.length > 0 ? (
+                  <span className="admin-counter-copy">{items.join(' · ')}</span>
+                ) : (
+                  <StatusBadge value="succeeded" label="Thành công" />
+                )
+              }
+              return <StatusBadge value="succeeded" label="Không có lỗi" />
+            },
+          },
+        ]}
+      />
+    </ResourceFrame>
+  )
+}
 
 const DUE_WORK_COUNTERS = Object.freeze([
   ['claimed', 'Claimed'],
@@ -390,6 +516,7 @@ function IndexingCreateForm({ onSubmit, busy }) {
 }
 
 export function JobsActionBar({ ingestion, indexing, tab }) {
+  if (tab === 'events') return null
   return (
     <div className="admin-jobs-action-slot">
       {tab === 'ingestion' ? (
@@ -400,13 +527,29 @@ export function JobsActionBar({ ingestion, indexing, tab }) {
     </div>
   )
 }
+export function reloadAdminJobResources({ tab, ingestion, indexing, events, sources } = {}) {
+  if (tab === 'events') return events?.reload?.()
+  if (tab === 'ingestion') {
+    sources?.reload?.()
+    return ingestion?.reload?.()
+  }
+  return indexing?.reload?.()
+}
+
+export function reloadAfterDueWork({ ingestion, indexing, events } = {}) {
+  ingestion?.reload?.()
+  indexing?.reload?.()
+  return events?.reload?.()
+}
+
 
 export function AdminJobsView({ api, session, initialData, onSessionExpired, cacheScope }) {
   const seeded = initialData ?? {}
-  const [tab, setTab] = useState('ingestion')
+  const [tab, setTab] = useState(seeded.tab ?? 'ingestion')
   const [draftQuery, setDraftQuery] = useState({
     ingestion: { status: '' },
     indexing: { status: '' },
+    events: { status: '', queueName: '', task: '', runId: '', jobId: '', articleId: '', sourceId: '', from: '', to: '' },
   })
   const [appliedQuery, setAppliedQuery] = useState({})
   const [dueWorkRun, setDueWorkRun] = useState(
@@ -428,6 +571,13 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
     enabled: tab === 'indexing',
     initialData: seeded.indexing,
     query: appliedQuery.indexing ?? {},
+    onSessionExpired,
+    cacheScope,
+  })
+  const events = useAdminResource(api, 'listCronLifecycleEvents', {
+    enabled: tab === 'events',
+    initialData: seeded.events,
+    query: appliedQuery.events ?? {},
     onSessionExpired,
     cacheScope,
   })
@@ -483,7 +633,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
     }
   }
   function refreshCurrent() {
-    ;(tab === 'ingestion' ? ingestion : indexing).reload()
+    return reloadAdminJobResources({ tab, ingestion, indexing, events, sources })
   }
 
   function runDueWorkNow() {
@@ -495,8 +645,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
       .then((response) => {
         if (response) {
           setDueWorkRun(normalizeDueWorkRun(response))
-          ingestion.reload()
-          indexing.reload()
+          reloadAfterDueWork({ ingestion, indexing, events })
         }
         return response
       })
@@ -584,7 +733,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         return response
       })
   }
-  const active = tab === 'ingestion' ? ingestion : indexing
+  const active = tab === 'ingestion' ? ingestion : tab === 'indexing' ? indexing : events
   return (
     <div className="admin-view admin-jobs-view">
       <PageHeader
@@ -626,6 +775,15 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         >
           Indexing
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'events'}
+          className={tab === 'events' ? 'active' : ''}
+          onClick={() => setTab('events')}
+        >
+          Lifecycle Events
+        </button>
       </div>
       <div className="admin-toolbar">
         <label>
@@ -640,17 +798,137 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
             }
           >
             <option value="">Tất cả</option>
-            {['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled'].map((status) => (
+            {['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled', 'deferred', 'timeout', 'started'].map((status) => (
               <option key={status} value={status}>
                 {status}
               </option>
             ))}
           </select>
         </label>
+        {tab === 'events' ? (
+          <>
+            <label>
+              <span>Queue</span>
+              <select
+                value={draftQuery.events?.queueName ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, queueName: event.target.value },
+                  }))
+                }
+              >
+                <option value="">Tất cả queue</option>
+                <option value="ingestion">ingestion</option>
+                <option value="indexing">indexing</option>
+                <option value="account-deletion">account-deletion</option>
+              </select>
+            </label>
+            <label>
+              <span>Task</span>
+              <select
+                value={draftQuery.events?.task ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, task: event.target.value },
+                  }))
+                }
+              >
+                <option value="">Tất cả task</option>
+                <option value="summary">summary</option>
+                <option value="embedding">embedding</option>
+                <option value="visibility-reconcile">visibility-reconcile</option>
+              </select>
+            </label>
+            <label>
+              <span>Run ID</span>
+              <input
+                type="text"
+                placeholder="Lọc theo runId"
+                value={draftQuery.events?.runId ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, runId: event.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Job ID</span>
+              <input
+                type="text"
+                placeholder="Lọc theo jobId"
+                value={draftQuery.events?.jobId ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, jobId: event.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Article ID</span>
+              <input
+                type="text"
+                placeholder="Lọc theo articleId"
+                value={draftQuery.events?.articleId ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, articleId: event.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Source ID</span>
+              <input
+                type="text"
+                placeholder="Lọc theo sourceId"
+                value={draftQuery.events?.sourceId ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, sourceId: event.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Từ thời gian</span>
+              <input
+                type="datetime-local"
+                value={draftQuery.events?.from ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, from: event.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Đến thời gian</span>
+              <input
+                type="datetime-local"
+                value={draftQuery.events?.to ?? ''}
+                onChange={(event) =>
+                  setDraftQuery((current) => ({
+                    ...current,
+                    events: { ...current.events, to: event.target.value },
+                  }))
+                }
+              />
+            </label>
+          </>
+        ) : null}
         <AdminButton
           variant="secondary"
           icon="refresh"
-          onClick={() => setAppliedQuery((current) => ({ ...current, [tab]: { ...draftQuery[tab] } }))}
+          onClick={() => setAppliedQuery((current) => ({ ...current, [tab]: tab === 'events' ? normalizeLifecycleEventQuery(draftQuery[tab]) : { ...draftQuery[tab] } }))}
         >
           Áp dụng lọc
         </AdminButton>
@@ -675,21 +953,38 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         </p>
       ) : null}
       <Panel
-        title={tab === 'ingestion' ? 'Ingestion queue' : 'Indexing queue'}
+        title={
+          tab === 'ingestion'
+            ? 'Ingestion queue'
+            : tab === 'indexing'
+              ? 'Indexing queue'
+              : 'Cron & job lifecycle events'
+        }
       >
-        <JobList
-          data={active.data}
-          state={active.state}
-          error={active.error}
-          reload={active.reload}
-          loadMore={active.loadMore}
-          loadingMore={active.loadingMore}
-          kind={tab}
-          onRetry={(job, kind, trigger) => actionFor(job, kind, 'retry', trigger)}
-          onCancel={(job, kind, trigger) => actionFor(job, kind, 'cancel', trigger)}
-          onPreviewArticle={previewArticle}
-          busy={mutation.busy}
-        />
+        {tab === 'events' ? (
+          <EventList
+            data={events.data}
+            state={events.state}
+            error={events.error}
+            reload={events.reload}
+            loadMore={events.loadMore}
+            loadingMore={events.loadingMore}
+          />
+        ) : (
+          <JobList
+            data={active.data}
+            state={active.state}
+            error={active.error}
+            reload={active.reload}
+            loadMore={active.loadMore}
+            loadingMore={active.loadingMore}
+            kind={tab}
+            onRetry={(job, kind, trigger) => actionFor(job, kind, 'retry', trigger)}
+            onCancel={(job, kind, trigger) => actionFor(job, kind, 'cancel', trigger)}
+            onPreviewArticle={previewArticle}
+            busy={mutation.busy}
+          />
+        )}
       </Panel>
       <AdminConfirmDialog
         open={Boolean(confirmation)}

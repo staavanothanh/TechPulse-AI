@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { deriveLeaseKey } from '../domain/jobs/lease-keys.js'
 import { monotonicNow, runtimeFailure, settleBeforeDeadline, settleWithinGrace } from './runtime-bounds.js'
+import { safeEvent } from './runtime-trace.js'
 
 function safeOutcomeError(error, now) {
   if (!error) return undefined
@@ -30,6 +31,9 @@ function finalizationError() {
   return runtimeFailure('indexing_finalization_unresolved', 'Indexing terminal outcome could not be finalized')
 }
 
+function finalizationTraceStatus(error) {
+  return ['indexing_deadline_exceeded', 'indexing_finalization_unresolved'].includes(error?.code) ? 'timeout' : 'failed'
+}
 function boundedFinalizationDeadline() {
   return new Date(Date.now() + FINALIZATION_GRACE_MS)
 }
@@ -76,7 +80,7 @@ function shouldDeferOutcome(outcome, candidate) {
   if (outcome?.status === 'deferred') return executionAttempt < 3
   const attempts = externalAttempts(outcome?.error)
   const durableRecovery = outcome?.error?.durableRecovery === true
-  return Boolean(outcome?.error?.retryable) && attempts === 0 && (executionAttempt < 3 || durableRecovery)
+  return Boolean(outcome?.error?.retryable) && (attempts === undefined || attempts === 0) && (executionAttempt < 3 || durableRecovery)
 }
 
 function shouldIncrementAttempt(error) {
@@ -96,7 +100,7 @@ function isLeaseLost(error) {
   return ['lease_heartbeat_lost', 'lease_heartbeat_unavailable'].includes(error?.code)
 }
 
-function startLeaseHeartbeat({ leaseRepository, fence, ownerToken, leaseMs, deadline }) {
+function startLeaseHeartbeat({ leaseRepository, fence, ownerToken, leaseMs, deadline, onLost }) {
   const controller = new globalThis.AbortController()
   if (typeof leaseRepository?.heartbeat !== 'function') return { signal: controller.signal, abort: (reason) => controller.abort(reason), stop() {} }
   const intervalMs = Math.max(100, Math.floor(Number(leaseMs) / 3) || 100)
@@ -107,8 +111,20 @@ function startLeaseHeartbeat({ leaseRepository, fence, ownerToken, leaseMs, dead
     inFlight = true
     Promise.resolve()
       .then(() => leaseRepository.heartbeat({ key: fence.key, jobId: fence.jobId, leaseGeneration: fence.leaseGeneration, ownerToken, leaseMs, signal: controller.signal, ...(deadline ? { deadline } : {}) }))
-      .then((owned) => { if (owned !== true && !controller.signal.aborted) controller.abort(leaseHeartbeatError()) })
-      .catch(() => { if (!controller.signal.aborted) controller.abort(leaseHeartbeatUnavailableError()) })
+      .then((owned) => {
+        if (owned !== true && !controller.signal.aborted) {
+          const error = leaseHeartbeatError()
+          try { onLost?.(error) } catch { /* telemetry cannot change job outcomes */ }
+          controller.abort(error)
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          const error = leaseHeartbeatUnavailableError()
+          try { onLost?.(error) } catch { /* telemetry cannot change job outcomes */ }
+          controller.abort(error)
+        }
+      })
       .finally(() => { inFlight = false })
   }, intervalMs)
   timer.unref?.()
@@ -119,15 +135,18 @@ function startLeaseHeartbeat({ leaseRepository, fence, ownerToken, leaseMs, dead
   }
 }
 
-export function createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, leaseMs = 30_000, ownerToken = () => randomBytes(32).toString('hex') } = {}) {
+export function createIndexingQueueAdapter({ jobRepository, leaseRepository, executor, leaseMs = 30_000, ownerToken = () => randomBytes(32).toString('hex'), trace = () => {} } = {}) {
   if (!jobRepository || !leaseRepository) throw new Error('Indexing job and lease repositories are required')
+  const emitTrace = typeof trace === 'function' ? (event) => {
+    try { trace(safeEvent(event, () => new Date())) } catch { /* telemetry cannot change job outcomes */ }
+  } : () => {}
   return Object.freeze({
     queueName: 'indexing',
     recoveryStrategy: 'terminal-parent-linked-retry',
     selectDue: ({ now, task, tasks, excludeArticleIds, jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, signal, deadline } = {}) => jobRepository.selectDueIndexing({ now, task, tasks, excludeArticleIds, jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}) }),
     recoverExpired: ({ now, limit, signal, deadline } = {}) => jobRepository.recoverExpiredIndexing({ leaseRepository, now, limit, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}) }),
     nextAvailableAt: (input = {}) => jobRepository.nextAvailableAt(input),
-    async claimAndExecute({ candidate, now = new Date(), deadline, signal } = {}) {
+    async claimAndExecute({ candidate, now = new Date(), deadline, signal, runId } = {}) {
       if (signal?.aborted) return { status: 'deferred', claimed: false }
       const startedAt = validDate(now, 'Indexing admission time')
       const deadlineAt = deadline === undefined ? null : validDate(deadline, 'Indexing deadline')
@@ -161,6 +180,16 @@ export function createIndexingQueueAdapter({ jobRepository, leaseRepository, exe
         return { status: 'deferred', claimed: false }
       }
 
+      const buildTraceContext = (generation = fence.leaseGeneration) => Object.freeze({
+        runId,
+        queueName: 'indexing',
+        task: candidate.task,
+        jobId: String(candidate.id),
+        articleId: String(candidate.articleId),
+        sourceId: candidate.sourceId ? String(candidate.sourceId) : undefined,
+        leaseGeneration: generation,
+        ...(deadlineAt ? { deadlineAt } : {}),
+      })
       const claimController = new globalThis.AbortController()
       signal?.addEventListener?.('abort', () => claimController.abort(signal.reason), { once: true })
       const claimOperation = Promise.resolve().then(() => jobRepository.claimQueuedWithFence({ jobId: candidate.id, fence, signal: claimController.signal, ...(deadlineAt ? { deadline: deadlineAt } : {}) }))
@@ -183,9 +212,13 @@ export function createIndexingQueueAdapter({ jobRepository, leaseRepository, exe
         return { status: 'deferred', claimed: false }
       }
       const claimed = claimedResult.value
+      const traceContext = buildTraceContext(fence.leaseGeneration)
       if (remainingAdmissionMs() === 0) {
         if (claimed) {
+          emitTrace({ ...traceContext, stage: 'indexing.claim', status: 'succeeded' })
+          emitTrace({ ...traceContext, stage: 'indexing.deadline', status: 'timeout', error: deadlineError() })
           await deferJob({ jobRepository, candidate, fence, delayMs: DEFAULT_DEFER_MS })
+          emitTrace({ ...traceContext, stage: 'indexing.completion', status: 'deferred', error: deadlineError() })
           return { status: 'deferred', claimed: true }
         }
         await releaseLease({ leaseRepository, fence, ownerToken: token })
@@ -195,18 +228,42 @@ export function createIndexingQueueAdapter({ jobRepository, leaseRepository, exe
         await releaseLease({ leaseRepository, fence, ownerToken: token })
         return { status: 'deferred', claimed: false }
       }
+      emitTrace({ ...traceContext, stage: 'indexing.claim', status: 'succeeded' })
+      const deferAndTrace = async ({ delayMs, incrementAttempt, error, includeRetryAfter = false } = {}) => {
+        let deferred
+        try {
+          deferred = await deferJob({ jobRepository, candidate, fence, delayMs, incrementAttempt })
+        } catch (deferError) {
+          emitTrace({ ...traceContext, stage: 'indexing.executor', status: 'failed', error: deferError })
+          emitTrace({ ...traceContext, stage: 'indexing.completion', status: 'failed', error: deferError })
+          throw deferError
+        }
+        const status = deferred?.status === 'cancelled' ? 'partial' : 'deferred'
+        emitTrace({ ...traceContext, stage: 'indexing.executor', status, ...(error ? { error } : {}) })
+        emitTrace({ ...traceContext, stage: 'indexing.completion', status, ...(error ? { error } : {}) })
+        return { status, claimed: true, ...(includeRetryAfter ? { retryAfterSeconds: Math.ceil(delayMs / 1_000) } : {}) }
+      }
+
 
       if (typeof executor !== 'function') {
-        const deferred = await deferJob({ jobRepository, candidate, fence, delayMs: DEFAULT_DEFER_MS })
-        return { status: deferred?.status === 'cancelled' ? 'partial' : 'deferred', claimed: true }
+        return deferAndTrace({ delayMs: DEFAULT_DEFER_MS })
       }
       const cancellationRequested = typeof jobRepository.cancellationRequestedWithFence === 'function'
         && await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.cancellationRequestedWithFence({ jobId: candidate.id, fence, signal, deadline: operationDeadline }))
       if (cancellationRequested) {
-        await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.completeWithFence({ jobId: candidate.id, fence, status: 'cancelled', signal, deadline: operationDeadline }))
+        emitTrace({ ...traceContext, stage: 'indexing.executor', status: 'cancelled' })
+        try {
+          await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.completeWithFence({ jobId: candidate.id, fence, status: 'cancelled', signal, deadline: operationDeadline }))
+        } catch (error) {
+          emitTrace({ ...traceContext, stage: 'indexing.completion', status: finalizationTraceStatus(error), error })
+          throw error
+        }
+        emitTrace({ ...traceContext, stage: 'indexing.completion', status: 'cancelled' })
         return { status: 'partial', claimed: true }
       }
-      const heartbeat = startLeaseHeartbeat({ leaseRepository, fence, ownerToken: token, leaseMs, ...(deadlineAt ? { deadline: deadlineAt } : {}) })
+      const heartbeat = startLeaseHeartbeat({ leaseRepository, fence, ownerToken: token, leaseMs, ...(deadlineAt ? { deadline: deadlineAt } : {}), onLost: (error) => {
+        emitTrace({ ...traceContext, stage: 'indexing.heartbeat', status: 'failed', error })
+      } })
       signal?.addEventListener?.('abort', () => heartbeat.abort(signal.reason), { once: true })
       try {
         let outcome
@@ -226,24 +283,35 @@ export function createIndexingQueueAdapter({ jobRepository, leaseRepository, exe
           if (execution.kind === 'deadline') throw execution.error
           if (!execution.settled) throw execution.error
           outcome = execution.value
+          emitTrace({ ...traceContext, stage: 'indexing.executor', status: outcome?.status ?? 'succeeded' })
         } catch (error) {
           if (isLeaseLost(heartbeat.signal.reason ?? error)) throw heartbeat.signal.reason ?? error
-          if (shouldDeferOutcome({ error }, candidate)) {
+          if (error?.code === 'indexing_deadline_exceeded') {
+            emitTrace({ ...traceContext, stage: 'indexing.deadline', status: 'timeout', error })
+            outcome = { status: 'failed', error: { code: 'indexing_deadline_exceeded', retryable: false } }
+            emitTrace({ ...traceContext, stage: 'indexing.executor', status: 'timeout', error: outcome.error })
+          } else if (shouldDeferOutcome({ error }, candidate)) {
             const delayMs = deferDelayMs(error.retryAfterSeconds)
-            const deferred = await deferJob({ jobRepository, candidate, fence, delayMs, incrementAttempt: shouldIncrementAttempt(error) })
-            return { status: deferred?.status === 'cancelled' ? 'partial' : 'deferred', claimed: true, retryAfterSeconds: Math.ceil(delayMs / 1_000) }
+            return deferAndTrace({ delayMs, incrementAttempt: shouldIncrementAttempt(error), error, includeRetryAfter: true })
+          } else {
+            outcome = { status: 'failed', error: { code: error?.code ?? 'worker_failed', retryable: Boolean(error?.retryable), upstreamStatus: error?.upstreamStatus } }
+            emitTrace({ ...traceContext, stage: 'indexing.executor', status: 'failed', error: outcome.error })
           }
-          outcome = { status: 'failed', error: { code: error?.code ?? 'worker_failed', retryable: Boolean(error?.retryable), upstreamStatus: error?.upstreamStatus } }
         }
         if (isLeaseLost(heartbeat.signal.reason)) throw heartbeat.signal.reason
         if (shouldDeferOutcome(outcome, candidate)) {
           const delayMs = deferDelayMs(outcome.retryAfterSeconds ?? outcome.error?.retryAfterSeconds)
-          const deferred = await deferJob({ jobRepository, candidate, fence, delayMs, incrementAttempt: shouldIncrementAttempt(outcome.error) })
-          return { status: deferred?.status === 'cancelled' ? 'partial' : 'deferred', claimed: true, retryAfterSeconds: Math.ceil(delayMs / 1_000) }
+          return deferAndTrace({ delayMs, incrementAttempt: shouldIncrementAttempt(outcome.error), error: outcome.error, includeRetryAfter: true })
         }
         const status = ['succeeded', 'partial', 'failed', 'cancelled'].includes(outcome?.status) ? outcome.status : 'failed'
         const finishedAt = new Date()
-        await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.completeWithFence({ jobId: candidate.id, fence, status, error: safeOutcomeError(outcome?.error, finishedAt), inputHash: outcome?.inputHash, signal, deadline: operationDeadline }))
+        try {
+          await runBoundedMutation(({ signal, deadline: operationDeadline }) => jobRepository.completeWithFence({ jobId: candidate.id, fence, status, error: safeOutcomeError(outcome?.error, finishedAt), inputHash: outcome?.inputHash, signal, deadline: operationDeadline }))
+        } catch (error) {
+          emitTrace({ ...traceContext, stage: 'indexing.completion', status: finalizationTraceStatus(error), error })
+          throw error
+        }
+        emitTrace({ ...traceContext, stage: 'indexing.completion', status, error: outcome?.error })
         return { status: status === 'cancelled' ? 'partial' : status, claimed: true }
       } finally {
         heartbeat.stop()

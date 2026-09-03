@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { QUEUE_ORDER } from './queue-registry.js'
+import { safeEvent, startRuntimePhase } from './runtime-trace.js'
 
 const EMPTY_COUNTERS = Object.freeze({ claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 })
 const RESPONSE_KEY = Object.freeze({ ingestion: 'ingestion', indexing: 'indexing', 'account-deletion': 'accountDeletion' })
@@ -20,13 +21,16 @@ function candidateTime(candidate) {
   return Number.isNaN(value.getTime()) ? Number.MAX_SAFE_INTEGER : value.getTime()
 }
 
-export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, budgetMs = 8000, now = () => new Date(), runId = randomUUID(), deadline, signal } = {}) {
+export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, budgetMs = 8000, now = () => new Date(), runId = randomUUID(), deadline, signal, trace } = {}) {
   if (!registry || typeof registry.registered !== 'function') throw new Error('Queue registry is required')
   const adapters = registry.registered()
   if (!Number.isInteger(maxJobs) || maxJobs < adapters.length) throw new Error('maxJobs must cover every registered queue')
   if (!Number.isInteger(maxRecoveries) || maxRecoveries < 0) throw new Error('maxRecoveries is invalid')
   if (!Number.isFinite(budgetMs) || budgetMs < adapters.length * RESERVED_ATTEMPT_MS + SAFETY_MARGIN_MS) throw new Error('Due-work budget cannot cover reserved queue attempts')
 
+  const emitTrace = typeof trace === 'function' ? (event) => {
+    try { trace(safeEvent(event, now)) } catch { /* telemetry cannot change job outcomes */ }
+  } : () => {}
   signal?.throwIfAborted?.()
   const startedAt = now()
   if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Due-work clock is invalid')
@@ -39,22 +43,79 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
     if (!(current instanceof Date) || Number.isNaN(current.getTime())) throw new Error('Due-work clock is invalid')
     return current.getTime() + reservedAttempts * RESERVED_ATTEMPT_MS <= workDeadline ? current : null
   }
+
+  const coordinatorPhase = startRuntimePhase({
+    trace: emitTrace,
+    stage: 'coordinator',
+    now,
+    context: { runId, deadlineAt: new Date(workDeadline) },
+  })
+  try {
+
   const queueCounters = Object.fromEntries(QUEUE_ORDER.map((name) => [name, counters()]))
   const recovery = { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 }
+  let recoverySequence = 0
+  const nextRecoverySequence = () => Math.min(recoverySequence++, 2_147_483_647)
   if (maxRecoveries > 0 && adapters.length > 0) {
+    emitTrace({
+      runId,
+      stage: 'coordinator.recovery',
+      status: 'started',
+      sequence: nextRecoverySequence(),
+    })
     let remaining = maxRecoveries
     let progressed = true
     while (remaining > 0 && progressed) {
       progressed = false
       for (const adapter of adapters) {
         if (remaining <= 0 || !canStart(adapters.length)) break
-        const result = await adapter.recoverExpired({ limit: 1, now: startedAt, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) })
+        let result
+        try {
+          result = await adapter.recoverExpired({ limit: 1, now: startedAt, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) })
+        } catch (error) {
+          emitTrace({
+            runId,
+            queueName: adapter.queueName,
+            stage: 'coordinator.recovery',
+            status: 'failed',
+            sequence: nextRecoverySequence(),
+            error,
+          })
+          throw error
+        }
         for (const key of Object.keys(recovery)) recovery[key] += Number(result?.[key] ?? 0)
         const inspected = Math.max(0, Math.min(remaining, Number(result?.inspected ?? 0)))
         remaining -= inspected
-        if (inspected > 0) progressed = true
+        if (inspected > 0) {
+          progressed = true
+          emitTrace({
+            runId,
+            queueName: adapter.queueName,
+            stage: 'coordinator.recovery',
+            status: Number(result?.recovered ?? 0) > 0 ? 'succeeded' : 'deferred',
+            sequence: nextRecoverySequence(),
+            counters: {
+              inspected: Number(result?.inspected ?? 0),
+              recovered: Number(result?.recovered ?? 0),
+              retriesCreated: Number(result?.retriesCreated ?? 0),
+              failed: Number(result?.failed ?? 0),
+            },
+          })
+        }
       }
     }
+    emitTrace({
+      runId,
+      stage: 'coordinator.recovery',
+      status: Number(recovery.recovered) > 0 ? 'succeeded' : 'deferred',
+      sequence: nextRecoverySequence(),
+      counters: {
+        inspected: Number(recovery.inspected),
+        recovered: Number(recovery.recovered),
+        retriesCreated: Number(recovery.retriesCreated),
+        failed: Number(recovery.failed),
+      },
+    })
   }
 
   let slots = maxJobs
@@ -70,6 +131,17 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
   }
   const handleResult = (result, queueName, candidate) => {
     const status = record(result, queueCounters[queueName])
+    emitTrace({
+      runId,
+      queueName,
+      jobId: candidate?.id ? String(candidate.id) : undefined,
+      sourceId: candidate?.sourceId ? String(candidate.sourceId) : undefined,
+      articleId: candidate?.articleId ? String(candidate.articleId) : undefined,
+      task: candidate?.task ? String(candidate.task) : undefined,
+      stage: 'coordinator.claim',
+      status: result?.claimed === false ? 'deferred' : status,
+      error: result?.error,
+    })
     if (result?.claimed !== false) {
       if (queueName === 'ingestion') {
         exhaustedQueues.delete('indexing')
@@ -124,6 +196,16 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
   const availability = await Promise.all(adapters.map((adapter) => adapter.nextAvailableAt({ now: startedAt, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) })))
   const nextDates = availability.filter(Boolean).map((value) => value instanceof Date ? value : new Date(value)).filter((value) => !Number.isNaN(value.getTime()))
   const finishedAt = now()
+
+  coordinatorPhase.succeed({
+    counters: {
+      claimed: Object.values(queueCounters).reduce((sum, c) => sum + c.claimed, 0),
+      succeeded: Object.values(queueCounters).reduce((sum, c) => sum + c.succeeded, 0),
+      failed: Object.values(queueCounters).reduce((sum, c) => sum + c.failed, 0),
+      deferred: Object.values(queueCounters).reduce((sum, c) => sum + c.deferred, 0),
+    },
+  })
+
   return {
     runId,
     startedAt,
@@ -131,6 +213,11 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
     recovery,
     queues: Object.fromEntries(QUEUE_ORDER.map((name) => [RESPONSE_KEY[name], queueCounters[name]])),
     nextAvailableAt: nextDates.length > 0 ? new Date(Math.min(...nextDates.map((value) => value.getTime()))) : null,
+  }
+  }
+  catch (error) {
+    coordinatorPhase.fail(error)
+    throw error
   }
 }
 

@@ -114,7 +114,7 @@ export async function createConfiguredIndexingRuntime({
   const providerAdmission = createProviderAdmission({ repository: providerAdmissionRepository, failureDomainRepository: providerFailureDomainRepository, registry: providerRegistry, now })
   const providerRouter = createProviderRouter({ workloadPolicies: providerRegistry.workloadPolicies ?? [], admission: providerAdmission, now })
   const artifactProcessor = createArtifactProcessor({ articleRepository, sourceRepository, indexingJobRepository, providerRouter, llmProvider, embeddingProvider, embeddingTarget, now })
-  jobRuntime.queueRegistry.register(createIndexingQueueAdapter({ indexingJobRepository, jobRepository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, executor: (input) => artifactProcessor.execute(input) }))
+  jobRuntime.queueRegistry.register(createIndexingQueueAdapter({ indexingJobRepository, jobRepository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, executor: (input) => artifactProcessor.execute(input), trace: jobRuntime.trace }))
   jobRuntime.maintenanceRegistry.register('purge-indexing-jobs', ({ cutoff, limit }) => indexingJobRepository.purgeDueIndexingJobs({ cutoff, limit }))
   const reconciliationRunner = createReconciliationRunner({ repository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
   const sourcePolicyReconciliationWorker = reconciliationReady === false ? undefined : createSourcePolicyReconciliationWorker({ sourceRepository, indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })

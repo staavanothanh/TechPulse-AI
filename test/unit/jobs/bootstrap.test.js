@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner } from '../../../server/bootstrap/jobs.js'
+import { assertCronObservabilityReady, assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner } from '../../../server/bootstrap/jobs.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
+import { CRON_OBSERVABILITY_COLLECTIONS, CRON_OBSERVABILITY_INDEXES } from '../../../scripts/migrations/cron-observability.js'
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES, GOVERNANCE_INDEXES } from '../../../scripts/migrations/governance.js'
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
 import { GOVERNANCE_HARDENING_INDEXES } from '../../../scripts/migrations/governance-hardening.js'
@@ -34,6 +35,25 @@ function readyContext({ auditValidator = DURABLE_JOB_AUDIT_VALIDATOR, indexOverr
   }
 }
 
+
+describe('cron observability bootstrap readiness', () => {
+  it('requires the strict event validator and every event index', async () => {
+    const context = readyContext()
+    const originalListCollections = context.db.listCollections
+    const originalCollection = context.db.collection
+    const definition = CRON_OBSERVABILITY_COLLECTIONS.cronLifecycleEvents
+    const eventCollection = {
+      indexes: async () => CRON_OBSERVABILITY_INDEXES.cronLifecycleEvents.map((index) => ({ name: index.name, key: index.key, ...(index.options ?? {}) })),
+    }
+    const collections = await originalListCollections({}, { nameOnly: false }).toArray()
+    context.db.listCollections = () => ({ toArray: async () => [...collections, { name: 'cronLifecycleEvents', options: { validator: definition.validator, validationLevel: 'strict', validationAction: 'error' } }] })
+    context.db.collection = (name) => name === 'cronLifecycleEvents' ? eventCollection : originalCollection(name)
+
+    await expect(assertCronObservabilityReady(context)).resolves.toBeUndefined()
+    context.db.collection = (name) => name === 'cronLifecycleEvents' ? { indexes: async () => [] } : originalCollection(name)
+    await expect(assertCronObservabilityReady(context)).rejects.toThrow(/cron-observability indexes/i)
+  })
+})
 describe('durable-jobs bootstrap readiness', () => {
   it('constructs repositories and service only for exact validators and indexes', async () => {
     const context = readyContext()
@@ -49,7 +69,8 @@ describe('durable-jobs bootstrap readiness', () => {
     const governanceKeyring = { currentVersion: 1, versions: [1], digest: vi.fn(() => 'b'.repeat(64)) }
     const governanceContext = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
     const maintenanceContext = { ...governanceContext, client: { db: () => governanceContext.governanceDb } }
-    const runtime = await createConfiguredJobRuntime({ context: governanceContext, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb: governanceContext.governanceDb, maintenanceContext })
+    const cronEventRepository = { purgeExpiredEvents: vi.fn() }
+    const runtime = await createConfiguredJobRuntime({ context: governanceContext, cronEventRepository, rateLimitAdmission, quotaKeyring, governanceKeyring, governanceDb: governanceContext.governanceDb, maintenanceContext })
     expect(runtime.queueRegistry.registered().map(({ queueName }) => queueName)).toEqual(['account-deletion', 'ingestion'])
     expect(runtime.maintenanceRegistry.has('purge-ingestion-jobs')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-indexing-jobs')).toBe(false)
@@ -57,6 +78,30 @@ describe('durable-jobs bootstrap readiness', () => {
     expect(runtime.maintenanceRegistry.has('purge-takedown-workflows')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-account-deletion-workflows')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-audit-ip-hmac')).toBe(true)
+    expect(runtime.maintenanceRegistry.has('purge-cron-lifecycle-events')).toBe(true)
+  })
+  it('registers lifecycle retention in the bounded cron materialization phase', async () => {
+    const context = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
+    const governanceContext = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })
+    const maintenanceContext = { ...governanceContext, client: { db: () => governanceContext.governanceDb } }
+    const cutoff = new Date('2026-09-03T10:00:00.000Z')
+    const purgeExpiredEvents = vi.fn(async () => ({ inspected: 4, affected: 2, hasMore: false }))
+    const runtime = await createConfiguredJobRuntime({
+      context,
+      maintenanceContext,
+      maintenanceCronEventRepository: { purgeExpiredEvents },
+      rateLimitAdmission: { reserve: async () => ({ allowed: true }) },
+      quotaKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'a'.repeat(64)) },
+      governanceKeyring: { currentVersion: 1, versions: [1], digest: vi.fn(() => 'b'.repeat(64)) },
+      governanceDb: context.governanceDb,
+      now: () => cutoff,
+    })
+
+    expect(runtime.cronMaterializers).toHaveLength(2)
+    const result = await runtime.cronMaterializers[0]({ deadline: new Date(cutoff.getTime() + 60_000) })
+
+    expect(result).toEqual({ inspected: 4, affected: 2, hasMore: false })
+    expect(purgeExpiredEvents).toHaveBeenCalledWith({ cutoff, limit: 100, deadline: new Date(cutoff.getTime() + 60_000) })
   })
 
   it('runs takedown PII cleanup through the runtime takedown repository', async () => {
@@ -170,6 +215,27 @@ describe('durable-jobs bootstrap readiness', () => {
     expect(calls).toEqual(['materialize', 'coordinate', 'indexing-drain'])
   })
 
+  it('awaits the tracer flush before the cron runner resolves', async () => {
+    let flushed = false
+    const trace = vi.fn()
+    trace.flush = vi.fn(async () => { flushed = true; return true })
+    const coordinatorRunner = vi.fn(async () => {
+      expect(flushed).toBe(false)
+      return { runId: 'run-1', startedAt: new Date(), finishedAt: new Date() }
+    })
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner,
+      trace,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    await cron()
+
+    expect(trace.flush).toHaveBeenCalledOnce()
+    expect(flushed).toBe(true)
+  })
+
   it('counts the fair turn against the profile cap and merges drain counters into indexing', async () => {
     const candidate = { id: 'job-1', articleId: 'article-1', task: 'summary' }
     const queue = {
@@ -223,6 +289,22 @@ describe('durable-jobs bootstrap readiness', () => {
     expect(materializeDailyIngestion).toHaveBeenCalledTimes(2)
     expect(coordinatorRunner).toHaveBeenCalledTimes(1)
   })
+  it('forwards the bounded materialization deadline to fixed callbacks', async () => {
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const deadlines = []
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner: async () => ({ startedAt, finishedAt: startedAt }),
+      materializers: [async ({ deadline }) => { deadlines.push(deadline) }],
+      now: () => startedAt,
+      materializationBudgetMs: 4_000,
+    })
+
+    await cron()
+
+    expect(deadlines).toHaveLength(1)
+    expect(deadlines[0]).toEqual(new Date(startedAt.getTime() + 4_000))
+  })
 
   it('gives each fixed materializer one bounded turn before ingestion can exhaust the budget', async () => {
     const calls = []
@@ -231,13 +313,43 @@ describe('durable-jobs bootstrap readiness', () => {
       jobRepository: { materializeDailyIngestion: async () => { calls.push('ingestion'); return { hasMore: true } } },
       coordinatorRunner: async () => { calls.push('coordinate') },
       materializers: [async () => { calls.push('takedown') }],
-      now: () => new Date(Date.UTC(2026, 7, 10, 0, 0, tick++ === 0 ? 0 : 5)),
+      now: () => new Date(Date.UTC(2026, 7, 10, 0, 0, tick++ === 0 ? 0 : 3)),
       maxMaterializationPages: 10,
       materializationBudgetMs: 4_000,
     })
     await cron()
     expect(calls[0]).toBe('takedown')
     expect(calls).toContain('coordinate')
+  })
+  it('bounds a stalled fixed materializer to the materialization deadline and abort signal', async () => {
+    vi.useFakeTimers()
+    try {
+      const startedAt = new Date('2026-09-03T10:00:00.000Z')
+      let materializerSignal
+      let materializerDeadline
+      const materializer = vi.fn(({ signal, deadline }) => {
+        materializerSignal = signal
+        materializerDeadline = deadline
+        return new Promise(() => {})
+      })
+      const coordinatorRunner = vi.fn()
+      const cron = createCronDueWorkRunner({
+        jobRepository: { materializeDailyIngestion: vi.fn() },
+        coordinatorRunner,
+        materializers: [materializer],
+        now: () => startedAt,
+        materializationBudgetMs: 10,
+      })
+
+      const run = cron().then(() => null, (error) => error)
+      await vi.advanceTimersByTimeAsync(10)
+      await expect(run).resolves.toMatchObject({ code: 'runtime_error' })
+      expect(materializerDeadline).toEqual(new Date(startedAt.getTime() + 10))
+      expect(materializerSignal?.aborted).toBe(true)
+      expect(coordinatorRunner).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects an unexpected partial filter on the actor-idempotency unique index', async () => {

@@ -2869,6 +2869,131 @@ export const openApiDocument = {
         }
       }
     },
+    "/api/v1/admin/cron-lifecycle-events": {
+      "get": {
+        "tags": [
+          "Admin Jobs"
+        ],
+        "operationId": "listCronLifecycleEvents",
+        "x-persistence": "mongo",
+        "summary": "List durable cron and job lifecycle observability events",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "runId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "queueName",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "jobId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "articleId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "sourceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CronLifecycleEventListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
     "/api/v1/admin/duplicate-merges": {
       "post": {
         "tags": [
@@ -7259,6 +7384,36 @@ export const openApiDocument = {
           }
         }
       },
+      "LifecycleEventError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "retryable",
+          "occurredAt"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "upstreamStatus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 100,
+            "maximum": 599
+          }
+        }
+      },
       "JobCounters": {
         "type": "object",
         "additionalProperties": false,
@@ -7292,6 +7447,64 @@ export const openApiDocument = {
             "minimum": 0
           },
           "failed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "LifecycleEventCounters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fetched": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "created": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "duplicate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claimed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "succeeded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "partial": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deferred": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inspected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recovered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retriesCreated": {
             "type": "integer",
             "minimum": 0
           }
@@ -7894,6 +8107,158 @@ export const openApiDocument = {
           }
         }
       },
+      "CronLifecycleEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "eventId",
+          "version",
+          "eventType",
+          "stage",
+          "status",
+          "occurredAt"
+        ],
+        "properties": {
+          "eventId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "queueName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "jobId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "articleId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sequence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "leaseGeneration": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "remainingClaims": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "profileMaxJobs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "stage": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "elapsedMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "counters": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifecycleEventCounters"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifecycleEventError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CronLifecycleEventListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CronLifecycleEvent"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/CursorMeta"
+          }
+        }
+      },
       "IndexingJobListResponse": {
         "type": "object",
         "additionalProperties": false,
@@ -8097,7 +8462,8 @@ export const openApiDocument = {
           "purge-takedown-pii",
           "purge-takedown-workflows",
           "purge-account-deletion-workflows",
-          "purge-audit-ip-hmac"
+          "purge-audit-ip-hmac",
+          "purge-cron-lifecycle-events"
         ],
         "description": "Fixed server-owned maintenance action; it never carries a collection, filter, cutoff, cursor or batch-size override."
       },

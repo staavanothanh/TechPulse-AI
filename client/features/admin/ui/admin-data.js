@@ -190,6 +190,7 @@ const QUERY_FIELDS = Object.freeze({
   listSources: ['operationalStatus', 'licenseStatus', 'connectorType', 'cursor', 'limit'],
   listIngestionJobs: ['status', 'sourceId', 'cursor', 'limit'],
   listIndexingJobs: ['status', 'task', 'articleId', 'sourceId', 'cursor', 'limit'],
+  listCronLifecycleEvents: ['runId', 'queueName', 'task', 'jobId', 'articleId', 'sourceId', 'status', 'stage', 'from', 'to', 'cursor', 'limit'],
   listAdminArticles: ['status', 'sourceId', 'summaryStatus', 'embeddingStatus', 'cursor', 'limit'],
   listTakedownRequests: ['status', 'cursor', 'limit'],
   listAccountDeletionRequests: ['status', 'cursor', 'limit'],
@@ -356,6 +357,23 @@ export function allowlistedQuery(operation, query = {}) {
     }),
   )
 }
+export function normalizeLifecycleEventDateTime(value) {
+  if (value === undefined || value === null || value === '') return null
+  const date = new Date(String(value))
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+export function normalizeLifecycleEventQuery(query = {}) {
+  const normalized = { ...query }
+  for (const key of ['from', 'to']) {
+    if (!Object.hasOwn(normalized, key) || normalized[key] === '') continue
+    const value = normalizeLifecycleEventDateTime(normalized[key])
+    if (value === null) delete normalized[key]
+    else normalized[key] = value
+  }
+  return normalized
+}
+
 
 export function stableQueryKey(query = {}) {
   return JSON.stringify(

@@ -15,6 +15,7 @@ export const ATTESTATION_SCOPES = Object.freeze(Object.keys(RUNTIME_SCHEMA_GENER
 export const ROLE_PROBE_SCOPES = Object.freeze([
   'auth-core',
   'sources',
+  'cron-observability',
   'provider-routing-v2',
   'chat-sessions',
   'qa-evidence-fence',
@@ -118,15 +119,45 @@ export function buildAttestationRegistry(results, scopes = ATTESTATION_SCOPES) {
   return Object.fromEntries(scopes.map((scope) => [scope, registry[scope]]))
 }
 
+export async function assertVerifierCheckout({ commit, cwd = process.cwd(), execGit = execFileAsync } = {}) {
+  const expectedCommit = assertCommit(commit)
+  let headResult
+  try {
+    headResult = await execGit('git', ['rev-parse', 'HEAD'], { cwd })
+  } catch {
+    throw new Error('db:verify checkout identity could not be established')
+  }
+  let actualCommit
+  try {
+    actualCommit = assertCommit(String(headResult?.stdout ?? '').trim())
+  } catch {
+    throw new Error('db:verify checkout HEAD is invalid')
+  }
+  if (actualCommit !== expectedCommit)
+    throw new Error('db:verify checkout HEAD does not match pushed localSha')
+  let statusResult
+  try {
+    statusResult = await execGit('git', ['status', '--porcelain', '--untracked-files=all'], { cwd })
+  } catch {
+    throw new Error('db:verify checkout status could not be established')
+  }
+  if (String(statusResult?.stdout ?? '').trim() !== '')
+    throw new Error('db:verify checkout must be clean before attestation')
+  return true
+}
+
 export async function runDbVerify({
   scope,
   commit,
   requireRole = false,
   environment = process.env,
   cwd = process.cwd(),
+  execGit = execFileAsync,
+  execVerify = execFileAsync,
 } = {}) {
   if (!ATTESTATION_SCOPES.includes(scope))
     throw new Error(`Unsupported attestation scope: ${scope}`)
+  await assertVerifierCheckout({ commit, cwd, execGit })
   const args = [
     '--env-file-if-exists=.env',
     'scripts/db-verify.js',
@@ -135,7 +166,7 @@ export async function runDbVerify({
   ]
   if (requireRole) args.push('--require-role')
   try {
-    const { stdout } = await execFileAsync(process.execPath, args, {
+    const { stdout } = await execVerify(process.execPath, args, {
       cwd,
       env: buildVerifierEnvironment({ environment, commit }),
       maxBuffer: 1024 * 1024,

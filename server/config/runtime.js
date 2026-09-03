@@ -87,6 +87,17 @@ function providerConfiguration(value, input) {
     .map(([name]) => name)
   return validateProviderConfiguration(parsed, { credentialEnvNames })
 }
+const MIN_MACHINE_SECRET_BYTES = 32
+const PLACEHOLDER_MACHINE_SECRET = /^(?:<[^>]+>|change[-_ ]?me|replace[-_ ]?me|placeholder|your[-_ ]?secret)$/i
+
+function assertMachineSecret(environment, envName) {
+  const value = environment?.[envName]
+  if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') < MIN_MACHINE_SECRET_BYTES || PLACEHOLDER_MACHINE_SECRET.test(value.trim())) {
+    throw new Error('Internal machine secret must be at least 32 bytes and must not be a placeholder')
+  }
+  return envName
+}
+
 
 export function validateRuntimeConfiguration(input = process.env) {
   const origins = csv(input.PUBLIC_APP_ORIGINS)
@@ -105,7 +116,7 @@ export function validateRuntimeConfiguration(input = process.env) {
   if (checkpointKeyIds.length === 0 || checkpointKeyIds.length > 3 || checkpointKeyIds.some((id) => !KEY_ID_PATTERN.test(id))) {
     throw new Error('OFFLINE_CHECKPOINT_KEY_IDS must contain safe key IDs')
   }
-  const machineSecretEnv = envName(input.INTERNAL_MACHINE_SECRET_ENV, 'internal machine secret env')
+  const machineSecretEnv = assertMachineSecret(input, envName(input.INTERNAL_MACHINE_SECRET_ENV, 'internal machine secret env'))
   const googleOAuth = {
     clientIdEnv: optionalEnvName(input.GOOGLE_OAUTH_CLIENT_ID_ENV, 'Google OAuth client ID env'),
     clientSecretEnv: optionalEnvName(input.GOOGLE_OAUTH_CLIENT_SECRET_ENV, 'Google OAuth client secret env'),

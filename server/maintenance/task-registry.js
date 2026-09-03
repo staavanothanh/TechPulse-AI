@@ -6,6 +6,7 @@ export const MAINTENANCE_TASK_NAMES = Object.freeze([
   'purge-takedown-workflows',
   'purge-account-deletion-workflows',
   'purge-audit-ip-hmac',
+  'purge-cron-lifecycle-events',
 ])
 
 const TASK_SET = new Set(MAINTENANCE_TASK_NAMES)

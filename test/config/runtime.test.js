@@ -32,6 +32,7 @@ const validEnvironment = {
   }),
   PROVIDER_MAIN_API_KEY: 'test-only-secret',
   INTERNAL_MACHINE_SECRET_ENV: 'CRON_SECRET',
+  CRON_SECRET: 'm'.repeat(32),
 }
 
 describe('Step 1 runtime configuration contract', () => {
@@ -63,6 +64,11 @@ describe('Step 1 runtime configuration contract', () => {
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, QUOTA_HMAC_RETIRING_KEY_ENVS: 'QUOTA_HMAC_CURRENT_KEY' })).toThrow(/duplicate\/current/)
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, INTERNAL_MACHINE_SECRET_ENV: 'bad-name' })).toThrow(/environment variable name/)
     expect(() => validateRuntimeConfiguration({ ...validEnvironment, PROVIDER_ADMISSION_DOMAINS_JSON: '[{}]' })).toThrow(/legacy|graph/i)
+  })
+  it('rejects missing, short, and placeholder machine bearer secrets', () => {
+    expect(() => validateRuntimeConfiguration({ ...validEnvironment, CRON_SECRET: undefined })).toThrow(/machine secret/i)
+    expect(() => validateRuntimeConfiguration({ ...validEnvironment, CRON_SECRET: 'short' })).toThrow(/machine secret/i)
+    expect(() => validateRuntimeConfiguration({ ...validEnvironment, CRON_SECRET: '<replace-with-secret>' })).toThrow(/machine secret/i)
   })
 
   it('requires complete Google OAuth configuration and binds redirect URI to a public origin', () => {

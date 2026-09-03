@@ -1044,7 +1044,7 @@ type RuntimeCapabilityProbeDocument = {
 Rules:
 
 - Terminal account deletion/takedown tạo minimized suppression payload, ký HMAC bằng dedicated governance signing key từ Vercel environment rồi insert cùng domain/audit mutation trong **cùng client/session transaction** qua hai pre-created database. Insert fail làm terminal mutation rollback; không có eventual best-effort gap.
-- Runtime custom role chỉ `insert/find` suppression, audit và HMAC lifecycle snapshots; không update/delete các collection này. Maintenance credential chỉ làm fixed IP-HMAC field-unset; owner operator credential ghi checkpoint/retention manifest và chạy offline purge.
+- Runtime custom role chỉ `insert/find` suppression, audit và HMAC lifecycle snapshots; không update/delete các collection này. Maintenance credential chỉ chạy các fixed cleanup task `purge-audit-ip-hmac` và `purge-cron-lifecycle-events` bằng identity riêng; owner operator credential ghi checkpoint/retention manifest và chạy full offline purge.
 - Governance runtime signing keyring tách quota/IP HMAC: đúng một current + tối đa một retiring version; DB chỉ giữ version/signature. Runtime key chỉ retire theo live governance lifecycle evidence. Offline checkpoint HMAC keyring, sidecar continuity và old-key custody thuộc recovery track hậu MVP; secret không vào repo/Vercel/Mongo, inventory chỉ ghi keyId/activatedAt/retireAfter.
 - Governance database hoặc runtime signature unavailable làm terminal deletion/takedown fail closed. Backup inventory và signed read-only governance sidecar là recovery copy hậu MVP; sidecar không ghi đè live governance database trong app-only restore.
 - Step 11 phải probe transaction thật trên Atlas deployment đã cấu hình: cùng runtime client/session/credential ghi rồi rollback/commit qua pre-created collection ở `techpulse_app` và `techpulse_governance`. Capability/role probe fail thì block handoff; không fallback sang eventual write, best-effort export hoặc persistence technology khác.
@@ -1125,6 +1125,7 @@ Mỗi owner phải tạo index/script retention cùng migration của collection
 | Takedown requester PII | 90 ngày sau terminal state | bounded field-unset script | Step 11 |
 | Non-PII takedown lifecycle evidence | 180 ngày sau terminal state | state-aware cleanup/manual review | Step 11 |
 | Audit IP HMAC | 30 ngày | bounded field-unset script | Steps 2, 3, 11 |
+| Cron lifecycle event | 30 ngày sau `occurredAt` (`purgeAfter`) | fixed bounded delete script | Steps 2, 3, 11 |
 | Minimized audit event | 180 ngày | runtime retention evidence; owner-only offline fixed purge + signed retention manifest là hậu MVP | Steps 2, 3, 11; post-MVP recovery |
 | `jobLeases` high-water | project lifetime | no TTL; controlled GC migration after proof | Step 4 |
 
@@ -1143,10 +1144,11 @@ Mỗi invocation dùng server `now`, batch tối đa 100 và stable `(deadline, 
 | `purge-takedown-workflows` | `takedownRequests` | terminal + `workflowPurgeAfter<=now` | delete minimized workflow document |
 | `purge-account-deletion-workflows` | `accountDeletionRequests` | completed + `purgeAfter<=now` | delete workflow document |
 | `purge-audit-ip-hmac` | `adminAuditLogs` | `ipHmacPurgeAfter<=now` | unset IP HMAC/version/deadline |
+| `purge-cron-lifecycle-events` | `cronLifecycleEvents` | `purgeAfter<=now` | delete due lifecycle events |
 
 Task cần `cronBearer`/machine identity, fixed maximum batch và safe aggregate audit. Browser/admin session bị từ chối; không endpoint nào nhận raw Mongo filter, collection name hoặc caller cutoff. Dry-run chỉ là deployment script mode dùng cùng constant table, không là public HTTP option.
 
-`purge-audit-ip-hmac` dùng Mongo client riêng được resolve qua `MONGODB_MAINTENANCE_URI_ENV`; URI/credential phải khác runtime. Thiếu credential chỉ làm task này unavailable và làm maintenance-retention release gate fail. Runner không thay bằng runtime credential, đồng thời không dừng core runtime hoặc các fixed task khác đang có đúng capability.
+`purge-audit-ip-hmac` và `purge-cron-lifecycle-events` dùng Mongo client riêng được resolve qua `MONGODB_MAINTENANCE_URI_ENV`; URI/credential phải khác runtime. Thiếu credential làm các task này unavailable và làm maintenance-retention release gate fail. Runner không thay bằng runtime credential, đồng thời không dừng core runtime hoặc các fixed task khác đang có đúng capability.
 
 Full minimized-audit-event deletion là ngoại lệ **không expose qua HTTP maintenance route**. Sau 180 ngày, owner-only offline script dùng fixed predicate `purgeAfter<=authoritativeNow`, exact `(purgeAfter,_id)` batch tối đa 100 và ghi signed retention manifest vào `techpulse_governance` trước khi xóa. Verifier chỉ chấp nhận missing event nằm trong manifest hợp lệ; governance sidecar backup giữ manifest/checkpoint continuity, mọi gap khác vẫn là tamper/rollback failure.
 

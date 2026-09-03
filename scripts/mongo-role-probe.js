@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ObjectId } from 'mongodb'
+import { MongoClient, ObjectId } from 'mongodb'
 import { RUNTIME_CAPABILITY_PROBE_COLLECTION } from './migrations/governance-capability-probes.js'
 
 export function actionsForCollection(privileges, database, collection) {
@@ -9,6 +9,105 @@ export function actionsForCollection(privileges, database, collection) {
   })
   return new Set(scoped.flatMap((privilege) => privilege.actions ?? []))
 }
+function principalSet(users) {
+  return new Set((Array.isArray(users) ? users : []).flatMap((entry) => {
+    if (!entry?.user || !entry?.db) return []
+    return [`${String(entry.db)}:${String(entry.user)}`]
+  }))
+}
+
+function clusterIdentity(hello) {
+  if (hello?.serviceId) return `service:${String(hello.serviceId)}`
+  const hosts = Array.isArray(hello?.hosts) ? [...hello.hosts].map(String).sort().join(',') : ''
+  const setName = hello?.setName ? String(hello.setName) : ''
+  const primary = hello?.primary ? String(hello.primary) : ''
+  if (!setName && !hosts && !primary) return null
+  return `set:${setName}|hosts:${hosts}|primary:${primary}`
+}
+
+function hasOnlyAllowedPrivileges(privileges, database) {
+  const allowed = new Map([
+    ['cronLifecycleEvents', new Set(['find', 'remove', 'listIndexes', 'listCollections'])],
+    ['adminAuditLogs', new Set(['find', 'update'])],
+  ])
+  const allPrivileges = Array.isArray(privileges) ? privileges : []
+  if (allPrivileges.length === 0) return false
+  return allPrivileges.every((privilege) => {
+    const resource = privilege.resource ?? {}
+    const actions = privilege.actions ?? []
+    if (resource.db !== database) return false
+    if (resource.collection === '') return actions.every((action) => action === 'listCollections')
+    if (!allowed.has(resource.collection)) return false
+    return actions.every((action) => allowed.get(resource.collection).has(action))
+  })
+}
+
+const MAINTENANCE_CLIENT_OPTIONS = Object.freeze({ maxPoolSize: 2, serverSelectionTimeoutMS: 5_000 })
+const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{1,127}$/
+
+export async function probeCronObservabilityMaintenanceRoleCapabilities({ environment = process.env, database, runtimeUriEnv, runtimeDb, maintenanceClient, closeClient = true, clientFactory = (uri) => new MongoClient(uri, MAINTENANCE_CLIENT_OPTIONS) } = {}) {
+  const failed = Object.freeze({ configured: false, connected: false, clusterBound: false, distinctPrincipal: false, leastPrivilege: false, cronLifecycleFindAllowed: false, cronLifecycleRemoveAllowed: false, cronLifecycleListIndexesAllowed: false, cronLifecycleListCollectionsAllowed: false, auditFindAllowed: false, auditUpdateAllowed: false, auditRemoveDenied: false, auditDeleteDenied: false })
+  const maintenanceUriEnv = environment?.MONGODB_MAINTENANCE_URI_ENV
+  const maintenanceUri = ENV_NAME_PATTERN.test(String(maintenanceUriEnv ?? '')) ? environment[maintenanceUriEnv] : undefined
+  if (typeof maintenanceUri !== 'string' || maintenanceUri.trim() === '' || typeof database !== 'string' || database.trim() === '') return failed
+  const runtimeUri = ENV_NAME_PATTERN.test(String(runtimeUriEnv ?? '')) ? environment[runtimeUriEnv] : undefined
+  if (typeof runtimeUri === 'string' && runtimeUri.trim() !== '' && runtimeUri === maintenanceUri) return failed
+  if (!runtimeDb || typeof runtimeDb.command !== 'function' || typeof runtimeDb.collection !== 'function') return failed
+  let client
+  let connected = false
+  try {
+    client = maintenanceClient ?? clientFactory(maintenanceUri)
+    if (!client || typeof client.connect !== 'function') return { ...failed, configured: true }
+    if (!maintenanceClient) await client.connect()
+    connected = true
+    const db = maintenanceClient?.db?.(database) ?? client.db(database)
+    const [runtimeHello, runtimeStatus, maintenanceHello, maintenanceStatus] = await Promise.all([
+      runtimeDb.command({ hello: 1 }),
+      runtimeDb.command({ connectionStatus: 1, showPrivileges: true }),
+      db.command({ hello: 1 }),
+      db.command({ connectionStatus: 1, showPrivileges: true }),
+    ])
+    const runtimeUsers = principalSet(runtimeStatus?.authInfo?.authenticatedUsers)
+    const maintenanceUsers = principalSet(maintenanceStatus?.authInfo?.authenticatedUsers)
+    const clusterBound = clusterIdentity(runtimeHello) !== null && clusterIdentity(runtimeHello) === clusterIdentity(maintenanceHello)
+    const distinctPrincipal = runtimeUsers.size > 0 && maintenanceUsers.size > 0 && [...runtimeUsers].every((user) => !maintenanceUsers.has(user))
+    const maintenancePrivileges = maintenanceStatus?.authInfo?.authenticatedUserPrivileges ?? []
+    const leastPrivilege = hasOnlyAllowedPrivileges(maintenancePrivileges, database)
+    if (!clusterBound || !distinctPrincipal || !leastPrivilege) return { ...failed, configured: true, connected: true, clusterBound, distinctPrincipal, leastPrivilege }
+    const cronLifecycleCollection = db.collection('cronLifecycleEvents')
+    const auditCollection = db.collection('adminAuditLogs')
+    const [collections, indexes] = await Promise.all([
+      db.listCollections({ name: 'cronLifecycleEvents' }, { nameOnly: true }).toArray(),
+      cronLifecycleCollection.indexes(),
+    ])
+    await cronLifecycleCollection.find({ eventId: '0'.repeat(64) }).project({ _id: 1 }).limit(1).toArray()
+    await auditCollection.find({ eventId: '0'.repeat(64) }).project({ _id: 1 }).limit(1).toArray()
+    const lifecycleActions = actionsForCollection(maintenancePrivileges, database, 'cronLifecycleEvents')
+    const auditActions = actionsForCollection(maintenancePrivileges, database, 'adminAuditLogs')
+    return {
+      configured: true,
+      connected: true,
+      clusterBound,
+      distinctPrincipal,
+      leastPrivilege,
+      cronLifecycleFindAllowed: lifecycleActions.has('find'),
+      cronLifecycleRemoveAllowed: lifecycleActions.has('remove'),
+      cronLifecycleListIndexesAllowed: lifecycleActions.has('listIndexes') && Array.isArray(indexes),
+      cronLifecycleListCollectionsAllowed: lifecycleActions.has('listCollections') && Array.isArray(collections),
+      auditFindAllowed: auditActions.has('find'),
+      auditUpdateAllowed: auditActions.has('update'),
+      auditRemoveDenied: !auditActions.has('remove'),
+      auditDeleteDenied: !auditActions.has('delete'),
+    }
+  } catch {
+    return { ...failed, configured: true, connected }
+  } finally {
+    if (closeClient && !maintenanceClient) {
+      try { await client?.close?.() } catch { /* best-effort cleanup */ }
+    }
+  }
+}
+
 
 function probeDocument(eventId) {
   const targetId = new ObjectId()

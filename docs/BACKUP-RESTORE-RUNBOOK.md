@@ -42,8 +42,9 @@ signature/chain không hợp lệ.
 | Hủy backup artifact | Storage owner | Chờ external action |
 
 Runtime và maintenance credential không thay thế các authority này.
-`MONGODB_MAINTENANCE_URI_ENV` chỉ sở hữu audit IP-HMAC cleanup task cố định. Runtime
-credential không được thực hiện backup, restore hoặc checkpoint operation chỉ dành cho owner.
+`MONGODB_MAINTENANCE_URI_ENV` chỉ sở hữu các fixed cleanup task `purge-audit-ip-hmac`
+và `purge-cron-lifecycle-events`; URI/identity phải khác runtime. Credential này
+không được thực hiện backup, restore hoặc checkpoint operation chỉ dành cho owner.
 
 ## 1. Chuẩn bị restore plan local
 

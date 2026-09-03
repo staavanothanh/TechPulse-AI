@@ -150,29 +150,51 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
     })
   }
   factories.jobs = async ({ common }) => {
-    const [{ createProductionJobRuntime }, { createConfiguredJobRuntime }, { createConfiguredIngestionExecutor }, { createReleaseVerifiedSchemaVerifier }] = await Promise.all([
+    const [
+      { createProductionJobRuntime },
+      { createConfiguredJobRuntime, assertCronObservabilityReady },
+      { createConfiguredIngestionExecutor },
+      { createReleaseVerifiedSchemaVerifier },
+      { MongoCronEventRepository },
+      { createRuntimeTracer, reportRuntimeTraceDegraded },
+    ] = await Promise.all([
       import('../maintenance/job-runtime.js'),
       import('./jobs.js'),
       import('./ingestion.js'),
       import('./schema-readiness.js'),
+      import('../repositories/mongo/cron-event-repository.js'),
+      import('../jobs/runtime-trace.js'),
     ])
+    let cronEventRepository = null
+    let trace = createRuntimeTracer({ enabled: false })
+    try {
+      const verifyCronObservabilitySchema = createReleaseVerifiedSchemaVerifier('cron-observability', environment)
+      await verifyCronObservabilitySchema(common.context)
+      await assertCronObservabilityReady(common.context)
+      cronEventRepository = new MongoCronEventRepository(common.context)
+      trace = createRuntimeTracer({ repository: cronEventRepository, onPersistenceDegraded: (details) => reportRuntimeTraceDegraded(details) })
+    } catch {
+      // Durable jobs remain usable, but startup must not claim event observability is ready.
+    }
     const verifyJobsSchema = createReleaseVerifiedSchemaVerifier('durable-jobs', environment)
     const verifyGovernanceSchema = createReleaseVerifiedSchemaVerifier('governance', environment)
     const result = await createProductionJobRuntime({
       runtimeConfig: common.runtime,
       jobOptions: {
         context: common.context,
+        cronEventRepository,
         executor: createConfiguredIngestionExecutor({ context: common.context, providerRegistry: common.runtime.providerRegistry }),
         rateLimitAdmission: common.rateLimitAdmission,
         quotaKeyring: common.quotaKeyring,
         governanceKeyring: common.governanceKeyring,
         verifyJobsSchema,
         verifyGovernanceSchema,
+        trace,
       },
       createJobRuntime: createConfiguredJobRuntime,
     })
     if (!result.jobs?.jobService) throw new Error('Durable job runtime is unavailable')
-    return result.jobs
+    return { ...result.jobs, cronEventRepository, cronObservabilityReady: Boolean(cronEventRepository) }
   }
   factories.indexing = async ({ common, jobs }) => {
     const [{ createConfiguredProviderAdapters, DEFAULT_CHAT_TIMEOUT_MS }, { createConfiguredIndexingRuntime }, { createReleaseVerifiedSchemaVerifier }] = await Promise.all([
@@ -318,8 +340,14 @@ export function createLazyRuntimeOptions({
     select: (value) => value.jobService,
     unavailableMessage: 'Durable job service is unavailable',
   })
+  const cronEventRepository = createLazyService({
+    load: capabilities.jobs,
+    select: (value) => value.cronEventRepository,
+    unavailableMessage: 'Cron lifecycle event repository is unavailable',
+  })
 
   return Object.freeze({
+    cronEventRepository,
     authService: createLazyService({ load: capabilities.common, select: (value) => value.authService, unavailableMessage: 'Authentication service is unavailable' }),
     articleService: createLazyService({ load: capabilities.content, select: (value) => value.articleService, unavailableMessage: 'Article service is unavailable' }),
     searchService: createLazyService({ load: capabilities.content, select: (value) => value.searchService, unavailableMessage: 'Search service is unavailable' }),

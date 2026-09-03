@@ -9,6 +9,7 @@ export const RUNTIME_SCHEMA_GENERATIONS = Object.freeze({
   'google-oauth': 'google-oauth-v1',
   sources: 'sources-v1',
   'durable-jobs': 'durable-jobs-v1',
+  'cron-observability': 'cron-observability-v1',
   articles: 'articles-provider-routing-v2-v1',
   'indexing-jobs': 'indexing-jobs-drain-performance-v1',
   'provider-routing-v2': 'provider-routing-v2-v1',
@@ -98,6 +99,32 @@ function databaseIdentity(environment) {
     .digest('hex')
   return Object.freeze({ database, clusterBinding })
 }
+function maintenanceAuthorityBinding(environment) {
+  const uriEnvironmentName = environment.MONGODB_MAINTENANCE_URI_ENV
+  if (typeof uriEnvironmentName !== 'string' || !ENV_NAME_PATTERN.test(uriEnvironmentName)) throw new Error('Schema attestation maintenance identity is invalid')
+  const uri = environment[uriEnvironmentName]
+  if (typeof uri !== 'string' || !uri.trim()) throw new Error('Schema attestation maintenance identity is invalid')
+  const schemeEnd = uri.indexOf('://')
+  if (schemeEnd < 1) throw new Error('Schema attestation maintenance identity is invalid')
+  const queryStart = uri.indexOf('?', schemeEnd + 3)
+  const pathStart = uri.indexOf('/', schemeEnd + 3)
+  const authorityEnd = pathStart === -1 || queryStart !== -1 && queryStart < pathStart ? (queryStart === -1 ? uri.length : queryStart) : pathStart
+  const authorityWithCredentials = uri.slice(schemeEnd + 3, authorityEnd)
+  const credentialEnd = authorityWithCredentials.lastIndexOf('@')
+  if (credentialEnd < 1) throw new Error('Schema attestation maintenance identity is invalid')
+  let username
+  try { username = decodeURIComponent(authorityWithCredentials.slice(0, credentialEnd).split(':', 1)[0]) } catch { throw new Error('Schema attestation maintenance identity is invalid') }
+  if (!username) throw new Error('Schema attestation maintenance identity is invalid')
+  const authority = mongoAuthority(uri)
+  const pathEnd = queryStart === -1 ? uri.length : queryStart
+  const pathDatabase = pathStart >= 0 && pathStart < pathEnd ? decodeURIComponent(uri.slice(pathStart + 1, pathEnd)) : ''
+  const query = queryStart >= 0 ? new URLSearchParams(uri.slice(queryStart + 1)) : new URLSearchParams()
+  const authSourceOptions = [...query.entries()].filter(([key]) => key.toLowerCase() === 'authsource')
+  if (authSourceOptions.length > 1) throw new Error('Schema attestation maintenance identity is invalid')
+  const authSource = authSourceOptions[0]?.[1] || pathDatabase || 'admin'
+  return createHash('sha256').update(`mongodb-maintenance:${authority}|database:${environment.MONGODB_DATABASE}|authSource:${authSource}|principal:${username}`).digest('hex')
+}
+
 
 function expectedPayload(scope, verifiedAt, environment) {
   const generation = schemaGenerationForVerificationTarget(scope)
@@ -111,17 +138,19 @@ function expectedPayload(scope, verifiedAt, environment) {
     commit: deploymentCommit(environment),
     database,
     clusterBinding,
+    ...(scope === 'cron-observability' ? { maintenanceAuthorityBinding: maintenanceAuthorityBinding(environment) } : {}),
   })
 }
 
-function assertExactPayload(payload) {
+function assertExactPayload(payload, scope) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Runtime schema attestation payload is invalid')
   }
+  const expectedKeys = scope === 'cron-observability' ? [...PAYLOAD_KEYS, 'maintenanceAuthorityBinding'].sort() : PAYLOAD_KEYS
   const keys = Object.keys(payload).sort()
   if (
-    keys.length !== PAYLOAD_KEYS.length ||
-    keys.some((key, index) => key !== PAYLOAD_KEYS[index])
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index])
   ) {
     throw new Error('Runtime schema attestation payload is invalid')
   }
@@ -192,7 +221,7 @@ export function assertReleaseVerifiedSchema(scope, environment = process.env, no
   }
 
   const attestation = readAttestation(scope, environment)
-  assertExactPayload(attestation.payload)
+  assertExactPayload(attestation.payload, scope)
   const verifiedAt = new Date(attestation.payload.verifiedAt)
   if (
     Number.isNaN(verifiedAt.getTime()) ||

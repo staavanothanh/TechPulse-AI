@@ -100,7 +100,7 @@ docs/
 - ADR-0013 tách protocol adapter, provider failure domain, credential admission domain, route và workload policy. Current DeepSeek graph chỉ có một route cho mỗi LLM workload, không có model/provider fallback và dùng bounded retry; nếu bổ sung fallback phải giữ failure-class, capability và admitted-input gates.
 - Cleanup có fixed machine-only task table + deadline/source-citation indexes; HMAC keyring, closed tombstone và signed `techpulse_governance` checkpoint/suppression state bảo vệ runtime governance. Restore replay và backup sidecar là hậu MVP.
 - Mirrored `runtimeCapabilityProbes` ở hai logical DB chứng minh runtime cross-database transaction/role; probe chỉ có opaque ID/timestamps, TTL 5 phút và immediate cleanup/abort zero residue.
-- Audit IP-HMAC field cleanup dùng Mongo maintenance client/credential riêng; thiếu credential không được fallback sang runtime identity.
+- Audit IP-HMAC và cron lifecycle-event cleanup dùng Mongo maintenance client/credential riêng; thiếu credential không được fallback sang runtime identity và làm maintenance-retention release gate fail.
 - Audit chỉ lưu safe changed fields/state transition/action-specific `reasonCode`; không snapshot arbitrary document hoặc free-form case text.
 - Blueprint có 12 step, direct mode và milestone cutline Day 5/10/15; coding-agent support không hạ verification gate.
 

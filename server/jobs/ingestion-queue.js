@@ -165,8 +165,10 @@ export function createIngestionQueueAdapter({
   if (!jobRepository || !leaseRepository) throw new Error('Job and lease repositories are required')
   if (!Number.isInteger(leaseMs) || leaseMs < 100 || leaseMs > 15 * 60 * 1000) throw new Error('Lease duration is invalid')
   validDuration(executionTimeoutMs, 'Ingestion execution timeout')
-  const emitTrace = (event) => trace(safeEvent(event, () => new Date()))
   if (typeof trace !== 'function') throw new Error('Ingestion trace callback is required')
+  const emitTrace = (event) => {
+    try { trace(safeEvent(event, () => new Date())) } catch { /* telemetry cannot change job outcomes */ }
+  }
   return Object.freeze({
     queueName: 'ingestion',
     recoveryStrategy: 'terminal-parent-linked-retry',
@@ -228,7 +230,12 @@ export function createIngestionQueueAdapter({
       const claimed = claimedResult.value
       if (remainingAdmissionMs() === 0) {
         if (claimed) {
+          const traceContext = Object.freeze({ runId, queueName: 'ingestion', jobId: String(candidate.id), sourceId: String(candidate.sourceId), leaseGeneration: fence.leaseGeneration, deadlineAt })
+          const deadlineErr = runtimeFailure('ingestion_deadline_exceeded', 'Ingestion execution deadline was exceeded')
+          emitTrace({ ...traceContext, stage: 'ingestion.claim', status: 'succeeded' })
+          emitTrace({ ...traceContext, stage: 'ingestion.deadline', status: 'timeout', error: deadlineErr })
           await deferClaimedJobAfterDeadline({ jobRepository, candidate, fence, maxWaitMs: grace })
+          emitTrace({ ...traceContext, stage: 'ingestion.completion', status: 'deferred', error: deadlineErr })
           return { status: 'deferred', claimed: true }
         }
         await releaseAcquiredLease({ leaseRepository, fence, ownerToken: token, maxWaitMs: grace })
@@ -279,7 +286,7 @@ export function createIngestionQueueAdapter({
         if (execution.timedOut) {
           reportStage({ stage: 'ingestion.deadline', status: 'timeout', error: execution.outcome.error })
           executorPhase.timeout(execution.outcome.error)
-        } else if (['succeeded', 'partial', 'cancelled'].includes(execution.outcome?.status)) executorPhase.succeed({ counters: execution.outcome?.counters })
+        } else if (['succeeded', 'partial', 'cancelled'].includes(execution.outcome?.status)) executorPhase.succeed({ status: execution.outcome.status, counters: execution.outcome?.counters })
         else executorPhase.fail(execution.outcome?.error)
       } catch (error) {
         executorPhase.fail(error)
@@ -308,8 +315,8 @@ export function createIngestionQueueAdapter({
         }
         if (!completion.settled) throw completion.error ?? unresolvedFinalization()
         const completed = completion.value
-        completionPhase.succeed()
         const committedStatus = completed?.status ?? status
+        completionPhase.succeed({ status: committedStatus === 'cancelled' ? 'cancelled' : committedStatus })
         return { status: committedStatus === 'cancelled' ? 'partial' : committedStatus, claimed: true }
       } catch (completionError) {
         if (completionTimedOut) {

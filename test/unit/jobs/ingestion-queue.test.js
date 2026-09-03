@@ -222,9 +222,49 @@ describe('ingestion queue adapter', () => {
         status: 'failed',
         error: expect.objectContaining({ code: 'ingestion_deadline_exceeded', retryable: false }),
       }))
+      expect(trace.mock.calls.some(([event]) => event.stage === 'ingestion.deadline' && event.status === 'timeout')).toBe(true)
       expect(trace.mock.calls.some(([event]) => event.stage === 'ingestion.executor' && event.status === 'timeout')).toBe(true)
     } finally {
       vi.useRealTimers()
+    }
+  })
+  it('emits claim success, deadline timeout, and completion deferral when admission expires after ingestion claim', async () => {
+    const fence = { key: 'ingestion:source:507f1f77bcf86cd799439012', jobId: '507f1f77bcf86cd799439011', ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
+    const trace = vi.fn()
+    const deferWithFence = vi.fn(async () => true)
+    let perfTime = 1_000
+    const perfSpy = vi.spyOn(globalThis.performance, 'now').mockImplementation(() => perfTime)
+    try {
+      const adapter = createIngestionQueueAdapter({
+        jobRepository: {
+          claimQueuedWithFence: vi.fn(async () => {
+            perfTime = 50_000
+            return true
+          }),
+          deferWithFence,
+        },
+        leaseRepository: {
+          acquire: vi.fn(async () => fence),
+          release: vi.fn(async () => true),
+        },
+        executor: vi.fn(),
+        trace,
+      })
+      const started = new Date('2026-08-10T00:00:00.000Z')
+      const result = await adapter.claimAndExecute({
+        candidate: { id: fence.jobId, sourceId: '507f1f77bcf86cd799439012' },
+        runId: 'cron-run-post-claim',
+        now: started,
+        deadline: new Date(started.getTime() + 10_000),
+      })
+
+      expect(result).toEqual({ status: 'deferred', claimed: true })
+      const events = trace.mock.calls.map(([event]) => event)
+      expect(events.some((event) => event.stage === 'ingestion.claim' && event.status === 'succeeded')).toBe(true)
+      expect(events.some((event) => event.stage === 'ingestion.deadline' && event.status === 'timeout')).toBe(true)
+      expect(events.some((event) => event.stage === 'ingestion.completion' && event.status === 'deferred')).toBe(true)
+    } finally {
+      perfSpy.mockRestore()
     }
   })
   it('terminalizes a deadline even when the executor resolves during grace', async () => {

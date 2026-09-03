@@ -3,6 +3,7 @@ import {
   actionsForCollection,
   isAuthorizationDenied,
   probeAuditRoleCapabilities,
+  probeCronObservabilityMaintenanceRoleCapabilities,
   probeHmacLifecycleRoleCapabilities,
   probeSourcesRoleCapabilities,
   probeCrossDatabaseTransactionCapabilities,
@@ -226,5 +227,110 @@ describe('Mongo audit role capability probe', () => {
     await expect(probeAuditRoleCapabilities({ client, db: { collection: vi.fn(() => collection) } })).resolves.toEqual({
       inserted: true, findAllowed: true, updateDenied: false, deleteDenied: true,
     })
+  })
+  it('probes cron deletion and audit field-unset capabilities without audit deletion', async () => {
+    const collection = {
+      indexes: vi.fn(async () => [{ name: '_id_' }]),
+      find: vi.fn(() => ({
+        project: () => ({
+          limit: () => ({ toArray: vi.fn(async () => []) }),
+        }),
+      })),
+    }
+    const runtimeHello = { serviceId: 'cluster-1', setName: 'rs0', hosts: ['node-1'] }
+    const maintenanceHello = { serviceId: 'cluster-1', setName: 'rs0', hosts: ['node-1'] }
+    const maintenancePrivileges = [
+      { resource: { db: 'app', collection: 'cronLifecycleEvents' }, actions: ['find', 'remove', 'listIndexes'] },
+      { resource: { db: 'app', collection: 'adminAuditLogs' }, actions: ['find', 'update'] },
+      { resource: { db: 'app', collection: '' }, actions: ['listCollections'] },
+    ]
+    const db = {
+      collection: vi.fn(() => collection),
+      listCollections: vi.fn(() => ({ toArray: vi.fn(async () => [{ name: 'cronLifecycleEvents' }]) })),
+      command: vi.fn(async (command) => command.hello ? maintenanceHello : { authInfo: { authenticatedUsers: [{ user: 'maintenance-role', db: 'admin' }], authenticatedUserPrivileges: maintenancePrivileges } }),
+    }
+    const runtimeDb = {
+      collection: vi.fn(),
+      command: vi.fn(async (command) => command.hello ? runtimeHello : { authInfo: { authenticatedUsers: [{ user: 'runtime-role', db: 'admin' }] } }),
+    }
+    const client = { connect: vi.fn(async () => undefined), db: vi.fn(() => db), close: vi.fn(async () => undefined) }
+    const clientFactory = vi.fn(() => client)
+
+    await expect(probeCronObservabilityMaintenanceRoleCapabilities({
+      environment: { MONGODB_MAINTENANCE_URI_ENV: 'MAINTENANCE_URI', MAINTENANCE_URI: 'mongodb://maintenance', RUNTIME_URI: 'mongodb://runtime' },
+      database: 'app',
+      runtimeUriEnv: 'RUNTIME_URI',
+      runtimeDb,
+      clientFactory,
+    })).resolves.toEqual({
+      configured: true,
+      connected: true,
+      clusterBound: true,
+      distinctPrincipal: true,
+      leastPrivilege: true,
+      cronLifecycleFindAllowed: true,
+      cronLifecycleRemoveAllowed: true,
+      cronLifecycleListIndexesAllowed: true,
+      cronLifecycleListCollectionsAllowed: true,
+      auditFindAllowed: true,
+      auditUpdateAllowed: true,
+      auditRemoveDenied: true,
+      auditDeleteDenied: true,
+    })
+    expect(client.close).toHaveBeenCalledOnce()
+  })
+  it.each([
+    ['wrong cluster', { serviceId: 'cluster-2' }, [{ user: 'maintenance-role', db: 'admin' }], [
+      { resource: { db: 'app', collection: 'cronLifecycleEvents' }, actions: ['find', 'remove', 'listIndexes'] },
+      { resource: { db: 'app', collection: 'adminAuditLogs' }, actions: ['find', 'update'] },
+      { resource: { db: 'app', collection: '' }, actions: ['listCollections'] },
+    ]],
+    ['same principal', { serviceId: 'cluster-1' }, [{ user: 'runtime-role', db: 'admin' }], [
+      { resource: { db: 'app', collection: 'cronLifecycleEvents' }, actions: ['find', 'remove', 'listIndexes'] },
+      { resource: { db: 'app', collection: 'adminAuditLogs' }, actions: ['find', 'update'] },
+      { resource: { db: 'app', collection: '' }, actions: ['listCollections'] },
+    ]],
+    ['extra privilege', { serviceId: 'cluster-1' }, [{ user: 'maintenance-role', db: 'admin' }], [
+      { resource: { db: 'app', collection: 'cronLifecycleEvents' }, actions: ['find', 'remove', 'listIndexes'] },
+      { resource: { db: 'app', collection: 'adminAuditLogs' }, actions: ['find', 'update', 'remove'] },
+      { resource: { db: 'app', collection: '' }, actions: ['listCollections'] },
+    ]],
+    ['cross database privilege', { serviceId: 'cluster-1' }, [{ user: 'maintenance-role', db: 'admin' }], [
+      { resource: { db: 'app', collection: 'cronLifecycleEvents' }, actions: ['find', 'remove', 'listIndexes'] },
+      { resource: { db: 'app', collection: 'adminAuditLogs' }, actions: ['find', 'update'] },
+      { resource: { db: 'app', collection: '' }, actions: ['listCollections'] },
+      { resource: { db: 'other', collection: 'jobs' }, actions: ['find'] },
+    ]],
+  ])('fails closed for %s maintenance identity binding', async (_name, maintenanceHello, maintenanceUsers, maintenancePrivileges) => {
+    const db = {
+      collection: vi.fn(),
+      command: vi.fn(async (command) => command.hello ? maintenanceHello : { authInfo: { authenticatedUsers: maintenanceUsers, authenticatedUserPrivileges: maintenancePrivileges } }),
+    }
+    const runtimeDb = {
+      collection: vi.fn(),
+      command: vi.fn(async (command) => command.hello ? { serviceId: 'cluster-1' } : { authInfo: { authenticatedUsers: [{ user: 'runtime-role', db: 'admin' }] } }),
+    }
+    const client = { connect: vi.fn(async () => undefined), db: vi.fn(() => db), close: vi.fn(async () => undefined) }
+    const result = await probeCronObservabilityMaintenanceRoleCapabilities({
+      environment: { MONGODB_MAINTENANCE_URI_ENV: 'MAINTENANCE_URI', MAINTENANCE_URI: 'mongodb://maintenance' },
+      database: 'app', runtimeDb, clientFactory: () => client,
+    })
+    expect(result).toMatchObject({ configured: true, connected: true, leastPrivilege: !['extra privilege', 'cross database privilege'].includes(_name) })
+    expect(result.cronLifecycleFindAllowed).toBe(false)
+  })
+
+  it('fails closed when the maintenance credential is absent or overlaps runtime', async () => {
+    const clientFactory = vi.fn()
+    const runtimeDb = { command: vi.fn(), collection: vi.fn() }
+    const environment = { MONGODB_MAINTENANCE_URI_ENV: 'MAINTENANCE_URI', MAINTENANCE_URI: 'mongodb://same' }
+
+    await expect(probeCronObservabilityMaintenanceRoleCapabilities({ environment: {}, database: 'app', clientFactory })).resolves.toMatchObject({ configured: false, connected: false })
+    await expect(probeCronObservabilityMaintenanceRoleCapabilities({
+      environment: { ...environment, RUNTIME_URI: 'mongodb://same' }, database: 'app', runtimeUriEnv: 'RUNTIME_URI', runtimeDb, clientFactory,
+    })).resolves.toMatchObject({ configured: false, connected: false })
+    const throwingFactory = vi.fn(() => { throw new Error('invalid URI') })
+    await expect(probeCronObservabilityMaintenanceRoleCapabilities({ environment, database: 'app', runtimeDb, clientFactory: throwingFactory })).resolves.toMatchObject({ configured: true, connected: false })
+    expect(throwingFactory).toHaveBeenCalledOnce()
+    expect(clientFactory).not.toHaveBeenCalled()
   })
 })

@@ -4,6 +4,7 @@ const ADMIN_FILTERS = Object.freeze({
   listTakedownRequests: ['status', 'cursor', 'limit'],
   listAdminUsers: ['status', 'email', 'cursor', 'limit'],
   listAccountDeletionRequests: ['status', 'cursor', 'limit'],
+  listCronLifecycleEvents: ['runId', 'queueName', 'task', 'jobId', 'articleId', 'sourceId', 'status', 'stage', 'from', 'to', 'cursor', 'limit'],
 })
 const MAX_RETRY_AFTER = 86_400
 
@@ -56,5 +57,6 @@ export function createAdminReadApi(generatedApi, fetchImpl = globalThis.fetch) {
     getAccountDeletionRequest: (options) => invoke('getAccountDeletionRequest', options),
     retryAccountDeletionRequest: (options) => invoke('retryAccountDeletionRequest', options),
     listAuditLogs: (options) => invoke('listAuditLogs', options),
+    listCronLifecycleEvents: (options) => invoke('listCronLifecycleEvents', options),
   })
 }

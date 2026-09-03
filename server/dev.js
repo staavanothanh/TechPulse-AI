@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { configureDns } from '../scripts/configure-dns.js'
 import { createDevViteOptions } from './dev-vite.js'
+import { createRuntimeTracer, reportRuntimeTraceDegraded } from './jobs/runtime-trace.js'
 
 configureDns()
 
@@ -23,8 +24,10 @@ const { createSafeFetch } = await import('./infrastructure/http/safe-fetch.js')
 const { createSourceTechnicalCheckAdapter } = await import('./infrastructure/http/source-technical-check.js')
 const { createRateLimitAdmission } = await import('./security/rate-limit-admission.js')
 const { closeMaintenanceMongoContext, getMaintenanceMongoContext } = await import('./maintenance/mongo-context.js')
-const { createRuntimeTracer } = await import('./jobs/runtime-trace.js')
-const runtimeTrace = createRuntimeTracer()
+const { probeCronObservabilityMaintenanceRoleCapabilities } = await import('../scripts/mongo-role-probe.js')
+const { MongoCronEventRepository } = await import('./repositories/mongo/cron-event-repository.js')
+let cronEventRepository
+let runtimeTrace = createRuntimeTracer()
 let authService
 let sourceService
 let jobService
@@ -46,11 +49,34 @@ try {
   const configured = await createConfiguredAuthService()
   authService = configured.authService
   runtime = configured.runtime
+  cronEventRepository = new MongoCronEventRepository(configured.context)
+  runtimeTrace = createRuntimeTracer({ repository: cronEventRepository, onPersistenceDegraded: (details) => reportRuntimeTraceDegraded(details) })
   const rateLimitAdmission = createRateLimitAdmission({ repository: configured.authRepository, keyring: configured.quotaKeyring })
   try {
-    maintenanceContext = await getMaintenanceMongoContext({ runtimeConfig: configured.runtime, runtimeClient: configured.context.client })
-    if (!maintenanceContext) console.warn('Audit IP-HMAC maintenance is unavailable until MONGODB_MAINTENANCE_URI_ENV is configured')
-  } catch { console.warn('Audit IP-HMAC maintenance is unavailable until a separate maintenance credential is configured') }
+    maintenanceContext = await getMaintenanceMongoContext({ runtimeConfig: configured.runtime, runtimeClient: configured.context.client, environment: process.env })
+    if (maintenanceContext) {
+      const capability = await probeCronObservabilityMaintenanceRoleCapabilities({
+        environment: process.env,
+        database: configured.runtime?.maintenanceMongo?.database ?? configured.runtime?.mongo?.database,
+        runtimeUriEnv: configured.runtime?.mongo?.uriEnv,
+        runtimeDb: configured.context.db,
+        maintenanceClient: maintenanceContext.client,
+        closeClient: false,
+      })
+      if (!Object.values(capability ?? {}).every(Boolean)) {
+        await closeMaintenanceMongoContext(maintenanceContext)
+        maintenanceContext = null
+        console.warn('Cron lifecycle and audit IP-HMAC maintenance are unavailable until a dedicated maintenance credential is configured')
+      }
+    }
+    if (!maintenanceContext) console.warn('Cron lifecycle and audit IP-HMAC maintenance are unavailable until MONGODB_MAINTENANCE_URI_ENV is configured')
+  } catch {
+    if (maintenanceContext) {
+      try { await closeMaintenanceMongoContext(maintenanceContext) } catch { /* cleanup is best effort */ }
+      maintenanceContext = null
+    }
+    console.warn('Cron lifecycle and audit IP-HMAC maintenance are unavailable until a separate maintenance credential is configured')
+  }
   try {
     const governance = await createConfiguredAdminGovernanceService({ context: configured.context, rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring })
     adminGovernanceService = governance.adminGovernanceService
@@ -59,7 +85,7 @@ try {
   const technicalCheckAdapter = createSourceTechnicalCheckAdapter({ safeFetch: createSafeFetch() })
   try { sourceService = (await createConfiguredSourceService({ context: configured.context, technicalCheckAdapter, rateLimitAdmission })).sourceService } catch { console.warn('Source Registry service is unavailable until its migration is applied') }
   try {
-    const jobs = await createConfiguredJobRuntime({ context: configured.context, executor: createConfiguredIngestionExecutor({ context: configured.context, providerRegistry: runtime.providerRegistry }), rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring, maintenanceContext, trace: runtimeTrace })
+    const jobs = await createConfiguredJobRuntime({ context: configured.context, cronEventRepository, executor: createConfiguredIngestionExecutor({ context: configured.context, providerRegistry: runtime.providerRegistry }), rateLimitAdmission, quotaKeyring: configured.quotaKeyring, governanceKeyring: configured.governanceKeyring, maintenanceContext, trace: runtimeTrace })
     jobService = jobs.jobService
     dueWorkRunner = jobs.dueWorkRunner
     maintenanceRunner = jobs.maintenanceRunner
@@ -88,7 +114,7 @@ try {
 } catch {
   console.warn('Auth service is unavailable until MongoDB/runtime env is configured')
 }
-const app = createApp({ authService, sourceService, jobService, indexingJobService, sourcePolicyReconciliationService, dueWorkRunner, maintenanceRunner, articleService, searchService, savedService, qaService, adminGovernanceService, accountDeletionService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
+const app = createApp({ authService, sourceService, jobService, indexingJobService, sourcePolicyReconciliationService, dueWorkRunner, maintenanceRunner, cronEventRepository, articleService, searchService, savedService, qaService, adminGovernanceService, accountDeletionService, imageCspHosts, allowedOrigins: runtime?.origins?.join(','), machineSecretEnv: runtime?.internalMachineSecretEnv, afterApiMiddleware: vite.middlewares })
 server.on('request', app)
 server.listen(port, () => {
   console.log(`TechPulse local server listening on http://localhost:${port}`)

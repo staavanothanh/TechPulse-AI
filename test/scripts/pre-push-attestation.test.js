@@ -8,6 +8,7 @@ import {
   createVercelEnvironmentPayload,
   parsePrePushInput,
   parseVerifierOutput,
+  runDbVerify,
   runPrePushAttestation,
   updateVercelEnvironmentVariable,
 } from '../../scripts/pre-push-attestation.js'
@@ -96,6 +97,7 @@ describe('pre-push release attestation', () => {
       expect.arrayContaining([
         'auth-core',
         'sources',
+        'cron-observability',
         'provider-routing-v2',
         'chat-sessions',
         'qa-evidence-fence',
@@ -227,6 +229,25 @@ describe('pre-push release attestation', () => {
     ).resolves.toMatchObject({ updated: false, target: 'preview' })
     expect(fetchImpl.mock.calls[1][0]).toContain('/v10/projects/prj_test/env?upsert=true')
     expect(JSON.parse(fetchImpl.mock.calls[1][1].body).target).toEqual(['preview'])
+  })
+
+  it('rejects db verification when current HEAD differs from pushed localSha', async () => {
+    const execGit = vi.fn(async (_command, args) => {
+      if (args[0] === 'rev-parse') return { stdout: `${'b'.repeat(40)}\n` }
+      throw new Error('db verify should not run')
+    })
+    await expect(runDbVerify({ scope: 'auth-core', commit: COMMIT, cwd: 'checkout', execGit })).rejects.toThrow(/HEAD.*localSha|pushed commit/i)
+    expect(execGit).toHaveBeenCalledWith('git', ['rev-parse', 'HEAD'], expect.objectContaining({ cwd: 'checkout' }))
+  })
+
+  it('rejects db verification when checkout status is dirty', async () => {
+    const execGit = vi.fn(async (_command, args) => {
+      if (args[0] === 'rev-parse') return { stdout: `${COMMIT}\n` }
+      if (args[0] === 'status') return { stdout: ' M server/jobs/runtime-trace.js\n' }
+      throw new Error('unexpected git operation')
+    })
+    await expect(runDbVerify({ scope: 'auth-core', commit: COMMIT, cwd: 'checkout', execGit })).rejects.toThrow(/clean|dirty/i)
+    expect(execGit).toHaveBeenCalledWith('git', ['status', '--porcelain', '--untracked-files=all'], expect.objectContaining({ cwd: 'checkout' }))
   })
 
   it('fails without exposing Vercel response bodies', async () => {

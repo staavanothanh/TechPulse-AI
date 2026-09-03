@@ -448,6 +448,37 @@ describe('admin feature views', () => {
     expect(html).toContain('Thử lại')
     expect(html).not.toMatch(/idempotencyKey|leaseGeneration|provider|token/i)
   })
+  it('updates the bounded-run summary after the Events-tab action completes', async () => {
+    const api = { runAdminDueWork: vi.fn().mockResolvedValue({ data: {
+      runId: 'run-after-events-action',
+      startedAt: '2026-09-03T10:00:00.000Z',
+      finishedAt: '2026-09-03T10:00:01.000Z',
+      queues: { ingestion: {}, indexing: {}, accountDeletion: {} },
+    } }) }
+    const props = {
+      api,
+      session,
+      initialData: {
+        tab: 'events',
+        events: { data: [], meta: { hasNext: false } },
+        ingestion: { data: [], meta: { hasNext: false } },
+        indexing: { data: [], meta: { hasNext: false } },
+        sources: { data: [], meta: { hasNext: false } },
+      },
+      onSessionExpired: vi.fn(),
+    }
+    const runner = renderHookRunner((input) => AdminJobsView(input))
+    const initialTree = runner.render(props)
+    const header = findElement(initialTree, (element) => element?.props?.title === 'Jobs và queue')
+    const action = findElement(header.props.action, (element) => element?.props?.icon === 'play')
+
+    await action.props.onClick()
+
+    const updatedTree = runner.render(props)
+    const runPanel = findElement(updatedTree, (element) => element?.props?.run?.runId === 'run-after-events-action')
+    expect(api.runAdminDueWork).toHaveBeenCalledOnce()
+    expect(runPanel).not.toBeNull()
+  })
 
   it('renders the job create forms above the queue tables beside the filter controls', () => {
     const ingestionHtml = renderToStaticMarkup(

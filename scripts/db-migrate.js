@@ -20,6 +20,7 @@ import { buildAdminPerformanceIndexesMigration, runAdminPerformanceIndexesMigrat
 import { buildIndexingDrainPerformanceMigration, runIndexingDrainPerformanceMigration } from './migrations/indexing-drain-performance.js'
 import { buildQaEvidenceFenceMigration, runQaEvidenceFenceMigration } from './migrations/qa-evidence-fence.js'
 import { buildSummaryDetailV1Migration, runSummaryDetailV1Migration } from './migrations/summary-detail-v1.js'
+import { buildCronObservabilityMigration, runCronObservabilityMigration } from './migrations/cron-observability.js'
 import {
   runAuthCoreWithStep4Compatibility,
   runDurableJobsWithStep4Compatibility,
@@ -49,9 +50,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 const summaryDetailWriterMode = args.has('--writers-paused') ? 'paused' : undefined
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation', 'cron-observability'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation, cron-observability',
   )
   process.exitCode = 2
 } else {
@@ -84,6 +85,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? buildQaEvidenceFenceMigration
               : target === 'summary-detail-v1'
                 ? buildSummaryDetailV1Migration
+              : target === 'cron-observability'
+                ? buildCronObservabilityMigration
               : target === 'governance'
                 ? buildGovernanceMigration
               : target === 'google-oauth'
@@ -112,6 +115,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? runQaEvidenceFenceMigration
               : target === 'summary-detail-v1'
                 ? runSummaryDetailV1Migration
+              : target === 'cron-observability'
+                ? runCronObservabilityMigration
               : target === 'governance'
                 ? runGovernanceMigration
               : target === 'google-oauth'

@@ -14,6 +14,7 @@ const validEnvironment = {
   OFFLINE_CHECKPOINT_KEY_IDS: 'checkpoint-current,checkpoint-old',
   PROVIDER_ADMISSION_DOMAINS_JSON: '[]',
   INTERNAL_MACHINE_SECRET_ENV: 'CRON_SECRET',
+  CRON_SECRET: 'm'.repeat(32),
 }
 
 describe('Step 2 runtime and keyring configuration', () => {

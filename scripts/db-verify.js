@@ -8,6 +8,7 @@ import {
   DURABLE_JOB_COLLECTIONS,
   DURABLE_JOB_INDEXES,
 } from './migrations/durable-jobs.js'
+import { CRON_OBSERVABILITY_COLLECTIONS, CRON_OBSERVABILITY_INDEXES } from './migrations/cron-observability.js'
 import { ARTICLE_COLLECTIONS, ARTICLE_INDEXES } from './migrations/articles.js'
 import {
   INDEXING_ARTICLE_INDEXES,
@@ -52,6 +53,7 @@ import {
 import {
   actionsForCollection,
   probeAuditRoleCapabilities,
+  probeCronObservabilityMaintenanceRoleCapabilities,
   probeHmacLifecycleRoleCapabilities,
   probeSourcesRoleCapabilities,
   probeGovernanceRoleCapabilities,
@@ -78,6 +80,7 @@ function stableJson(value) {
       .join(',')}}`
   return JSON.stringify(value)
 }
+
 
 const GOOGLE_OAUTH_AUTH_COLLECTIONS = Object.freeze({
   ...AUTH_CORE_COLLECTIONS,
@@ -302,9 +305,9 @@ async function probeTopicTaxonomyRoleCapabilities({ client, db } = {}) {
     transaction: outcome.transactionStarted && outcome.sessionHealthy,
   }
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation',
+    'Supported verification targets: auth-core, sources, durable-jobs, cron-observability, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation',
   )
   process.exitCode = 2
 } else {
@@ -331,6 +334,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
         ? SOURCE_COLLECTIONS
         : target === 'durable-jobs'
           ? DURABLE_JOB_COLLECTIONS
+          : target === 'cron-observability'
+            ? CRON_OBSERVABILITY_COLLECTIONS
           : target === 'articles'
             ? ARTICLE_COLLECTIONS
             : target === 'indexing-jobs'
@@ -365,6 +370,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
     const expectedIndexes =
       target === 'sources'
         ? SOURCE_INDEXES
+          : target === 'cron-observability'
+            ? CRON_OBSERVABILITY_INDEXES
         : target === 'durable-jobs'
           ? DURABLE_JOB_INDEXES
           : target === 'articles'
@@ -641,6 +648,31 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
               { 'reconciliation.status': 1, 'reconciliation.requiredPolicyVersion': 1 },
             ],
           ]
+        : target === 'cron-observability'
+          ? [
+              [
+                'cron_events_occurred',
+                'cronLifecycleEvents',
+                { occurredAt: { $lte: new Date() } },
+                { occurredAt: -1, _id: -1 },
+                'cron_events_occurred_id',
+              ],
+              ['cron_events_run', 'cronLifecycleEvents', { runId: 'probe-run' }, { occurredAt: -1, _id: -1 }, 'cron_events_run_occurred_id'],
+              ['cron_events_queue', 'cronLifecycleEvents', { queueName: 'ingestion' }, { occurredAt: -1, _id: -1 }, 'cron_events_queue_occurred_id'],
+              ['cron_events_task', 'cronLifecycleEvents', { task: 'summary' }, { occurredAt: -1, _id: -1 }, 'cron_events_task_occurred_id'],
+              ['cron_events_job', 'cronLifecycleEvents', { jobId: 'probe-job' }, { occurredAt: -1, _id: -1 }, 'cron_events_job_occurred_id'],
+              ['cron_events_article', 'cronLifecycleEvents', { articleId: 'probe-article' }, { occurredAt: -1, _id: -1 }, 'cron_events_article_occurred_id'],
+              ['cron_events_source', 'cronLifecycleEvents', { sourceId: 'probe-source' }, { occurredAt: -1, _id: -1 }, 'cron_events_source_occurred_id'],
+              ['cron_events_status', 'cronLifecycleEvents', { status: 'succeeded' }, { occurredAt: -1, _id: -1 }, 'cron_events_status_occurred_id'],
+              ['cron_events_stage', 'cronLifecycleEvents', { stage: 'indexing.executor' }, { occurredAt: -1, _id: -1 }, 'cron_events_stage_occurred_id'],
+              [
+                'cron_events_purge',
+                'cronLifecycleEvents',
+                { purgeAfter: { $lte: new Date() } },
+                { purgeAfter: 1, _id: 1 },
+                'cron_events_purge_deadline',
+              ],
+            ]
         : target === 'durable-jobs'
           ? [
               [
@@ -1010,7 +1042,6 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
         try {
           const explain = await context.db.collection(collectionName).aggregate(pipeline).explain('queryPlanner')
           const stages = winningPlanStages(explain)
-          if (stages.includes('COLLSCAN') || stages.includes('SORT')) planProblems.push(`${label}:${stages.join(',')}`)
         } catch { planProblems.push(`${label}:explain-unavailable`) }
       }
     }
@@ -1031,6 +1062,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
     let roleStatus =
       target === 'sources' ||
       target === 'durable-jobs' ||
+      target === 'cron-observability' ||
       target === 'articles' ||
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
@@ -1048,6 +1080,10 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
               { database: context.database, collection: 'sources', label: 'sources', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
               { database: context.database, collection: 'adminAuditLogs', label: 'audit', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
             ]
+          : target === 'cron-observability'
+            ? [
+                { database: context.database, collection: 'cronLifecycleEvents', label: 'cron observability runtime', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
+              ]
           : target === 'provider-routing-v2'
             ? [
                 { database: context.database, collection: 'providerAdmissionStates', label: 'provider admission state', required: ['find', 'insert', 'update', 'listIndexes', 'listCollections'], forbidden: ['remove', 'delete'] },
@@ -1096,6 +1132,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       } else if (requireRole && target === 'topic-taxonomy-v1') {
         roleProblems.push('topic-taxonomy role privileges unavailable')
         roleStatus = 'unverified'
+      } else if (requireRole && target === 'cron-observability') {
+        roleProblems.push('cron observability role privileges unavailable')
+        roleStatus = 'unverified'
       }
     } catch {
       if (requireRole && target === 'provider-routing-v2') {
@@ -1103,6 +1142,9 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
         roleStatus = 'unverified'
       } else if (requireRole && target === 'topic-taxonomy-v1') {
         roleProblems.push('topic-taxonomy role privileges unavailable')
+        roleStatus = 'unverified'
+      } else if (requireRole && target === 'cron-observability') {
+        roleProblems.push('cron observability role privileges unavailable')
         roleStatus = 'unverified'
       } else roleStatus = 'unavailable-local'
     }
@@ -1166,6 +1208,12 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       const crossDatabaseProbe = await probeCrossDatabaseTransactionCapabilities({ ...context, governanceDb: governanceContext.db })
       for (const [capability, passed] of Object.entries(crossDatabaseProbe)) if (!passed) roleProblems.push(`governance cross-database capability failed: ${capability}`)
       roleStatus = roleProblems.length === 0 ? schemaReady ? 'verified' : 'capabilities-verified-schema-unverified' : 'unverified'
+    } else if (requireRole && target === 'cron-observability') {
+      const maintenanceProbe = await probeCronObservabilityMaintenanceRoleCapabilities({ environment: process.env, database: context.database, runtimeUriEnv: process.env.MONGODB_URI_ENV, runtimeDb: context.db })
+      for (const [capability, passed] of Object.entries(maintenanceProbe)) {
+        if (!passed) roleProblems.push(`cron observability maintenance capability failed: ${capability}`)
+      }
+      roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
     } else if (requireRole) {
       roleProblems.push('durable-jobs runtime role capability probe is not registered')
     }

@@ -5,6 +5,7 @@ import { AdminJobsView } from '../../../client/features/admin/ui/AdminJobsView.j
 import {
   aggregateDueWorkCounters,
   normalizeDueWorkRun,
+  normalizeLifecycleEventQuery,
   runAdminDueWork,
 } from '../../../client/features/admin/ui/admin-data.js'
 
@@ -73,6 +74,12 @@ describe('admin due-work controls', () => {
       body: undefined,
       credentials: 'same-origin',
     })
+  })
+  it('normalizes datetime-local lifecycle filters to RFC3339 UTC values', () => {
+    const local = '2026-09-03T10:30'
+    const normalized = normalizeLifecycleEventQuery({ from: local, to: local })
+
+    expect(normalized).toEqual({ from: new Date(local).toISOString(), to: new Date(local).toISOString() })
   })
 
   it('renders the manual run action and aggregate counters for the three queues', () => {

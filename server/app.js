@@ -6,6 +6,7 @@ import { createAuthRouter } from './http/auth-router.js'
 import { createAdminSourcesRouter } from './http/admin/sources/router.js'
 import { createAdminIngestionJobsRouter } from './http/admin/ingestion-jobs/router.js'
 import { createAdminIndexingJobsRouter } from './http/admin/indexing-jobs/router.js'
+import { createAdminLifecycleEventsRouter } from './http/admin/lifecycle-events/router.js'
 import { createAdminGovernanceRouter } from './http/admin/governance/router.js'
 import { createArticlesRouter } from './http/articles/router.js'
 import { createContentSecurityPolicyMiddleware } from './http/articles/content-security-policy.js'
@@ -48,6 +49,7 @@ export function createApp(options = {}) {
   app.use(createAdminSourcesRouter({ sourceService: options.sourceService, sourcePolicyReconciliationService: options.sourcePolicyReconciliationService, authService: options.authService }))
   app.use(createAdminIngestionJobsRouter({ jobService: options.jobService, authService: options.authService }))
   app.use(createAdminIndexingJobsRouter({ indexingJobService: options.indexingJobService, authService: options.authService }))
+  app.use(createAdminLifecycleEventsRouter({ cronEventRepository: options.cronEventRepository, authService: options.authService }))
   app.use(createAdminGovernanceRouter({ adminGovernanceService: options.adminGovernanceService, authService: options.authService }))
   app.use(createInternalCronRouter({ dueWorkRunner: options.dueWorkRunner }))
   app.use(createInternalMaintenanceRouter({ maintenanceRunner: options.maintenanceRunner }))

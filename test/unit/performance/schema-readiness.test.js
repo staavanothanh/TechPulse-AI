@@ -20,6 +20,8 @@ const NOW = new Date('2026-08-22T09:00:00.000Z')
 const BASE_ENVIRONMENT = Object.freeze({
   MONGODB_URI_ENV: 'MONGODB_URI',
   MONGODB_URI: 'mongodb+srv://runtime-user:runtime-password@cluster.example.test/?retryWrites=true',
+  MONGODB_MAINTENANCE_URI_ENV: 'MONGODB_MAINTENANCE_URI',
+  MONGODB_MAINTENANCE_URI: 'mongodb+srv://maintenance-user:maintenance-password@cluster.example.test/?retryWrites=true',
   MONGODB_DATABASE: 'techpulse_app',
   SCHEMA_ATTESTATION_COMMIT: 'a'.repeat(40),
   [SCHEMA_ATTESTATION_PUBLIC_KEY_ENV]: PUBLIC_KEY,
@@ -128,6 +130,24 @@ describe('release-verified runtime schema readiness', () => {
     expect(() =>
       assertReleaseVerifiedSchema('articles', { ...environment, ...overrides }, NOW),
     ).toThrow(/attestation/i)
+  })
+
+  it('binds cron readiness to the non-secret maintenance authority fingerprint', () => {
+    const environment = signedEnvironment(['cron-observability'])
+    const envelope = JSON.parse(environment[RUNTIME_SCHEMA_ATTESTATIONS_ENV])['cron-observability']
+    expect(envelope.payload.maintenanceAuthorityBinding).toMatch(/^[a-f0-9]{64}$/)
+    expect(envelope.payload.maintenanceAuthorityBinding).not.toContain('maintenance-password')
+    expect(() => assertReleaseVerifiedSchema('cron-observability', environment, NOW)).not.toThrow()
+    expect(() => assertReleaseVerifiedSchema('cron-observability', {
+      ...environment,
+      MONGODB_MAINTENANCE_URI: 'mongodb+srv://maintenance-user:maintenance-password@other.example.test/',
+    }, NOW)).toThrow(/attestation/i)
+    for (const maintenanceUri of [
+      'mongodb+srv://maintenance-user:maintenance-password@cluster.example.test/?authSource=other-auth',
+      'mongodb+srv://maintenance-user:maintenance-password@cluster.example.test/other-auth',
+    ]) {
+      expect(() => assertReleaseVerifiedSchema('cron-observability', { ...environment, MONGODB_MAINTENANCE_URI: maintenanceUri }, NOW)).toThrow(/attestation/i)
+    }
   })
 
   it('rejects the wrong public key and a future verification time', () => {

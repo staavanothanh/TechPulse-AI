@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ObjectId } from 'mongodb'
 import { createJobService } from '../../../server/application/jobs/service.js'
-
+import { createFlushedCoordinatorRunner } from '../../../server/bootstrap/jobs.js'
 const NOW = new Date('2026-08-10T00:00:00.000Z')
 const auth = {
   user: { id: '507f1f77bcf86cd799439011', role: 'admin', status: 'active' },
@@ -130,6 +130,18 @@ describe('ingestion job service', () => {
     await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-coordinator-0001' })
     expect(coordinator).toHaveBeenCalledTimes(1)
     expect(materializeDailyIngestion).not.toHaveBeenCalled()
+  })
+  it('waits for lifecycle trace writes before the auto-kick resolves', async () => {
+    const coordinator = vi.fn(async () => ({ processed: 1 }))
+    const trace = vi.fn()
+    trace.flush = vi.fn(async () => true)
+    const flushedCoordinator = createFlushedCoordinatorRunner({ coordinatorRunner: coordinator, trace })
+    const { service } = fixture({ runDueWork: flushedCoordinator })
+
+    await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-flush-0001' })
+
+    expect(coordinator).toHaveBeenCalledOnce()
+    expect(trace.flush).toHaveBeenCalledOnce()
   })
 
   it('keeps create auto-kick short while explicit admin due-work uses the bounded drain runner', async () => {

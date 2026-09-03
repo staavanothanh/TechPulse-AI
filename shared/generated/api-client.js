@@ -524,6 +524,14 @@ const operations = [
     "pathParams": []
   },
   {
+    "operationId": "listCronLifecycleEvents",
+    "method": "GET",
+    "path": "/api/v1/admin/cron-lifecycle-events",
+    "requiredHeaders": [],
+    "browserManagedHeaders": [],
+    "pathParams": []
+  },
+  {
     "operationId": "mergeDuplicateArticles",
     "method": "POST",
     "path": "/api/v1/admin/duplicate-merges",
@@ -767,6 +775,7 @@ export function createApiClient(clientOptions = {}) {
     retryIndexingJob: (init = {}) => requestOperation('retryIndexingJob', init, clientOptions),
     cancelIndexingJob: (init = {}) => requestOperation('cancelIndexingJob', init, clientOptions),
     runAdminDueWork: (init = {}) => requestOperation('runAdminDueWork', init, clientOptions),
+    listCronLifecycleEvents: (init = {}) => requestOperation('listCronLifecycleEvents', init, clientOptions),
     mergeDuplicateArticles: (init = {}) => requestOperation('mergeDuplicateArticles', init, clientOptions),
     listTakedownRequests: (init = {}) => requestOperation('listTakedownRequests', init, clientOptions),
     createTakedownRequest: (init = {}) => requestOperation('createTakedownRequest', init, clientOptions),
