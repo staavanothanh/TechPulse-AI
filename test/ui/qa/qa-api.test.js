@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createQaApi } from '../../../client/features/qa/qa-api.js'
+import { createQaApi, normalizeAnswerBody } from '../../../client/features/qa/qa-api.js'
 
 function response(payload, status = 200, headers = {}) {
   return new Response(payload === undefined ? null : JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json', ...headers } })
@@ -55,6 +55,26 @@ describe('Step 10 Q&A API adapter', () => {
     expect(dateBody.scope).toEqual({
       publishedAfter: new Date('2026-08-01T00:00').toISOString(),
       publishedBefore: new Date('2026-08-02T00:00').toISOString(),
+    })
+  })
+
+  it('derives the observed temporal scope before transport and matches the shared body normalizer', async () => {
+    const now = new Date('2026-09-04T15:30:00.000Z')
+    const body = { question: 'tháng 9 này có tin tức gì về các model AI mới không', scope: { topics: ['AI'] } }
+    const fetchImpl = vi.fn(async () => response({ data: { status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence' } }))
+    const generated = {
+      createGroundedAnswer: ({ fetchImpl: managedFetch, body: requestBody, headers }) => managedFetch('/api/v1/answers', { body: requestBody, headers }),
+    }
+    const api = createQaApi(generated, fetchImpl, { now })
+
+    await api.createAnswer(body)
+
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(requestBody).toEqual(normalizeAnswerBody(body, { now }))
+    expect(requestBody.scope).toEqual({
+      topics: ['AI'],
+      publishedAfter: '2026-09-01T00:00:00.000Z',
+      publishedBefore: '2026-09-30T23:59:59.999Z',
     })
   })
 

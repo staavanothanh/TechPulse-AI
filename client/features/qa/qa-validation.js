@@ -1,3 +1,5 @@
+import { resolveQaTemporalScope } from '../../../shared/qa-temporal.js'
+
 const ARTICLE_ID_PATTERN = /^[0-9a-fA-F]{24}$/
 
 const REFUSAL_REASONS = new Set(['sensitive-input', 'insufficient-evidence', 'policy-blocked', 'provider-unavailable'])
@@ -14,22 +16,23 @@ export const refusalCopy = (reason) => {
 }
 
 const invalid = (firstInvalid, message) => ({ valid: false, firstInvalid, message })
-export function hasQaScope(scope = {}) {
+export function hasQaScope(scope = {}, { now = new Date(), question } = {}) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return false
-  const articleId = scope.articleId
+  const resolvedScope = resolveQaTemporalScope({ question: question ?? scope.question, scope, now })
+  const articleId = resolvedScope.articleId
   const hasArticle = typeof articleId === 'string' && ARTICLE_ID_PATTERN.test(articleId)
   const articleProvided = articleId !== undefined && articleId !== null && (typeof articleId !== 'string' || articleId.trim().length > 0)
   if (articleProvided && !hasArticle) return false
-  const topics = scope.topics === undefined ? [] : scope.topics
+  const topics = resolvedScope.topics === undefined ? [] : resolvedScope.topics
   const normalizedTopics = Array.isArray(topics) ? topics.map((topic) => typeof topic === 'string' ? topic.trim().toLowerCase() : topic) : []
   const topicsValid = Array.isArray(topics) && topics.length <= 10 && new Set(normalizedTopics).size === topics.length && topics.every((topic) => typeof topic === 'string' && topic.trim().length > 0 && topic.trim().length <= 100)
   if (!topicsValid) return false
-  const hasAfter = Boolean(scope.publishedAfter)
-  const hasBefore = Boolean(scope.publishedBefore)
+  const hasAfter = Boolean(resolvedScope.publishedAfter)
+  const hasBefore = Boolean(resolvedScope.publishedBefore)
   if (hasAfter !== hasBefore) return false
   if (hasAfter) {
-    const after = Date.parse(scope.publishedAfter)
-    const before = Date.parse(scope.publishedBefore)
+    const after = Date.parse(resolvedScope.publishedAfter)
+    const before = Date.parse(resolvedScope.publishedBefore)
     if (Number.isNaN(after) || Number.isNaN(before) || after > before) return false
   }
   return Boolean(hasArticle || topics.length > 0 || hasAfter)
@@ -52,22 +55,25 @@ export function appendSessionPage(current = [], next = []) {
   return [...current, ...next.filter((session) => !existing.has(session.id))]
 }
 
-export function validateQuestionScope(question, scope = {}) {
+export function validateQuestionScope(question, scope = {}, { now = new Date() } = {}) {
   const value = typeof question === 'string' ? question.trim() : ''
   if (value.length < 3) return invalid('question', 'Câu hỏi cần ít nhất 3 ký tự.')
   if (value.length > 1000) return invalid('question', 'Câu hỏi tối đa 1.000 ký tự.')
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return invalid('scope', 'Chọn ít nhất một phạm vi nguồn.')
-  if (scope.articleId !== undefined && scope.articleId !== null && (typeof scope.articleId !== 'string' || (scope.articleId.trim().length > 0 && !ARTICLE_ID_PATTERN.test(scope.articleId)))) return invalid('articleId', 'Mã bài viết không hợp lệ.')
-  const topics = scope.topics === undefined ? [] : scope.topics
+  const resolvedScope = resolveQaTemporalScope({ question: value, scope, now })
+  const scopeForValidation = Object.hasOwn(resolvedScope, 'question') ? resolvedScope : { ...resolvedScope, question }
+  if (scopeForValidation.articleId !== undefined && scopeForValidation.articleId !== null && (typeof scopeForValidation.articleId !== 'string' || (scopeForValidation.articleId.trim().length > 0 && !ARTICLE_ID_PATTERN.test(scopeForValidation.articleId)))) return invalid('articleId', 'Mã bài viết không hợp lệ.')
+  const topics = scopeForValidation.topics === undefined ? [] : scopeForValidation.topics
   const normalizedTopics = Array.isArray(topics) ? topics.map((topic) => typeof topic === 'string' ? topic.trim().toLowerCase() : topic) : []
   if (!Array.isArray(topics) || topics.length > 10 || new Set(normalizedTopics).size !== topics.length || topics.some((topic) => typeof topic !== 'string' || topic.trim().length === 0 || topic.trim().length > 100)) return invalid('topics', 'Chọn tối đa 10 chủ đề khác nhau.')
-  const hasAfter = Boolean(scope.publishedAfter)
-  const hasBefore = Boolean(scope.publishedBefore)
+  const hasAfter = Boolean(scopeForValidation.publishedAfter)
+  const hasBefore = Boolean(scopeForValidation.publishedBefore)
   if (hasAfter !== hasBefore) return invalid(hasAfter ? 'publishedBefore' : 'publishedAfter', 'Cần nhập đủ hai mốc thời gian.')
-  if (hasAfter && (Number.isNaN(Date.parse(scope.publishedAfter)) || Number.isNaN(Date.parse(scope.publishedBefore)))) return invalid('publishedAfter', 'Mốc thời gian không hợp lệ.')
-  if (hasAfter && Date.parse(scope.publishedAfter) > Date.parse(scope.publishedBefore)) return invalid('publishedAfter', 'Mốc bắt đầu phải trước mốc kết thúc.')
-  if (!hasQaScope(scope)) return invalid('scope', 'Chọn bài viết, chủ đề hoặc một khoảng thời gian.')
-  return { valid: true, firstInvalid: null, message: '' }
+  if (hasAfter && (Number.isNaN(Date.parse(scopeForValidation.publishedAfter)) || Number.isNaN(Date.parse(scopeForValidation.publishedBefore)))) return invalid('publishedAfter', 'Mốc thời gian không hợp lệ.')
+  if (hasAfter && Date.parse(scopeForValidation.publishedAfter) > Date.parse(scopeForValidation.publishedBefore)) return invalid('publishedAfter', 'Mốc bắt đầu phải trước mốc kết thúc.')
+  if (!hasQaScope(scopeForValidation, { now, question: value })) return invalid('scope', 'Chọn bài viết, chủ đề hoặc một khoảng thời gian.')
+  const { question: _questionIgnored, ...validatedScope } = resolvedScope
+  return { valid: true, firstInvalid: null, message: '', scope: { ...validatedScope } }
 }
 
 function answerFromPayload(payload) {

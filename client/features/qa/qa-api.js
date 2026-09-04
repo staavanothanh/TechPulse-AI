@@ -1,3 +1,5 @@
+import { resolveQaTemporalScope } from '../../../shared/qa-temporal.js'
+
 function retryAfterValue(response) {
   const value = Number(response.headers.get('Retry-After'))
   return Number.isInteger(value) && value > 0 ? value : null
@@ -12,11 +14,12 @@ function normalizeDateTime(value) {
   return Number.isNaN(date.getTime()) ? value : date.toISOString()
 }
 
-export function normalizeAnswerBody(body) {
+export function normalizeAnswerBody(body, { now = new Date() } = {}) {
   const scope = body?.scope
   if (!body || typeof body !== 'object' || !scope || typeof scope !== 'object' || Array.isArray(scope)) return body
+  const resolvedScope = resolveQaTemporalScope({ question: body.question, scope, now })
   const scopeWithoutEmptyFields = Object.fromEntries(
-    Object.entries(scope).filter(([key, value]) => {
+    Object.entries(resolvedScope).filter(([key, value]) => {
       if (key === 'topics') return Array.isArray(value) && value.length > 0
       if (['articleId', 'publishedAfter', 'publishedBefore'].includes(key)) return value !== undefined && value !== null && value !== ''
       return true
@@ -26,12 +29,11 @@ export function normalizeAnswerBody(body) {
     ...body,
     scope: {
       ...scopeWithoutEmptyFields,
-      ...(scope.publishedAfter ? { publishedAfter: normalizeDateTime(scope.publishedAfter) } : {}),
-      ...(scope.publishedBefore ? { publishedBefore: normalizeDateTime(scope.publishedBefore) } : {}),
+      ...(resolvedScope.publishedAfter ? { publishedAfter: normalizeDateTime(resolvedScope.publishedAfter) } : {}),
+      ...(resolvedScope.publishedBefore ? { publishedBefore: normalizeDateTime(resolvedScope.publishedBefore) } : {}),
     },
   }
 }
-
 
 const FIELD_COPY = Object.freeze({
   question: 'Câu hỏi chưa hợp lệ.',
@@ -50,7 +52,7 @@ function safeFieldErrors(details) {
   }))
 }
 
-export function createQaApi(generatedApi, fetchImpl = globalThis.fetch) {
+export function createQaApi(generatedApi, fetchImpl = globalThis.fetch, { now = () => new Date() } = {}) {
   async function invoke(operation, init = {}) {
     if (typeof operation !== 'function') throw new Error('Q&A operation is unavailable')
     let retryAfter = null
@@ -88,7 +90,7 @@ export function createQaApi(generatedApi, fetchImpl = globalThis.fetch) {
   return Object.freeze({
     listSessions: (query) => invoke(generatedApi?.listChatSessions, { query }),
     getSession: (chatSessionId) => invoke(generatedApi?.getChatSession, { pathParams: { chatSessionId } }),
-    createAnswer: (body, { csrfToken, idempotencyKey, chatSessionId } = {}) => invoke(generatedApi?.createGroundedAnswer, { body: JSON.stringify({ ...normalizeAnswerBody(body), ...(chatSessionId ? { chatSessionId } : {}) }), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': idempotencyKey } }),
+    createAnswer: (body, { csrfToken, idempotencyKey, chatSessionId } = {}) => invoke(generatedApi?.createGroundedAnswer, { body: JSON.stringify({ ...normalizeAnswerBody(body, { now }), ...(chatSessionId ? { chatSessionId } : {}) }), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': idempotencyKey } }),
     deleteSession: (chatSessionId, csrfToken) => invoke(generatedApi?.deleteChatSession, { pathParams: { chatSessionId }, headers: { 'X-CSRF-Token': csrfToken } }),
     clearSessions: (csrfToken) => invoke(generatedApi?.clearChatSessions, { headers: { 'X-CSRF-Token': csrfToken } }),
   })

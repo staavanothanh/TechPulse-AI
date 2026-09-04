@@ -725,7 +725,7 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
   return { state, article, error, onBack, onAskAboutArticle, onRetry: retry }
 }
 
-export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user }) {
+export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user, now = () => new Date() } = {}) {
   const [state, setState] = useState('empty')
   const [sessions, setSessions] = useState([])
   const [messages, setMessages] = useState([])
@@ -849,13 +849,15 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
   }
 
   async function ask(payload) {
-    const validation = validateQuestionScope(payload.question, payload)
+    const clockValue = typeof now === 'function' ? now() : now
+    const validation = validateQuestionScope(payload.question, payload, { now: clockValue })
     if (!validation.valid) {
       const hasPriorConversation = messages.length > 0 || Boolean(sessionIdRef.current)
       setError(new Error(validation.message))
       if (!hasPriorConversation) setState('error')
       return
     }
+    const effectiveScope = validation.scope ?? {}
     const epoch = epochRef.current
     setState('loading')
     setError(null)
@@ -870,10 +872,10 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
           {
             question: payload.question,
             scope: {
-              ...(typeof payload.articleId === 'string' && payload.articleId.trim().length > 0 ? { articleId: payload.articleId } : {}),
-              ...(Array.isArray(payload.topics) && payload.topics.length > 0 ? { topics: payload.topics } : {}),
-              ...(payload.publishedAfter ? { publishedAfter: payload.publishedAfter } : {}),
-              ...(payload.publishedBefore ? { publishedBefore: payload.publishedBefore } : {}),
+              ...(typeof effectiveScope.articleId === 'string' && effectiveScope.articleId.trim().length > 0 ? { articleId: effectiveScope.articleId } : {}),
+              ...(Array.isArray(effectiveScope.topics) && effectiveScope.topics.length > 0 ? { topics: effectiveScope.topics } : {}),
+              ...(effectiveScope.publishedAfter ? { publishedAfter: effectiveScope.publishedAfter } : {}),
+              ...(effectiveScope.publishedBefore ? { publishedBefore: effectiveScope.publishedBefore } : {}),
             }
           },
           {
@@ -894,6 +896,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
         ])
         setScope((current) => ({
           ...current,
+          ...effectiveScope,
           sessionId: returnedSessionId ?? current.sessionId,
         }))
         setState('ready')

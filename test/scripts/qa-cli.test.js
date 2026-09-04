@@ -7,6 +7,7 @@ import {
   resolveQaCliAuth,
   runQaCli,
 } from '../../scripts/qa-cli.js'
+import { normalizeAnswerBody } from '../../client/features/qa/qa-api.js'
 
 const ARTICLE_ID = '507f1f77bcf86cd799439011'
 const SESSION_ID = '507f1f77bcf86cd799439099'
@@ -131,6 +132,49 @@ describe('local Q&A CLI', () => {
         publishedBefore: '2026-08-02T00:00:00.000Z',
       },
     })
+  })
+
+  it('derives the observed UTC month in the CLI and produces the same effective body as web normalization', async () => {
+    const now = new Date('2026-09-04T15:30:00.000Z')
+    const question = 'tháng 9 này có tin tức gì về các model AI mới không'
+    const scope = { topics: ['AI'] }
+    const cliBody = normalizeQaRequest({ question, scope, now })
+    const webBody = normalizeAnswerBody({ question, scope }, { now })
+    expect(cliBody).toEqual(webBody)
+    expect(cliBody.scope).toEqual({
+      topics: ['AI'],
+      publishedAfter: '2026-09-01T00:00:00.000Z',
+      publishedBefore: '2026-09-30T23:59:59.999Z',
+    })
+
+    const fetchImpl = vi.fn(async () => jsonResponse(ANSWER))
+    await runQaCli({
+      options: parseQaCliArgs(['--question', question, '--topic', 'AI', '--idempotency-key', 'temporal-cli-key']),
+      environment: { QA_SESSION_TOKEN: SESSION_TOKEN, QA_CSRF_TOKEN: CSRF_TOKEN },
+      fetchImpl,
+      now,
+    })
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual(cliBody)
+  })
+
+  it('keeps unknown temporal phrases unchanged and rejects one-sided explicit dates', async () => {
+    const now = new Date('2026-09-04T15:30:00.000Z')
+    expect(normalizeQaRequest({ question: 'tháng 13 này có tin gì?', scope: { topics: ['AI'] }, now }).scope).toEqual({ topics: ['AI'] })
+    const fetchImpl = vi.fn(async () => jsonResponse(ANSWER))
+    await expect(runQaCli({
+      options: parseQaCliArgs([
+        '--question',
+        'tháng 9 này có tin gì?',
+        '--topic',
+        'AI',
+        '--published-after',
+        '2026-09-01T00:00:00.000Z',
+      ]),
+      environment: { QA_SESSION_TOKEN: SESSION_TOKEN, QA_CSRF_TOKEN: CSRF_TOKEN },
+      fetchImpl,
+      now,
+    })).rejects.toMatchObject({ status: 422, code: 'validation_error', details: [{ field: 'publishedBefore' }] })
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('resolves direct session credentials and prefers environment credentials over flags', () => {

@@ -3,6 +3,7 @@ import { canonicalRequestHash } from '../../domain/jobs/idempotency.js'
 import { ContentError, contentActorFence } from '../articles/query.js'
 import { admitQuestion, PrivacyAdmissionError } from '../../domain/qa/privacy.js'
 import { buildGroundedPrompt, evidenceAdmissionFence, filterQnaEvidence, EvidenceSelectionError } from '../../domain/qa/evidence.js'
+import { resolveQaTemporalScope } from '../../../shared/qa-temporal.js'
 import { hydrateAnswerCitations, validateParagraphCitations } from '../../domain/qa/citations.js'
 import { assertSupportedAnswer, deterministicRefusal } from '../../domain/qa/support.js'
 import { ProviderAdapterError } from '../../ai/provider-error-taxonomy.js'
@@ -222,7 +223,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     let actor
     try { actor = contentActorFence(auth) } catch { throw new ContentError(401, 'unauthorized', 'Authentication is required') }
     if (!KEY_PATTERN.test(String(idempotencyKey ?? ''))) throw new ContentError(400, 'bad_request', 'Idempotency-Key is invalid')
-    const safeScope = scopeValue(scope)
+    const safeScope = scopeValue(resolveQaTemporalScope({ question, scope, now: now() }))
     if (typeof question !== 'string' || question.length < 3 || question.length > 1000) throw new ContentError(422, 'validation_error', 'Question is invalid')
     let privacyError
     let admittedQuestion

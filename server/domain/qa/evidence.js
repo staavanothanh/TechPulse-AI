@@ -42,6 +42,17 @@ function neutralizeDelimiter(value) {
   return String(value ?? '').replaceAll(/<\s*\/?\s*(?:evidence-block|question)\b/gi, (match) => `&lt;${match.slice(1)}`)
 }
 
+function canonicalIsoDate(value) {
+  if (value === undefined || value === null || value === '') return null
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function publicationDateMetadata(article) {
+  const publishedAt = canonicalIsoDate(article?.publishedAt)
+  return publishedAt ? `[published-at=${publishedAt}]` : null
+}
+
 function sourceName(source) {
   const value = typeof source?.name === 'string' ? source.name.slice(0, 200) : ''
   if (containsSensitiveProviderInput(value)) throw new EvidenceSelectionError('policy-blocked', 'Source policy input is not safe for a provider')
@@ -113,7 +124,8 @@ export function buildGroundedPrompt({ question, evidence = [] } = {}) {
   const blocks = selected.map(({ article, source }, index) => {
     const citation = citations[index]
     const id = `E${index + 1}`
-    const header = `<evidence-block id="${id}" citation="${citation.id}">\n[source=${sourceName(source)}]\n`
+    const metadataLine = publicationDateMetadata(article)
+    const header = `<evidence-block id="${id}" citation="${citation.id}">\n[source=${sourceName(source)}]\n${metadataLine ? `${metadataLine}\n` : ''}`
     const footer = '\n</evidence-block>'
     return Object.freeze({
       id,

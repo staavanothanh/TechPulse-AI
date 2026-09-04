@@ -183,14 +183,14 @@ export function parseQaCliArgs(argv = []) {
   return Object.freeze({ ...options, topics: Object.freeze([...options.topics]) })
 }
 
-export function normalizeQaRequest({ question, scope = {}, chatSessionId } = {}) {
+export function normalizeQaRequest({ question, scope = {}, chatSessionId, now = new Date() } = {}) {
   const normalizedScope =
     scope && typeof scope === 'object' && !Array.isArray(scope) ? { ...scope } : scope
   return normalizeAnswerBody({
     question: typeof question === 'string' ? question.trim() : question,
     scope: normalizedScope,
     ...(chatSessionId ? { chatSessionId } : {}),
-  })
+  }, { now })
 }
 
 function sessionCookieFromValue(value) {
@@ -275,9 +275,9 @@ function answerScope(options) {
   }
 }
 
-function answerRequest(options) {
+function answerRequest(options, { now = new Date() } = {}) {
   const scope = answerScope(options)
-  const validation = validateQuestionScope(options.question, scope)
+  const validation = validateQuestionScope(options.question, scope, { now })
   if (!validation.valid) {
     throw new QaCliError(422, 'validation_error', validation.message, [
       {
@@ -289,9 +289,9 @@ function answerRequest(options) {
   }
   return normalizeQaRequest({
     question: options.question,
-    scope,
+    scope: validation.scope ?? scope,
     chatSessionId: options.chatSessionId,
-  })
+  }, { now })
 }
 
 function baseOrigin(value) {
@@ -551,10 +551,11 @@ export async function runQaCli({
   environment = process.env,
   fetchImpl = globalThis.fetch,
   randomUuid = generateRandomUUID,
+  now = new Date(),
 } = {}) {
   if (!options || options.help) return Object.freeze({ ok: true, help: true })
   assertRepositoryRoot()
-  const body = answerRequest(options)
+  const body = answerRequest(options, { now })
   const origin = baseOrigin(
     options.baseUrl ?? valueFromEnvironment(environment, 'QA_BASE_URL') ?? DEFAULT_BASE_URL,
   )
@@ -619,6 +620,7 @@ export async function main(
     randomUuid = generateRandomUUID,
     log = console.log,
     errorLog = console.error,
+    now = new Date(),
   } = {},
 ) {
   try {
@@ -627,7 +629,7 @@ export async function main(
       log(QA_CLI_USAGE)
       return Object.freeze({ ok: true, help: true })
     }
-    const result = await runQaCli({ options, environment, fetchImpl, randomUuid })
+    const result = await runQaCli({ options, environment, fetchImpl, randomUuid, now })
     if (result.ok) log(JSON.stringify(result.body))
     else {
       errorLog(JSON.stringify(result.body))
