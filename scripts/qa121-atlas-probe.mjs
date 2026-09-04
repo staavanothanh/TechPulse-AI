@@ -1,8 +1,8 @@
 import { MongoClient, ObjectId } from 'mongodb'
 import { randomBytes } from 'node:crypto'
-import { configureDns } from './scripts/configure-dns.js'
-import { CHAT_SESSION_COLLECTIONS } from './scripts/migrations/chat-sessions.js'
-import { historicalCitationDocument } from './server/repositories/mongo/chat-repository.js'
+import { configureDns } from './configure-dns.js'
+import { CHAT_SESSION_COLLECTIONS } from './migrations/chat-sessions.js'
+import { historicalCitationDocument } from '../server/repositories/mongo/chat-repository.js'
 
 configureDns()
 
