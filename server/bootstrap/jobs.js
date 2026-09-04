@@ -163,6 +163,59 @@ async function runCronOperation({ operation, deadline, now }) {
   return settled.value
 }
 
+function isMaterializationDeadlineError(error) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && error.code === 'runtime_error'
+    && (error.message === 'Cron operation deadline was exceeded' || /deadline.*exceeded/i.test(String(error.message ?? ''))),
+  )
+}
+
+async function runCronMaterializationPhase({
+  trace,
+  now,
+  context,
+  overallDeadline,
+  deadline,
+  materializers = [],
+  jobRepository,
+  pageLimit,
+  maxPages,
+}) {
+  const phase = startRuntimePhase({ trace, stage: 'cron.materialization', now, context })
+  let pages = 0
+  try {
+    let hasMore = true
+    for (const materializer of materializers) {
+      if (now().getTime() >= overallDeadline.getTime()) break
+      await runCronOperation({ operation: (options) => materializer({ ...options, deadline }), deadline, now })
+    }
+    while (hasMore && pages < maxPages) {
+      const pageNow = now()
+      if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
+      if (pageNow.getTime() >= deadline.getTime()) break
+      const result = await runCronOperation({
+        operation: (options) => jobRepository.materializeDailyIngestion({ now: pageNow, limit: pageLimit, ...options }),
+        deadline,
+        now,
+      })
+      pages += 1
+      hasMore = result?.hasMore === true
+      if (now().getTime() >= deadline.getTime()) break
+    }
+    phase.succeed({ counters: { updated: pages } })
+    return pages
+  } catch (error) {
+    if (isMaterializationDeadlineError(error)) {
+      phase.timeout(error, { counters: { deferred: 1 } })
+      return pages
+    }
+    phase.fail(error)
+    throw error
+  }
+}
+
 function emptyTaskCounters() {
   return Object.fromEntries(['summary', 'embedding', 'visibility-reconcile'].map((task) => [task, mergeCounters()]))
 }
@@ -302,33 +355,16 @@ export function createCronDueWorkRunner({
     }
     const cronPhase = startRuntimePhase({ trace: emitTrace, stage: 'cron', now, context: { runId, deadlineAt: globalDeadline } })
     try {
-      let pages = 0
-      await runTracedPhase({
-        stage: 'cron.materialization',
+      await runCronMaterializationPhase({
         trace: emitTrace,
         now,
         context: { runId, deadlineAt: globalDeadline },
-        execute: async () => {
-          let hasMore = true
-          for (const materializer of materializers) {
-            if (now().getTime() >= globalDeadline.getTime()) break
-            await runCronOperation({ operation: (options) => materializer({ ...options, deadline: materializationDeadline }), deadline: materializationDeadline, now })
-          }
-          while (hasMore && pages < maxMaterializationPages) {
-            const pageNow = now()
-            if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
-            if (pageNow.getTime() >= materializationDeadline.getTime()) break
-            const result = await runCronOperation({
-              operation: (options) => jobRepository.materializeDailyIngestion({ now: pageNow, limit: materializationPageLimit, ...options }),
-              deadline: materializationDeadline,
-              now,
-            })
-            pages += 1
-            hasMore = result?.hasMore === true
-            if (now().getTime() >= materializationDeadline.getTime()) break
-          }
-        },
-        successDetails: () => ({ counters: { updated: pages } }),
+        overallDeadline: globalDeadline,
+        deadline: materializationDeadline,
+        materializers,
+        jobRepository,
+        pageLimit: materializationPageLimit,
+        maxPages: maxMaterializationPages,
       })
       const remainingBudgetMs = globalDeadline.getTime() - now().getTime()
       if (remainingBudgetMs < 1000) {

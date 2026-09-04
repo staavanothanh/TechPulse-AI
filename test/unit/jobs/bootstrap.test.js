@@ -321,10 +321,12 @@ describe('durable-jobs bootstrap readiness', () => {
     expect(calls[0]).toBe('takedown')
     expect(calls).toContain('coordinate')
   })
-  it('bounds a stalled fixed materializer to the materialization deadline and abort signal', async () => {
+  it('degrades a stalled fixed materializer to a deferred outcome without rejecting the cron invocation', async () => {
     vi.useFakeTimers()
     try {
+      // Arrange
       const startedAt = new Date('2026-09-03T10:00:00.000Z')
+      const materializationBudgetMs = 10
       let materializerSignal
       let materializerDeadline
       const materializer = vi.fn(({ signal, deadline }) => {
@@ -332,24 +334,91 @@ describe('durable-jobs bootstrap readiness', () => {
         materializerDeadline = deadline
         return new Promise(() => {})
       })
-      const coordinatorRunner = vi.fn()
+      const coordinatorResult = {
+        runId: 'cron-red-run',
+        startedAt,
+        finishedAt: startedAt,
+        recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+        queues: {
+          accountDeletion: { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 },
+          ingestion: { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 },
+          indexing: { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 },
+        },
+        nextAvailableAt: null,
+      }
+      const coordinatorRunner = vi.fn(async () => coordinatorResult)
+      const indexingDrainRunner = vi.fn(async (coordinated) => coordinated ?? coordinatorResult)
+      const trace = vi.fn()
       const cron = createCronDueWorkRunner({
-        jobRepository: { materializeDailyIngestion: vi.fn() },
+        jobRepository: { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false })) },
         coordinatorRunner,
+        indexingDrainRunner,
         materializers: [materializer],
+        trace,
+        runIdFactory: () => 'cron-red-run',
         now: () => startedAt,
-        materializationBudgetMs: 10,
+        materializationBudgetMs,
       })
 
-      const run = cron().then(() => null, (error) => error)
-      await vi.advanceTimersByTimeAsync(10)
-      await expect(run).resolves.toMatchObject({ code: 'runtime_error' })
-      expect(materializerDeadline).toEqual(new Date(startedAt.getTime() + 10))
+      // Act
+      const pending = cron()
+      const settlement = pending.then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      )
+      await vi.advanceTimersByTimeAsync(materializationBudgetMs)
+      const outcome = await settlement
+
+      // Assert: resolves rather than rejects
+      expect(outcome.ok).toBe(true)
+      expect(materializerDeadline).toEqual(new Date(startedAt.getTime() + materializationBudgetMs))
       expect(materializerSignal?.aborted).toBe(true)
-      expect(coordinatorRunner).not.toHaveBeenCalled()
+      expect(coordinatorRunner).toHaveBeenCalledTimes(1)
+      expect(indexingDrainRunner).toHaveBeenCalledTimes(1)
+      const events = trace.mock.calls.map(([event]) => event)
+      const materializationTerminals = events.filter(
+        (event) => event.stage === 'cron.materialization' && event.status !== 'started',
+      )
+      expect(materializationTerminals.length).toBeGreaterThan(0)
+      const terminal = materializationTerminals.at(-1)
+      expect(['timeout', 'deferred']).toContain(terminal.status)
+      expect(terminal.counters?.deferred ?? 0).toBeGreaterThanOrEqual(1)
+      if (terminal.errorCode !== undefined) {
+        expect(terminal.errorCode).toBe('runtime_error')
+      }
+      const cronTerminals = events.filter((event) => event.stage === 'cron' && event.status !== 'started')
+      expect(cronTerminals.length).toBeGreaterThan(0)
+      for (const event of cronTerminals) {
+        expect(event.status).not.toBe('failed')
+      }
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('fails the cron invocation and phase when materializer encounters a non-deadline error', async () => {
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const nonDeadlineError = new Error('Database connection lost during materialization')
+    const coordinatorRunner = vi.fn()
+    const trace = vi.fn()
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn() },
+      coordinatorRunner,
+      materializers: [vi.fn().mockRejectedValue(nonDeadlineError)],
+      trace,
+      now: () => startedAt,
+      materializationBudgetMs: 4_000,
+    })
+
+    await expect(cron()).rejects.toThrow('Database connection lost during materialization')
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+    const events = trace.mock.calls.map(([event]) => event)
+    const materializationTerminals = events.filter(
+      (event) => event.stage === 'cron.materialization' && event.status === 'failed',
+    )
+    expect(materializationTerminals.length).toBeGreaterThan(0)
+    const cronTerminals = events.filter((event) => event.stage === 'cron' && event.status === 'failed')
+    expect(cronTerminals.length).toBeGreaterThan(0)
   })
 
   it('rejects an unexpected partial filter on the actor-idempotency unique index', async () => {
