@@ -1251,7 +1251,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       let runtimeSchemaAttestation
       if (issueRuntimeAttestation) {
         verificationStage = 'runtime-schema-attestation'
-        const attestationScope = target === 'indexing-drain-performance' || target === 'source-policy-reconciliation' || target === 'chat-sessions-source-name-v1' ? 'chat-sessions' : target
+        const attestationScope = target === 'indexing-drain-performance' || target === 'source-policy-reconciliation' ? 'indexing-jobs' : target === 'chat-sessions-source-name-v1' ? 'chat-sessions' : target
         runtimeSchemaAttestation = issueReleaseVerifiedSchemaAttestation(attestationScope, process.env)
       }
       console.log(
