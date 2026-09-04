@@ -13,17 +13,19 @@ const ANSWER = {
     id: 'answer-integration-1',
     status: 'answered',
     paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'] }],
-    citations: [{
-      id: 'C1',
-      articleId: ARTICLE_ID,
-      sourceId: '507f1f77bcf86cd799439012',
-      sourceName: 'Nguồn biên tập',
-      titleOriginal: 'Bài nguồn',
-      originalUrl: 'https://example.com/article',
-      author: null,
-      publishedAt: '2026-08-10T00:00:00.000Z',
-      sourceLanguage: 'vi',
-    }],
+    citations: [
+      {
+        id: 'C1',
+        articleId: ARTICLE_ID,
+        sourceId: '507f1f77bcf86cd799439012',
+        sourceName: 'Nguồn biên tập',
+        titleOriginal: 'Bài nguồn',
+        originalUrl: 'https://example.com/article',
+        author: null,
+        publishedAt: '2026-08-10T00:00:00.000Z',
+        sourceLanguage: 'vi',
+      },
+    ],
     refusalReason: null,
     chatSessionId: SESSION_ID,
     createdAt: '2026-08-12T00:00:00.000Z',
@@ -41,7 +43,9 @@ function listen(server) {
 }
 
 function close(server) {
-  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  return new Promise((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  )
 }
 
 describe('local Q&A CLI HTTP integration', () => {
@@ -54,7 +58,8 @@ describe('local Q&A CLI HTTP integration', () => {
       },
       async verifyCsrf({ token }) {
         csrfTokens.push(token)
-        if (token !== CSRF_TOKEN) throw Object.assign(new Error('invalid csrf'), { status: 403, code: 'csrf_invalid' })
+        if (token !== CSRF_TOKEN)
+          throw Object.assign(new Error('invalid csrf'), { status: 403, code: 'csrf_invalid' })
       },
     }
     const qaService = {
@@ -71,11 +76,16 @@ describe('local Q&A CLI HTTP integration', () => {
     try {
       const result = await runQaCli({
         options: parseQaCliArgs([
-          '--question', '  Bài viết kết luận gì?  ',
-          '--topic', 'AI',
-          '--chat-session-id', SESSION_ID,
-          '--idempotency-key', 'qa-cli-integration-1',
-          '--base-url', origin,
+          '--question',
+          '  Bài viết kết luận gì?  ',
+          '--topic',
+          'AI',
+          '--chat-session-id',
+          SESSION_ID,
+          '--idempotency-key',
+          'qa-cli-integration-1',
+          '--base-url',
+          origin,
         ]),
         environment: { QA_SESSION_TOKEN: SESSION_TOKEN, QA_CSRF_TOKEN: CSRF_TOKEN },
         fetchImpl: globalThis.fetch,

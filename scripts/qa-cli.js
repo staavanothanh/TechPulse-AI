@@ -75,7 +75,8 @@ export class QaCliError extends Error {
   }
 }
 function assertRepositoryRoot() {
-  if (path.resolve(process.cwd()) !== REPOSITORY_ROOT) throw new QaCliError(400, 'bad_request', 'Run the Q&A CLI from the repository root')
+  if (path.resolve(process.cwd()) !== REPOSITORY_ROOT)
+    throw new QaCliError(400, 'bad_request', 'Run the Q&A CLI from the repository root')
 }
 
 function valueFromEnvironment(environment, name, { trim = false } = {}) {
@@ -93,24 +94,35 @@ function argumentValue(argv, index, argument, option) {
   }
   if (argument !== option) return undefined
   const value = argv[index + 1]
-  if (value === undefined || value.startsWith('--')) throw new QaCliError(400, 'bad_request', `${option} requires a value`)
+  if (value === undefined || value.startsWith('--'))
+    throw new QaCliError(400, 'bad_request', `${option} requires a value`)
   return { value, nextIndex: index + 1 }
 }
 
 function setOnce(options, field, value, option) {
-  if (options[field] !== undefined) throw new QaCliError(400, 'bad_request', `${option} is duplicated`)
+  if (options[field] !== undefined)
+    throw new QaCliError(400, 'bad_request', `${option} is duplicated`)
   return { ...options, [field]: value }
 }
 
 function topicValues(value, option) {
   const values = value.split(',').map((topic) => topic.trim())
-  if (values.length === 0 || values.some((topic) => topic.length === 0)) throw new QaCliError(400, 'bad_request', `${option} contains an empty topic`)
+  if (values.length === 0 || values.some((topic) => topic.length === 0))
+    throw new QaCliError(400, 'bad_request', `${option} contains an empty topic`)
   return values
 }
 function boundedTimeout(value) {
   const timeoutMs = Number(value)
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS || timeoutMs > MAX_TIMEOUT_MS) {
-    throw new QaCliError(400, 'bad_request', `--timeout-ms must be an integer between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`)
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < MIN_TIMEOUT_MS ||
+    timeoutMs > MAX_TIMEOUT_MS
+  ) {
+    throw new QaCliError(
+      400,
+      'bad_request',
+      `--timeout-ms must be an integer between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`,
+    )
   }
   return timeoutMs
 }
@@ -137,7 +149,8 @@ export function parseQaCliArgs(argv = []) {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
     if (argument === '--help' || argument === '-h') return Object.freeze({ help: true })
-    if (typeof argument !== 'string') throw new QaCliError(400, 'bad_request', 'arguments are invalid')
+    if (typeof argument !== 'string')
+      throw new QaCliError(400, 'bad_request', 'arguments are invalid')
     const option = argument.split('=', 1)[0]
     if (!OPTION_NAMES.has(option)) throw new QaCliError(400, 'bad_request', 'unknown argument')
     if (option === '--topic' || option === '--topics') {
@@ -171,7 +184,8 @@ export function parseQaCliArgs(argv = []) {
 }
 
 export function normalizeQaRequest({ question, scope = {}, chatSessionId } = {}) {
-  const normalizedScope = scope && typeof scope === 'object' && !Array.isArray(scope) ? { ...scope } : scope
+  const normalizedScope =
+    scope && typeof scope === 'object' && !Array.isArray(scope) ? { ...scope } : scope
   return normalizeAnswerBody({
     question: typeof question === 'string' ? question.trim() : question,
     scope: normalizedScope,
@@ -187,24 +201,49 @@ function sessionCookieFromValue(value) {
 }
 
 function assertCsrfToken(value) {
-  if (typeof value !== 'string' || value.length < CSRF_MIN_LENGTH || value.length > CSRF_MAX_LENGTH) {
+  if (
+    typeof value !== 'string' ||
+    value.length < CSRF_MIN_LENGTH ||
+    value.length > CSRF_MAX_LENGTH
+  ) {
     throw new QaCliError(403, 'csrf_invalid', 'CSRF token is invalid')
   }
   return value
 }
 
 export function resolveQaCliAuth({ options = {}, environment = process.env } = {}) {
-  const sessionCookieValue = valueFromEnvironment(environment, 'QA_SESSION_COOKIE') ?? (typeof options.sessionCookie === 'string' && options.sessionCookie.length > 0 ? options.sessionCookie : undefined)
-  const sessionTokenValue = sessionCookieValue === undefined
-    ? valueFromEnvironment(environment, 'QA_SESSION_TOKEN') ?? (typeof options.sessionToken === 'string' && options.sessionToken.length > 0 ? options.sessionToken : undefined)
-    : undefined
-  const csrfToken = valueFromEnvironment(environment, 'QA_CSRF_TOKEN', { trim: true }) ?? (typeof options.csrfToken === 'string' ? options.csrfToken.trim() : undefined)
-  const email = valueFromEnvironment(environment, 'QA_EMAIL') ?? (typeof options.email === 'string' && options.email.length > 0 ? options.email : undefined)
-  const password = valueFromEnvironment(environment, 'QA_PASSWORD') ?? (typeof options.password === 'string' && options.password.length > 0 ? options.password : undefined)
+  const sessionCookieValue =
+    valueFromEnvironment(environment, 'QA_SESSION_COOKIE') ??
+    (typeof options.sessionCookie === 'string' && options.sessionCookie.length > 0
+      ? options.sessionCookie
+      : undefined)
+  const sessionTokenValue =
+    sessionCookieValue === undefined
+      ? (valueFromEnvironment(environment, 'QA_SESSION_TOKEN') ??
+        (typeof options.sessionToken === 'string' && options.sessionToken.length > 0
+          ? options.sessionToken
+          : undefined))
+      : undefined
+  const csrfToken =
+    valueFromEnvironment(environment, 'QA_CSRF_TOKEN', { trim: true }) ??
+    (typeof options.csrfToken === 'string' ? options.csrfToken.trim() : undefined)
+  const email =
+    valueFromEnvironment(environment, 'QA_EMAIL') ??
+    (typeof options.email === 'string' && options.email.length > 0 ? options.email : undefined)
+  const password =
+    valueFromEnvironment(environment, 'QA_PASSWORD') ??
+    (typeof options.password === 'string' && options.password.length > 0
+      ? options.password
+      : undefined)
   const hasSessionCredential = sessionCookieValue !== undefined || sessionTokenValue !== undefined
   const hasLoginInput = email !== undefined || password !== undefined
   if (hasSessionCredential || (!hasLoginInput && csrfToken !== undefined)) {
-    if (!hasSessionCredential) throw new QaCliError(401, 'unauthorized', 'Session authentication requires a session credential and CSRF token')
+    if (!hasSessionCredential)
+      throw new QaCliError(
+        401,
+        'unauthorized',
+        'Session authentication requires a session credential and CSRF token',
+      )
     return Object.freeze({
       mode: 'session',
       cookie: sessionCookieFromValue(sessionCookieValue ?? sessionTokenValue),
@@ -212,10 +251,19 @@ export function resolveQaCliAuth({ options = {}, environment = process.env } = {
     })
   }
   if (hasLoginInput) {
-    if (email === undefined || password === undefined) throw new QaCliError(401, 'unauthorized', 'Login authentication requires both email and password')
+    if (email === undefined || password === undefined)
+      throw new QaCliError(
+        401,
+        'unauthorized',
+        'Login authentication requires both email and password',
+      )
     return Object.freeze({ mode: 'login', email, password })
   }
-  throw new QaCliError(401, 'unauthorized', 'Authentication is required; provide session credentials or login credentials')
+  throw new QaCliError(
+    401,
+    'unauthorized',
+    'Authentication is required; provide session credentials or login credentials',
+  )
 }
 
 function answerScope(options) {
@@ -231,23 +279,45 @@ function answerRequest(options) {
   const scope = answerScope(options)
   const validation = validateQuestionScope(options.question, scope)
   if (!validation.valid) {
-    throw new QaCliError(422, 'validation_error', validation.message, [{
-      field: validation.firstInvalid,
-      message: validation.message,
-      code: 'invalid_cli_input',
-    }])
+    throw new QaCliError(422, 'validation_error', validation.message, [
+      {
+        field: validation.firstInvalid,
+        message: validation.message,
+        code: 'invalid_cli_input',
+      },
+    ])
   }
-  return normalizeQaRequest({ question: options.question, scope, chatSessionId: options.chatSessionId })
+  return normalizeQaRequest({
+    question: options.question,
+    scope,
+    chatSessionId: options.chatSessionId,
+  })
 }
 
 function baseOrigin(value) {
   let parsed
-  try { parsed = new URL(value) } catch { throw new QaCliError(400, 'bad_request', 'Base URL must be a valid HTTP(S) origin') }
-  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || (parsed.pathname !== '' && parsed.pathname !== '/') || parsed.search || parsed.hash) {
-    throw new QaCliError(400, 'bad_request', 'Base URL must be an HTTP(S) origin without credentials or a path')
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new QaCliError(400, 'bad_request', 'Base URL must be a valid HTTP(S) origin')
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.pathname !== '' && parsed.pathname !== '/') ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new QaCliError(
+      400,
+      'bad_request',
+      'Base URL must be an HTTP(S) origin without credentials or a path',
+    )
   }
   const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
-  if (!LOOPBACK_HOSTS.has(hostname)) throw new QaCliError(400, 'bad_request', 'Base URL must target a loopback host')
+  if (!LOOPBACK_HOSTS.has(hostname))
+    throw new QaCliError(400, 'bad_request', 'Base URL must target a loopback host')
   return parsed.origin
 }
 
@@ -258,10 +328,16 @@ function responseTooLargeError() {
 async function responseText(response) {
   const declaredValue = response?.headers?.get?.('Content-Length')
   const declaredLength = Number(declaredValue)
-  if (declaredValue !== null && declaredValue !== undefined && !Number.isNaN(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) throw responseTooLargeError()
+  if (
+    declaredValue !== null &&
+    declaredValue !== undefined &&
+    !Number.isNaN(declaredLength) &&
+    declaredLength > MAX_RESPONSE_BYTES
+  )
+    throw responseTooLargeError()
   if (response?.body?.getReader) {
     const reader = response.body.getReader()
-    const decoder = new TextDecoder()
+    const decoder = new globalThis.TextDecoder()
     let text = ''
     let bytes = 0
     try {
@@ -270,7 +346,11 @@ async function responseText(response) {
         if (done) break
         bytes += value.byteLength
         if (bytes > MAX_RESPONSE_BYTES) {
-          try { await reader.cancel() } catch { /* The stream already exceeded the limit. */ }
+          try {
+            await reader.cancel()
+          } catch {
+            /* The stream already exceeded the limit. */
+          }
           throw responseTooLargeError()
         }
         text += decoder.decode(value, { stream: true })
@@ -282,7 +362,8 @@ async function responseText(response) {
   }
   if (typeof response?.text === 'function') {
     const text = await response.text()
-    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) throw responseTooLargeError()
+    if (new globalThis.TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES)
+      throw responseTooLargeError()
     return text
   }
   return undefined
@@ -291,28 +372,53 @@ async function responseText(response) {
 async function responseBody(response) {
   const text = await responseText(response)
   if (text !== undefined) {
-    try { return JSON.parse(text) } catch (error) {
+    try {
+      return JSON.parse(text)
+    } catch (error) {
       if (error?.name === 'AbortError') throw error
       return undefined
     }
   }
   if (typeof response?.json !== 'function') return undefined
-  try { return await response.json() } catch (error) {
+  try {
+    return await response.json()
+  } catch (error) {
     if (error?.name === 'AbortError') throw error
     return undefined
   }
 }
 
 function fallbackErrorBody(status) {
-  const code = status === 401 ? 'unauthorized' : status === 403 ? 'forbidden' : status === 404 ? 'not_found' : status === 409 ? 'conflict' : status === 422 ? 'validation_error' : status === 429 ? 'rate_limit_exceeded' : status >= 500 ? 'service_unavailable' : 'bad_request'
+  const code =
+    status === 401
+      ? 'unauthorized'
+      : status === 403
+        ? 'forbidden'
+        : status === 404
+          ? 'not_found'
+          : status === 409
+            ? 'conflict'
+            : status === 422
+              ? 'validation_error'
+              : status === 429
+                ? 'rate_limit_exceeded'
+                : status >= 500
+                  ? 'service_unavailable'
+                  : 'bad_request'
   return { error: { code, message: 'Request could not be completed' } }
 }
 function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype
+  return (
+    value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype
+  )
 }
 
 function hasOnlyData(body) {
-  return isPlainObject(body) && Object.keys(body).length === 1 && Object.prototype.hasOwnProperty.call(body, 'data')
+  return (
+    isPlainObject(body) &&
+    Object.keys(body).length === 1 &&
+    Object.prototype.hasOwnProperty.call(body, 'data')
+  )
 }
 
 async function validatePublicAnswerEnvelope(body) {
@@ -323,15 +429,15 @@ async function validatePublicAnswerEnvelope(body) {
   return body
 }
 
-
 function resolveTimeoutMs(options, environment) {
   const value = options.timeoutMs ?? valueFromEnvironment(environment, 'QA_TIMEOUT_MS')
   return value === undefined ? DEFAULT_TIMEOUT_MS : boundedTimeout(value)
 }
 
 async function requestJson({ fetchImpl, url, init, stage, timeoutMs }) {
-  if (typeof fetchImpl !== 'function') throw new QaCliError(503, 'service_unavailable', 'Fetch is unavailable')
-  const controller = new AbortController()
+  if (typeof fetchImpl !== 'function')
+    throw new QaCliError(503, 'service_unavailable', 'Fetch is unavailable')
+  const controller = new globalThis.AbortController()
   let timedOut = false
   let timeoutId
   const timeoutMarker = {}
@@ -348,7 +454,13 @@ async function requestJson({ fetchImpl, url, init, stage, timeoutMs }) {
     try {
       parsed = await responseBody(response)
     } catch (error) {
-      if (error?.code === RESPONSE_TOO_LARGE_CODE && !response.ok) return Object.freeze({ ok: false, status: response.status, stage, body: fallbackErrorBody(response.status) })
+      if (error?.code === RESPONSE_TOO_LARGE_CODE && !response.ok)
+        return Object.freeze({
+          ok: false,
+          status: response.status,
+          stage,
+          body: fallbackErrorBody(response.status),
+        })
       throw error
     }
     const body = parsed && typeof parsed === 'object' ? parsed : fallbackErrorBody(response.status)
@@ -358,14 +470,15 @@ async function requestJson({ fetchImpl, url, init, stage, timeoutMs }) {
   try {
     return await Promise.race([requestPromise, timeoutPromise])
   } catch (error) {
-    if (timedOut || error === timeoutMarker || error?.name === 'AbortError') throw new QaCliError(503, 'service_unavailable', 'Local Q&A request timed out')
-    if (error?.code === RESPONSE_TOO_LARGE_CODE) throw new QaCliError(502, 'internal_error', 'Local Q&A response exceeded the safe size limit')
+    if (timedOut || error === timeoutMarker || error?.name === 'AbortError')
+      throw new QaCliError(503, 'service_unavailable', 'Local Q&A request timed out')
+    if (error?.code === RESPONSE_TOO_LARGE_CODE)
+      throw new QaCliError(502, 'internal_error', 'Local Q&A response exceeded the safe size limit')
     throw new QaCliError(503, 'service_unavailable', 'Local Q&A endpoint is unavailable')
   } finally {
     globalThis.clearTimeout(timeoutId)
   }
 }
-
 
 function setCookieValues(headers) {
   if (typeof headers?.getSetCookie === 'function') {
@@ -385,23 +498,41 @@ function sessionCookieFromLogin(response) {
     const token = parseSessionCookie(String(value).split(';', 1)[0])
     if (token) return `${COOKIE_NAME}=${encodeURIComponent(token)}`
   }
-  throw new QaCliError(502, 'internal_error', 'Authentication response did not contain a session cookie')
+  throw new QaCliError(
+    502,
+    'internal_error',
+    'Authentication response did not contain a session cookie',
+  )
 }
 
 function loginSession(loginResult) {
   const body = loginResult.body
   const data = body?.data
   const csrfToken = data?.csrfToken
-  if (!hasOnlyData(body) || !isPlainObject(data) || !isPlainObject(data.user)
-    || typeof csrfToken !== 'string' || csrfToken.length < CSRF_MIN_LENGTH || csrfToken.length > CSRF_MAX_LENGTH) {
-    throw new QaCliError(502, 'internal_error', 'Authentication response failed its public contract')
+  if (
+    !hasOnlyData(body) ||
+    !isPlainObject(data) ||
+    !isPlainObject(data.user) ||
+    typeof csrfToken !== 'string' ||
+    csrfToken.length < CSRF_MIN_LENGTH ||
+    csrfToken.length > CSRF_MAX_LENGTH
+  ) {
+    throw new QaCliError(
+      502,
+      'internal_error',
+      'Authentication response failed its public contract',
+    )
   }
   return Object.freeze({ cookie: sessionCookieFromLogin(loginResult.response), csrfToken })
 }
 
 function idempotencyKey(options, environment, randomUuid) {
-  const value = valueFromEnvironment(environment, 'QA_IDEMPOTENCY_KEY') ?? options.idempotencyKey ?? randomUuid()
-  if (typeof value !== 'string' || value.length === 0) throw new QaCliError(400, 'bad_request', 'Idempotency-Key is invalid')
+  const value =
+    valueFromEnvironment(environment, 'QA_IDEMPOTENCY_KEY') ??
+    options.idempotencyKey ??
+    randomUuid()
+  if (typeof value !== 'string' || value.length === 0)
+    throw new QaCliError(400, 'bad_request', 'Idempotency-Key is invalid')
   return value
 }
 
@@ -415,11 +546,18 @@ function answerHeaders({ origin, auth, key }) {
   }
 }
 
-export async function runQaCli({ options, environment = process.env, fetchImpl = globalThis.fetch, randomUuid = generateRandomUUID } = {}) {
+export async function runQaCli({
+  options,
+  environment = process.env,
+  fetchImpl = globalThis.fetch,
+  randomUuid = generateRandomUUID,
+} = {}) {
   if (!options || options.help) return Object.freeze({ ok: true, help: true })
   assertRepositoryRoot()
   const body = answerRequest(options)
-  const origin = baseOrigin(options.baseUrl ?? valueFromEnvironment(environment, 'QA_BASE_URL') ?? DEFAULT_BASE_URL)
+  const origin = baseOrigin(
+    options.baseUrl ?? valueFromEnvironment(environment, 'QA_BASE_URL') ?? DEFAULT_BASE_URL,
+  )
   const timeoutMs = resolveTimeoutMs(options, environment)
   const auth = resolveQaCliAuth({ options, environment })
   const key = idempotencyKey(options, environment, randomUuid)
@@ -452,7 +590,11 @@ export async function runQaCli({ options, environment = process.env, fetchImpl =
     timeoutMs,
   })
   if (!result.ok) return result
-  try { await validatePublicAnswerEnvelope(result.body) } catch { throw new QaCliError(502, 'internal_error', 'Q&A response failed public contract validation') }
+  try {
+    await validatePublicAnswerEnvelope(result.body)
+  } catch {
+    throw new QaCliError(502, 'internal_error', 'Q&A response failed public contract validation')
+  }
   return result
 }
 
@@ -469,7 +611,16 @@ function errorBody(error) {
   return { error: { code: 'internal_error', message: 'Local Q&A CLI failed' } }
 }
 
-export async function main(argv = process.argv.slice(2), { environment = process.env, fetchImpl = globalThis.fetch, randomUuid = generateRandomUUID, log = console.log, errorLog = console.error } = {}) {
+export async function main(
+  argv = process.argv.slice(2),
+  {
+    environment = process.env,
+    fetchImpl = globalThis.fetch,
+    randomUuid = generateRandomUUID,
+    log = console.log,
+    errorLog = console.error,
+  } = {},
+) {
   try {
     const options = parseQaCliArgs(argv)
     if (options.help) {
