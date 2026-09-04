@@ -55,6 +55,15 @@ describe('Step 10 Q&A validation', () => {
     )).toMatchObject({ valid: false, firstInvalid: 'publishedBefore' })
   })
 
+  it('keeps a natural-language-only temporal question invalid under the route scope contract', () => {
+    const result = validateQuestionScope(
+      'tháng 9 này có tin tức gì về các model AI mới không',
+      {},
+      { now: new Date('2026-09-04T15:30:00.000Z') },
+    )
+    expect(result).toMatchObject({ valid: false, firstInvalid: 'scope' })
+  })
+
   it('accepts only complete answered/refused public branches and resolves citations', () => {
     const citation = { id: 'C1', sourceName: 'Nguồn biên tập', titleOriginal: 'Bài nguồn', originalUrl: 'https://example.com/article', publishedAt: '2026-08-10T00:00:00.000Z', sourceLanguage: 'vi' }
     expect(validateAnswerPayload({ data: { id: 'a1', status: 'answered', paragraphs: [{ text: 'Kết luận có nguồn.', citationIds: ['C1'] }], citations: [citation], refusalReason: null, chatSessionId: 's1', createdAt: '2026-08-12T00:00:00.000Z' } }).valid).toBe(true)

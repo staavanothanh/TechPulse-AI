@@ -22,6 +22,7 @@ export default function QaView({
   error,
   onAsk,
   handlers = {},
+  now = () => new Date(),
 }) {
   const [question, setQuestion] = useState('')
   const [questionError, setQuestionError] = useState('')
@@ -38,7 +39,8 @@ export default function QaView({
   const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
   const isTopicSelected = (topic) => scopeTopics.some((selectedTopic) => topicsMatch(selectedTopic, topic))
-  const hasScope = hasQaScope(safeScope, { question })
+  const clockValue = typeof now === 'function' ? now() : now
+  const hasScope = hasQaScope(safeScope, { question, now: clockValue })
   function submit(event) {
     if (!event.defaultPrevented) event.preventDefault()
     const value = question.trim()
@@ -48,7 +50,7 @@ export default function QaView({
       return
     }
     const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, scopeValue]) => key !== 'topics' || scopeValue.length > 0))
-    const validation = validateQuestionScope(value, askScope)
+    const validation = validateQuestionScope(value, askScope, { now: clockValue })
     if (!validation.valid) return
     setQuestionError('')
     onAsk?.({ ...validation.scope, question: value })

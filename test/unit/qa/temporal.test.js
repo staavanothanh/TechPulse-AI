@@ -51,6 +51,15 @@ describe('Q&A temporal resolver', () => {
     expect(resolveQaTemporalScope({ question: 'tháng 9 này có gì mới?', scope: { topics: ['ai'], publishedBefore: '2026-09-30T23:59:59.999Z' }, now: NOW })).toEqual({ topics: ['ai'], publishedBefore: '2026-09-30T23:59:59.999Z' })
   })
 
+  it('returns a new scope object without mutating the caller scope', () => {
+    const scope = { topics: ['AI'] }
+    const first = resolveQaTemporalScope({ question: 'tháng này có gì mới?', scope, now: NOW })
+    const second = resolveQaTemporalScope({ question: 'tháng này có gì mới?', scope, now: NOW })
+    expect(first).not.toBe(scope)
+    expect(first).not.toBe(second)
+    expect(scope).toEqual({ topics: ['AI'] })
+  })
+
   it('leaves unsupported or ambiguous phrases and natural-language-only scopes unchanged', () => {
     expect(resolveQaTemporalScope({ question: 'tháng 13 này có gì mới?', scope: SOURCE_SCOPE, now: NOW })).toEqual(SOURCE_SCOPE)
     expect(resolveQaTemporalScope({ question: 'Tin tháng 9 đó có gì mới?', scope: SOURCE_SCOPE, now: NOW })).toEqual(SOURCE_SCOPE)
