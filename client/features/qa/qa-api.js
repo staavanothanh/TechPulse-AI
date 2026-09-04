@@ -12,7 +12,7 @@ function normalizeDateTime(value) {
   return Number.isNaN(date.getTime()) ? value : date.toISOString()
 }
 
-function normalizeAnswerBody(body) {
+export function normalizeAnswerBody(body) {
   const scope = body?.scope
   if (!body || typeof body !== 'object' || !scope || typeof scope !== 'object' || Array.isArray(scope)) return body
   const scopeWithoutEmptyFields = Object.fromEntries(

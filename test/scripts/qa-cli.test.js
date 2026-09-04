@@ -80,8 +80,8 @@ describe('local Q&A CLI', () => {
       scope: {
         articleId: '',
         topics: ['AI'],
-        publishedAfter: '2026-08-01T00:00:00',
-        publishedBefore: '2026-08-02T00:00:00',
+        publishedAfter: '2026-08-01T00:00:00.000Z',
+        publishedBefore: '2026-08-02T00:00:00.000Z',
       },
       chatSessionId: '',
     })).toEqual({
