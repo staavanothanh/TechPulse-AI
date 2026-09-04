@@ -314,4 +314,63 @@ describe('topic-taxonomy-v1 migration contract', () => {
     expect(articlesCollection.updateOne).not.toHaveBeenCalled()
     expect(usersCollection.updateOne).not.toHaveBeenCalled()
   })
+
+  it('skips already-migrated documents without rewriting canonical fields', async () => {
+    const articleId = new ObjectId()
+    const userId = new ObjectId()
+    const now = new Date('2026-08-20T00:00:00.000Z')
+
+    const migratedArticle = {
+      _id: articleId,
+      status: 'published',
+      titleOriginal: 'Cloud data infrastructure with Kubernetes',
+      excerptOriginal: 'A database pipeline stores analytics for modern teams.',
+      topics: ['devops', 'dữ liệu'],
+      topicIds: ['devops-cloud', 'containers-orchestration', 'computer-science', 'databases', 'data-engineering'],
+      topicTaxonomyVersion: 1,
+      updatedAt: now,
+    }
+    const migratedUser = {
+      _id: userId,
+      status: 'active',
+      topicPreferences: ['AI', 'Robot'],
+      topicPreferenceIds: ['ai-ml', 'ai-agent', 'robotics'],
+      topicPreferenceTaxonomyVersion: 1,
+      updatedAt: now,
+    }
+
+    const articlesCollection = {
+      find: vi.fn(() => ({
+        sort: () => ({
+          limit: () => ({
+            toArray: vi.fn().mockResolvedValueOnce([migratedArticle]).mockResolvedValueOnce([]),
+          }),
+        }),
+      })),
+      updateOne: vi.fn(async () => ({ matchedCount: 1 })),
+    }
+    const usersCollection = {
+      find: vi.fn(() => ({
+        sort: () => ({
+          limit: () => ({
+            toArray: vi.fn().mockResolvedValueOnce([migratedUser]).mockResolvedValueOnce([]),
+          }),
+        }),
+      })),
+      updateOne: vi.fn(async () => ({ matchedCount: 1 })),
+    }
+    const db = {
+      collection: vi.fn((name) => {
+        if (name === 'articles') return articlesCollection
+        if (name === 'users') return usersCollection
+      }),
+    }
+
+    const result = await runTopicTaxonomyBackfill({ db, batchSize: 10 })
+
+    expect(result.articles).toMatchObject({ scanned: 1, migrated: 0, conflict: 0 })
+    expect(result.users).toMatchObject({ scanned: 1, migrated: 0, conflict: 0 })
+    expect(articlesCollection.updateOne).not.toHaveBeenCalled()
+    expect(usersCollection.updateOne).not.toHaveBeenCalled()
+  })
 })
