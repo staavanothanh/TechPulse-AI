@@ -6,6 +6,7 @@ import { createProviderRouter } from '../ai/provider-router.js'
 import { MongoProviderAdmissionRepository } from '../repositories/mongo/provider-admission-repository.js'
 import { MongoProviderFailureDomainRepository } from '../repositories/mongo/provider-failure-domain-repository.js'
 import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../scripts/migrations/chat-sessions.js'
+import { CHAT_SESSION_SOURCE_NAME_VALIDATOR } from '../../scripts/migrations/chat-sessions-source-name-v1.js'
 import { PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
@@ -42,7 +43,11 @@ export async function assertChatSessionsReady(context) {
   const collectionMap = new Map(collections.map((item) => [item.name, item]))
   for (const [name, definition] of Object.entries(CHAT_SESSION_COLLECTIONS)) {
     const actual = collectionMap.get(name)
-    const acceptedValidators = name === 'answerAttempts' ? [definition.validator, PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR] : [definition.validator]
+    const acceptedValidators = name === 'answerAttempts'
+      ? [definition.validator, PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR]
+      : name === 'chatSessions'
+        ? [CHAT_SESSION_SOURCE_NAME_VALIDATOR]
+        : [definition.validator]
     if (!actual || actual.options?.validationLevel !== 'strict' || actual.options?.validationAction !== 'error' || !acceptedValidators.some((validator) => stableJson(actual.options?.validator) === stableJson(validator))) throw new Error('chat-sessions migration is not ready')
     const actualByName = new Map((await context.db.collection(name).indexes()).map((index) => [index.name, index]))
     if (CHAT_SESSION_INDEXES[name].some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('chat-sessions indexes are not ready')

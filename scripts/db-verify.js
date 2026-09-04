@@ -26,6 +26,7 @@ import {
   CHAT_SESSION_COLLECTIONS,
   CHAT_SESSION_INDEXES,
 } from './migrations/chat-sessions.js'
+import { CHAT_SESSION_SOURCE_NAME_VALIDATOR } from './migrations/chat-sessions-source-name-v1.js'
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_INDEXES, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES } from './migrations/governance.js'
 import { GOVERNANCE_AUDIT_VALIDATOR } from './migrations/governance-audit.js'
 import {
@@ -305,9 +306,9 @@ async function probeTopicTaxonomyRoleCapabilities({ client, db } = {}) {
     transaction: outcome.transactionStarted && outcome.sessionHealthy,
   }
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'chat-sessions-source-name-v1', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, cron-observability, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation',
+    'Supported verification targets: auth-core, sources, durable-jobs, cron-observability, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, chat-sessions-source-name-v1, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation',
   )
   process.exitCode = 2
 } else {
@@ -346,6 +347,11 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
                 ? PROVIDER_ROUTING_V2_COLLECTIONS
               : target === 'chat-sessions'
                 ? CHAT_SESSION_COLLECTIONS
+              : target === 'chat-sessions-source-name-v1'
+                ? {
+                    chatSessions: { validator: CHAT_SESSION_SOURCE_NAME_VALIDATOR },
+                    answerAttempts: CHAT_SESSION_COLLECTIONS.answerAttempts,
+                  }
               : target === 'qa-evidence-fence'
                 ? {
                     articles: { validator: QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR },
@@ -382,7 +388,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
                 ? Object.fromEntries(Object.entries(INDEXING_JOB_INDEXES).map(([name, indexes]) => [name, [...indexes, ...(INDEXING_DRAIN_PERFORMANCE_INDEXES[name] ?? [])]]))
               : target === 'provider-routing-v2'
                 ? PROVIDER_ROUTING_V2_INDEXES
-              : target === 'chat-sessions'
+              : target === 'chat-sessions' || target === 'chat-sessions-source-name-v1'
                 ? CHAT_SESSION_INDEXES
               : target === 'qa-evidence-fence'
                 ? { articles: ARTICLE_INDEXES.articles, sources: SOURCE_INDEXES.sources }
@@ -451,7 +457,13 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
                 ? [INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator, PROVIDER_ROUTING_V2_COLLECTIONS.providerAdmissionStates.validator]
                 : ['indexing-jobs', 'indexing-drain-performance'].includes(target) && name === 'indexingJobs'
                   ? [INDEXING_JOB_COLLECTIONS.indexingJobs.validator, PROVIDER_ROUTING_V2_COLLECTIONS.indexingJobs.validator]
+                  : target === 'chat-sessions' && name === 'chatSessions'
+                    ? [CHAT_SESSION_SOURCE_NAME_VALIDATOR]
+                  : target === 'chat-sessions-source-name-v1' && name === 'chatSessions'
+                    ? [CHAT_SESSION_SOURCE_NAME_VALIDATOR]
                   : target === 'chat-sessions' && name === 'answerAttempts'
+                    ? [CHAT_SESSION_COLLECTIONS.answerAttempts.validator, PROVIDER_ROUTING_V2_COLLECTIONS.answerAttempts.validator]
+                  : target === 'chat-sessions-source-name-v1' && name === 'answerAttempts'
                     ? [CHAT_SESSION_COLLECTIONS.answerAttempts.validator, PROVIDER_ROUTING_V2_COLLECTIONS.answerAttempts.validator]
               : [expectedCollections[name].validator]
         if (
@@ -540,6 +552,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
       target === 'chat-sessions' ||
+      target === 'chat-sessions-source-name-v1' ||
       target === 'qa-evidence-fence' ||
       target === 'summary-detail-v1' ||
       target === 'source-policy-reconciliation'
@@ -550,7 +563,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
         const acceptedAuditValidators =
           target === 'source-policy-reconciliation'
             ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
-            : target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'chat-sessions'
+            : target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'chat-sessions' || target === 'chat-sessions-source-name-v1'
               ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
             : target === 'durable-jobs' || target === 'articles'
               ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
@@ -859,7 +872,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
                   'articles_source_reconciliation',
                 ],
               ]
-            : target === 'chat-sessions'
+            : target === 'chat-sessions' || target === 'chat-sessions-source-name-v1'
               ? [
                   [
                     'chat_user_updated',
@@ -1066,7 +1079,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       target === 'articles' ||
       target === 'indexing-jobs' ||
       target === 'indexing-drain-performance' ||
-      target === 'chat-sessions' || target === 'qa-evidence-fence' || target === 'summary-detail-v1' || target === 'topic-taxonomy-v1' || target === 'governance' || target === 'google-oauth' || target === 'source-policy-reconciliation'
+      target === 'chat-sessions' || target === 'chat-sessions-source-name-v1' || target === 'qa-evidence-fence' || target === 'summary-detail-v1' || target === 'topic-taxonomy-v1' || target === 'governance' || target === 'google-oauth' || target === 'source-policy-reconciliation'
         ? 'not-requested'
         : 'unavailable-local'
     const roleProblems = []
@@ -1105,7 +1118,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
                 { database: context.database, collection: 'articles', label: 'topic taxonomy article path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
                 { database: context.database, collection: 'users', label: 'topic taxonomy user path', required: ['find', 'update', 'listIndexes', 'listCollections'], forbidden: [] },
               ]
-          : ['durable-jobs', 'indexing-jobs', 'indexing-drain-performance', 'chat-sessions', 'source-policy-reconciliation'].includes(target)
+          : ['durable-jobs', 'indexing-jobs', 'indexing-drain-performance', 'chat-sessions', 'chat-sessions-source-name-v1', 'source-policy-reconciliation'].includes(target)
             ? []
             : [
                 { database: context.database, collection: 'adminAuditLogs', label: 'audit', required: ['find', 'insert'], forbidden: ['update', 'remove', 'delete'] },
@@ -1179,7 +1192,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       roleStatus = roleProblems.length === 0 ? 'verified' : 'unverified'
     } else if (requireRole && (target === 'articles' || target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'source-policy-reconciliation')) {
       roleStatus = 'not-requested'
-    } else if (requireRole && target === 'chat-sessions') {
+    } else if (requireRole && (target === 'chat-sessions' || target === 'chat-sessions-source-name-v1')) {
       const probe = await probeChatSessionsRoleCapabilities(context)
       for (const [capability, passed] of Object.entries(probe)) {
         if (passed) continue
@@ -1238,7 +1251,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       let runtimeSchemaAttestation
       if (issueRuntimeAttestation) {
         verificationStage = 'runtime-schema-attestation'
-        const attestationScope = target === 'indexing-drain-performance' || target === 'source-policy-reconciliation' ? 'indexing-jobs' : target
+        const attestationScope = target === 'indexing-drain-performance' || target === 'source-policy-reconciliation' || target === 'chat-sessions-source-name-v1' ? 'chat-sessions' : target
         runtimeSchemaAttestation = issueReleaseVerifiedSchemaAttestation(attestationScope, process.env)
       }
       console.log(

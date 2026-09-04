@@ -5,6 +5,7 @@ import { assertChatSessionsReady, assertQaEvidenceFenceReady, createConfiguredQa
 import { MongoChatRepository } from '../../../server/repositories/mongo/chat-repository.js'
 import { MongoArticleRepository } from '../../../server/repositories/mongo/article-repository.js'
 import { CHAT_SESSION_COLLECTIONS, CHAT_SESSION_INDEXES } from '../../../scripts/migrations/chat-sessions.js'
+import { CHAT_SESSION_SOURCE_NAME_VALIDATOR } from '../../../scripts/migrations/chat-sessions-source-name-v1.js'
 import { PROVIDER_ROUTING_ANSWER_ATTEMPT_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../../scripts/migrations/provider-routing-v2.js'
 import { QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../../scripts/migrations/summary-detail-v1.js'
@@ -25,6 +26,7 @@ function readyContext({ indexOverride = {}, validatorOverride = {} } = {}) {
   for (const entry of Object.entries(PROVIDER_ROUTING_V2_COLLECTIONS)) definitions.set(entry[0], entry[1])
   definitions.set('sources', SOURCE_COLLECTIONS.sources)
   const fencedDefaults = {
+    chatSessions: CHAT_SESSION_SOURCE_NAME_VALIDATOR,
     articles: SUMMARY_DETAIL_ARTICLE_VALIDATOR,
     sources: QA_EVIDENCE_FENCE_SOURCE_VALIDATOR,
   }
@@ -171,6 +173,9 @@ describe('Step 10 Q&A bootstrap', () => {
   it('fails closed unless exact chat validators and indexes are deployed', async () => {
     await expect(assertChatSessionsReady(readyContext())).resolves.toBeUndefined()
     await expect(assertChatSessionsReady(readyContext({ indexOverride: { answerAttempts: [] } }))).rejects.toThrow(/indexes/i)
+  })
+  it('rejects the pre-successor chatSessions validator until sourceName migration is deployed', async () => {
+    await expect(assertChatSessionsReady(readyContext({ validatorOverride: { chatSessions: CHAT_SESSION_COLLECTIONS.chatSessions.validator } }))).rejects.toThrow(/migration/i)
   })
 
   it('accepts the exact provider-routing-v2 answer-attempt validator after collMod', async () => {

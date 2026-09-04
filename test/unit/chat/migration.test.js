@@ -8,6 +8,7 @@ import {
   validateAnswerAttemptDocument,
   validateChatSessionDocument,
 } from '../../../scripts/migrations/chat-sessions.js'
+import { CHAT_SESSION_SOURCE_NAME_VALIDATOR, assertChatSessionsSourceNameMigrationSafe } from '../../../scripts/migrations/chat-sessions-source-name-v1.js'
 import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/indexing-jobs.js'
 import { actorValues } from '../../../server/repositories/mongo/chat-repository.js'
 
@@ -61,6 +62,13 @@ describe('Step 10 chat migration contract', () => {
       expect(definition.validator).toEqual(expect.objectContaining({ $and: expect.any(Array) }))
       expect(definition.validator.$and[0].$jsonSchema.additionalProperties).toBe(false)
     }
+  })
+  it('blocks the legacy chat-sessions target from downgrading the sourceName successor', async () => {
+    const db = {
+      listCollections: vi.fn(() => ({ toArray: async () => [{ name: 'chatSessions', options: { validator: CHAT_SESSION_SOURCE_NAME_VALIDATOR } }] })),
+    }
+    await expect(assertChatSessionsSourceNameMigrationSafe({ db, target: 'chat-sessions' })).rejects.toThrow(/downgrade.*source-name/i)
+    await expect(assertChatSessionsSourceNameMigrationSafe({ db, target: 'chat-sessions-source-name-v1' })).resolves.toBeUndefined()
   })
 
   it('defines bounded history, citation cleanup and answer receipt indexes', () => {

@@ -11,6 +11,11 @@ import {
   runProviderRoutingV2Migration,
 } from './migrations/provider-routing-v2.js'
 import { buildChatSessionsMigration, runChatSessionsMigration } from './migrations/chat-sessions.js'
+import {
+  assertChatSessionsSourceNameMigrationSafe,
+  buildChatSessionsSourceNameMigration,
+  runChatSessionsSourceNameMigration,
+} from './migrations/chat-sessions-source-name-v1.js'
 import { buildGovernanceMigration, buildGovernanceDatabaseMigration, runGovernanceMigration, runGovernanceDatabaseMigration } from './migrations/governance.js'
 import { buildGovernanceHardeningMigration, runGovernanceHardeningMigration } from './migrations/governance-hardening.js'
 import { buildGovernanceCapabilityProbeMigration, runGovernanceCapabilityProbeMigration } from './migrations/governance-capability-probes.js'
@@ -50,9 +55,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 const summaryDetailWriterMode = args.has('--writers-paused') ? 'paused' : undefined
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation', 'cron-observability'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'chat-sessions-source-name-v1', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation', 'cron-observability'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation, cron-observability',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, chat-sessions-source-name-v1, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation, cron-observability',
   )
   process.exitCode = 2
 } else {
@@ -85,6 +90,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? buildQaEvidenceFenceMigration
               : target === 'summary-detail-v1'
                 ? buildSummaryDetailV1Migration
+              : target === 'chat-sessions-source-name-v1'
+                ? buildChatSessionsSourceNameMigration
               : target === 'cron-observability'
                 ? buildCronObservabilityMigration
               : target === 'governance'
@@ -119,6 +126,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? runCronObservabilityMigration
               : target === 'governance'
                 ? runGovernanceMigration
+              : target === 'chat-sessions-source-name-v1'
+                ? runChatSessionsSourceNameMigration
               : target === 'google-oauth'
                 ? runGoogleOAuthMigration
               : target === 'topic-taxonomy-v1'
@@ -147,6 +156,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
       : await (async () => {
           const context = await getMongoContext(runtime)
           await assertMigrationTargetDoesNotDowngradeProviderRoutingV2({ db: context.db, target })
+          await assertChatSessionsSourceNameMigrationSafe({ db: context.db, target })
           const auditValidator = ['governance', 'google-oauth'].includes(target) ? await preservedSourcePolicyAuditValidator(context.db) : undefined
           const appDb = target === 'governance' ? withGoogleOAuthAuditCompatibility(context.db, auditValidator ? { auditValidator } : {}) : context.db
           const plan = await runMigration({ db: appDb, ...(auditValidator ? { auditValidator } : {}), ...(['summary-detail-v1', 'topic-taxonomy-v1'].includes(target) ? { writerMode: summaryDetailWriterMode } : {}) })
