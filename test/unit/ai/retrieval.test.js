@@ -109,4 +109,12 @@ describe('Step 10 bounded Q&A relevance admission', () => {
     expect(result.map(({ article }) => article.id)).toEqual(['semantic-match'])
     expect(rankQnaEvidence({ question: 'có là gì thế nào', records })).toEqual([])
   })
+  it('breaks equal relevance ties by publication freshness only for latest ordering', () => {
+    const records = [
+      { article: { id: 'old', titleOriginal: 'AI', publishedAt: '2025-01-01T00:00:00.000Z' } },
+      { article: { id: 'new', titleOriginal: 'AI', publishedAt: '2026-09-06T00:00:00.000Z' } },
+    ]
+    expect(rankQnaEvidence({ question: 'AI', records, ordering: ['relevance', 'freshness'] }).map(({ article }) => article.id)).toEqual(['new', 'old'])
+    expect(rankQnaEvidence({ question: 'AI', records }).map(({ article }) => article.id)).toEqual(['old', 'new'])
+  })
 })

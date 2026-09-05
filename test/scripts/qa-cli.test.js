@@ -134,7 +134,7 @@ describe('local Q&A CLI', () => {
     })
   })
 
-  it('derives the observed UTC month in the CLI and produces the same effective body as web normalization', async () => {
+  it('preserves explicit scope in the CLI and produces the same body as web normalization', async () => {
     const now = new Date('2026-09-04T15:30:00.000Z')
     const question = 'tháng 9 này có tin tức gì về các model AI mới không'
     const scope = { topics: ['AI'] }
@@ -143,8 +143,6 @@ describe('local Q&A CLI', () => {
     expect(cliBody).toEqual(webBody)
     expect(cliBody.scope).toEqual({
       topics: ['AI'],
-      publishedAfter: '2026-09-01T00:00:00.000Z',
-      publishedBefore: '2026-09-30T23:59:59.999Z',
     })
 
     const fetchImpl = vi.fn(async () => jsonResponse(ANSWER))

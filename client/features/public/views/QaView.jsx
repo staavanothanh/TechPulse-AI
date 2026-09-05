@@ -8,7 +8,7 @@ import {
 } from '../components/reader-primitives.jsx'
 import { formatDate, TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
-import { hasQaScope, validateQuestionScope } from '../../qa/qa-validation.js'
+import { hasQaScope, qaClarificationMessage, validateQuestionScope } from '../../qa/qa-validation.js'
 import { handleQaQuestionKeyDown } from '../../qa/qa-keyboard.js'
 import { topicsMatch } from '../../../../shared/topic-catalog.js'
 import { useDialogFocus } from '../../qa/dialog-focus.js'
@@ -22,7 +22,6 @@ export default function QaView({
   error,
   onAsk,
   handlers = {},
-  now = () => new Date(),
 }) {
   const [question, setQuestion] = useState('')
   const [questionError, setQuestionError] = useState('')
@@ -39,8 +38,8 @@ export default function QaView({
   const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
   const isTopicSelected = (topic) => scopeTopics.some((selectedTopic) => topicsMatch(selectedTopic, topic))
-  const clockValue = typeof now === 'function' ? now() : now
-  const hasScope = hasQaScope(safeScope, { question, now: clockValue })
+  const hasScope = hasQaScope(safeScope)
+  const displayError = safeQaError(error)
   function submit(event) {
     if (!event.defaultPrevented) event.preventDefault()
     const value = question.trim()
@@ -50,7 +49,7 @@ export default function QaView({
       return
     }
     const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, scopeValue]) => key !== 'topics' || scopeValue.length > 0))
-    const validation = validateQuestionScope(value, askScope, { now: clockValue })
+    const validation = validateQuestionScope(value, askScope)
     if (!validation.valid) return
     setQuestionError('')
     onAsk?.({ ...validation.scope, question: value })
@@ -118,7 +117,7 @@ export default function QaView({
             {state === 'error' ? (
               <ErrorState
                 title="Không thể tạo câu trả lời"
-                error={error}
+                error={displayError}
                 onRetry={handlers.onRetry}
               />
             ) : null}
@@ -414,3 +413,12 @@ function MessageThread({ messages, onCitation }) {
 }
 
 export { QaView, CitationDrawer }
+
+function safeQaError(error) {
+  const message = qaClarificationMessage(error)
+  if (!message) return error
+  return {
+    message,
+    ...(typeof error?.requestId === 'string' ? { requestId: error.requestId } : {}),
+  }
+}

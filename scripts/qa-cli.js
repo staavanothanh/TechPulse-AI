@@ -2,7 +2,7 @@ import { randomUUID as generateRandomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { normalizeAnswerBody } from '../client/features/qa/qa-api.js'
-import { validateQuestionScope } from '../client/features/qa/qa-validation.js'
+import { qaClarificationMessage, validateQuestionScope } from '../client/features/qa/qa-validation.js'
 import { COOKIE_NAME, parseSessionCookie } from '../server/http/cookies.js'
 
 const DEFAULT_BASE_URL = 'http://localhost:3000'
@@ -16,6 +16,8 @@ const CSRF_MAX_LENGTH = 256
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 const RESPONSE_TOO_LARGE_CODE = 'response_too_large'
 
+const SAFE_ERROR_CODES = new Set(['unauthorized', 'forbidden', 'not_found', 'conflict', 'validation_error', 'rate_limit_exceeded', 'service_unavailable', 'bad_request', 'csrf_invalid', 'idempotency_mismatch'])
+const SAFE_CLARIFICATION_CODES = new Set(['qa_clarify_missing_year', 'qa_clarify_ambiguous_time', 'qa_clarify_unsupported_time', 'qa_clarify_conflicting_time', 'qa_clarify_latest_unsupported', 'qa_clarify_invalid_date'])
 const OPTION_NAMES = new Set([
   '--question',
   '--article-id',
@@ -183,14 +185,14 @@ export function parseQaCliArgs(argv = []) {
   return Object.freeze({ ...options, topics: Object.freeze([...options.topics]) })
 }
 
-export function normalizeQaRequest({ question, scope = {}, chatSessionId, now = new Date() } = {}) {
+export function normalizeQaRequest({ question, scope = {}, chatSessionId } = {}) {
   const normalizedScope =
     scope && typeof scope === 'object' && !Array.isArray(scope) ? { ...scope } : scope
   return normalizeAnswerBody({
     question: typeof question === 'string' ? question.trim() : question,
     scope: normalizedScope,
     ...(chatSessionId ? { chatSessionId } : {}),
-  }, { now })
+  })
 }
 
 function sessionCookieFromValue(value) {
@@ -275,9 +277,9 @@ function answerScope(options) {
   }
 }
 
-function answerRequest(options, { now = new Date() } = {}) {
+function answerRequest(options) {
   const scope = answerScope(options)
-  const validation = validateQuestionScope(options.question, scope, { now })
+  const validation = validateQuestionScope(options.question, scope)
   if (!validation.valid) {
     throw new QaCliError(422, 'validation_error', validation.message, [
       {
@@ -291,7 +293,7 @@ function answerRequest(options, { now = new Date() } = {}) {
     question: options.question,
     scope: validation.scope ?? scope,
     chatSessionId: options.chatSessionId,
-  }, { now })
+  })
 }
 
 function baseOrigin(value) {
@@ -420,6 +422,42 @@ function hasOnlyData(body) {
     Object.prototype.hasOwnProperty.call(body, 'data')
   )
 }
+function safeErrorDetails(details) {
+  if (!Array.isArray(details)) return undefined
+  const safeFields = new Set(['question', 'articleId', 'topics', 'publishedAfter', 'publishedBefore', 'scope', 'quota', 'body'])
+  return details.flatMap((detail) => {
+    if (!isPlainObject(detail)) return []
+    const code = typeof detail.code === 'string' && SAFE_CLARIFICATION_CODES.has(detail.code) ? detail.code : undefined
+    if (code) return [{ field: '/question', code, message: qaClarificationMessage({ code: 'validation_error', details: [{ field: '/question', code }] }) }]
+    const field = typeof detail.field === 'string' && detail.field.length <= 256 ? detail.field : undefined
+    const safeCode = typeof detail.code === 'string' && /^[a-z0-9_:-]{1,128}$/iu.test(detail.code) ? detail.code : undefined
+    if (!field || !safeFields.has(field.split('/').filter(Boolean).at(-1))) return []
+    const safe = {
+      field,
+      ...(typeof detail.message === 'string' && detail.message.length <= 500 ? { message: detail.message } : {}),
+      ...(safeCode ? { code: safeCode } : {}),
+    }
+    return [safe]
+  })
+}
+
+
+function safeErrorBody(body, status) {
+  const fallback = fallbackErrorBody(status)
+  if (!isPlainObject(body) || !isPlainObject(body.error)) return fallback
+  const source = body.error
+  const code = SAFE_ERROR_CODES.has(source.code) ? source.code : fallback.error.code
+  const details = safeErrorDetails(source.details)
+  const clarificationDetails = details?.filter((detail) => detail.code?.startsWith('qa_clarify_')) ?? []
+  const message = clarificationDetails.length > 0
+    ? qaClarificationMessage({ code: 'validation_error', details: clarificationDetails })
+    : typeof source.message === 'string' && source.message.length <= 500 ? source.message : fallback.error.message
+  const error = { code, message }
+  if (typeof source.requestId === 'string' && source.requestId.length <= 256) error.requestId = source.requestId
+  if (details !== undefined && details.length > 0) error.details = details
+  return { error }
+}
+
 
 async function validatePublicAnswerEnvelope(body) {
   if (!hasOnlyData(body)) throw new Error('Public AnswerResponse envelope is invalid')
@@ -464,7 +502,7 @@ async function requestJson({ fetchImpl, url, init, stage, timeoutMs }) {
       throw error
     }
     const body = parsed && typeof parsed === 'object' ? parsed : fallbackErrorBody(response.status)
-    if (!response.ok) return Object.freeze({ ok: false, status: response.status, stage, body })
+    if (!response.ok) return Object.freeze({ ok: false, status: response.status, stage, body: safeErrorBody(body, response.status) })
     return Object.freeze({ ok: true, status: response.status, stage, body, response })
   })()
   try {
@@ -551,11 +589,10 @@ export async function runQaCli({
   environment = process.env,
   fetchImpl = globalThis.fetch,
   randomUuid = generateRandomUUID,
-  now = new Date(),
 } = {}) {
   if (!options || options.help) return Object.freeze({ ok: true, help: true })
   assertRepositoryRoot()
-  const body = answerRequest(options, { now })
+  const body = answerRequest(options)
   const origin = baseOrigin(
     options.baseUrl ?? valueFromEnvironment(environment, 'QA_BASE_URL') ?? DEFAULT_BASE_URL,
   )
@@ -620,7 +657,6 @@ export async function main(
     randomUuid = generateRandomUUID,
     log = console.log,
     errorLog = console.error,
-    now = new Date(),
   } = {},
 ) {
   try {
@@ -629,7 +665,7 @@ export async function main(
       log(QA_CLI_USAGE)
       return Object.freeze({ ok: true, help: true })
     }
-    const result = await runQaCli({ options, environment, fetchImpl, randomUuid, now })
+    const result = await runQaCli({ options, environment, fetchImpl, randomUuid })
     if (result.ok) log(JSON.stringify(result.body))
     else {
       errorLog(JSON.stringify(result.body))

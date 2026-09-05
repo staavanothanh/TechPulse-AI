@@ -1,4 +1,4 @@
-import { resolveQaTemporalScope } from '../../../shared/qa-temporal.js'
+import { qaClarificationMessage } from './qa-validation.js'
 
 function retryAfterValue(response) {
   const value = Number(response.headers.get('Retry-After'))
@@ -14,25 +14,22 @@ function normalizeDateTime(value) {
   return Number.isNaN(date.getTime()) ? value : date.toISOString()
 }
 
-export function normalizeAnswerBody(body, { now = new Date() } = {}) {
+export function normalizeAnswerBody(body) {
   const scope = body?.scope
   if (!body || typeof body !== 'object' || !scope || typeof scope !== 'object' || Array.isArray(scope)) return body
-  const resolvedScope = resolveQaTemporalScope({ question: body.question, scope, now })
-  const scopeWithoutEmptyFields = Object.fromEntries(
-    Object.entries(resolvedScope).filter(([key, value]) => {
-      if (key === 'topics') return Array.isArray(value) && value.length > 0
-      if (['articleId', 'publishedAfter', 'publishedBefore'].includes(key)) return value !== undefined && value !== null && value !== ''
-      return true
-    }),
+  const normalizedScope = Object.fromEntries(
+    Object.entries(scope)
+      .filter(([key, value]) => {
+        if (key === 'topics') return Array.isArray(value) && value.length > 0
+        if (['articleId', 'publishedAfter', 'publishedBefore'].includes(key)) return value !== undefined && value !== null && value !== ''
+        return true
+      })
+      .map(([key, value]) => [
+        key,
+        ['publishedAfter', 'publishedBefore'].includes(key) ? normalizeDateTime(value) : value,
+      ]),
   )
-  return {
-    ...body,
-    scope: {
-      ...scopeWithoutEmptyFields,
-      ...(resolvedScope.publishedAfter ? { publishedAfter: normalizeDateTime(resolvedScope.publishedAfter) } : {}),
-      ...(resolvedScope.publishedBefore ? { publishedBefore: normalizeDateTime(resolvedScope.publishedBefore) } : {}),
-    },
-  }
+  return { ...body, scope: normalizedScope }
 }
 
 const FIELD_COPY = Object.freeze({
@@ -52,7 +49,7 @@ function safeFieldErrors(details) {
   }))
 }
 
-export function createQaApi(generatedApi, fetchImpl = globalThis.fetch, { now = () => new Date() } = {}) {
+export function createQaApi(generatedApi, fetchImpl = globalThis.fetch) {
   async function invoke(operation, init = {}) {
     if (typeof operation !== 'function') throw new Error('Q&A operation is unavailable')
     let retryAfter = null
@@ -71,11 +68,12 @@ export function createQaApi(generatedApi, fetchImpl = globalThis.fetch, { now = 
       if (result instanceof Response) {
         const payload = await result.json().catch(() => undefined)
         if (!result.ok) {
-          const error = new Error(payload?.error?.message ?? 'API request failed')
+          const serverError = payload?.error
+          const error = new Error(qaClarificationMessage(serverError) ?? serverError?.message ?? 'API request failed')
           error.status = result.status
-          error.code = payload?.error?.code
-          error.requestId = payload?.error?.requestId
-          const fieldErrors = safeFieldErrors(payload?.error?.details)
+          error.code = serverError?.code
+          error.requestId = serverError?.requestId
+          const fieldErrors = safeFieldErrors(serverError?.details)
           if (Object.keys(fieldErrors).length > 0) error.fieldErrors = fieldErrors
           throw error
         }
@@ -90,7 +88,7 @@ export function createQaApi(generatedApi, fetchImpl = globalThis.fetch, { now = 
   return Object.freeze({
     listSessions: (query) => invoke(generatedApi?.listChatSessions, { query }),
     getSession: (chatSessionId) => invoke(generatedApi?.getChatSession, { pathParams: { chatSessionId } }),
-    createAnswer: (body, { csrfToken, idempotencyKey, chatSessionId } = {}) => invoke(generatedApi?.createGroundedAnswer, { body: JSON.stringify({ ...normalizeAnswerBody(body, { now }), ...(chatSessionId ? { chatSessionId } : {}) }), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': idempotencyKey } }),
+    createAnswer: (body, { csrfToken, idempotencyKey, chatSessionId } = {}) => invoke(generatedApi?.createGroundedAnswer, { body: JSON.stringify({ ...normalizeAnswerBody(body), ...(chatSessionId ? { chatSessionId } : {}) }), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'Idempotency-Key': idempotencyKey } }),
     deleteSession: (chatSessionId, csrfToken) => invoke(generatedApi?.deleteChatSession, { pathParams: { chatSessionId }, headers: { 'X-CSRF-Token': csrfToken } }),
     clearSessions: (csrfToken) => invoke(generatedApi?.clearChatSessions, { headers: { 'X-CSRF-Token': csrfToken } }),
   })

@@ -70,7 +70,7 @@ function evidenceText(record) {
  * Rerank a bounded visible evidence set against the admitted question.
  * The score is an internal admission value and is never part of a public DTO.
  */
-export function rankQnaEvidence({ question, records = [], queryEmbedding, relevanceThreshold = 0.25, maxCandidates = 50 } = {}) {
+export function rankQnaEvidence({ question, records = [], queryEmbedding, relevanceThreshold = 0.25, maxCandidates = 50, ordering = ['relevance'] } = {}) {
   if (typeof question !== 'string' || question.trim().length === 0 || !Array.isArray(records)) return []
   if (!Number.isFinite(relevanceThreshold) || relevanceThreshold < 0 || relevanceThreshold > 1) throw new Error('Q&A relevance threshold is invalid')
   const terms = queryTerms(question)
@@ -86,6 +86,11 @@ export function rankQnaEvidence({ question, records = [], queryEmbedding, releva
     && queryEmbedding.embedding.length === queryEmbedding.dimensions
     && queryEmbedding.embedding.every((item) => typeof item === 'number' && Number.isFinite(item))
   if (terms.length === 0 && !semanticReady) return []
+  const freshnessOrder = Array.isArray(ordering) && ordering.includes('freshness')
+  const publicationTime = (record) => {
+    const value = new Date((record?.article ?? record)?.publishedAt).getTime()
+    return Number.isFinite(value) ? value : 0
+  }
   const ranked = records.flatMap((record, index) => {
     const textTerms = new Set(queryTerms(evidenceText(record)))
     const lexicalScore = terms.length > 0 ? terms.filter((term) => textTerms.has(term)).length / terms.length : 0
@@ -98,6 +103,6 @@ export function rankQnaEvidence({ question, records = [], queryEmbedding, releva
       score = terms.length === 0 ? hybrid.semanticScore : (hybrid.semanticScore >= relevanceThreshold ? Math.max(combined, hybrid.semanticScore) : combined)
     }
     return score >= relevanceThreshold ? [{ record, relevanceScore: Number(score.toFixed(6)), index }] : []
-  }).sort((left, right) => right.relevanceScore - left.relevanceScore || left.index - right.index)
+  }).sort((left, right) => right.relevanceScore - left.relevanceScore || (freshnessOrder ? publicationTime(right.record) - publicationTime(left.record) : 0) || left.index - right.index)
   return ranked.slice(0, Math.min(50, Math.max(1, maxCandidates))).map(({ record }) => record)
 }

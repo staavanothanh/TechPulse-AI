@@ -3,7 +3,9 @@ import { canonicalRequestHash } from '../../domain/jobs/idempotency.js'
 import { ContentError, contentActorFence } from '../articles/query.js'
 import { admitQuestion, PrivacyAdmissionError } from '../../domain/qa/privacy.js'
 import { buildGroundedPrompt, evidenceAdmissionFence, filterQnaEvidence, EvidenceSelectionError } from '../../domain/qa/evidence.js'
-import { resolveQaTemporalScope } from '../../../shared/qa-temporal.js'
+import { planQaIntent, assertQaIntentProposal, QA_TIME_ZONE } from './intent-planner.js'
+import { compileQaExecutionPlan } from './intent-compiler.js'
+import { clarificationForCode, QA_CLARIFICATION_CODES } from '../../domain/qa/intent.js'
 import { hydrateAnswerCitations, validateParagraphCitations } from '../../domain/qa/citations.js'
 import { assertSupportedAnswer, deterministicRefusal } from '../../domain/qa/support.js'
 import { ProviderAdapterError } from '../../ai/provider-error-taxonomy.js'
@@ -103,22 +105,35 @@ function scopeHashValue(scope) {
     ...(scope.publishedBefore ? { publishedBefore: scope.publishedBefore.toISOString() } : {}),
   }
 }
+function safeClarificationDetail(value) {
+  const code = QA_CLARIFICATION_CODES.includes(value?.code) ? value.code : 'qa_clarify_ambiguous_time'
+  return { field: '/question', code, message: clarificationForCode(code) }
+}
 
-export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerRouter, providerAdapters = {}, rateLimitAdmission, queryEmbedding, privacyCapability = 'zdr-verified', supportVerifier, now = () => new Date() } = {}) {
+function clarificationError(value) {
+  const detail = safeClarificationDetail(value)
+  return new ContentError(422, 'validation_error', detail.message, [detail])
+}
+
+function clarificationFromAttempt(attempt) {
+  return attempt?.error?.code?.startsWith('qa_clarify_') ? { code: attempt.error.code, field: '/question', message: attempt.error.message } : null
+}
+
+export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerRouter, providerAdapters = {}, rateLimitAdmission, queryEmbedding, privacyCapability = 'zdr-verified', supportVerifier, intentPlanner = planQaIntent, intentCompiler = compileQaExecutionPlan, qaTimeZone = QA_TIME_ZONE, now = () => new Date() } = {}) {
   if (!chatRepository || typeof chatRepository.reserveAnswerAttempt !== 'function') throw new Error('Chat repository is required')
   if (!providerRouter || typeof providerRouter.execute !== 'function') throw new Error('Provider router is required')
   const articleRepo = articleRepository ?? { findQnaEvidence: async () => [] }
   const adapters = providerAdapters
   const verifySupport = supportVerifier ?? (async () => ({ verdict: 'uncertain' }))
 
-  async function prepareProviderInput({ question, admittedQuestion, scope, expectedFence }) {
+  async function prepareProviderInput({ question, admittedQuestion, scope, expectedFence, ordering = ['relevance'] }) {
     const admitted = admittedQuestion ?? admitQuestion(question, { capability: privacyCapability })
     let embedding
     if (typeof queryEmbedding === 'function') {
       try { embedding = await queryEmbedding(admitted.question) } catch { embedding = undefined }
       if (embedding && (typeof embedding.model !== 'string' || !embedding.model || !Number.isInteger(embedding.dimensions) || embedding.dimensions < 1 || !Number.isInteger(embedding.version) || embedding.version < 1 || typeof embedding.artifactCompatibilityId !== 'string' || !embedding.artifactCompatibilityId || !Array.isArray(embedding.embedding) || embedding.embedding.length !== embedding.dimensions || embedding.embedding.some((value) => typeof value !== 'number' || !Number.isFinite(value)))) embedding = undefined
     }
-    const records = await qaRepositoryCall('findQnaEvidence', () => articleRepo.findQnaEvidence({ question: admitted.question, queryEmbedding: embedding, scope, limit: 50, includeSource: true }))
+    const records = await qaRepositoryCall('findQnaEvidence', () => articleRepo.findQnaEvidence({ question: admitted.question, queryEmbedding: embedding, scope, ordering, limit: 50, includeSource: true }))
     let evidence
     try {
       evidence = filterQnaEvidence(records)
@@ -158,10 +173,12 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     })
   }
 
-  async function assertCurrentEvidenceFence({ providerInput, scope }) {
+  async function assertCurrentEvidenceFence({ providerInput, scope, ordering = ['relevance'] }) {
     const selectedArticleIds = providerInput.selectedArticleIds ?? providerInput.evidence.map(({ article }) => article?.id ?? (article?._id?.toHexString ? article._id.toHexString() : String(article?._id ?? ''))).filter(Boolean)
     const recheckScope = { ...scope, articleIds: [...selectedArticleIds] }
-    const records = await qaRepositoryCall('recheckEvidence', () => articleRepo.findQnaEvidence({ question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope: recheckScope, limit: 50, includeSource: true }))
+    const records = await qaRepositoryCall('recheckEvidence', () => typeof articleRepo.findQnaEvidenceByIds === 'function'
+      ? articleRepo.findQnaEvidenceByIds({ ids: selectedArticleIds, question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope, ordering, limit: 50, includeSource: true })
+      : articleRepo.findQnaEvidence({ question: providerInput.admitted.question, queryEmbedding: providerInput.embedding, scope: recheckScope, ordering, limit: 50, includeSource: true }))
     const selectedIdsSet = new Set(selectedArticleIds.map((id) => String(id)))
     const matchingRecords = (records ?? []).filter((record) => {
       const id = String(record?.article?.id ?? record?.article?._id ?? record?.id ?? record?._id ?? '')
@@ -223,7 +240,8 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     let actor
     try { actor = contentActorFence(auth) } catch { throw new ContentError(401, 'unauthorized', 'Authentication is required') }
     if (!KEY_PATTERN.test(String(idempotencyKey ?? ''))) throw new ContentError(400, 'bad_request', 'Idempotency-Key is invalid')
-    const safeScope = scopeValue(resolveQaTemporalScope({ question, scope, now: now() }))
+    const referenceInstant = new Date(now())
+    const safeScope = scopeValue(scope)
     if (typeof question !== 'string' || question.length < 3 || question.length > 1000) throw new ContentError(422, 'validation_error', 'Question is invalid')
     let privacyError
     let admittedQuestion
@@ -245,6 +263,8 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     let attempt = await qaRepositoryCall('reserveAnswerAttempt', () => answerAttemptRepository.reserveAnswerAttempt({ actor, idempotencyKeyHash, requestHash, chatSessionId, quotaReservationKey: `answer:${actor.userId}`, rateLimitAdmission, quotaScopes: ['answer-minute', 'answer-daily'], now: now() }))
     if (attempt?.status === 'mismatch') throw new ContentError(409, 'idempotency_mismatch', 'Answer request conflicts with current idempotency intent')
     if (['completed', 'refused', 'failed'].includes(attempt.status)) {
+      const persistedClarification = clarificationFromAttempt(attempt)
+      if (persistedClarification) throw clarificationError(persistedClarification)
       if (attempt.resultStatus && attempt.chatSessionId && typeof chatRepository.getAnswerResult === 'function') {
         const replay = await qaRepositoryCall('getAnswerResult', () => chatRepository.getAnswerResult({ actor, chatSessionId: attempt.chatSessionId, messageId: attempt.messageId, now: now() }))
         if (replay) return { answer: replay }
@@ -258,13 +278,42 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     }
     if (privacyError) return { answer: await privacyRefusal({ actor, attempt, scope: safeScope, chatSessionId }) }
     let providerInput
+    let executionScope = safeScope
+    let retrievalOrdering = ['relevance']
     let localControlFailure
     try {
       if (typeof chatRepository.assertActorFence === 'function' && !await qaRepositoryCall('assertActorFence', () => chatRepository.assertActorFence(actor))) {
         if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: 'actor_fence_lost', message: 'Authentication is no longer active', retryable: false, occurredAt: now() } }, { expectedStatus: 'provider-running' }))
         throw new ContentError(401, 'unauthorized', 'Authentication is required')
       }
-      providerInput = await prepareProviderInput({ question, admittedQuestion, scope: safeScope })
+      const plannerInput = {
+        version: 'qa-planner-input-v1',
+        question: admittedQuestion.question,
+        explicitScope: safeScope,
+        referenceInstant: referenceInstant.toISOString(),
+        timeZone: qaTimeZone,
+      }
+      let proposal
+      let executionPlan
+      try {
+        proposal = await intentPlanner(plannerInput, { attemptId: attempt._id?.toHexString?.() ?? String(attempt._id) })
+        assertQaIntentProposal(proposal)
+        executionPlan = await intentCompiler({ proposal, explicitScope: safeScope, question: admittedQuestion.question, referenceInstant: referenceInstant.toISOString(), timeZone: qaTimeZone })
+      } catch (error) {
+        if (error instanceof ContentError) throw error
+        const safeError = { code: 'provider_unavailable', message: 'Q&A intent planning is temporarily unavailable', retryable: true, occurredAt: referenceInstant }
+        if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: safeError }, { expectedStatuses: ['reserved', 'provider-running'] }))
+        throw new ContentError(503, 'service_unavailable', 'Q&A intent planning is temporarily unavailable')
+      }
+      if (!executionPlan || !['execute', 'clarify'].includes(executionPlan.decision)) throw new ContentError(503, 'service_unavailable', 'Q&A intent planning is temporarily unavailable')
+      if (executionPlan.decision === 'clarify') {
+        const detail = safeClarificationDetail(executionPlan.provenance?.clarification ?? executionPlan.clarification)
+        if (typeof answerAttemptRepository.updateAnswerAttempt === 'function') await qaRepositoryCall('updateAnswerAttempt', () => answerAttemptRepository.updateAnswerAttempt(attempt._id, { status: 'failed', error: { code: detail.code, message: detail.message, retryable: false, occurredAt: referenceInstant } }, { expectedStatuses: ['reserved', 'provider-running'] }))
+        throw clarificationError(detail)
+      }
+      retrievalOrdering = Array.isArray(executionPlan.ordering) && executionPlan.ordering.includes('freshness') ? ['relevance', 'freshness'] : ['relevance']
+      executionScope = scopeValue(executionPlan.effectiveScope)
+      providerInput = await prepareProviderInput({ question, admittedQuestion, scope: executionScope, ordering: retrievalOrdering })
       let primaryGenerationRoute
       function routeMetadata(route) {
         if (!route || typeof route !== 'object' || !route.routeId || !route.providerFailureDomainId) return {}
@@ -289,7 +338,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
         const admittedInput = inputFromInvocation(invocation, providerInput.routerInput)
         try {
           await renewProviderStage(route)
-          await assertCurrentEvidenceFence({ providerInput, scope: safeScope })
+          await assertCurrentEvidenceFence({ providerInput, scope: executionScope, ordering: retrievalOrdering })
         } catch (error) {
           if (isLocalControlFailure(error)) {
             localControlFailure = error
@@ -331,7 +380,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
           const admittedInput = inputFromInvocation(invocation, supportInput)
           try {
             await renewProviderStage(route, { recordRoute: false })
-            await assertCurrentEvidenceFence({ providerInput, scope: safeScope })
+            await assertCurrentEvidenceFence({ providerInput, scope: executionScope, ordering: retrievalOrdering })
           } catch (error) {
             if (isLocalControlFailure(error)) {
               localControlFailure = error

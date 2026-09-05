@@ -112,7 +112,7 @@ function createHookRunner(hookFn) {
 
 describe('useQa session lifecycle and race safety', () => {
 
-  it('persists the derived temporal scope and reuses it for a follow-up request', async () => {
+  it('persists canonical explicit scope and reuses it for a follow-up request', async () => {
     const createAnswerCalls = []
     const fixedNow = new Date('2026-09-04T15:30:00.000Z')
     const qaApi = {
@@ -139,8 +139,6 @@ describe('useQa session lifecycle and race safety', () => {
 
     const effectiveScope = {
       topics: ['AI'],
-      publishedAfter: '2026-09-01T00:00:00.000Z',
-      publishedBefore: '2026-09-30T23:59:59.999Z',
     }
     expect(createAnswerCalls[0].body.scope).toEqual(effectiveScope)
     expect(runner.current.scope).toMatchObject({ ...effectiveScope, sessionId: 'session-temporal-1' })

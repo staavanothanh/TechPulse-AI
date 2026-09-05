@@ -58,7 +58,7 @@ describe('Step 10 Q&A API adapter', () => {
     })
   })
 
-  it('derives the observed temporal scope before transport and matches the shared body normalizer', async () => {
+  it('preserves explicit scope before transport while leaving temporal interpretation to the server', async () => {
     const now = new Date('2026-09-04T15:30:00.000Z')
     const body = { question: 'tháng 9 này có tin tức gì về các model AI mới không', scope: { topics: ['AI'] } }
     const fetchImpl = vi.fn(async () => response({ data: { status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence' } }))
@@ -71,11 +71,7 @@ describe('Step 10 Q&A API adapter', () => {
 
     const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body)
     expect(requestBody).toEqual(normalizeAnswerBody(body, { now }))
-    expect(requestBody.scope).toEqual({
-      topics: ['AI'],
-      publishedAfter: '2026-09-01T00:00:00.000Z',
-      publishedBefore: '2026-09-30T23:59:59.999Z',
-    })
+    expect(requestBody.scope).toEqual({ topics: ['AI'] })
   })
 
   it('preserves bounded Retry-After and canonical API error metadata', async () => {
