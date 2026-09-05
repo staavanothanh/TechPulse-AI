@@ -4,9 +4,9 @@ import { assertCanonicalLeaseKey } from '../../domain/jobs/lease-keys.js'
 import { assessDedupe, mergeArticleRecords } from '../../domain/article/dedupe.js'
 import { ArticleError, articleConflict, leaseFenceStale, policyVersionMismatch, sourcePolicyBlocked } from '../../domain/article/errors.js'
 import { hideArticle as hideArticleRecord, removeArticle as removeArticleRecord, restoreArticle as restoreArticleRecord } from '../../domain/article/lifecycle.js'
-import { normalizeCandidateToArticle } from '../../domain/article/normalization.js'
-import { classifyTopics } from '../../domain/article/topic-classifier.js'
-import { expandTopicSelection } from '../../../shared/topic-catalog.js'
+import { normalizeCandidateToArticle, normalizeTopics, sanitizeText } from '../../domain/article/normalization.js'
+import { classifyTopicIds, classifyTopics } from '../../domain/article/topic-classifier.js'
+import { TOPIC_TAXONOMY_VERSION, expandTopicSelection } from '../../../shared/topic-catalog.js'
 import { evaluateMediaPolicy } from '../../domain/policy/media-policy.js'
 import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
 import { canUseQnaEvidence, currentArticleVisibilityFilter, isSourceProductionEligible, qnaEvidenceFilter } from '../../domain/article/visibility.js'
@@ -160,6 +160,12 @@ function safeCandidate(candidate) {
 function mediaBackfillLimit(value) {
   const limit = value === undefined ? 100 : Number(value)
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ArticleError('article_query_invalid', 'Media backfill limit is invalid', { status: 400 })
+  return limit
+}
+
+function topicBackfillLimit(value) {
+  const limit = value === undefined ? 100 : Number(value)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ArticleError('article_query_invalid', 'Topic backfill limit is invalid', { status: 400 })
   return limit
 }
 
@@ -698,6 +704,103 @@ export class MongoArticleRepository {
     })
   }
 
+  async backfillArticleTopicCandidates({ articles = [], dryRun = false, limit } = {}) {
+    const boundedLimit = topicBackfillLimit(limit)
+    if (!Array.isArray(articles)) throw new ArticleError('candidate_invalid', 'Topic backfill articles are invalid', { status: 422 })
+    if (typeof dryRun !== 'boolean') throw new ArticleError('candidate_invalid', 'Topic backfill dry-run flag is invalid', { status: 422 })
+    const input = articles.slice(0, boundedLimit)
+    const report = { scanned: 0, migrated: 0, wouldUpdate: 0, skipped: 0, conflict: 0, unclassified: 0, embeddingInvalidated: 0, nextCursor: null, skippedReasons: {}, failedReasons: {} }
+    if (input.length === 0) return Object.freeze(report)
+    for (const doc of input) {
+      report.scanned += 1
+      report.nextCursor = doc?._id ?? null
+      if (!doc || doc.status === 'removed' || doc._id === undefined) {
+        report.skipped += 1
+        report.skippedReasons.article_ineligible = (report.skippedReasons.article_ineligible ?? 0) + 1
+        continue
+      }
+      const currentTopics = Array.isArray(doc.topics) ? doc.topics : []
+      const currentTopicIds = Array.isArray(doc.topicIds) ? doc.topicIds : []
+      const currentVersion = doc.topicTaxonomyVersion
+      let topics
+      let topicIds
+      let normalizedSupplied = []
+      try {
+        normalizedSupplied = normalizeTopics(currentTopics)
+        const title = sanitizeText(doc.titleOriginal ?? '', 2000)
+        const excerpt = doc.contentScope === 'metadata' || doc.excerptOriginal === undefined || doc.excerptOriginal === null ? '' : sanitizeText(doc.excerptOriginal, 20_000)
+        topics = classifyTopics({ values: normalizedSupplied, titleOriginal: title, excerptOriginal: excerpt })
+        topicIds = classifyTopicIds({ values: normalizedSupplied, titleOriginal: title, excerptOriginal: excerpt })
+      } catch (error) {
+        report.conflict += 1
+        report.failedReasons.topic_classification = (report.failedReasons.topic_classification ?? 0) + 1
+        continue
+      }
+      if (topicIds.length === 0) {
+        const suppliedSet = new Set(normalizedSupplied)
+        const keywordDerived = topics.filter((topic) => !suppliedSet.has(topic))
+        if (keywordDerived.length === 0) {
+          report.skipped += 1
+          report.unclassified += 1
+          report.skippedReasons.no_classifier_signal = (report.skippedReasons.no_classifier_signal ?? 0) + 1
+          continue
+        }
+      }
+      const searchTextNormalized = normalizedSearchText([doc.titleOriginal, doc.author, ...topics, doc.excerptOriginal].filter(Boolean).join(' '))
+      if (currentTopics.length === 0 && topics.length === 0) {
+        report.skipped += 1
+        report.unclassified += 1
+        report.skippedReasons.no_classifier_signal = (report.skippedReasons.no_classifier_signal ?? 0) + 1
+        continue
+      }
+      if (topics.length === currentTopics.length && topicIds.length === currentTopicIds.length && currentVersion === TOPIC_TAXONOMY_VERSION && topics.every((value, index) => value === currentTopics[index]) && topicIds.every((value, index) => value === currentTopicIds[index])) {
+        report.skipped += 1
+        report.skippedReasons.already_enriched = (report.skippedReasons.already_enriched ?? 0) + 1
+        continue
+      }
+      if (dryRun) {
+        report.wouldUpdate += 1
+        continue
+      }
+      const now = nextDate(this.clock(), doc.updatedAt ?? this.clock(), 'Topic backfill clock')
+      const set = {
+        topics: [...topics],
+        topicIds: [...topicIds],
+        topicTaxonomyVersion: TOPIC_TAXONOMY_VERSION,
+        searchTextNormalized,
+        updatedAt: now,
+      }
+      const unset = {}
+      if (doc.embeddingStatus === 'ready') {
+        set.embeddingStatus = 'pending'
+        set.embedding = null
+        set.embeddingModel = null
+        set.embeddingDimensions = null
+        set.embeddingInputHash = null
+        set.embeddingVersion = null
+        set.embeddingSourcePolicyVersion = null
+        set.embeddedAt = null
+        set.embeddingError = null
+        unset.embeddingArtifactCompatibilityId = ''
+        report.embeddingInvalidated += 1
+      }
+      const filter = { _id: idValue(doc._id), updatedAt: dateValue(doc.updatedAt, 'Topic backfill article updatedAt'), status: { $ne: 'removed' } }
+      const update = { $set: set, ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}) }
+      try {
+        const result = await this.articles().updateOne(filter, update)
+        if (result.matchedCount === 1) report.migrated += 1
+        else {
+          report.conflict += 1
+          report.skippedReasons.article_changed = (report.skippedReasons.article_changed ?? 0) + 1
+        }
+      } catch (error) {
+        report.conflict += 1
+        report.failedReasons.article_update = (report.failedReasons.article_update ?? 0) + 1
+      }
+    }
+    return Object.freeze(report)
+  }
+
   async commitIngestionBatch({ job, fence, source, expectedSourcePolicyVersion, expectedConnectorConfig, candidates = [], articles, checkpoint, counters, retrievedAt, signal, deadline } = {}) {
     commitFence(fence, job)
     if (!jobIdentifier(job)) throw leaseFenceStale()
@@ -911,6 +1014,24 @@ export class MongoArticleRepository {
     const id = contentObjectId(articleId, { nullable: true })
     if (!id) return null
     return serializeArticle(await this.articles().findOne({ _id: id, status: { $ne: 'removed' } }, options))
+  }
+
+  async findArticleTopicCandidates({ cursor = null, limit } = {}) {
+    const boundedLimit = topicBackfillLimit(limit)
+    const filter = {
+      status: { $ne: 'removed' },
+      $or: [
+        { topics: { $exists: false } },
+        { topics: { $size: 0 } },
+        { topicIds: { $exists: false } },
+        { topicIds: { $size: 0 } },
+        { topicTaxonomyVersion: { $ne: TOPIC_TAXONOMY_VERSION } },
+      ],
+      ...(cursor ? { _id: { $gt: idValue(cursor) } } : {}),
+    }
+    const documents = await this.articles().find(filter).sort({ _id: 1 }).limit(boundedLimit).toArray()
+    const articles = documents.map((document) => ({ ...serializeArticle(document), _id: document._id }))
+    return { articles, nextCursor: documents.length === boundedLimit && documents.length > 0 ? documents.at(-1)._id : null }
   }
 
   async commitArtifact({ job, fence, expectedSourcePolicyVersion, purpose, inputHash, fields, unsetFields = [], onCommitted, cancellationRequested = false } = {}) {
