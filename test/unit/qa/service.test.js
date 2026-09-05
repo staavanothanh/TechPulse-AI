@@ -190,7 +190,7 @@ describe('Step 10 grounded answer service', () => {
     await expect(service.createAnswer({ ...base, scope: { publishedAfter: '2026-08-03T00:00:00.000Z', publishedBefore: '2026-08-04T00:00:00.000Z' } })).rejects.toMatchObject({ status: 409, code: 'idempotency_mismatch' })
   })
 
-  it('derives UTC temporal bounds before repository retrieval and persists the effective scope', async () => {
+  it('derives server-timezone bounds for retrieval and persists canonical session scope', async () => {
     const fixedNow = new Date('2026-09-04T15:30:00.000Z')
     const repo = repository({ records: evidence() })
     const findScopes = []
@@ -213,14 +213,12 @@ describe('Step 10 grounded answer service', () => {
     expect(result.answer.status).toBe('refused')
     expect(findScopes[0]).toEqual({
       topics: ['ai'],
-      publishedAfter: new Date('2026-09-01T00:00:00.000Z'),
-      publishedBefore: new Date('2026-09-30T23:59:59.999Z'),
+      publishedAfter: new Date('2026-08-31T17:00:00.000Z'),
+      publishedBefore: new Date('2026-09-30T16:59:59.999Z'),
     })
     expect(repo.appendAnswer).toHaveBeenCalledWith(expect.objectContaining({
       scope: {
         topics: ['ai'],
-        publishedAfter: new Date('2026-09-01T00:00:00.000Z'),
-        publishedBefore: new Date('2026-09-30T23:59:59.999Z'),
       },
     }))
   })

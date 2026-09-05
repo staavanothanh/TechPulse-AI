@@ -98,6 +98,7 @@ function assertPolicy(policy) {
   if (!policy || typeof policy.workloadId !== 'string' || !OPERATIONS.has(policy.operation) || !CAPABILITIES.has(policy.requiredCapability)
     || !Number.isInteger(policy.maxExternalAttempts) || policy.maxExternalAttempts < 1 || policy.maxExternalAttempts > 2
     || typeof policy.primaryRouteId !== 'string' || !Array.isArray(policy.modelFallbackRouteIds) || !Array.isArray(policy.providerFallbackRouteIds)) throw configError()
+  if (policy.workloadId === 'qa-intent' && (policy.operation !== 'summary' || policy.maxExternalAttempts !== 1 || policy.modelFallbackRouteIds.length !== 0 || policy.providerFallbackRouteIds.length !== 0)) throw configError()
 }
 
 function assertCandidate(route, { policy, primaryRoute, fallback, now }) {

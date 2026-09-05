@@ -725,7 +725,7 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
   return { state, article, error, onBack, onAskAboutArticle, onRetry: retry }
 }
 
-export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user, now = () => new Date() } = {}) {
+export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user } = {}) {
   const [state, setState] = useState('empty')
   const [sessions, setSessions] = useState([])
   const [messages, setMessages] = useState([])
@@ -849,8 +849,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
   }
 
   async function ask(payload) {
-    const clockValue = typeof now === 'function' ? now() : now
-    const validation = validateQuestionScope(payload.question, payload, { now: clockValue })
+    const validation = validateQuestionScope(payload.question, payload)
     if (!validation.valid) {
       const hasPriorConversation = messages.length > 0 || Boolean(sessionIdRef.current)
       setError(new Error(validation.message))

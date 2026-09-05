@@ -1,4 +1,6 @@
 import { createQaService } from '../application/qa/service.js'
+import { planQaIntent, QA_TIME_ZONE } from '../application/qa/intent-planner.js'
+import { assertQaIntentProposal } from '../domain/qa/intent.js'
 import { MongoArticleRepository } from '../repositories/mongo/article-repository.js'
 import { MongoChatRepository } from '../repositories/mongo/chat-repository.js'
 import { createProviderAdmission } from '../ai/provider-admission.js'
@@ -25,6 +27,24 @@ function capabilityAllows(actual, required) {
   return actual === required || actual === 'zdr-verified' && required === 'nonconfidential'
 }
 
+function optionalQaIntentPolicy(providerRegistry, generationPolicy) {
+  const policy = (providerRegistry?.workloadPolicies ?? []).find((item) => item?.workloadId === 'qa-intent')
+  if (!policy) return undefined
+  const route = Array.isArray(providerRegistry?.routes)
+    ? providerRegistry.routes.find((item) => item?.routeId === policy.primaryRouteId)
+    : undefined
+  const valid = policy.operation === 'summary'
+    && policy.requiredCapability === generationPolicy.requiredCapability
+    && QA_CAPABILITIES.has(policy.requiredCapability)
+    && policy.maxExternalAttempts === 1
+    && Array.isArray(policy.modelFallbackRouteIds) && policy.modelFallbackRouteIds.length === 0
+    && Array.isArray(policy.providerFallbackRouteIds) && policy.providerFallbackRouteIds.length === 0
+    && route && route.enabled === true && Array.isArray(route.operations) && route.operations.includes('summary')
+    && QA_CAPABILITIES.has(route.capability) && capabilityAllows(route.capability, policy.requiredCapability)
+  if (!valid) throw new Error('Q&A workload policies are not ready: qa-intent must use an exact summary route with one attempt and no fallbacks')
+  return policy
+}
+
 function requireQaWorkloadPolicies(providerRegistry) {
   const policies = providerRegistry?.workloadPolicies
   if (!Array.isArray(policies)) throw new Error('Q&A workload policies are not ready')
@@ -34,7 +54,8 @@ function requireQaWorkloadPolicies(providerRegistry) {
   const support = byId.get('qa-support')
   if (!generation || generation.operation !== 'answer' || !QA_CAPABILITIES.has(generation.requiredCapability) || generation.maxExternalAttempts !== 2
     || !support || support.operation !== 'support' || support.requiredCapability !== generation.requiredCapability || support.maxExternalAttempts !== 1) throw new Error('Q&A workload policies are not ready: qa-generation and qa-support are required')
-  return Object.freeze({ policies, generation, support })
+  const intent = optionalQaIntentPolicy(providerRegistry, generation)
+  return Object.freeze({ policies, generation, support, ...(intent ? { intent } : {}) })
 }
 
 export async function assertChatSessionsReady(context) {
@@ -83,12 +104,27 @@ export async function createConfiguredQaService({ context, providerRegistry = { 
   const chatRepository = new MongoChatRepository({ ...context, now })
   const admission = providerAdmission ?? (providerRegistry.domains?.length > 0 ? createProviderAdmission({ repository: new MongoProviderAdmissionRepository(context), failureDomainRepository: new MongoProviderFailureDomainRepository(context), registry: providerRegistry, now }) : null)
   if (typeof admission?.run !== 'function') throw new Error('Q&A provider admission is not ready')
-  const { policies: workloadPolicies, generation: generationPolicy } = requireQaWorkloadPolicies(providerRegistry)
+  const { policies: workloadPolicies, generation: generationPolicy, intent: intentPolicy } = requireQaWorkloadPolicies(providerRegistry)
   const configuredRouter = providerRouter ?? createProviderRouter({ workloadPolicies, admission, now })
   const safeQueryEmbedding = typeof queryEmbedding === 'function' && QA_CAPABILITIES.has(queryEmbedding.capability) && capabilityAllows(queryEmbedding.capability, generationPolicy.requiredCapability) ? queryEmbedding : undefined
   const supportVerifier = providerAdapters.llmProvider.verifySupport
     ? ({ route, question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }) => providerAdapters.llmProvider.verifySupport({ route, input: JSON.stringify({ question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }), locale: 'vi', tools: [] })
     : undefined
+  if (intentPolicy && typeof providerAdapters.llmProvider.planIntent !== 'function') throw new Error('Q&A intent provider adapter is not ready')
+  const intentPlanner = intentPolicy
+    ? async (input, { attemptId } = {}) => {
+      const deterministic = planQaIntent(input)
+      if (deterministic.temporal.kind !== 'none') return deterministic
+      const result = await configuredRouter.execute({
+        workloadId: 'qa-intent',
+        admittedInput: input,
+        attemptId: String(attemptId ?? 'qa-intent'),
+        invoke: ({ route, admittedInput }) => providerAdapters.llmProvider.planIntent({ route, input: `<qa-planner-input>${JSON.stringify(admittedInput)}</qa-planner-input>`, locale: 'vi', tools: [] }),
+        validateOutput: ({ output }) => assertQaIntentProposal(output),
+      })
+      return result.output
+    }
+    : undefined
   maintenanceRegistry.register('purge-answer-attempts', ({ cutoff, limit }) => chatRepository.purgeDueAnswerAttempts({ cutoff, limit }))
-  return createQaService({ articleRepository, chatRepository, providerRouter: configuredRouter, providerAdapters, queryEmbedding: safeQueryEmbedding, privacyCapability: generationPolicy.requiredCapability, rateLimitAdmission, supportVerifier, now })
+  return createQaService({ articleRepository, chatRepository, providerRouter: configuredRouter, providerAdapters, queryEmbedding: safeQueryEmbedding, privacyCapability: generationPolicy.requiredCapability, rateLimitAdmission, supportVerifier, intentPlanner, qaTimeZone: process.env.QA_TIME_ZONE ?? QA_TIME_ZONE, now })
 }

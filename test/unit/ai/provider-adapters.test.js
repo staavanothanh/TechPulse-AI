@@ -212,4 +212,31 @@ describe('Step 9 controlled provider adapters', () => {
     const ambiguous = createConfiguredProviderAdapters({ registry, fetchImpl: vi.fn(async () => { throw Object.assign(new Error('after dispatch'), { code: 'ECONNRESET' }) }), resolveCredential: () => 'secret-value' })
     await expect(ambiguous.llmProvider.summarize({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'ambiguous' })
   })
+  it('uses the bounded qa-intent transport with tools disabled and a closed proposal schema', async () => {
+    const proposal = {
+      proposalVersion: 'qa-intent-proposal-v1',
+      language: 'en',
+      normalizedQuery: 'any news?',
+      intent: 'qna',
+      entities: [],
+      temporal: { kind: 'none' },
+      scopeHints: {},
+      queryVariants: ['any news?'],
+      clarification: null,
+      confidence: 0.9,
+      provenance: { plannerVersion: 'qa-planner-v1' },
+    }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(proposal) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const adapters = createConfiguredProviderAdapters({ registry, fetchImpl, resolveCredential: () => 'secret-value' })
+
+    await expect(adapters.llmProvider.planIntent({ route: registry.routes[0], input: '<qa-planner-input>{"question":"Any news?"}</qa-planner-input>', locale: 'vi', tools: [] })).resolves.toEqual(proposal)
+    const request = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(request.tools).toEqual([])
+    expect(request.messages[0].content).toMatch(/qa-planner-input|untrusted|ignore/i)
+    expect(request.messages[0].content).not.toMatch(/chain.of.thought|private reasoning/i)
+
+    const invalidFetch = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...proposal, repositoryFilter: { author: 'attacker' } }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const invalidAdapters = createConfiguredProviderAdapters({ registry, fetchImpl: invalidFetch, resolveCredential: () => 'secret-value' })
+    await expect(invalidAdapters.llmProvider.planIntent({ route: registry.routes[0], input: 'safe', locale: 'vi', tools: [] })).rejects.toMatchObject({ failureClass: 'schema' })
+  })
 })

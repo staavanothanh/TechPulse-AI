@@ -157,4 +157,20 @@ describe('ADR-0013 provider configuration graph', () => {
     nonEmbedding.routes = replaceById(nonEmbedding.routes, 'routeId', 'summary-primary', (item) => ({ ...item, embeddingDimensions: 1024, embeddingVersion: 1 }))
     expect(() => validateProviderConfiguration(nonEmbedding, { now: NOW })).toThrow(/embedding|unsupported field/i)
   })
+  it('accepts only a single no-fallback qa-intent planner attempt', () => {
+    const value = graph()
+    value.workloadPolicies.push({ workloadId: 'qa-intent', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'summary-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] })
+    expect(validateProviderConfiguration(value, { now: NOW }).workloadPolicies).toEqual(expect.arrayContaining([expect.objectContaining({ workloadId: 'qa-intent', maxExternalAttempts: 1 })]))
+
+    for (const patch of [
+      { maxExternalAttempts: 2 },
+      { modelFallbackRouteIds: ['summary-model-fallback'] },
+      { providerFallbackRouteIds: ['summary-provider-fallback'] },
+      { operation: 'answer' },
+    ]) {
+      const invalid = graph()
+      invalid.workloadPolicies.push({ workloadId: 'qa-intent', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'summary-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [], ...patch })
+      expect(() => validateProviderConfiguration(invalid, { now: NOW })).toThrow(/qa-intent|attempt|fallback|operation/i)
+    }
+  })
 })

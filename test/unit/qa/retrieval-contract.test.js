@@ -323,7 +323,7 @@ describe('Step 10 admitted-question retrieval/support contract', () => {
       supportVerifier,
     })
 
-    const result = await service.createAnswer({ auth, question: 'Thoi tiet ngay mai the nao?', scope: { articleId: 'article-retrieval' }, idempotencyKey: 'retrieval-irrelevant-1' })
+    const result = await service.createAnswer({ auth, question: 'Thoi tiet hien tai the nao?', scope: { articleId: 'article-retrieval' }, idempotencyKey: 'retrieval-irrelevant-1' })
 
     expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence', paragraphs: [], citations: [] })
   })
