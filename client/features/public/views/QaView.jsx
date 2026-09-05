@@ -8,7 +8,7 @@ import {
 } from '../components/reader-primitives.jsx'
 import { formatDate, TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
-import { hasQaScope } from '../../qa/qa-validation.js'
+import { hasQaScope, validateQuestionScope } from '../../qa/qa-validation.js'
 import { handleQaQuestionKeyDown } from '../../qa/qa-keyboard.js'
 import { topicsMatch } from '../../../../shared/topic-catalog.js'
 import { useDialogFocus } from '../../qa/dialog-focus.js'
@@ -22,6 +22,7 @@ export default function QaView({
   error,
   onAsk,
   handlers = {},
+  now = () => new Date(),
 }) {
   const [question, setQuestion] = useState('')
   const [questionError, setQuestionError] = useState('')
@@ -38,18 +39,21 @@ export default function QaView({
   const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
   const isTopicSelected = (topic) => scopeTopics.some((selectedTopic) => topicsMatch(selectedTopic, topic))
-  const hasScope = hasQaScope(safeScope)
+  const clockValue = typeof now === 'function' ? now() : now
+  const hasScope = hasQaScope(safeScope, { question, now: clockValue })
   function submit(event) {
     if (!event.defaultPrevented) event.preventDefault()
     const value = question.trim()
-    if (!value || value.length > 1000 || !hasScope || state === 'loading') return
+    if (!value || value.length > 1000 || state === 'loading') return
     if (value.length < 3) {
       setQuestionError('Câu hỏi cần ít nhất 3 ký tự.')
       return
     }
+    const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, scopeValue]) => key !== 'topics' || scopeValue.length > 0))
+    const validation = validateQuestionScope(value, askScope, { now: clockValue })
+    if (!validation.valid) return
     setQuestionError('')
-    const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, value]) => key !== 'topics' || value.length > 0))
-    onAsk?.({ ...askScope, question: value })
+    onAsk?.({ ...validation.scope, question: value })
     setQuestion('')
   }
   return (

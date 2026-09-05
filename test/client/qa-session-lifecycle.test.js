@@ -111,6 +111,45 @@ function createHookRunner(hookFn) {
 }
 
 describe('useQa session lifecycle and race safety', () => {
+
+  it('persists the derived temporal scope and reuses it for a follow-up request', async () => {
+    const createAnswerCalls = []
+    const fixedNow = new Date('2026-09-04T15:30:00.000Z')
+    const qaApi = {
+      listSessions: vi.fn(async () => ({ data: [] })),
+      createAnswer: vi.fn(async (body, headers) => {
+        createAnswerCalls.push({ body, headers })
+        return {
+          data: {
+            id: `answer-${createAnswerCalls.length}`,
+            status: 'answered',
+            paragraphs: [{ text: 'Có căn cứ.', citationIds: ['C1'] }],
+            citations: [{ id: 'C1', articleId: '507f1f77bcf86cd799439011', sourceId: '507f1f77bcf86cd799439012' }],
+            refusalReason: null,
+            chatSessionId: 'session-temporal-1',
+            createdAt: '2026-09-04T15:31:00.000Z',
+          },
+        }
+      }),
+    }
+    const runner = createHookRunner(useQa)
+    runner.render({ csrfToken: 'csrf-1', enabled: true, expire: vi.fn(), qaApi, now: fixedNow, user: { topicPreferences: ['AI'] } })
+
+    await runner.current.onAsk({ question: 'tháng 9 này có tin tức gì mới không', topics: ['AI'] })
+
+    const effectiveScope = {
+      topics: ['AI'],
+      publishedAfter: '2026-09-01T00:00:00.000Z',
+      publishedBefore: '2026-09-30T23:59:59.999Z',
+    }
+    expect(createAnswerCalls[0].body.scope).toEqual(effectiveScope)
+    expect(runner.current.scope).toMatchObject({ ...effectiveScope, sessionId: 'session-temporal-1' })
+
+    await runner.current.onAsk({ ...runner.current.scope, question: 'Cập nhật thêm thông tin trong tháng này' })
+
+    expect(createAnswerCalls[1].body.scope).toEqual(effectiveScope)
+    expect(createAnswerCalls[1].headers.chatSessionId).toBe('session-temporal-1')
+  })
   it('serializes overlapping asks and passes the first canonical chatSessionId to the second ask', async () => {
     const ask1Deferred = deferred()
     const ask2Deferred = deferred()

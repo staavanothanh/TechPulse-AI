@@ -5,6 +5,7 @@ import {
   PrivacyAdmissionError,
 } from '../../../server/domain/qa/privacy.js'
 import {
+  admittedEvidenceText,
   buildGroundedPrompt,
   filterQnaEvidence,
   EvidenceSelectionError,
@@ -91,6 +92,23 @@ describe('Step 10 evidence and prompt boundary', () => {
     expect(prompt.prompt).not.toContain('https://example.com')
     expect(prompt.prompt).not.toContain('https://private.example')
     expect(prompt.prompt).toContain('Đoạn trích an toàn')
+  })
+
+  it('includes only canonical publication dates as safe evidence metadata', () => {
+    const prompt = buildGroundedPrompt({
+      question: 'Bài viết kết luận gì?',
+      evidence: [{ article: article({ publishedAt: new Date('2026-08-10T08:30:00+07:00') }), source: source() }],
+    })
+    expect(prompt.prompt).toContain('[published-at=2026-08-10T01:30:00.000Z]')
+    expect(prompt.prompt).not.toContain('originalUrl')
+    expect(prompt.prompt).not.toContain('example.com')
+
+    const missingDate = buildGroundedPrompt({
+      question: 'Bài viết kết luận gì?',
+      evidence: [{ article: article({ publishedAt: 'not-a-date' }), source: source() }],
+    })
+    expect(missingDate.prompt).not.toContain('[published-at=')
+    expect(missingDate.prompt).not.toContain('Invalid Date')
   })
 
   it('does not send an excerpt when the current source permits metadata only', () => {

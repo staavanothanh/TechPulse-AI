@@ -190,6 +190,41 @@ describe('Step 10 grounded answer service', () => {
     await expect(service.createAnswer({ ...base, scope: { publishedAfter: '2026-08-03T00:00:00.000Z', publishedBefore: '2026-08-04T00:00:00.000Z' } })).rejects.toMatchObject({ status: 409, code: 'idempotency_mismatch' })
   })
 
+  it('derives UTC temporal bounds before repository retrieval and persists the effective scope', async () => {
+    const fixedNow = new Date('2026-09-04T15:30:00.000Z')
+    const repo = repository({ records: evidence() })
+    const findScopes = []
+    const originalFind = repo.findQnaEvidence
+    repo.findQnaEvidence = vi.fn(async (input) => {
+      findScopes.push(input.scope)
+      return originalFind()
+    })
+    const originalAppend = repo.appendAnswer
+    repo.appendAnswer = vi.fn(async (input) => originalAppend(input))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, now: () => fixedNow })
+
+    const result = await service.createAnswer({
+      auth,
+      question: 'tháng 9 này có tin tức gì về các model AI mới không',
+      scope: { topics: ['AI'] },
+      idempotencyKey: 'temporal-service-key',
+    })
+
+    expect(result.answer.status).toBe('refused')
+    expect(findScopes[0]).toEqual({
+      topics: ['ai'],
+      publishedAfter: new Date('2026-09-01T00:00:00.000Z'),
+      publishedBefore: new Date('2026-09-30T23:59:59.999Z'),
+    })
+    expect(repo.appendAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      scope: {
+        topics: ['ai'],
+        publishedAfter: new Date('2026-09-01T00:00:00.000Z'),
+        publishedBefore: new Date('2026-09-30T23:59:59.999Z'),
+      },
+    }))
+  })
+
   it('does not reserve quota or call a provider for a missing or foreign continuation session', async () => {
     const repo = repository({ records: evidence() })
     repo.getChatSession = vi.fn(async () => null)

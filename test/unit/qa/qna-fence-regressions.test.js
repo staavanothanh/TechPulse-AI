@@ -120,7 +120,7 @@ describe('Q&A evidence fence regressions', () => {
     const source = sourceDocument(firstSourceId)
     const prompt = buildGroundedPrompt({ question: 'Noi dung la gi?', evidence: qnaEvidence(article, source) })
     const fence = evidenceAdmissionFence(prompt.evidence)
-    const body = prompt.blocks[0].text.match(/\n\[source=[^\n]*\]\n([\s\S]*)\n<\/evidence-block>$/)?.[1]
+    const body = prompt.blocks[0].text.match(/\n\[source=[^\n]*\]\n(?:\[published-at=[^\n]*\]\n)?([\s\S]*)\n<\/evidence-block>$/)?.[1]
 
     expect(body).toBeTruthy()
     expect(fence.articles[0].evidenceTextHash).toBe(sha256(body))
