@@ -18,6 +18,38 @@ function fixture() {
   }
   return { ...value, fixtureDigest: retrievalFixtureDigest(value) }
 }
+function rankingMetricsFixture() {
+  const queries = [
+    { id: 'q-rank-one', inputHash: '21'.padStart(64, '0'), embedding: vector(0) },
+    { id: 'q-rank-two', inputHash: '22'.padStart(64, '0'), embedding: vector(1) },
+  ]
+  const documents = [
+    { id: 'doc-rank-one', inputHash: '31'.padStart(64, '0'), embedding: vector(0) },
+    { id: 'doc-rank-two', inputHash: '32'.padStart(64, '0'), embedding: vector(1).map((value, index) => index === 2 ? 1 : value) },
+    { id: 'doc-rank-two-distractor', inputHash: '33'.padStart(64, '0'), embedding: vector(1) },
+  ]
+  const value = {
+    fixtureVersion: 'bge-m3-ranking-metrics-v1',
+    provenance: {
+      providerId: 'openrouter',
+      endpointId: 'openrouter-embeddings',
+      model: 'baai/bge-m3',
+      dimensions: 1024,
+      embeddingVersion: 1,
+      artifactCompatibilityId: 'bge-m3-v1-1024',
+      generatedAt: '2026-08-11T00:00:00.000Z',
+      inputIds: [...queries, ...documents].map(({ id, inputHash: hash }) => ({ id, hash })),
+    },
+    queries,
+    documents,
+    cases: [
+      { queryId: 'q-rank-one', targetId: 'doc-rank-one' },
+      { queryId: 'q-rank-two', targetId: 'doc-rank-two' },
+    ],
+  }
+  return { ...value, fixtureDigest: retrievalFixtureDigest(value) }
+}
+
 
 describe('Step 9 retrieval top-five eval harness', () => {
   it('requires each versioned BGE-M3 fixture target in top five', () => {
@@ -25,6 +57,14 @@ describe('Step 9 retrieval top-five eval harness', () => {
     expect(report).toEqual(expect.objectContaining({ model: 'baai/bge-m3', dimensions: 1024, version: 1, datasetVersion: 'bge-m3-vi-real-v1', queries: expect.any(Number), top5Rate: 1, passed: true }))
     expect(report.queries).toBeGreaterThanOrEqual(5)
     expect(report.details.every(({ queryId, targetId }) => typeof queryId === 'string' && typeof targetId === 'string')).toBe(true)
+  })
+  it('reports top-one and reciprocal-rank metrics', () => {
+    const report = runRetrievalEvaluation({ fixture: rankingMetricsFixture() })
+    expect(report).toEqual(expect.objectContaining({ top1Rate: 0.5, mrr: 0.75, top5Rate: 1 }))
+    expect(report.details).toEqual([
+      expect.objectContaining({ queryId: 'q-rank-one', targetId: 'doc-rank-one', rank: 1, hit: true }),
+      expect.objectContaining({ queryId: 'q-rank-two', targetId: 'doc-rank-two', rank: 2, hit: true }),
+    ])
   })
 
   it('fails closed for a fixture whose provenance digest does not match', () => {

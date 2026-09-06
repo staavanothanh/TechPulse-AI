@@ -234,6 +234,131 @@ describe('article repository fence contract', () => {
     expect(result[0].source).toEqual(expect.objectContaining({ sourceKey: source.sourceKey }))
     expect(result[0].article.titleOriginal).toBe('Kubernetes autoscaling')
   })
+  it('generates a freshness lane even when the relevance lane fills the candidate cap', async () => {
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    const source = { ...makeSource(), _id: new ObjectId(SOURCE_ID) }
+    const toDocument = (article, id, currentSource = source) => ({
+      ...article,
+      _id: new ObjectId(id),
+      sourceId: currentSource._id,
+      provenance: article.provenance.map((entry) => ({ ...entry, sourceId: currentSource._id })),
+      _currentSource: currentSource,
+    })
+    const relevanceArticles = Array.from({ length: 100 }, (_, index) => normalizeCandidateToArticle(makeCandidate({
+      externalId: `relevance-${index}`,
+      originalUrl: `https://example.com/articles/relevance-${index}`,
+      titleOriginal: `Kubernetes autoscaling relevance ${index}`,
+      excerptOriginal: 'Kubernetes autoscaling guidance.',
+      publishedAt: '2026-08-01T00:00:00.000Z',
+    }), { source, now: RETRIEVED_AT }))
+    const latestArticle = normalizeCandidateToArticle(makeCandidate({
+      externalId: 'latest',
+      originalUrl: 'https://example.com/articles/latest',
+      titleOriginal: 'Kubernetes autoscaling latest',
+      excerptOriginal: 'Kubernetes autoscaling guidance.',
+      publishedAt: '2026-09-05T00:00:00.000Z',
+    }), { source, now: RETRIEVED_AT })
+    const communitySource = { ...makeSource({ id: '507f1f77bcf86cd799439012', sourceKey: 'hn:topstories', connectorType: 'hacker-news', accessMethod: 'api', authorityTier: 'community-signal', connectorConfig: { kind: 'hacker-news', hackerNewsStream: 'topstories', batchSize: 20 } }), _id: new ObjectId('507f1f77bcf86cd799439012') }
+    const communityArticle = normalizeCandidateToArticle(makeCandidate({
+      sourceId: communitySource.id,
+      connectorType: communitySource.connectorType,
+      authorityTier: communitySource.authorityTier,
+      externalId: 'community',
+      originalUrl: 'https://news.ycombinator.com/item?id=7',
+      titleOriginal: 'Kubernetes autoscaling community',
+      excerptOriginal: 'Kubernetes autoscaling guidance.',
+      publishedAt: '2026-09-06T00:00:00.000Z',
+    }), { source: communitySource, now: RETRIEVED_AT })
+    const relevanceDocuments = relevanceArticles.map((article, index) => toDocument(article, `507f1f77bcf86cd79943${index.toString(16).padStart(4, '0')}`))
+    const freshnessDocuments = [
+      toDocument(latestArticle, '507f1f77bcf86cd79943ff00'),
+      toDocument(communityArticle, '507f1f77bcf86cd79943ff01', communitySource),
+    ]
+    const aggregate = vi.fn((pipeline) => ({
+      toArray: vi.fn(async () => pipeline.some((stage) => stage.$match?.$text) ? relevanceDocuments : freshnessDocuments),
+    }))
+    repository.articles = () => ({ aggregate })
+
+    const result = await repository.findQnaEvidence({ question: 'Kubernetes autoscaling', limit: 2, includeSource: true, ordering: ['relevance', 'freshness'] })
+
+    expect(result).toHaveLength(2)
+    expect(result.map(({ article }) => article.titleOriginal)).toEqual(['Kubernetes autoscaling latest', 'Kubernetes autoscaling relevance 0'])
+    expect(result.map(({ source: resultSource }) => resultSource.sourceKey)).toEqual([source.sourceKey, source.sourceKey])
+    expect(result.map(({ article }) => article.titleOriginal)).not.toContain('Kubernetes autoscaling community')
+  })
+
+
+  it('retrieves an alias-lane article while excluding community decoys and preserving source metadata', async () => {
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    const source = { ...makeSource(), _id: new ObjectId(SOURCE_ID) }
+    const communitySource = {
+      ...makeSource({
+        id: '507f1f77bcf86cd799439012',
+        sourceKey: 'hn:topstories',
+        connectorType: 'hacker-news',
+        accessMethod: 'api',
+        authorityTier: 'community-signal',
+        connectorConfig: { kind: 'hacker-news', hackerNewsStream: 'topstories', batchSize: 20 },
+      }),
+      _id: new ObjectId('507f1f77bcf86cd799439012'),
+    }
+    const toDocument = (article, id, currentSource) => ({
+      ...article,
+      _id: new ObjectId(id),
+      sourceId: currentSource._id,
+      provenance: article.provenance.map((entry) => ({ ...entry, sourceId: currentSource._id })),
+      _currentSource: currentSource,
+    })
+    const editorialArticle = normalizeCandidateToArticle(makeCandidate({
+      externalId: 'alias-editorial',
+      originalUrl: 'https://example.com/articles/tensor-accelerator',
+      titleOriginal: 'Tensor accelerator',
+      excerptOriginal: 'Dedicated hardware for inference workloads.',
+      topics: ['hardware'],
+    }), { source, now: RETRIEVED_AT })
+    const communityArticle = normalizeCandidateToArticle(makeCandidate({
+      sourceId: communitySource.id,
+      connectorType: communitySource.connectorType,
+      authorityTier: communitySource.authorityTier,
+      externalId: 'alias-community',
+      originalUrl: 'https://news.ycombinator.com/item?id=77',
+      titleOriginal: 'Tensor accelerator community',
+      excerptOriginal: 'Community discussion of inference hardware.',
+      topics: ['hardware'],
+    }), { source: communitySource, now: RETRIEVED_AT })
+    const editorialDocument = toDocument(editorialArticle, '507f1f77bcf86cd7994390a1', source)
+    const communityDocument = toDocument(communityArticle, '507f1f77bcf86cd7994390a2', communitySource)
+    const aggregate = vi.fn((pipeline) => {
+      const lexicalQuery = pipeline.find((stage) => stage.$match?.$text?.$search)?.$match?.$text?.$search
+      const documents = typeof lexicalQuery === 'string' && lexicalQuery.toLocaleLowerCase('vi').includes('tensor accelerator')
+        ? [editorialDocument, communityDocument]
+        : []
+      return { toArray: vi.fn(async () => documents) }
+    })
+    repository.articles = () => ({ aggregate })
+
+    const result = await repository.findQnaEvidence({
+      question: 'What does ORBIT accomplish?',
+      queryVariants: ['Tensor accelerator'],
+      limit: 1,
+      includeSource: true,
+      relevanceThreshold: 0.5,
+    })
+
+    const lexicalQueries = aggregate.mock.calls.flatMap(([pipeline]) => pipeline
+      .map((stage) => stage.$match?.$text?.$search)
+      .filter((query) => typeof query === 'string'))
+    expect(lexicalQueries).toContain('what does orbit accomplish?')
+    expect(lexicalQueries.some((query) => query.toLocaleLowerCase('vi') === 'tensor accelerator')).toBe(true)
+    expect(result).toHaveLength(1)
+    expect(result[0].article.titleOriginal).toBe('Tensor accelerator')
+    expect(result.map(({ article }) => article.titleOriginal)).not.toContain('Tensor accelerator community')
+    expect(result[0].source).toEqual(expect.objectContaining({
+      sourceKey: source.sourceKey,
+      authorityTier: source.authorityTier,
+      policyVersion: source.policyVersion,
+    }))
+  })
 
   it('does not retain candidate body/media binary in the commit input contract', () => {
     const repository = new MongoArticleRepository({ db: {}, client: {} })
@@ -247,5 +372,79 @@ describe('article repository fence contract', () => {
   it('rejects an article whose rights snapshot no longer matches the current source', () => {
     const article = normalizeCandidateToArticle(makeCandidate(), { source: makeSource(), now: RETRIEVED_AT })
     expect(() => assertArticleMatchesCurrent(article, { ...makeSource(), policyVersion: 4 })).toThrowError(expect.objectContaining({ code: 'policy_version_mismatch' }))
+  })
+  it('keeps a newer eligible article discoverable when bounded semantic and lexical lanes saturate', async () => {
+    const source = { ...makeSource(), _id: new ObjectId(SOURCE_ID) }
+    const communitySource = {
+      ...makeSource({
+        id: '507f1f77bcf86cd799439012',
+        sourceKey: 'hn:topstories',
+        connectorType: 'hacker-news',
+        accessMethod: 'api',
+        authorityTier: 'community-signal',
+        connectorConfig: { kind: 'hacker-news', hackerNewsStream: 'topstories', batchSize: 20 },
+      }),
+      _id: new ObjectId('507f1f77bcf86cd799439012'),
+    }
+    const repository = new MongoArticleRepository({ db: {}, client: {} }, {
+      embeddingTarget: { model: 'test-embedding-v1', dimensions: 3, version: 1, artifactCompatibilityId: 'test-embedding-compat' },
+    })
+    const question = 'freshness saturated retrieval'
+    const queryVariants = [question, 'freshness bounded original', 'freshness bounded variant two', 'freshness bounded variant three']
+    const queryEmbedding = { model: 'test-embedding-v1', dimensions: 3, version: 1, artifactCompatibilityId: 'test-embedding-compat', embedding: [1, 0, 0] }
+    const laneId = (prefix, index) => `${prefix}${index.toString(16).padStart(4, '0')}`
+    const toDocument = ({ article, articleSource, id, embedding = false }) => ({
+      ...article,
+      ...(embedding ? { embeddingStatus: 'ready', embeddingModel: queryEmbedding.model, embeddingDimensions: queryEmbedding.dimensions, embeddingVersion: queryEmbedding.version, embeddingArtifactCompatibilityId: queryEmbedding.artifactCompatibilityId, embedding: [...queryEmbedding.embedding] } : {}),
+      _id: new ObjectId(id),
+      sourceId: articleSource._id,
+      provenance: article.provenance.map((entry) => ({ ...entry, sourceId: articleSource._id })),
+      _currentSource: articleSource,
+    })
+    const makeLaneDocument = ({ articleSource, lane, index, idPrefix, publishedAt, embedding = false }) => {
+      const originalUrl = `https://example.com/articles/${lane}-${index}`
+      const article = normalizeCandidateToArticle(makeCandidate({
+        sourceId: articleSource.id,
+        connectorType: articleSource.connectorType,
+        authorityTier: articleSource.authorityTier,
+        externalId: `${lane}-${index}`,
+        originalUrl,
+        titleOriginal: `${question} ${lane} ${index}`,
+        excerptOriginal: `${question} bounded ${lane} lane candidate ${index}`,
+        publishedAt,
+        provenance: { sourceId: articleSource.id, originalUrl, externalId: `${lane}-${index}`, observedAt: RETRIEVED_AT },
+      }), { source: articleSource, now: RETRIEVED_AT })
+      return toDocument({ article, articleSource, id: laneId(idPrefix, index), embedding })
+    }
+
+    // Every lane is deliberately capped at 100: one semantic lane plus the original and three lexical variants.
+    const semanticDocuments = Array.from({ length: 100 }, (_, index) => makeLaneDocument({ articleSource: source, lane: 'semantic', index, idPrefix: '507f1f77bcf86cd79943', publishedAt: new Date(RETRIEVED_AT.getTime() - (100 - index) * 60_000), embedding: true }))
+    const lexicalDocuments = queryVariants.map((variant, laneIndex) => Array.from({ length: 100 }, (_, index) => makeLaneDocument({ articleSource: source, lane: `lexical-${laneIndex}-${variant}`, index, idPrefix: `507f1f77bcf86cd7994${(4 + laneIndex).toString(16)}`, publishedAt: new Date(RETRIEVED_AT.getTime() - (200 + laneIndex * 100 + index) * 60_000) })))
+    const newestTitle = `${question} newest eligible article`
+    const newest = makeLaneDocument({ articleSource: source, lane: 'recency', index: 0, idPrefix: '507f1f77bcf86cd79948', publishedAt: new Date(RETRIEVED_AT.getTime() + 24 * 60 * 60_000), embedding: true })
+    const newestDocument = { ...newest, titleOriginal: newestTitle, searchTextNormalized: newestTitle.toLowerCase() }
+    const communityDecoy = makeLaneDocument({ articleSource: communitySource, lane: 'community-decoy', index: 0, idPrefix: '507f1f77bcf86cd79949', publishedAt: new Date(RETRIEVED_AT.getTime() + 2 * 24 * 60 * 60_000), embedding: true })
+    const aggregate = vi.fn((pipeline) => {
+      const hasEmbeddingStage = pipeline.some((stage) => stage.$match?.embeddingStatus === 'ready')
+      const textSearch = pipeline.map((stage) => stage.$match?.$text?.$search).find((value) => typeof value === 'string')
+      const lexicalLane = queryVariants.findIndex((variant) => variant === textSearch)
+      const hasPublishedAtSort = pipeline.some((stage) => stage.$sort?.publishedAt === -1)
+      const documents = hasEmbeddingStage
+        ? semanticDocuments
+        : lexicalLane >= 0
+          ? lexicalDocuments[lexicalLane]
+          : hasPublishedAtSort
+            ? [newestDocument, communityDecoy]
+            : []
+      return { toArray: vi.fn(async () => documents) }
+    })
+    repository.articles = () => ({ aggregate })
+
+    const result = await repository.findQnaEvidence({ limit: 1, question, queryVariants, queryEmbedding, ordering: ['relevance', 'freshness'], includeSource: true })
+
+    expect(result).toHaveLength(1)
+    expect(result[0].article.titleOriginal).toBe(newestTitle)
+    expect(result[0].source).toEqual(expect.objectContaining({ sourceKey: source.sourceKey, authorityTier: 'editorial', operationalStatus: 'active', licenseStatus: 'permitted', policyVersion: source.policyVersion }))
+    expect(result.some(({ source: resultSource }) => resultSource?.sourceKey === communitySource.sourceKey)).toBe(false)
   })
 })

@@ -65,15 +65,41 @@ function evidenceText(record) {
   const article = record?.article ?? record
   return [article?.titleOriginal, article?.titleVi, article?.summaryVi, article?.excerptOriginal, ...(article?.topics ?? [])].filter(Boolean).join(' ')
 }
+const MAX_QNA_QUERY_VARIANTS = 3
+
+function boundedQueryTermSets(question, queryVariants) {
+  const termSets = []
+  const seen = new Set()
+  const add = (value) => {
+    if (typeof value !== 'string' || value.trim().length === 0) return false
+    const terms = queryTerms(value)
+    const key = terms.join('\u0000')
+    if (seen.has(key)) return false
+    seen.add(key)
+    termSets.push(terms)
+    return true
+  }
+
+  add(question)
+  if (Array.isArray(queryVariants)) {
+    let accepted = 0
+    for (const variant of queryVariants) {
+      if (accepted >= MAX_QNA_QUERY_VARIANTS) break
+      if (add(variant)) accepted += 1
+    }
+  }
+  return termSets
+}
 
 /**
  * Rerank a bounded visible evidence set against the admitted question.
  * The score is an internal admission value and is never part of a public DTO.
  */
-export function rankQnaEvidence({ question, records = [], queryEmbedding, relevanceThreshold = 0.25, maxCandidates = 50, ordering = ['relevance'] } = {}) {
+export function rankQnaEvidence({ question, queryVariants, records = [], queryEmbedding, relevanceThreshold = 0.25, maxCandidates = 50, ordering = ['relevance'] } = {}) {
   if (typeof question !== 'string' || question.trim().length === 0 || !Array.isArray(records)) return []
   if (!Number.isFinite(relevanceThreshold) || relevanceThreshold < 0 || relevanceThreshold > 1) throw new Error('Q&A relevance threshold is invalid')
-  const terms = queryTerms(question)
+  const queryTermSets = boundedQueryTermSets(question, queryVariants)
+  const hasLexicalTerms = queryTermSets.some((terms) => terms.length > 0)
   const semanticReady = typeof queryEmbedding?.model === 'string'
     && queryEmbedding.model.length > 0
     && Number.isInteger(queryEmbedding?.dimensions)
@@ -85,7 +111,7 @@ export function rankQnaEvidence({ question, records = [], queryEmbedding, releva
     && Array.isArray(queryEmbedding.embedding)
     && queryEmbedding.embedding.length === queryEmbedding.dimensions
     && queryEmbedding.embedding.every((item) => typeof item === 'number' && Number.isFinite(item))
-  if (terms.length === 0 && !semanticReady) return []
+  if (!hasLexicalTerms && !semanticReady) return []
   const freshnessOrder = Array.isArray(ordering) && ordering.includes('freshness')
   const publicationTime = (record) => {
     const value = new Date((record?.article ?? record)?.publishedAt).getTime()
@@ -93,14 +119,18 @@ export function rankQnaEvidence({ question, records = [], queryEmbedding, releva
   }
   const ranked = records.flatMap((record, index) => {
     const textTerms = new Set(queryTerms(evidenceText(record)))
-    const lexicalScore = terms.length > 0 ? terms.filter((term) => textTerms.has(term)).length / terms.length : 0
+    const lexicalScore = queryTermSets.reduce((best, terms) => {
+      if (terms.length === 0) return best
+      const score = terms.filter((term) => textTerms.has(term)).length / terms.length
+      return Math.max(best, score)
+    }, 0)
     const article = record?.article ?? record
     const candidate = { ...article, embeddingStatus: article?.embeddingStatus, embeddingModel: article?.embeddingModel, embeddingDimensions: article?.embeddingDimensions, embeddingArtifactCompatibilityId: article?.embeddingArtifactCompatibilityId, embeddingVersion: article?.embeddingVersion, embedding: article?.embedding, textScore: lexicalScore }
     const hybrid = semanticReady ? rankHybridCandidates({ queryVector: queryEmbedding.embedding, queryModel: queryEmbedding.model, queryDimensions: queryEmbedding.dimensions, queryVersion: queryEmbedding.version, queryArtifactCompatibilityId: queryEmbedding.artifactCompatibilityId, candidates: [candidate], textWeight: 0.45, semanticWeight: 0.55 })[0] : null
     let score = lexicalScore
     if (hybrid) {
       const combined = 0.45 * lexicalScore + 0.55 * hybrid.semanticScore
-      score = terms.length === 0 ? hybrid.semanticScore : (hybrid.semanticScore >= relevanceThreshold ? Math.max(combined, hybrid.semanticScore) : combined)
+      score = hasLexicalTerms ? (hybrid.semanticScore >= relevanceThreshold ? Math.max(combined, hybrid.semanticScore) : combined) : hybrid.semanticScore
     }
     return score >= relevanceThreshold ? [{ record, relevanceScore: Number(score.toFixed(6)), index }] : []
   }).sort((left, right) => right.relevanceScore - left.relevanceScore || (freshnessOrder ? publicationTime(right.record) - publicationTime(left.record) : 0) || left.index - right.index)

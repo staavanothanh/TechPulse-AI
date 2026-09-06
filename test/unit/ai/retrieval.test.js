@@ -117,4 +117,26 @@ describe('Step 10 bounded Q&A relevance admission', () => {
     expect(rankQnaEvidence({ question: 'AI', records, ordering: ['relevance', 'freshness'] }).map(({ article }) => article.id)).toEqual(['new', 'old'])
     expect(rankQnaEvidence({ question: 'AI', records }).map(({ article }) => article.id)).toEqual(['old', 'new'])
   })
+  it('admits an alias-only evidence record through a bounded query variant without exposing internal scores', () => {
+    const records = [{
+      article: {
+        id: 'alias-only',
+        titleOriginal: 'Tensor accelerator',
+        excerptOriginal: 'Dedicated hardware for inference workloads.',
+        topics: ['hardware'],
+      },
+    }]
+
+    const result = rankQnaEvidence({
+      question: 'What does ORBIT accomplish?',
+      queryVariants: ['Tensor accelerator'],
+      records,
+      relevanceThreshold: 0.5,
+      maxCandidates: 1,
+    })
+
+    expect(result.map(({ article }) => article.id)).toEqual(['alias-only'])
+    expect(result[0]).not.toHaveProperty('relevanceScore')
+  })
+
 })
