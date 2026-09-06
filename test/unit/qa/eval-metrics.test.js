@@ -38,6 +38,19 @@ describe('Step 10 controlled createAnswer evaluation metrics', () => {
     expect(report).toEqual(expect.objectContaining({ total: 1, passed: false, citationPrecision: 0, claimCoverage: 0 }))
     expect(report.details[0]).toEqual(expect.objectContaining({ citationPrecision: 0, claimCoverage: 0, passed: false }))
   })
+  it('rejects answered citations without publication metadata', async () => {
+    const createAnswer = async () => ({
+      answer: {
+        status: 'answered',
+        paragraphs: [{ text: `Chip AI ${cases[0].expectedClaims[0]}.`, citationIds: ['C1'] }],
+        citations: [{ id: 'C1', articleId: 'article-eval', sourceId: 'source-eval', publishedAt: 'not-a-date' }],
+      },
+    })
+    const report = await runCitationEvaluation({ cases: [cases[0]], createAnswer })
+
+    expect(report).toEqual(expect.objectContaining({ citationMetadataCoverage: 0, citationPrecision: 1, passed: false }))
+    expect(report.details[0]).toEqual(expect.objectContaining({ citationMetadataCoverage: 0, citationPrecision: 1, passed: false }))
+  })
 
   it('fails an insufficient-evidence slice when provider reports unavailable', async () => {
     const report = await runGroundednessEvaluation({ cases: [cases[1]], createAnswer: async () => ({ answer: { status: 'refused', refusalReason: 'provider-unavailable', paragraphs: [], citations: [] } }) })

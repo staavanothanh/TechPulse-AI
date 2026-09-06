@@ -101,7 +101,7 @@ try {
     } catch { console.warn('Indexing service is unavailable until the Step 9 migration/provider configuration is ready') }
     try {
       adapters ??= createConfiguredProviderAdapters({ registry: runtime.providerRegistry, summaryTimeoutMs: DEFAULT_CHAT_TIMEOUT_MS })
-      qaService = await createConfiguredQaService({ context: configured.context, providerRegistry: runtime.providerRegistry, providerAdapters: adapters, providerAdmission: indexing.providerAdmission, queryEmbedding: indexing.queryEmbedding, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry })
+      qaService = await createConfiguredQaService({ context: configured.context, providerRegistry: runtime.providerRegistry, providerAdapters: adapters, providerAdmission: indexing.providerAdmission, queryEmbedding: indexing.queryEmbedding, rateLimitAdmission, maintenanceRegistry: jobs.maintenanceRegistry, scopeConfirmationSecret: process.env[configured.runtime.internalMachineSecretEnv] })
     } catch { console.warn('Grounded Q&A service is unavailable until the Step 10 migration/provider configuration is ready') }
   } catch { console.warn('Durable job service is unavailable until its migration is applied') }
   try {

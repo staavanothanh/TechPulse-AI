@@ -305,6 +305,35 @@ function contentObjectId(value, { nullable = false } = {}) {
 function normalizedSearchText(value) {
   return String(value ?? '').normalize('NFD').replaceAll(/[\u0300-\u036f]/g, '').replaceAll(/đ/gi, (letter) => letter === 'Đ' ? 'D' : 'd').toLocaleLowerCase('vi').trim().replaceAll(/\s+/g, ' ')
 }
+const MAX_QNA_QUERY_VARIANTS = 3
+
+function qnaLexicalSearchQuery(question) {
+  if (typeof question !== 'string') return null
+  const normalized = normalizedSearchText(question)
+  return /[\p{L}\p{N}]/u.test(normalized) ? normalized : null
+}
+
+function qnaLexicalSearchQueries(question, queryVariants) {
+  const queries = []
+  const seen = new Set()
+  const add = (value) => {
+    const query = qnaLexicalSearchQuery(value)
+    if (!query || seen.has(query)) return false
+    seen.add(query)
+    queries.push(query)
+    return true
+  }
+
+  add(question)
+  if (Array.isArray(queryVariants)) {
+    let accepted = 0
+    for (const variant of queryVariants) {
+      if (accepted >= MAX_QNA_QUERY_VARIANTS) break
+      if (add(variant)) accepted += 1
+    }
+  }
+  return queries
+}
 
 function publicDate(value) {
   const date = value instanceof Date ? value : new Date(value)
@@ -1347,13 +1376,42 @@ export class MongoArticleRepository {
     await this.savedArticles().deleteMany({ userId: contentObjectId(userId) })
   }
 
-  async findQnaEvidence({ limit = 20, includeSource = false, scope = {}, question, queryEmbedding, relevanceThreshold = 0.25 } = {}) {
+  async findQnaEvidenceByIds({ ids = [], includeSource = false, scope = {}, question, queryVariants, queryEmbedding, relevanceThreshold = 0.25, ordering = ['relevance'] } = {}) {
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 50) throw new ArticleError('article_query_invalid', 'Article ids are invalid', { status: 400 })
+    const collection = this.articles()
+    const qnaFilter = qnaEvidenceFilter({ sourcePath: '_currentSource' })
+    const scopeFilter = qnaScopeFilter({ ...scope, articleIds: ids })
+    const baseMatch = { status: qnaFilter.status, authorityTier: qnaFilter.authorityTier, evidenceEligible: qnaFilter.evidenceEligible, ...scopeFilter }
+    const documents = typeof collection.aggregate === 'function'
+      ? await collection.aggregate([
+        { $match: baseMatch },
+        { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
+        { $unwind: '$_currentSource' },
+        { $match: sourceOnlyFilter(qnaFilter) },
+        { $limit: ids.length },
+      ]).toArray()
+      : await collection.find(baseMatch).limit(ids.length).toArray()
+    const evidence = []
+    for (const document of documents) {
+      const source = document._currentSource ?? await sourceForArticle(this.sources(), document)
+      const { _currentSource: _sourceIgnored, ...article } = document
+      if (!canUseQnaEvidence(article, source)) continue
+      const visible = serializeVisibleArticle(article, source)
+      evidence.push(includeSource ? { article: visible, source: serializeSourceForQna(source) } : visible)
+    }
+    return typeof question === 'string' ? rankQnaEvidence({ question, queryVariants, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, ids.length), ordering }) : evidence
+  }
+
+  async findQnaEvidence({ limit = 20, includeSource = false, scope = {}, question, queryVariants, queryEmbedding, relevanceThreshold = 0.25, ordering = ['relevance'] } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ArticleError('article_query_invalid', 'Article limit is invalid', { status: 400 })
     const collection = this.articles()
     const qnaFilter = qnaEvidenceFilter({ sourcePath: '_currentSource' })
     const scopeFilter = qnaScopeFilter(scope)
     const candidateLimit = typeof question === 'string' ? Math.min(400, Math.max(limit, 100)) : limit
+    const lexicalQueries = qnaLexicalSearchQueries(question, queryVariants)
     const isHybrid = typeof question === 'string' && embeddingQueryCompatible(queryEmbedding, { expectedCompatibilityId: this.embeddingTarget.artifactCompatibilityId }) && typeof queryEmbedding?.artifactCompatibilityId === 'string' && queryEmbedding.artifactCompatibilityId.length > 0
+    const freshnessOrder = Array.isArray(ordering) && ordering.includes('freshness')
+    const nonFreshnessCapacity = freshnessOrder ? Math.max(0, 400 - candidateLimit) : 400
 
     if (typeof collection.aggregate !== 'function') {
       const candidates = new Map()
@@ -1369,18 +1427,30 @@ export class MongoArticleRepository {
         }
         const semanticDocs = await collection.find({ ...baseFilter, ...semanticFilter }).limit(candidateLimit).toArray()
         for (const doc of semanticDocs) {
-          candidates.set(doc._id?.toHexString?.() ?? String(doc._id), doc)
+          const id = doc._id?.toHexString?.() ?? String(doc._id)
+          if (candidates.size < nonFreshnessCapacity) candidates.set(id, doc)
         }
       }
-      if (candidates.size < candidateLimit) {
+      for (const lexicalQuery of lexicalQueries) {
+        try {
+          const lexicalDocs = await collection.find({ ...baseFilter, $text: { $search: lexicalQuery } }).sort({ score: { $meta: 'textScore' }, publishedAt: -1, _id: -1 }).limit(candidateLimit).toArray()
+          for (const doc of lexicalDocs) {
+            const id = doc._id?.toHexString?.() ?? String(doc._id)
+            if (!candidates.has(id) && candidates.size < nonFreshnessCapacity) candidates.set(id, doc)
+          }
+        } catch {
+          // Invalid or unavailable text search must not broaden retrieval.
+        }
+      }
+
+      if (freshnessOrder || candidates.size < candidateLimit) {
         const recencyDocs = await collection.find(baseFilter).sort({ publishedAt: -1, _id: -1 }).limit(candidateLimit).toArray()
         for (const doc of recencyDocs) {
           const id = doc._id?.toHexString?.() ?? String(doc._id)
-          if (!candidates.has(id) && candidates.size < 400) {
-            candidates.set(id, doc)
-          }
+          if (!candidates.has(id) && candidates.size < 400) candidates.set(id, doc)
         }
       }
+
       const evidence = []
       for (const document of candidates.values()) {
         const source = await sourceForArticle(this.sources(), document)
@@ -1389,7 +1459,7 @@ export class MongoArticleRepository {
           evidence.push(includeSource ? { article, source: serializeSourceForQna(source) } : article)
         }
       }
-      return typeof question === 'string' ? rankQnaEvidence({ question, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, limit) }).slice(0, limit) : evidence
+      return typeof question === 'string' ? rankQnaEvidence({ question, queryVariants, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, limit), ordering }).slice(0, limit) : evidence
     }
 
     const candidates = new Map()
@@ -1411,10 +1481,31 @@ export class MongoArticleRepository {
         { $limit: candidateLimit },
       ]).toArray()
       for (const item of semanticArticles) {
-        candidates.set(item._id?.toHexString?.() ?? String(item._id), item)
+        const id = item._id?.toHexString?.() ?? String(item._id)
+        if (candidates.size < nonFreshnessCapacity) candidates.set(id, item)
       }
     }
-    if (candidates.size < candidateLimit) {
+    for (const lexicalQuery of lexicalQueries) {
+      try {
+        const lexicalArticles = await collection.aggregate([
+          { $match: { ...baseMatch, $text: { $search: lexicalQuery } } },
+          { $set: { _textScore: { $meta: 'textScore' } } },
+          { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
+          { $unwind: '$_currentSource' },
+          { $match: sourceOnlyFilter(qnaFilter) },
+          { $sort: { _textScore: -1, publishedAt: -1, _id: -1 } },
+          { $limit: candidateLimit },
+        ]).toArray()
+        for (const item of lexicalArticles) {
+          const id = item._id?.toHexString?.() ?? String(item._id)
+          if (!candidates.has(id) && candidates.size < nonFreshnessCapacity) candidates.set(id, item)
+        }
+      } catch {
+        // Invalid or unavailable text search must not broaden retrieval.
+      }
+    }
+
+    if (freshnessOrder || candidates.size < candidateLimit) {
       const recencyArticles = await collection.aggregate([
         { $match: baseMatch },
         { $lookup: { from: 'sources', localField: 'sourceId', foreignField: '_id', as: '_currentSource' } },
@@ -1425,9 +1516,7 @@ export class MongoArticleRepository {
       ]).toArray()
       for (const item of recencyArticles) {
         const id = item._id?.toHexString?.() ?? String(item._id)
-        if (!candidates.has(id) && candidates.size < 400) {
-          candidates.set(id, item)
-        }
+        if (!candidates.has(id) && candidates.size < 400) candidates.set(id, item)
       }
     }
     const evidence = [...candidates.values()].flatMap(({ _currentSource: source, ...document }) => {
@@ -1435,7 +1524,7 @@ export class MongoArticleRepository {
       const article = serializeVisibleArticle(document, source)
       return [includeSource ? { article, source: serializeSourceForQna(source) } : article]
     })
-    return typeof question === 'string' ? rankQnaEvidence({ question, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, limit) }).slice(0, limit) : evidence
+    return typeof question === 'string' ? rankQnaEvidence({ question, queryVariants, records: evidence, queryEmbedding, relevanceThreshold, maxCandidates: Math.min(50, limit), ordering }).slice(0, limit) : evidence
   }
 }
 

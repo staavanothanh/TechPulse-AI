@@ -6,6 +6,67 @@ import { admittedEvidenceText, evidenceCitationMetadataHash } from '../../domain
 const DAY_MS = 24 * 60 * 60 * 1000
 const CHAT_RETENTION_MS = 30 * DAY_MS
 const ATTEMPT_RETENTION_MS = DAY_MS
+const SAFE_EXECUTION_CODE = /^[a-z0-9][a-z0-9_:-]{0,127}$/
+
+function executionError(code, message) {
+  const error = new Error(message)
+  error.code = code
+  error.retryable = false
+  return error
+}
+
+function cancellationReason(signal) {
+  const reason = signal?.reason
+  const suppliedCode = typeof reason?.code === 'string' ? reason.code : undefined
+  const code = suppliedCode && SAFE_EXECUTION_CODE.test(suppliedCode) ? suppliedCode : 'ingestion_aborted'
+  if (reason instanceof Error && (reason.code === undefined || code === reason.code)) return reason
+  const message = typeof reason?.message === 'string' && reason.message.length > 0
+    ? reason.message.slice(0, 256)
+    : 'Ingestion execution was aborted'
+  const error = executionError(code, message)
+  if (typeof reason?.retryable === 'boolean') error.retryable = reason.retryable
+  return error
+}
+
+function assertAppendExecutionAvailable({ signal, deadline, clock }) {
+  if (signal?.aborted) throw cancellationReason(signal)
+  if (deadline === undefined) return
+  const deadlineAt = new Date(deadline)
+  if (Number.isNaN(deadlineAt.getTime())) throw executionError('ingestion_deadline_invalid', 'Ingestion deadline is invalid')
+  const current = typeof clock === 'function' ? clock() : clock
+  const currentAt = new Date(current)
+  if (Number.isNaN(currentAt.getTime())) throw executionError('ingestion_clock_invalid', 'Ingestion clock is invalid')
+  if (currentAt.getTime() >= deadlineAt.getTime()) throw executionError('ingestion_deadline_exceeded', 'Ingestion execution deadline was exceeded')
+}
+
+function appendOperationOptions({ signal, deadline, clock } = {}) {
+  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : dateValue(deadline, 'Chat append deadline').getTime()
+  const currentAt = deadlineAt === Number.POSITIVE_INFINITY
+    ? null
+    : dateValue(typeof clock === 'function' ? clock() : clock, 'Chat append clock').getTime()
+  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - currentAt
+  return {
+    ...(signal ? { signal } : {}),
+    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+  }
+}
+
+function appendTransactionOptions({ signal, deadline, clock } = {}) {
+  const options = appendOperationOptions({ signal, deadline, clock })
+  return options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS, timeoutMS: options.maxTimeMS } : {}
+}
+
+async function runAppendOperation(work, { session, signal, deadline, clock }) {
+  assertAppendExecutionAvailable({ signal, deadline, clock })
+  try {
+    const result = await work({ session, ...appendOperationOptions({ signal, deadline, clock }) })
+    assertAppendExecutionAvailable({ signal, deadline, clock })
+    return result
+  } catch (error) {
+    try { assertAppendExecutionAvailable({ signal, deadline, clock }) } catch (cancellation) { throw cancellation }
+    throw error
+  }
+}
 
 function objectId(value, label = 'identifier') {
   if (value instanceof ObjectId) return value
@@ -253,11 +314,11 @@ export class MongoChatRepository {
   users() { return this.collection('users') }
   sessions() { return this.collection('sessions') }
 
-  async withTransaction(work) {
+  async withTransaction(work, options = {}) {
     const session = this.client.startSession()
     try {
       let result
-      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })
+      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, ...options })
       return result
     } finally { await session.endSession() }
   }
@@ -319,7 +380,8 @@ export class MongoChatRepository {
     return this.answerAttempts().findOne({ userId: values.userId, sessionId: values.sessionId, expectedSessionVersion: values.sessionVersion, idempotencyKeyHash }, options)
   }
 
-  async reserveAnswerAttempt({ actor, idempotencyKeyHash, requestHash, chatSessionId, quotaReservationKey, rateLimitAdmission, quotaScopes = ['answer-minute', 'answer-daily'], now = this.clock() } = {}) {
+  async reserveAnswerAttempt({ actor, idempotencyKeyHash, requestHash, chatSessionId, quotaReservationKey, rateLimitAdmission, quotaScopes = ['answer-minute', 'answer-daily'], now = this.clock(), signal, deadline } = {}) {
+    assertAppendExecutionAvailable({ signal, deadline, clock: this.clock })
     const values = actorValues(actor)
     if (!/^[a-f0-9]{64}$/.test(idempotencyKeyHash) || !/^[a-f0-9]{64}$/.test(requestHash)) throw new Error('Answer attempt hashes are invalid')
     const current = dateValue(now)
@@ -328,25 +390,26 @@ export class MongoChatRepository {
       idempotencyKeyHash, requestHash, status: 'reserved', ...(chatSessionId ? { chatSessionId: objectId(chatSessionId, 'chat session') } : {}), quotaReservationKey: String(quotaReservationKey ?? 'answer:user'),
       expiresAt: new Date(current.getTime() + ATTEMPT_RETENTION_MS), createdAt: current, updatedAt: current,
     }
-    const resolveExisting = async (options = {}) => {
-      const existing = await this.findAnswerAttempt({ actor, idempotencyKeyHash, options })
+    const resolveExisting = async (execute) => {
+      const existing = await execute((options) => this.findAnswerAttempt({ actor, idempotencyKeyHash, options }))
       if (!existing) return null
       if (existing.requestHash !== requestHash) { const error = new Error('Idempotency key is bound to another request'); error.code = 'idempotency_mismatch'; error.status = 409; throw error }
       if (existing.status === 'provider-running' && dateValue(existing.providerReservationExpiresAt ?? existing.updatedAt) <= current) {
-        const transition = await this.answerAttempts().updateOne({ _id: existing._id, status: 'provider-running', providerReservationExpiresAt: existing.providerReservationExpiresAt }, { $set: { status: 'failed', error: { code: 'ambiguous_provider_outcome', message: 'Provider outcome is unavailable', retryable: false, occurredAt: current }, updatedAt: current } }, options)
+        const transition = await execute((options) => this.answerAttempts().updateOne({ _id: existing._id, status: 'provider-running', providerReservationExpiresAt: existing.providerReservationExpiresAt }, { $set: { status: 'failed', error: { code: 'ambiguous_provider_outcome', message: 'Provider outcome is unavailable', retryable: false, occurredAt: current }, updatedAt: current } }, options))
         if (transition.matchedCount === 1) return { ...existing, status: 'failed', error: { code: 'ambiguous_provider_outcome', message: 'Provider outcome is unavailable', retryable: false, occurredAt: current } }
-        return this.findAnswerAttempt({ actor, idempotencyKeyHash, options })
+        return execute((options) => this.findAnswerAttempt({ actor, idempotencyKeyHash, options }))
       }
       return { ...existing, reused: true }
     }
     const work = async (session) => {
-      const options = session ? { session } : {}
-      if (!await this.assertActorFence(actor, options)) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
-      const existing = await resolveExisting(options)
+      const execute = (operation) => runAppendOperation(operation, { session, signal, deadline, clock: this.clock })
+      const actorFenceValid = await execute((options) => this.assertActorFence(actor, options))
+      if (!actorFenceValid) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
+      const existing = await execute(() => resolveExisting(execute))
       if (existing) return existing
       if (rateLimitAdmission?.reserve) {
         for (const scope of quotaScopes) {
-          const admission = await rateLimitAdmission.reserve({ scope, subject: values.userId.toHexString(), session })
+          const admission = await execute((options) => rateLimitAdmission.reserve({ scope, subject: values.userId.toHexString(), session, ...(options.signal ? { signal: options.signal } : {}), ...(deadline !== undefined ? { deadline } : {}) }))
           if (!admission || admission.allowed !== true) {
             const error = new Error('Answer quota is temporarily unavailable')
             error.code = 'rate_limit_exceeded'; error.status = 429; error.retryAfter = admission?.retryAfterSeconds
@@ -354,14 +417,16 @@ export class MongoChatRepository {
           }
         }
       }
-      await this.answerAttempts().insertOne(document, options)
+      await execute((options) => this.answerAttempts().insertOne(document, options))
       return { ...document, reused: false }
     }
     try {
-      return await this.withTransaction(work)
+      return await this.withTransaction(work, appendTransactionOptions({ signal, deadline, clock: this.clock }))
     } catch (error) {
+      try { assertAppendExecutionAvailable({ signal, deadline, clock: this.clock }) } catch (cancellation) { throw cancellation }
       if (error?.code !== 11000) throw error
-      const replay = await resolveExisting()
+      const replayExecute = (operation) => runAppendOperation(operation, { session: undefined, signal, deadline, clock: this.clock })
+      const replay = await replayExecute(() => resolveExisting(replayExecute))
       if (!replay) throw error
       return replay
     }
@@ -389,7 +454,8 @@ export class MongoChatRepository {
     return { inspected: selected.length, affected: result.deletedCount, hasMore: candidates.length > limit }
   }
 
-  async appendAnswer({ actor, chatSessionId, scope, question, answer, citations = [], attempt, now = this.clock(), expectedEvidenceFence } = {}) {
+  async appendAnswer({ actor, chatSessionId, scope, question, answer, citations = [], attempt, now = this.clock(), expectedEvidenceFence, signal, deadline } = {}) {
+    assertAppendExecutionAvailable({ signal, deadline, clock: this.clock })
     const values = actorValues(actor)
     const current = dateValue(now)
     if (typeof question !== 'string' || question.length < 1 || question.length > 1000) throw new Error('Question is invalid')
@@ -397,129 +463,148 @@ export class MongoChatRepository {
       ? { id: answer.id ?? new ObjectId().toHexString(), role: 'assistant', status: 'answered', paragraphs: answer.paragraphs, citations: citations.map(historicalCitationDocument), refusalReason: null, createdAt: current }
       : { id: answer?.id ?? new ObjectId().toHexString(), role: 'assistant', status: 'refused', paragraphs: [], citations: [], refusalReason: answer?.refusalReason ?? 'insufficient-evidence', createdAt: current }
     const userMessage = { id: new ObjectId().toHexString(), role: 'user', text: question, createdAt: current }
-    return this.withTransaction(async (session) => {
-      const tx = { session }
-      if (!await this.assertActorFence(actor, tx)) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
-      const userCollection = this.users()
-      const sessionCollection = this.sessions()
-      if (typeof userCollection.updateOne === 'function') {
-        const userFence = await userCollection.updateOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { $set: { updatedAt: current } }, tx)
-        if (userFence.matchedCount !== 1) { const error = new Error('Active user lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
-      }
-      if (typeof sessionCollection.updateOne === 'function') {
-        const sessionFence = await sessionCollection.updateOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: current }, absoluteExpiresAt: { $gt: current } }, { $set: { lastSeenAt: current } }, tx)
-        if (sessionFence.matchedCount !== 1) { const error = new Error('Active session lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
-      }
-      if (assistant.status === 'answered' && expectedEvidenceFence?.articles) {
-        const qnaFenceToken = new ObjectId()
-        const targets = citedEvidenceTargets({ answer, citations, expectedEvidenceFence })
-        const sourceTargets = new Map()
-        for (const target of targets) {
-          const previous = sourceTargets.get(target.sourceId)
-          if (previous && (previous.sourcePolicyVersion !== target.expected.sourcePolicyVersion || (previous.sourceKey ?? null) !== (target.expected.sourceKey ?? null))) throw conflictError('Answer evidence changed')
-          sourceTargets.set(target.sourceId, { sourceId: target.sourceId, sourcePolicyVersion: target.expected.sourcePolicyVersion, sourceKey: target.expected.sourceKey ?? null })
+    let result
+    try {
+      result = await this.withTransaction(async (session) => {
+        const execute = (work) => runAppendOperation(work, { session, signal, deadline, clock: this.clock })
+        if (!await execute((options) => this.assertActorFence(actor, options))) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
+        const userCollection = this.users()
+        const sessionCollection = this.sessions()
+        if (typeof userCollection.updateOne === 'function') {
+          const userFence = await execute((options) => userCollection.updateOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { $set: { updatedAt: current } }, options))
+          if (userFence.matchedCount !== 1) { const error = new Error('Active user lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
         }
-        const articleCollection = this.collection('articles')
-        const sourceCollection = this.collection('sources')
-        const lockedArticles = new Map()
-        for (const target of targets) {
-          const article = unwrap(await articleCollection.findOneAndUpdate({
-            _id: objectId(target.articleId, 'article'), sourceId: objectId(target.sourceId, 'source'),
-            status: 'published', evidenceEligible: true, 'rightsSnapshot.sourcePolicyVersion': target.expected.sourcePolicyVersion,
-            ...articleFenceFilter(target.expected),
-          }, { $set: { qnaFenceToken } }, { ...tx, returnDocument: 'after' }))
-          if (!article) throw conflictError('Article visibility changed')
-          lockedArticles.set(target.articleId, { ...target, article })
+        if (typeof sessionCollection.updateOne === 'function') {
+          const sessionFence = await execute((options) => sessionCollection.updateOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: current }, absoluteExpiresAt: { $gt: current } }, { $set: { lastSeenAt: current } }, options))
+          if (sessionFence.matchedCount !== 1) { const error = new Error('Active session lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
         }
-        const lockedSources = new Map()
-        for (const target of [...sourceTargets.values()].sort((left, right) => left.sourceId.localeCompare(right.sourceId))) {
-          const source = unwrap(await sourceCollection.findOneAndUpdate({
-            _id: objectId(target.sourceId, 'source'), policyVersion: target.sourcePolicyVersion,
-            operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] },
-            'technicalCheck.status': 'passed', authorityTier: { $in: ['primary', 'editorial'] },
-          }, { $set: { qnaFenceToken } }, { ...tx, returnDocument: 'after' }))
-          if (!source) throw conflictError('Source visibility changed')
-          lockedSources.set(target.sourceId, source)
+        if (assistant.status === 'answered' && expectedEvidenceFence?.articles) {
+          const qnaFenceToken = new ObjectId()
+          const targets = citedEvidenceTargets({ answer, citations, expectedEvidenceFence })
+          const sourceTargets = new Map()
+          for (const target of targets) {
+            const previous = sourceTargets.get(target.sourceId)
+            if (previous && (previous.sourcePolicyVersion !== target.expected.sourcePolicyVersion || (previous.sourceKey ?? null) !== (target.expected.sourceKey ?? null))) throw conflictError('Answer evidence changed')
+            sourceTargets.set(target.sourceId, { sourceId: target.sourceId, sourcePolicyVersion: target.expected.sourcePolicyVersion, sourceKey: target.expected.sourceKey ?? null })
+          }
+          const articleCollection = this.collection('articles')
+          const sourceCollection = this.collection('sources')
+          const lockedArticles = new Map()
+          for (const target of targets) {
+            const article = unwrap(await execute((options) => articleCollection.findOneAndUpdate({
+              _id: objectId(target.articleId, 'article'), sourceId: objectId(target.sourceId, 'source'),
+              status: 'published', evidenceEligible: true, 'rightsSnapshot.sourcePolicyVersion': target.expected.sourcePolicyVersion,
+              ...articleFenceFilter(target.expected),
+            }, { $set: { qnaFenceToken } }, { ...options, returnDocument: 'after' })))
+            if (!article) throw conflictError('Article visibility changed')
+            lockedArticles.set(target.articleId, { ...target, article })
+          }
+          const lockedSources = new Map()
+          for (const target of [...sourceTargets.values()].sort((left, right) => left.sourceId.localeCompare(right.sourceId))) {
+            const source = unwrap(await execute((options) => sourceCollection.findOneAndUpdate({
+              _id: objectId(target.sourceId, 'source'), policyVersion: target.sourcePolicyVersion,
+              operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] },
+              'technicalCheck.status': 'passed', authorityTier: { $in: ['primary', 'editorial'] },
+            }, { $set: { qnaFenceToken } }, { ...options, returnDocument: 'after' })))
+            if (!source) throw conflictError('Source visibility changed')
+            lockedSources.set(target.sourceId, source)
+          }
+          for (const target of lockedArticles.values()) {
+            const source = lockedSources.get(target.sourceId)
+            let textHash
+            let citationMetadataHash
+            try {
+              textHash = createHash('sha256').update(admittedEvidenceText(target.article, source)).digest('hex')
+              citationMetadataHash = evidenceCitationMetadataHash(target.article, source)
+            } catch { throw conflictError('Source visibility changed') }
+            if (idString(target.article._id) !== target.articleId || idString(target.article.sourceId) !== target.sourceId || idString(source?._id) !== target.sourceId || source?.policyVersion !== target.expected.sourcePolicyVersion || (source?.sourceKey ?? null) !== (target.expected.sourceKey ?? null) || !articleMatchesFence(target.article, target.expected) || !canUseQnaEvidence(target.article, source) || textHash !== target.expected.evidenceTextHash || citationMetadataHash !== target.expected.citationMetadataHash) throw conflictError('Source visibility changed')
+          }
         }
-        for (const target of lockedArticles.values()) {
-          const source = lockedSources.get(target.sourceId)
-          let textHash
-          let citationMetadataHash
-          try {
-            textHash = createHash('sha256').update(admittedEvidenceText(target.article, source)).digest('hex')
-            citationMetadataHash = evidenceCitationMetadataHash(target.article, source)
-          } catch { throw conflictError('Source visibility changed') }
-          if (idString(target.article._id) !== target.articleId || idString(target.article.sourceId) !== target.sourceId || idString(source?._id) !== target.sourceId || source?.policyVersion !== target.expected.sourcePolicyVersion || (source?.sourceKey ?? null) !== (target.expected.sourceKey ?? null) || !articleMatchesFence(target.article, target.expected) || !canUseQnaEvidence(target.article, source) || textHash !== target.expected.evidenceTextHash || citationMetadataHash !== target.expected.citationMetadataHash) throw conflictError('Source visibility changed')
+        let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
+        let document = await execute((options) => this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, options))
+        if (!document) {
+          if (chatSessionId) { const error = new Error('Chat session is unavailable'); error.code = 'not_found'; error.status = 404; throw error }
+          document = { _id: sessionId, userId: values.userId, title: null, scope: { ...scope, ...(scope?.articleId ? { articleId: objectId(scope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+          await execute((options) => this.chatSessions().insertOne(document, options))
         }
-      }
-      let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
-      let document = await this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, tx)
-      if (!document) {
-        if (chatSessionId) { const error = new Error('Chat session is unavailable'); error.code = 'not_found'; error.status = 404; throw error }
-        document = { _id: sessionId, userId: values.userId, title: null, scope: { ...scope, ...(scope?.articleId ? { articleId: objectId(scope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
-        await this.chatSessions().insertOne(document, tx)
-      }
-      if (document.messageCount + 2 > 30) {
-        sessionId = new ObjectId()
-        document = { _id: sessionId, userId: values.userId, title: null, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
-        await this.chatSessions().insertOne(document, tx)
-      }
-      const result = await this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: { $each: [userMessage, assistant] } }, $inc: { messageCount: 2 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS) } }, { ...tx, returnDocument: 'after' })
-      const after = unwrap(result)
-      if (!after) { const error = new Error('Chat session changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
-      if (attempt?.id) {
-        const outcome = attempt.outcome === 'completed' ? { status: 'completed', resultStatus: 'answered' } : attempt.outcome === 'refused' ? { status: 'refused', resultStatus: 'refused' } : null
-        if (!outcome) throw new Error('Answer attempt outcome is invalid')
-        const receipt = await this.answerAttempts().findOneAndUpdate({ _id: objectId(attempt.id, 'answer attempt'), userId: values.userId, sessionId: values.sessionId, expectedSessionVersion: values.sessionVersion, status: { $in: ['reserved', 'provider-running'] } }, { $set: { ...outcome, chatSessionId: after._id, messageId: assistant.id, updatedAt: current } }, { ...tx, returnDocument: 'after' })
-        if (!unwrap(receipt)) { const error = new Error('Answer attempt state changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
-      }
-      const publicAnswer = assistant.status === 'answered'
-        ? { id: answer.id ?? assistant.id, status: 'answered', paragraphs: (answer.paragraphs ?? []).map(({ text, citationIds }) => ({ text, citationIds: [...citationIds] })), citations: Array.isArray(answer.citations) ? answer.citations : [], refusalReason: null, chatSessionId: idString(after._id), createdAt: dateValue(answer.createdAt ?? current).toISOString() }
-        : { id: assistant.id, status: 'refused', paragraphs: [], citations: [], refusalReason: assistant.refusalReason, chatSessionId: idString(after._id), createdAt: dateValue(assistant.createdAt).toISOString() }
-      return { chatSessionId: idString(after._id), messageId: assistant.id, answer: publicAnswer, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
-    })
+        if (document.messageCount + 2 > 30) {
+          sessionId = new ObjectId()
+          document = { _id: sessionId, userId: values.userId, title: null, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+          await execute((options) => this.chatSessions().insertOne(document, options))
+        }
+        const chatResult = await execute((options) => this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: { $each: [userMessage, assistant] } }, $inc: { messageCount: 2 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS) } }, { ...options, returnDocument: 'after' }))
+        const after = unwrap(chatResult)
+        if (!after) { const error = new Error('Chat session changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
+        if (attempt?.id) {
+          const outcome = attempt.outcome === 'completed' ? { status: 'completed', resultStatus: 'answered' } : attempt.outcome === 'refused' ? { status: 'refused', resultStatus: 'refused' } : null
+          if (!outcome) throw new Error('Answer attempt outcome is invalid')
+          const receipt = await execute((options) => this.answerAttempts().findOneAndUpdate({ _id: objectId(attempt.id, 'answer attempt'), userId: values.userId, sessionId: values.sessionId, expectedSessionVersion: values.sessionVersion, status: { $in: ['reserved', 'provider-running'] } }, { $set: { ...outcome, chatSessionId: after._id, messageId: assistant.id, updatedAt: current } }, { ...options, returnDocument: 'after' }))
+          if (!unwrap(receipt)) { const error = new Error('Answer attempt state changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
+        }
+        const publicAnswer = assistant.status === 'answered'
+          ? { id: answer.id ?? assistant.id, status: 'answered', paragraphs: (answer.paragraphs ?? []).map(({ text, citationIds }) => ({ text, citationIds: [...citationIds] })), citations: Array.isArray(answer.citations) ? answer.citations : [], refusalReason: null, chatSessionId: idString(after._id), createdAt: dateValue(answer.createdAt ?? current).toISOString() }
+          : { id: assistant.id, status: 'refused', paragraphs: [], citations: [], refusalReason: assistant.refusalReason, chatSessionId: idString(after._id), createdAt: dateValue(assistant.createdAt).toISOString() }
+        return { chatSessionId: idString(after._id), messageId: assistant.id, answer: publicAnswer, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
+      }, appendTransactionOptions({ signal, deadline, clock: this.clock }))
+    } catch (error) {
+      try { assertAppendExecutionAvailable({ signal, deadline, clock: this.clock }) } catch (cancellation) { throw cancellation }
+      throw error
+    }
+    assertAppendExecutionAvailable({ signal, deadline, clock: this.clock })
+    return result
   }
 
-  async appendRefusalWithoutQuestion({ actor, chatSessionId, scope, answer, attempt, now = this.clock() } = {}) {
+  async appendRefusalWithoutQuestion({ actor, chatSessionId, scope, answer, attempt, now = this.clock(), signal, deadline } = {}) {
+    assertAppendExecutionAvailable({ signal, deadline, clock: this.clock })
     const values = actorValues(actor)
     const current = dateValue(now)
     const assistant = {
       id: answer?.id ?? new ObjectId().toHexString(), role: 'assistant', status: 'refused', paragraphs: [], citations: [],
       refusalReason: 'sensitive-input', createdAt: current,
     }
-    return this.withTransaction(async (session) => {
-      const tx = { session }
-      if (!await this.assertActorFence(actor, tx)) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
-      if (typeof this.users().updateOne === 'function') {
-        const userFence = await this.users().updateOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { $set: { updatedAt: current } }, tx)
-        if (userFence.matchedCount !== 1) { const error = new Error('Active user lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
-      }
-      if (typeof this.sessions().updateOne === 'function') {
-        const sessionFence = await this.sessions().updateOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: current }, absoluteExpiresAt: { $gt: current } }, { $set: { lastSeenAt: current } }, tx)
-        if (sessionFence.matchedCount !== 1) { const error = new Error('Active session lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
-      }
-      let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
-      let document = await this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, tx)
-      if (!document) {
-        if (chatSessionId) { const error = new Error('Chat session is unavailable'); error.code = 'not_found'; error.status = 404; throw error }
-        document = { _id: sessionId, userId: values.userId, title: null, scope: { ...scope, ...(scope?.articleId ? { articleId: objectId(scope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
-        await this.chatSessions().insertOne(document, tx)
-      }
-      if (document.messageCount + 1 > 30) {
-        sessionId = new ObjectId()
-        document = { _id: sessionId, userId: values.userId, title: null, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
-        await this.chatSessions().insertOne(document, tx)
-      }
-      const result = await this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: assistant }, $inc: { messageCount: 1 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS) } }, { ...tx, returnDocument: 'after' })
-      const after = unwrap(result)
-      if (!after) { const error = new Error('Chat session changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
-      if (attempt?.id) {
-        const receipt = await this.answerAttempts().findOneAndUpdate({ _id: objectId(attempt.id, 'answer attempt'), userId: values.userId, sessionId: values.sessionId, expectedSessionVersion: values.sessionVersion, status: 'reserved' }, { $set: { status: 'refused', resultStatus: 'refused', chatSessionId: after._id, messageId: assistant.id, updatedAt: current } }, { ...tx, returnDocument: 'after' })
-        if (!unwrap(receipt)) { const error = new Error('Answer attempt state changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
-      }
-      return { chatSessionId: idString(after._id), messageId: assistant.id, answer: { id: assistant.id, status: 'refused', paragraphs: [], citations: [], refusalReason: assistant.refusalReason, chatSessionId: idString(after._id), createdAt: dateValue(assistant.createdAt).toISOString() }, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
-    })
+    const persistedScope = scope && Object.keys(scope).length > 0 ? scope : { topics: ['redacted'] }
+    let result
+    try {
+      result = await this.withTransaction(async (session) => {
+        const execute = (work) => runAppendOperation(work, { session, signal, deadline, clock: this.clock })
+        if (!await execute((options) => this.assertActorFence(actor, options))) { const error = new Error('Authentication is required'); error.code = 'unauthorized'; error.status = 401; throw error }
+        if (typeof this.users().updateOne === 'function') {
+          const userFence = await execute((options) => this.users().updateOne({ _id: values.userId, status: 'active', sessionVersion: values.sessionVersion }, { $set: { updatedAt: current } }, options))
+          if (userFence.matchedCount !== 1) { const error = new Error('Active user lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+        }
+        if (typeof this.sessions().updateOne === 'function') {
+          const sessionFence = await execute((options) => this.sessions().updateOne({ _id: values.sessionId, userId: values.userId, userSessionVersion: values.sessionVersion, status: 'active', expiresAt: { $gt: current }, absoluteExpiresAt: { $gt: current } }, { $set: { lastSeenAt: current } }, options))
+          if (sessionFence.matchedCount !== 1) { const error = new Error('Active session lifecycle changed'); error.code = 'conflict'; error.status = 409; throw error }
+        }
+        let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
+        let document = await execute((options) => this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, options))
+        if (!document) {
+          if (chatSessionId) { const error = new Error('Chat session is unavailable'); error.code = 'not_found'; error.status = 404; throw error }
+          document = { _id: sessionId, userId: values.userId, title: null, scope: { ...persistedScope, ...(persistedScope?.articleId ? { articleId: objectId(persistedScope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+          await execute((options) => this.chatSessions().insertOne(document, options))
+        }
+        if (document.messageCount + 1 > 30) {
+          sessionId = new ObjectId()
+          document = { _id: sessionId, userId: values.userId, title: null, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+          await execute((options) => this.chatSessions().insertOne(document, options))
+        }
+        const chatResult = await execute((options) => this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: assistant }, $inc: { messageCount: 1 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS) } }, { ...options, returnDocument: 'after' }))
+        const after = unwrap(chatResult)
+        if (!after) { const error = new Error('Chat session changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
+        if (attempt?.id) {
+          const receipt = await execute((options) => this.answerAttempts().findOneAndUpdate({ _id: objectId(attempt.id, 'answer attempt'), userId: values.userId, sessionId: values.sessionId, expectedSessionVersion: values.sessionVersion, status: 'reserved' }, { $set: { status: 'refused', resultStatus: 'refused', chatSessionId: after._id, messageId: assistant.id, updatedAt: current } }, { ...options, returnDocument: 'after' }))
+          if (!unwrap(receipt)) { const error = new Error('Answer attempt state changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
+        }
+        return { chatSessionId: idString(after._id), messageId: assistant.id, answer: { id: assistant.id, status: 'refused', paragraphs: [], citations: [], refusalReason: assistant.refusalReason, chatSessionId: idString(after._id), createdAt: dateValue(assistant.createdAt).toISOString() }, session: serializeChatSession(after, { now: current }), ...(attempt?.id ? { attemptCommitted: true } : {}) }
+      }, appendTransactionOptions({ signal, deadline, clock: this.clock }))
+    } catch (error) {
+      try { assertAppendExecutionAvailable({ signal, deadline, clock: this.clock }) } catch (cancellation) { throw cancellation }
+      throw error
+    }
+    assertAppendExecutionAvailable({ signal, deadline, clock: this.clock })
+    return result
   }
+
 
   async getAnswerResult({ actor, chatSessionId, messageId, now = this.clock() } = {}) {
     const values = actorValues(actor)

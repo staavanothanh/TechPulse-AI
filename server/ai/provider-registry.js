@@ -6,6 +6,7 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]{1,127}$/
 const OPERATIONS = new Set(['summary', 'answer', 'support', 'embedding'])
 const CAPABILITIES = new Set(['zdr-verified', 'nonconfidential'])
 const BUDGET_WINDOWS = new Set(['hour', 'day', 'month'])
+const QA_INTENT_WORKLOAD_ID = 'qa-intent'
 
 function fail(message) {
   throw new Error(`Provider configuration ${message}`)
@@ -210,11 +211,13 @@ export function validateProviderConfiguration(input, {
   const workloadPolicies = []
   for (const policy of rawWorkloads.values()) {
     exactObject(policy, ['workloadId', 'operation', 'requiredCapability', 'maxExternalAttempts', 'primaryRouteId', 'modelFallbackRouteIds', 'providerFallbackRouteIds'], 'workload policy')
+    const isQaIntent = policy.workloadId === QA_INTENT_WORKLOAD_ID
     if (!OPERATIONS.has(policy.operation)) fail('workload policy operation is invalid')
     if (!CAPABILITIES.has(policy.requiredCapability)) fail('workload policy capability is invalid')
     if (!Number.isInteger(policy.maxExternalAttempts) || policy.maxExternalAttempts < 1 || policy.maxExternalAttempts > 2) fail('workload policy maxExternalAttempts is invalid')
-    if (['summary', 'answer'].includes(policy.operation) && policy.maxExternalAttempts !== 2) fail('summary and Q&A maxExternalAttempts must be two')
     if (!Array.isArray(policy.modelFallbackRouteIds) || !Array.isArray(policy.providerFallbackRouteIds)) fail('workload policy fallback routes must be arrays')
+    if (isQaIntent && (policy.operation !== 'summary' || policy.maxExternalAttempts !== 1 || policy.modelFallbackRouteIds.length !== 0 || policy.providerFallbackRouteIds.length !== 0)) fail('qa-intent workload policy must use one summary attempt without fallbacks')
+    if (!isQaIntent && ['summary', 'answer'].includes(policy.operation) && policy.maxExternalAttempts !== 2) fail('summary and Q&A maxExternalAttempts must be two')
     const routeIds = [policy.primaryRouteId, ...policy.modelFallbackRouteIds, ...policy.providerFallbackRouteIds]
     if (routeIds.some((routeId) => typeof routeId !== 'string' || !ID.test(routeId))) fail('workload policy route reference is invalid')
     if (new Set(routeIds).size !== routeIds.length) fail('workload policy fallback graph contains a duplicate or cycle')

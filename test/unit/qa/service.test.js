@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createQaService as createQaServiceImpl, scopeValue } from '../../../server/application/qa/service.js'
+import { planQaIntent } from '../../../server/application/qa/intent-planner.js'
+import { containsSensitiveProviderInput } from '../../../server/ai/policy-input.js'
 import { ProviderRoutingError } from '../../../server/ai/provider-router.js'
 import { ProviderAdapterError } from '../../../server/ai/provider-error-taxonomy.js'
 
@@ -109,6 +111,92 @@ describe('Step 10 grounded answer service', () => {
     expect(repo.sessions[0].question).toBeUndefined()
   })
 
+  it('rejects a sensitive user-origin scope topic before planner, embedding, retrieval, providers, or answer append without persisting the raw topic', async () => {
+    const rawTopic = 'ghp_scope_1234567890abcdef'
+    expect(containsSensitiveProviderInput(rawTopic)).toBe(true)
+
+    const repo = repository({ records: evidence() })
+    const findQnaEvidence = vi.spyOn(repo, 'findQnaEvidence')
+    const queryEmbedding = vi.fn(async () => ({ model: 'test-embedding', dimensions: 1, version: 1, artifactCompatibilityId: 'test-embedding-v1', embedding: [1] }))
+    const intentPlanner = vi.fn((input) => planQaIntent(input))
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const appendAnswer = vi.spyOn(repo, 'appendAnswer')
+    const appendRefusal = vi.spyOn(repo, 'appendRefusalWithoutQuestion')
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      providerRouter,
+      intentPlanner,
+      queryEmbedding,
+      providerAdapters: { llmProvider: { answer } },
+      supportVerifier,
+    })
+
+    const outcome = await service.createAnswer({
+      auth,
+      question: 'Bài viết kết luận gì?',
+      scope: { topics: [rawTopic] },
+      idempotencyKey: 'scope-topic-privacy-key',
+    }).then((value) => ({ value, error: null }), (error) => ({ value: null, error }))
+
+    expect.soft(outcome.error).toBeNull()
+    expect.soft(outcome.value?.answer).toMatchObject({ status: 'refused', refusalReason: 'sensitive-input', paragraphs: [], citations: [] })
+    expect.soft(intentPlanner).not.toHaveBeenCalled()
+    expect.soft(queryEmbedding).not.toHaveBeenCalled()
+    expect.soft(findQnaEvidence).not.toHaveBeenCalled()
+    expect.soft(providerRouter.execute).not.toHaveBeenCalled()
+    expect.soft(answer).not.toHaveBeenCalled()
+    expect.soft(supportVerifier).not.toHaveBeenCalled()
+    expect.soft(appendAnswer).not.toHaveBeenCalled()
+    expect.soft(appendRefusal).toHaveBeenCalledTimes(1)
+    expect.soft(appendRefusal.mock.calls[0]?.[0]?.scope).toEqual({})
+    expect.soft(repo.sessions).toHaveLength(1)
+    expect.soft(repo.attempts).toHaveLength(1)
+    expect.soft(JSON.stringify({ error: outcome.error, sessions: repo.sessions, attempts: [...repo.attempts.values()] })).not.toContain(rawTopic)
+    expect.soft(JSON.stringify(appendAnswer.mock.calls)).not.toContain(rawTopic)
+    expect.soft(JSON.stringify(appendRefusal.mock.calls)).not.toContain(rawTopic)
+  })
+
+  it('allows an ordinary user-origin topic through the planner, retrieval, providers, and answer append', async () => {
+    const repo = repository({ records: evidence() })
+    const findQnaEvidence = vi.spyOn(repo, 'findQnaEvidence')
+    const queryEmbedding = vi.fn(async () => ({ model: 'test-embedding', dimensions: 1, version: 1, artifactCompatibilityId: 'test-embedding-v1', embedding: [1] }))
+    const intentPlanner = vi.fn((input) => planQaIntent(input))
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const appendAnswer = vi.spyOn(repo, 'appendAnswer')
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      providerRouter,
+      intentPlanner,
+      queryEmbedding,
+      providerAdapters: { llmProvider: { answer } },
+      supportVerifier,
+    })
+
+    const result = await service.createAnswer({
+      auth,
+      question: 'Bài viết kết luận gì?',
+      scope: { topics: ['AI'] },
+      idempotencyKey: 'scope-topic-ordinary-key',
+    })
+
+    expect(result.answer.status).toBe('answered')
+    expect(intentPlanner).toHaveBeenCalledTimes(1)
+    expect(queryEmbedding).toHaveBeenCalledTimes(1)
+    expect(findQnaEvidence).toHaveBeenCalled()
+    expect(providerRouter.execute).toHaveBeenCalledTimes(2)
+    expect(answer).toHaveBeenCalledTimes(1)
+    expect(supportVerifier).toHaveBeenCalledTimes(1)
+    expect(appendAnswer).toHaveBeenCalledTimes(1)
+  })
+
   it('replays one atomic sensitive refusal and rejects the same key for a different request without persisting raw input', async () => {
     const repo = repository({ records: evidence() })
     repo.getAnswerResult = vi.fn(async () => repo.sessions[0]?.answer)
@@ -190,7 +278,7 @@ describe('Step 10 grounded answer service', () => {
     await expect(service.createAnswer({ ...base, scope: { publishedAfter: '2026-08-03T00:00:00.000Z', publishedBefore: '2026-08-04T00:00:00.000Z' } })).rejects.toMatchObject({ status: 409, code: 'idempotency_mismatch' })
   })
 
-  it('derives UTC temporal bounds before repository retrieval and persists the effective scope', async () => {
+  it('derives server-timezone bounds for retrieval and persists canonical session scope', async () => {
     const fixedNow = new Date('2026-09-04T15:30:00.000Z')
     const repo = repository({ records: evidence() })
     const findScopes = []
@@ -213,14 +301,12 @@ describe('Step 10 grounded answer service', () => {
     expect(result.answer.status).toBe('refused')
     expect(findScopes[0]).toEqual({
       topics: ['ai'],
-      publishedAfter: new Date('2026-09-01T00:00:00.000Z'),
-      publishedBefore: new Date('2026-09-30T23:59:59.999Z'),
+      publishedAfter: new Date('2026-08-31T17:00:00.000Z'),
+      publishedBefore: new Date('2026-09-30T16:59:59.999Z'),
     })
     expect(repo.appendAnswer).toHaveBeenCalledWith(expect.objectContaining({
       scope: {
         topics: ['ai'],
-        publishedAfter: new Date('2026-09-01T00:00:00.000Z'),
-        publishedBefore: new Date('2026-09-30T23:59:59.999Z'),
       },
     }))
   })
@@ -477,6 +563,47 @@ describe('Step 10 grounded answer service', () => {
     expect(repo.sessions).toHaveLength(0)
   })
 
+  it('does not commit a late answer append after request cancellation', async () => {
+    const repo = repository({ records: evidence() })
+    let releaseAppend
+    const appendDeferred = new Promise((resolve) => { releaseAppend = resolve })
+    let markAppendStarted
+    const appendStarted = new Promise((resolve) => { markAppendStarted = resolve })
+    let markAppendComplete
+    const appendComplete = new Promise((resolve) => { markAppendComplete = resolve })
+    let committed = false
+    const originalAppend = repo.appendAnswer
+    repo.appendAnswer = vi.fn(async (input) => {
+      markAppendStarted(input)
+      await appendDeferred
+      try {
+        if (input.signal?.aborted) return { aborted: true }
+        committed = true
+        return originalAppend(input)
+      } finally {
+        markAppendComplete()
+      }
+    })
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
+    const controller = new globalThis.AbortController()
+    const pending = service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'append-abort-key', signal: controller.signal })
+
+    await appendStarted
+    controller.abort()
+    try {
+      await expect(pending).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+    } finally {
+      releaseAppend()
+      await appendComplete
+    }
+
+    expect(supportVerifier).toHaveBeenCalledTimes(1)
+    expect(committed).toBe(false)
+    expect(repo.sessions).toHaveLength(0)
+  })
+
   it('allows one execution owner for twenty concurrent same-key requests', async () => {
     const records = evidence()
     const attempts = new Map()
@@ -677,6 +804,56 @@ describe('Step 10 grounded answer service', () => {
     await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'ambiguous-router-key' })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
     expect(providerRouter.execute).toHaveBeenCalledTimes(1)
     expect([...repo.attempts.values()][0]).toMatchObject({ status: 'failed', error: expect.objectContaining({ code: 'ambiguous_provider_outcome', retryable: false }) })
+  })
+  it('waits for an ambiguous attempt update before request cancellation cleanup', async () => {
+    const repo = repository({ records: evidence() })
+    const originalUpdate = repo.updateAnswerAttempt
+    let releaseUpdate
+    let markUpdateStarted
+    let activeUpdates = 0
+    let released = false
+    let resolveUpdatesDrained
+    const updateStarted = new Promise((resolve) => { markUpdateStarted = resolve })
+    const updateDeferred = new Promise((resolve) => { releaseUpdate = resolve })
+    const updatesDrained = new Promise((resolve) => { resolveUpdatesDrained = resolve })
+    const maybeResolveUpdatesDrained = () => {
+      if (released && activeUpdates === 0) resolveUpdatesDrained()
+    }
+    repo.updateAnswerAttempt = vi.fn(async (...args) => {
+      activeUpdates += 1
+      markUpdateStarted()
+      try {
+        await updateDeferred
+        return originalUpdate(...args)
+      } finally {
+        activeUpdates -= 1
+        maybeResolveUpdatesDrained()
+      }
+    })
+    const providerRouter = { execute: vi.fn(async () => { throw new ProviderRoutingError({ failureClass: 'ambiguous', code: 'ambiguous_provider_outcome', retryable: false }) }) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer: vi.fn() } } })
+    const controller = new globalThis.AbortController()
+    const pending = service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'ambiguous-update-await', signal: controller.signal, deadline: new Date(Date.now() + 5_000) })
+    let timeoutId
+
+    await updateStarted
+    controller.abort()
+    try {
+      const bounded = new Promise((_, reject) => {
+        timeoutId = globalThis.setTimeout(() => reject(new Error('Q&A request did not settle after cancellation')), 500)
+      })
+      await expect(Promise.race([pending, bounded])).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+    } finally {
+      if (timeoutId) globalThis.clearTimeout(timeoutId)
+      released = true
+      releaseUpdate()
+      await updatesDrained
+    }
+
+    await expect(pending).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+    const attempt = [...repo.attempts.values()][0]
+    expect(attempt).toMatchObject({ status: 'failed', error: expect.objectContaining({ code: expect.stringMatching(/ambiguous_provider_outcome|service_unavailable/) }) })
+    expect(['reserved', 'provider-running']).not.toContain(attempt.status)
   })
 
   it('keeps actor fence loss as canonical unauthorized instead of ambiguous provider outcome', async () => {

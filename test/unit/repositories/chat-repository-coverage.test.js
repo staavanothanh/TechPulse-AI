@@ -460,6 +460,41 @@ describe('chat repository coverage contracts', () => {
       }),
     ).rejects.toMatchObject({ code: 'rate_limit_exceeded', retryAfter: 7 })
   })
+  it('bounds reserve transactions by abort signal and future deadline', async () => {
+    const { repository, collections, transactionSession } = makeDatabase()
+    const controller = new AbortController()
+    const deadline = new Date(NOW.getTime() + 5_000)
+    const wallClock = vi.spyOn(Date, 'now').mockReturnValue(NOW.getTime())
+    try {
+      await repository.reserveAnswerAttempt({
+        actor: ACTOR,
+        idempotencyKeyHash: 'a'.repeat(64),
+        requestHash: 'b'.repeat(64),
+        signal: controller.signal,
+        deadline,
+        now: NOW,
+      })
+    } finally {
+      wallClock.mockRestore()
+    }
+
+    const remainingDeadlineMs = deadline.getTime() - NOW.getTime()
+    const transactionOptions = transactionSession.withTransaction.mock.calls[0][1]
+    expect(Number.isFinite(transactionOptions?.timeoutMS)).toBe(true)
+    expect(transactionOptions.timeoutMS).toBeGreaterThan(0)
+    expect(transactionOptions.timeoutMS).toBeLessThanOrEqual(remainingDeadlineMs)
+
+    const findOptions = collections.answerAttempts.findOne.mock.calls[0][1]
+    expect(findOptions?.signal).toBe(controller.signal)
+    expect(Number.isFinite(findOptions?.maxTimeMS)).toBe(true)
+    expect(findOptions?.maxTimeMS).toBeGreaterThan(0)
+
+    const insertOptions = collections.answerAttempts.insertOne.mock.calls[0][1]
+    expect(insertOptions?.signal).toBe(controller.signal)
+    expect(Number.isFinite(insertOptions?.maxTimeMS)).toBe(true)
+    expect(insertOptions?.maxTimeMS).toBeGreaterThan(0)
+  })
+
 
   it('updates attempts with optional status fences and purges due rows in bounded batches', async () => {
     const { repository, collections } = makeDatabase()
@@ -509,7 +544,7 @@ describe('chat repository coverage contracts', () => {
   })
 
   it('appends answered and refused messages while rotating full sessions', async () => {
-    const { repository, collections } = makeDatabase()
+    const { repository, collections, transactionSession } = makeDatabase()
     const current = {
       _id: CHAT_SESSION_ID,
       userId: USER_ID,
@@ -524,20 +559,37 @@ describe('chat repository coverage contracts', () => {
     collections.chatSessions.findOneAndUpdate.mockImplementation(async (filter) => ({
       value: { ...current, _id: filter._id, messageCount: 0, messages: [] },
     }))
-    const answer = await repository.appendAnswer({
-      actor: ACTOR,
-      question: 'Cau hoi?',
-      answer: {
-        id: 'answer-1',
-        status: 'answered',
-        paragraphs: [{ text: 'Ket luan', citationIds: [] }],
-      },
-      now: NOW,
-    })
+    const deadline = new Date(NOW.getTime() + 5_000)
+    const wallClock = vi.spyOn(Date, 'now').mockReturnValue(NOW.getTime())
+    let answer
+    try {
+      answer = await repository.appendAnswer({
+        actor: ACTOR,
+        question: 'Cau hoi?',
+        answer: {
+          id: 'answer-1',
+          status: 'answered',
+          paragraphs: [{ text: 'Ket luan', citationIds: [] }],
+        },
+        now: NOW,
+        deadline,
+      })
+    } finally {
+      wallClock.mockRestore()
+    }
     expect(answer).toMatchObject({
       answer: { status: 'answered' },
       chatSessionId: expect.any(String),
     })
+
+    const transactionOptions = transactionSession.withTransaction.mock.calls[0][1]
+    expect(transactionOptions).toEqual(expect.objectContaining({
+      maxCommitTimeMS: expect.any(Number),
+      timeoutMS: expect.any(Number),
+    }))
+    expect(Number.isFinite(transactionOptions.timeoutMS)).toBe(true)
+    expect(transactionOptions.timeoutMS).toBeGreaterThan(0)
+    expect(transactionOptions.timeoutMS).toBeLessThanOrEqual(deadline.getTime() - NOW.getTime())
 
     collections.chatSessions.findOne.mockResolvedValue(null)
     await expect(
@@ -557,5 +609,49 @@ describe('chat repository coverage contracts', () => {
         now: NOW,
       }),
     ).rejects.toThrow('Question')
+  })
+  it('rejects an aborted append before committing the chat session', async () => {
+    const { repository, collections } = makeDatabase()
+    const current = {
+      _id: CHAT_SESSION_ID,
+      userId: USER_ID,
+      scope: {},
+      messages: [],
+      messageCount: 0,
+      createdAt: NOW,
+      updatedAt: NOW,
+      expiresAt: new Date(NOW.getTime() + 60_000),
+    }
+    let releaseRead
+    let markReadStarted
+    const readStarted = new Promise((resolve) => { markReadStarted = resolve })
+    const pendingRead = new Promise((resolve) => { releaseRead = resolve })
+    collections.chatSessions.findOne.mockImplementationOnce(() => {
+      markReadStarted()
+      return pendingRead
+    })
+    collections.chatSessions.findOneAndUpdate.mockResolvedValue({ value: current })
+    const controller = new AbortController()
+    const cancellation = Object.assign(new Error('Ingestion execution was aborted'), {
+      code: 'ingestion_aborted',
+      retryable: false,
+    })
+    const append = repository.appendAnswer({
+      actor: ACTOR,
+      chatSessionId: CHAT_SESSION_ID,
+      question: 'Cau hoi?',
+      answer: { id: 'answer-cancelled', status: 'refused', refusalReason: 'insufficient-evidence' },
+      signal: controller.signal,
+      deadline: new Date(NOW.getTime() + 60_000),
+      now: NOW,
+    })
+
+    await readStarted
+    controller.abort(cancellation)
+    releaseRead(current)
+
+    await expect(append).rejects.toMatchObject({ code: 'ingestion_aborted', retryable: false })
+    expect(collections.chatSessions.findOneAndUpdate).not.toHaveBeenCalled()
+    expect(collections.chatSessions.insertOne).not.toHaveBeenCalled()
   })
 })

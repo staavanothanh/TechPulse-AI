@@ -10,6 +10,31 @@ function answerText(answer) {
   return (answer?.paragraphs ?? []).map(({ text }) => String(text ?? '')).join(' ')
 }
 
+function hasCanonicalCitationMetadata(citation) {
+  try {
+    const canonicalIdentity = (value) => typeof value === 'string' && value.trim().length > 0 && value === value.trim()
+    if (!citation || typeof citation !== 'object' || !canonicalIdentity(citation.articleId) || !canonicalIdentity(citation.sourceId) || typeof citation.titleOriginal !== 'string' || citation.titleOriginal.trim().length === 0) return false
+    if (typeof citation.originalUrl !== 'string') return false
+    const url = new URL(citation.originalUrl)
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return false
+    if (typeof citation.publishedAt !== 'string' || citation.publishedAt.trim().length === 0) return false
+    const date = new Date(citation.publishedAt)
+    return !Number.isNaN(date.getTime()) && date.toISOString() === citation.publishedAt
+  } catch { return false }
+}
+
+export function citationMetadataCoverage(result = {}) {
+  const answer = answerValue(result)
+  const paragraphs = Array.isArray(answer.paragraphs) ? answer.paragraphs : []
+  const usedCitationIds = new Set(paragraphs.flatMap((paragraph) => Array.isArray(paragraph?.citationIds) ? paragraph.citationIds : []))
+  if (usedCitationIds.size === 0) return answer.status === 'refused' ? 1 : 0
+  const citations = Array.isArray(answer.citations) ? answer.citations : []
+  const validUsed = [...usedCitationIds].filter((id) => citations.some((citation) => {
+    try { return citation?.id === id && hasCanonicalCitationMetadata(citation) } catch { return false }
+  })).length
+  return validUsed / usedCitationIds.size
+}
+
 export function answerMetrics({ item, result } = {}) {
   const answer = answerValue(result)
   const expectedRefusal = item.expected !== 'answered'

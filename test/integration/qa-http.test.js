@@ -1,3 +1,4 @@
+import { request as httpRequest } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp } from '../../server/app.js'
 
@@ -5,17 +6,56 @@ const TOKEN = 'qa-http-session-token'
 const COOKIE = `__Host-techpulse_session=${TOKEN}`
 const CHAT_ID = '507f1f77bcf86cd799439099'
 const ARTICLE_ID = '507f1f77bcf86cd799439011'
+const DISCONNECT_CSRF_TOKEN = 'csrf-deferred'
+const DISCONNECT_QUESTION = 'Câu hỏi bị ngắt kết nối'
+let deferredCsrfGate
+
+function createCsrfGate() {
+  let markEntered
+  let releaseGate
+  const entered = new Promise((resolve) => { markEntered = resolve })
+  const released = new Promise((resolve) => { releaseGate = resolve })
+  return {
+    entered,
+    released,
+    markEntered,
+    release: () => releaseGate(),
+  }
+}
+
+function withinTimeout(promise, label, timeoutMs = 2000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs)
+    promise.then(
+      (value) => { clearTimeout(timeout); resolve(value) },
+      (error) => { clearTimeout(timeout); reject(error) },
+    )
+  })
+}
 const AUTH = {
   async authenticate() { return { user: { id: 'user-1', status: 'active' }, session: { version: 1 } } },
-  async verifyCsrf({ token }) { if (token !== 'csrf') throw Object.assign(new Error('invalid csrf'), { status: 403, code: 'csrf_invalid' }) },
+  async verifyCsrf({ token }) {
+    if (token === DISCONNECT_CSRF_TOKEN) {
+      if (!deferredCsrfGate) throw new Error('deferred csrf gate is not configured')
+      deferredCsrfGate.markEntered()
+      await deferredCsrfGate.released
+      return
+    }
+    if (token !== 'csrf') throw Object.assign(new Error('invalid csrf'), { status: 403, code: 'csrf_invalid' })
+  },
 }
 
 describe('Step 10 Q&A HTTP boundary', () => {
   let server
   let origin
   const calls = []
+  const abortedServiceInputs = []
   const qaService = {
     async createAnswer(input) {
+      if (input.question === DISCONNECT_QUESTION && input.signal?.aborted) {
+        abortedServiceInputs.push(input)
+        return undefined
+      }
       calls.push(['createAnswer', input])
       if (input.question === 'Xung đột idempotency') throw Object.assign(new Error('Idempotency mismatch'), { status: 409, code: 'idempotency_mismatch' })
       if (input.question === 'Câu trả lời có citation lỗi') return { answer: { id: 'answer-invalid', status: 'answered', paragraphs: [{ text: 'Không được công khai.', citationIds: ['C-missing'] }], citations: [], refusalReason: null, chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
@@ -74,6 +114,8 @@ describe('Step 10 Q&A HTTP boundary', () => {
     })
     expect(invalid.status).toBe(422)
     expect((await invalid.json()).error.code).toBe('validation_error')
+    expect(invalid.headers.get('cache-control')).toBe('no-store, private')
+    expect(invalid.headers.get('vary')).toBe('Cookie')
     expect(calls.map(([name]) => name)).not.toContain('createAnswer-invalid')
 
     const missingKey = await fetch(`${origin}/api/v1/answers`, {
@@ -153,5 +195,53 @@ describe('Step 10 Q&A HTTP boundary', () => {
     })
     expect(response.status).toBe(409)
     expect((await response.json()).error.code).toBe('idempotency_mismatch')
+  })
+
+  it('does not dispatch an answer after the client disconnects before CSRF completes', async () => {
+    const before = calls.length
+    const abortedBefore = abortedServiceInputs.length
+    const gate = createCsrfGate()
+    deferredCsrfGate = gate
+    const body = JSON.stringify({ question: DISCONNECT_QUESTION, scope: { topics: ['ai'] } })
+    let clientRequest
+
+    try {
+      const clientOutcome = new Promise((resolve) => {
+        clientRequest = httpRequest(new URL('/api/v1/answers', origin), {
+          method: 'POST',
+          headers: headers({
+            Origin: 'http://localhost:3000',
+            'X-CSRF-Token': DISCONNECT_CSRF_TOKEN,
+            'Idempotency-Key': 'qa-http-disconnect-key',
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+          }),
+        })
+        clientRequest.once('response', (response) => {
+          response.resume()
+          resolve({ type: 'response', status: response.statusCode })
+        })
+        clientRequest.once('error', (error) => resolve({ type: 'error', code: error.code }))
+        clientRequest.once('close', () => resolve({ type: 'closed' }))
+        clientRequest.end(body)
+      })
+
+      await withinTimeout(gate.entered, 'CSRF verification')
+      clientRequest.destroy()
+      const outcome = await withinTimeout(clientOutcome, 'client disconnect')
+      expect(['closed', 'error']).toContain(outcome.type)
+
+      gate.release()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      const disconnectedCalls = calls.slice(before).filter(([name, input]) => name === 'createAnswer' && input?.question === DISCONNECT_QUESTION)
+      const abortedInputs = abortedServiceInputs.slice(abortedBefore)
+      expect(disconnectedCalls).toHaveLength(0)
+      expect(abortedInputs.every((input) => input.signal?.aborted)).toBe(true)
+    } finally {
+      gate.release()
+      clientRequest?.destroy()
+      deferredCsrfGate = null
+    }
   })
 })

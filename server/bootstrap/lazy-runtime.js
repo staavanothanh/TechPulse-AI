@@ -248,6 +248,7 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       queryEmbedding: indexing.queryEmbedding,
       rateLimitAdmission: common.rateLimitAdmission,
       maintenanceRegistry: jobs.maintenanceRegistry,
+      scopeConfirmationSecret: environment[common.runtime.internalMachineSecretEnv],
       verifySchema: verifyChatSchema,
       verifyProviderSchema,
       verifyEvidenceSchema,

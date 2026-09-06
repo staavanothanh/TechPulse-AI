@@ -31,7 +31,7 @@ describe('Step 10 Q&A validation', () => {
     expect(validateQuestionScope('Câu hỏi hợp lệ', { publishedAfter: '2026-08-12T00:00:00.000Z', publishedBefore: '2026-08-11T00:00:00.000Z' })).toMatchObject({ valid: false, firstInvalid: 'publishedAfter' })
   })
 
-  it('validates the observed temporal question against its effective derived UTC scope', () => {
+  it('validates explicit source scope without deriving temporal filters from question text', () => {
     const result = validateQuestionScope(
       'tháng 9 này có tin tức gì về các model AI mới không',
       { topics: ['AI'] },
@@ -41,8 +41,6 @@ describe('Step 10 Q&A validation', () => {
       valid: true,
       scope: {
         topics: ['AI'],
-        publishedAfter: '2026-09-01T00:00:00.000Z',
-        publishedBefore: '2026-09-30T23:59:59.999Z',
       },
     })
   })

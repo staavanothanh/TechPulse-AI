@@ -84,7 +84,7 @@ function validateFixture(fixture, embeddingSpec) {
 }
 
 function unavailableReport() {
-  return Object.freeze({ queries: 0, top5Rate: 0, passed: false, reason: 'fixture_unavailable', details: Object.freeze([]) })
+  return Object.freeze({ queries: 0, top1Rate: 0, top5Rate: 0, mrr: 0, passed: false, reason: 'fixture_unavailable', details: Object.freeze([]) })
 }
 
 export function runRetrievalEvaluation({ fixture, fixturePath = DEFAULT_RETRIEVAL_FIXTURE_PATH, embeddingSpec } = {}) {
@@ -105,22 +105,29 @@ export function runRetrievalEvaluation({ fixture, fixturePath = DEFAULT_RETRIEVA
     ...(spec.artifactCompatibilityId !== undefined ? { embeddingArtifactCompatibilityId: spec.artifactCompatibilityId } : {}),
     textScore: 0,
   }))
+  let top1Hits = 0
   let top5Hits = 0
+  let reciprocalRankSum = 0
   const details = verified.fixture.cases.map(({ queryId, targetId }) => {
     const query = queries.get(queryId)
-    const top5 = rankHybridCandidates({
+    const rankedCandidates = rankHybridCandidates({
       queryVector: query.embedding,
       queryModel: spec.model,
       queryDimensions: spec.dimensions,
       queryVersion: spec.version,
       ...(spec.artifactCompatibilityId !== undefined ? { queryArtifactCompatibilityId: spec.artifactCompatibilityId } : {}),
       candidates,
-    }).slice(0, 5).map(({ id }) => id)
-    const hit = top5.includes(targetId)
+    })
+    const targetRank = rankedCandidates.findIndex(({ id }) => id === targetId) + 1
+    const hit = targetRank > 0 && targetRank <= 5
+    if (targetRank === 1) top1Hits += 1
     if (hit) top5Hits += 1
-    return Object.freeze({ queryId, targetId, hit, rank: top5.indexOf(targetId) + 1 })
+    if (targetRank > 0) reciprocalRankSum += 1 / targetRank
+    return Object.freeze({ queryId, targetId, hit, rank: targetRank })
   })
+  const top1Rate = top1Hits / verified.fixture.cases.length
   const top5Rate = top5Hits / verified.fixture.cases.length
+  const mrr = reciprocalRankSum / verified.fixture.cases.length
   return Object.freeze({
     providerId: spec.providerId,
     endpointId: spec.endpointId,
@@ -130,7 +137,9 @@ export function runRetrievalEvaluation({ fixture, fixturePath = DEFAULT_RETRIEVA
     ...(spec.artifactCompatibilityId !== undefined ? { artifactCompatibilityId: spec.artifactCompatibilityId } : {}),
     datasetVersion: verified.fixture.fixtureVersion,
     queries: verified.fixture.cases.length,
+    top1Rate,
     top5Rate,
+    mrr,
     passed: top5Rate === 1,
     details: Object.freeze(details),
   })

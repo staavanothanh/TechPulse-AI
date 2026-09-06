@@ -98,6 +98,7 @@ function assertPolicy(policy) {
   if (!policy || typeof policy.workloadId !== 'string' || !OPERATIONS.has(policy.operation) || !CAPABILITIES.has(policy.requiredCapability)
     || !Number.isInteger(policy.maxExternalAttempts) || policy.maxExternalAttempts < 1 || policy.maxExternalAttempts > 2
     || typeof policy.primaryRouteId !== 'string' || !Array.isArray(policy.modelFallbackRouteIds) || !Array.isArray(policy.providerFallbackRouteIds)) throw configError()
+  if (policy.workloadId === 'qa-intent' && (policy.operation !== 'summary' || policy.maxExternalAttempts !== 1 || policy.modelFallbackRouteIds.length !== 0 || policy.providerFallbackRouteIds.length !== 0)) throw configError()
 }
 
 function assertCandidate(route, { policy, primaryRoute, fallback, now }) {
@@ -125,6 +126,27 @@ function reportOutcome(classification) {
   return 'terminal-failure'
 }
 
+function deadlineAt(value) {
+  if (value === undefined || value === null) return undefined
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date.getTime()
+}
+
+function executionUnavailable({ signal, deadline, now }) {
+  if (signal?.aborted) return true
+  const deadlineValue = deadlineAt(deadline)
+  const current = now()
+  return deadlineValue !== undefined && current instanceof Date && current.getTime() >= deadlineValue
+}
+
+function cancellationError() {
+  return new ProviderAdapterError('policy', { localControl: true })
+}
+
+function assertExecutionAvailable(context) {
+  if (executionUnavailable(context)) throw cancellationError()
+}
+
 export function createProviderRouter({ workloadPolicies, admission, now = () => new Date() } = {}) {
   if (!Array.isArray(workloadPolicies) || typeof now !== 'function' || !admission
     || typeof admission.getRoute !== 'function' || typeof admission.admitProviderDomain !== 'function'
@@ -137,9 +159,11 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
   }
 
   return Object.freeze({
-    async execute({ workloadId, admittedInput, attemptId, units = 1, invoke, validateOutput } = {}) {
+    async execute({ workloadId, admittedInput, attemptId, units = 1, invoke, validateOutput, signal, deadline } = {}) {
+      const context = { signal, deadline, now }
       const policy = policies.get(workloadId)
       if (!policy || typeof attemptId !== 'string' || attemptId.length < 1 || typeof invoke !== 'function' || typeof validateOutput !== 'function' || !Number.isFinite(units) || units <= 0) throw configError()
+      assertExecutionAvailable(context)
       let input
       try {
         input = immutableCopy(admittedInput)
@@ -160,6 +184,7 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
       let lastRoute = primaryRoute
 
       while (externalAttempts < policy.maxExternalAttempts) {
+        assertExecutionAvailable(context)
         const routeId = candidateIds(policy, fallback)[0]
         const route = admission.getRoute(routeId)
         lastRoute = route
@@ -170,8 +195,15 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
         }
         let domainAdmission
         try {
-          domainAdmission = await admission.admitProviderDomain({ routeId, attemptId })
-        } catch {
+          domainAdmission = await admission.admitProviderDomain({ routeId, attemptId, signal, deadline })
+          assertExecutionAvailable(context)
+        } catch (error) {
+          if (executionUnavailable(context) || error?.providerLocalControl === true) {
+            if (domainAdmission?.reservationId) {
+              try { await admission.reportProviderDomain({ routeId, reservationId: domainAdmission.reservationId, outcome: 'cancelled' }) } catch { /* cancellation cleanup is best effort */ }
+            }
+            throw cancellationError()
+          }
           throw routingError(new ProviderAdapterError('config'), {
             metadata: routeMetadata({ policy, route, externalAttempts, fallback }), externalAttempts,
           })
@@ -197,19 +229,23 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
             attemptId,
             kind: operationKind(policy.operation, fallback),
             units,
+            signal,
+            deadline,
             invoke: async (admittedRoute) => {
               externalAttempts += 1
-              const rawOutput = await invoke({ route: admittedRoute, admittedInput: input })
+              const rawOutput = await invoke({ route: admittedRoute, admittedInput: input, signal, deadline })
               return validateOutput({ route: admittedRoute, output: rawOutput, admittedInput: input })
             },
           })
+          assertExecutionAvailable(context)
           completed = true
         } catch (error) {
-          if (error?.providerLocalControl === true) {
+          const cancelled = executionUnavailable(context)
+          if (cancelled || error?.providerLocalControl === true) {
             try {
               await admission.reportProviderDomain({ routeId, reservationId: domainAdmission.reservationId, outcome: 'cancelled' })
             } catch { /* the reservation expires without recording a provider failure */ }
-            throw error
+            throw cancelled ? cancellationError() : error
           }
           const classification = classifyProviderError(error)
           try {
@@ -233,8 +269,13 @@ export function createProviderRouter({ workloadPolicies, admission, now = () => 
         }
         if (!completed) continue
         try {
+          assertExecutionAvailable(context)
           await admission.reportProviderDomain({ routeId, reservationId: domainAdmission.reservationId, outcome: 'succeeded' })
-        } catch {
+        } catch (error) {
+          if (executionUnavailable(context)) {
+            try { await admission.reportProviderDomain({ routeId, reservationId: domainAdmission.reservationId, outcome: 'cancelled' }) } catch { /* cancellation cleanup is best effort */ }
+            throw cancellationError()
+          }
           throw routingError(new ProviderAdapterError('ambiguous'), {
             metadata: routeMetadata({ policy, route, externalAttempts, fallback }), externalAttempts,
           })
