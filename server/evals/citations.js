@@ -1,7 +1,7 @@
 import { buildGroundedPrompt } from '../domain/qa/evidence.js'
 import { hydrateAnswerCitations, serializeHistoricalCitation, validateParagraphCitations } from '../domain/qa/citations.js'
 import { STEP10_EVAL_CASES, STEP10_EVAL_VERSION } from '../../test/fixtures/qa/step10-eval-fixture.js'
-import { aggregateAnswerMetrics, answerMetrics } from './qa-metrics.js'
+import { aggregateAnswerMetrics, answerMetrics, citationMetadataCoverage } from './qa-metrics.js'
 import { createControlledAnswer } from './controlled-qa.js'
 
 export async function runCitationEvaluation({ cases = STEP10_EVAL_CASES, createAnswer = createControlledAnswer } = {}) {
@@ -20,9 +20,13 @@ export async function runCitationEvaluation({ cases = STEP10_EVAL_CASES, createA
   for (const item of cases) {
     let result
     try { result = await execute({ item, question: item.question, scope: item.scope, idempotencyKey: `citation-eval-${item.id}` }) } catch { result = { answer: { status: 'error', paragraphs: [], citations: [] } } }
-    details.push(answerMetrics({ item, result }))
+    const baseDetail = answerMetrics({ item, result })
+    const coverage = citationMetadataCoverage(result)
+    details.push(Object.freeze({ ...baseDetail, citationMetadataCoverage: coverage, passed: baseDetail.passed && coverage >= 0.9 }))
   }
   const passedCases = details.filter(({ passed }) => passed).length
-  const metrics = aggregateAnswerMetrics(details)
-  return Object.freeze({ version: STEP10_EVAL_VERSION, total: details.length, passedCases, passRate: details.length ? passedCases / details.length : 0, passed: passedCases === details.length && metrics.citationPrecision >= 0.9 && metrics.claimCoverage >= 0.9, ...metrics, details: Object.freeze(details) })
+  const baseMetrics = aggregateAnswerMetrics(details)
+  const citationMetadataCoverageMean = details.length === 0 ? 0 : details.reduce((sum, detail) => sum + Number(detail.citationMetadataCoverage ?? 0), 0) / details.length
+  const metrics = Object.freeze({ ...baseMetrics, citationMetadataCoverage: citationMetadataCoverageMean })
+  return Object.freeze({ version: STEP10_EVAL_VERSION, total: details.length, passedCases, passRate: details.length ? passedCases / details.length : 0, passed: passedCases === details.length && metrics.citationPrecision >= 0.9 && metrics.claimCoverage >= 0.9 && metrics.citationMetadataCoverage >= 0.9, ...metrics, details: Object.freeze(details) })
 }

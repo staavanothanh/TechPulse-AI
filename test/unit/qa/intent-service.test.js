@@ -187,6 +187,55 @@ describe('QA intent service boundary (planner/compiler)', () => {
     expect(repo.lastEvidenceQuery.scope).not.toHaveProperty('injectedAdmin')
   })
 
+  it('passes bounded planner query variants through initial retrieval and every evidence recheck without expanding scope', async () => {
+    // Arrange: provider-like intent proposal and compiler output carry two safe variants.
+    const records = evidence()
+    const repo = repository(records)
+    const queryVariants = ['Chip AI tiet kiem dien the nao?', 'AI tiet kiem dien']
+    const intentPlanner = vi.fn((input) => ({
+      ...planQaIntent(input),
+      queryVariants: [...queryVariants],
+    }))
+    const intentCompiler = vi.fn((input) => ({
+      ...compileQaExecutionPlan(input),
+      queryVariants: [...input.proposal.queryVariants],
+    }))
+    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Ket qua cho thay chip AI tiet kiem dien.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'], addressesQuestion: true }))
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      providerAdapters: { llmProvider: { answer: provider } },
+      supportVerifier,
+      intentPlanner,
+      intentCompiler,
+      now: () => new Date(FIXED_NOW),
+    })
+
+    // Act
+    const result = await service.createAnswer({
+      auth,
+      question: 'Chip AI tiet kiem dien the nao?',
+      scope: { topics: ['AI'] },
+      idempotencyKey: 'intent-query-variants-1',
+    })
+
+    // Assert: initial retrieval plus both fence rechecks share variants and only the explicit topic scope.
+    expect(result.answer.status).toBe('answered')
+    expect(intentPlanner).toHaveBeenCalledTimes(1)
+    expect(intentCompiler).toHaveBeenCalledTimes(1)
+    expect(repo.evidenceQueries).toHaveLength(3)
+    expect(repo.evidenceQueries[0]).toEqual(expect.objectContaining({
+      question: 'Chip AI tiet kiem dien the nao?',
+      queryVariants,
+      scope: { topics: ['ai'] },
+    }))
+    for (const query of repo.evidenceQueries.slice(1)) {
+      expect(query.queryVariants).toEqual(queryVariants)
+      expect(query.scope.topics).toEqual(['ai'])
+    }
+  })
+
   it('fails closed when the planner fails, without retrieval or provider calls', async () => {
     // Arrange
     const repo = repository(evidence())
@@ -220,17 +269,201 @@ describe('QA intent service boundary (planner/compiler)', () => {
     expect(provider).not.toHaveBeenCalled()
     expect(supportVerifier).not.toHaveBeenCalled()
   })
-  it('keeps inferred temporal bounds out of the continuation scope fence', async () => {
+  it('terminates safely with zero provider/retrieval work when the request signal is already aborted', async () => {
+    // Arrange: request context is already aborted before orchestration starts.
     const repo = repository(evidence())
-    repo.getChatSession = vi.fn(async () => ({ scope: { topics: ['ai'] } }))
-    const service = createQaService({ chatRepository: repo, articleRepository: repo, now: () => new Date(FIXED_NOW) })
+    const queryEmbedding = vi.fn(async () => ({ model: 'baai/bge-m3', dimensions: 1, version: 1, artifactCompatibilityId: 'bge-m3-v1-1', embedding: [0.5] }))
+    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Ket qua.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'], addressesQuestion: true }))
+    const appendCalls = []
+    const appendAnswer = repo.appendAnswer
+    repo.appendAnswer = async (input) => { appendCalls.push(input); return appendAnswer(input) }
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      queryEmbedding,
+      providerAdapters: { llmProvider: { answer: provider } },
+      supportVerifier,
+      now: () => new Date(FIXED_NOW),
+    })
+    const controller = new AbortController()
+    controller.abort()
 
-    const first = await service.createAnswer({ auth, question: 'Tin AI hôm nay có gì mới?', scope: { topics: ['AI'] }, idempotencyKey: 'intent-continuation-first' })
-    const second = await service.createAnswer({ auth, question: 'Còn bài nào đáng chú ý?', scope: { topics: ['AI'] }, chatSessionId: first.answer.chatSessionId, idempotencyKey: 'intent-continuation-second' })
+    // Act: optional request/signal context carries the already-aborted signal.
+    const failure = await service.createAnswer({
+      auth,
+      question: 'Tin hôm nay có gì mới về AI?',
+      scope: { topics: ['AI'] },
+      idempotencyKey: 'intent-abort-already-1',
+      request: { signal: controller.signal },
+      signal: controller.signal,
+    }).then(() => null, (error) => error)
 
-    expect(first.answer.chatSessionId).toBe('507f1f77bcf86cd799439099')
-    expect(second.answer).toMatchObject({ chatSessionId: '507f1f77bcf86cd799439099', status: 'refused' })
-    expect(repo.getChatSession).toHaveBeenCalledWith(expect.objectContaining({ chatSessionId: '507f1f77bcf86cd799439099' }))
+    // Assert: safe terminal ContentError, zero external work, no persisted answer, no live reservation.
+    expect(failure).toMatchObject({ status: 503, code: 'service_unavailable' })
+    expect(queryEmbedding).not.toHaveBeenCalled()
+    expect(repo.evidenceQueries ?? []).toHaveLength(0)
+    expect(provider).not.toHaveBeenCalled()
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(appendCalls).toHaveLength(0)
+    for (const attempt of repo.attempts.values()) {
+      expect(['reserved', 'provider-running']).not.toContain(attempt.status)
+    }
+  })
+
+  it('terminates safely with zero provider/retrieval work when the request deadline is already exceeded', async () => {
+    // Arrange: request context carries an already-exceeded deadline.
+    const repo = repository(evidence())
+    const queryEmbedding = vi.fn(async () => ({ model: 'baai/bge-m3', dimensions: 1, version: 1, artifactCompatibilityId: 'bge-m3-v1-1', embedding: [0.5] }))
+    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Ket qua.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'], addressesQuestion: true }))
+    const appendCalls = []
+    const appendAnswer = repo.appendAnswer
+    repo.appendAnswer = async (input) => { appendCalls.push(input); return appendAnswer(input) }
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      queryEmbedding,
+      providerAdapters: { llmProvider: { answer: provider } },
+      supportVerifier,
+      now: () => new Date(FIXED_NOW),
+    })
+    const deadline = new Date(FIXED_NOW.getTime() - 1)
+
+    // Act
+    const failure = await service.createAnswer({
+      auth,
+      question: 'Tin hôm nay có gì mới về AI?',
+      scope: { topics: ['AI'] },
+      idempotencyKey: 'intent-deadline-already-1',
+      request: { signal: new AbortController().signal, deadline },
+      deadline,
+    }).then(() => null, (error) => error)
+
+    // Assert: safe terminal ContentError, zero external work, no persisted answer, no live reservation.
+    expect(failure).toMatchObject({ status: 503, code: 'service_unavailable' })
+    expect(queryEmbedding).not.toHaveBeenCalled()
+    expect(repo.evidenceQueries ?? []).toHaveLength(0)
+    expect(provider).not.toHaveBeenCalled()
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(appendCalls).toHaveLength(0)
+    for (const attempt of repo.attempts.values()) {
+      expect(['reserved', 'provider-running']).not.toContain(attempt.status)
+    }
+  })
+
+  it('does not leave a live provider reservation and performs no continued work after in-flight abort', async () => {
+    // Arrange: provider aborts the request mid-generation; support/append must not continue.
+    const repo = repository(evidence())
+    const queryEmbedding = vi.fn(async () => ({ model: 'baai/bge-m3', dimensions: 1, version: 1, artifactCompatibilityId: 'bge-m3-v1-1', embedding: [0.5] }))
+    const controller = new AbortController()
+    const provider = vi.fn(async () => {
+      controller.abort()
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return { paragraphs: [{ text: 'Ket qua.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
+    })
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'], addressesQuestion: true }))
+    const appendCalls = []
+    const appendAnswer = repo.appendAnswer
+    repo.appendAnswer = async (input) => { appendCalls.push(input); return appendAnswer(input) }
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      queryEmbedding,
+      providerAdapters: { llmProvider: { answer: provider } },
+      supportVerifier,
+      now: () => new Date(FIXED_NOW),
+    })
+
+    // Act
+    const failure = await service.createAnswer({
+      auth,
+      question: 'Tin hôm nay có gì mới về AI?',
+      scope: { topics: ['AI'] },
+      idempotencyKey: 'intent-abort-inflight-1',
+      request: { signal: controller.signal },
+      signal: controller.signal,
+    }).then(() => null, (error) => error)
+
+    // Assert: bounded safe terminal, generation happened once, no continued support/append, no live reservation.
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(failure).toMatchObject({ status: 503, code: 'service_unavailable' })
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(appendCalls).toHaveLength(0)
+    expect(repo.attempts.size).toBeGreaterThan(0)
+    for (const attempt of repo.attempts.values()) {
+      expect(['reserved', 'provider-running']).not.toContain(attempt.status)
+      if (attempt.providerReservationExpiresAt) {
+        expect(new Date(attempt.providerReservationExpiresAt).getTime()).toBeLessThanOrEqual(FIXED_NOW.getTime())
+      }
+    }
+  })
+
+  it('returns a bounded 503 when an actor-fence check is pending during request cancellation', async () => {
+    // Arrange: actor/session validation intentionally remains pending; cancellation must not wait for it.
+    const repo = repository(evidence())
+    const controller = new AbortController()
+    let releaseActorFence
+    const actorFencePending = new Promise((resolve) => { releaseActorFence = resolve })
+    let actorFenceStartedResolve
+    const actorFenceStarted = new Promise((resolve) => { actorFenceStartedResolve = resolve })
+    const originalAssertActorFence = repo.assertActorFence
+    repo.assertActorFence = vi.fn(async (...args) => {
+      actorFenceStartedResolve()
+      await actorFencePending
+      return originalAssertActorFence ? originalAssertActorFence(...args) : true
+    })
+    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Ket qua.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'], addressesQuestion: true }))
+    const appendCalls = []
+    const appendAnswer = repo.appendAnswer
+    repo.appendAnswer = async (input) => { appendCalls.push(input); return appendAnswer(input) }
+    const appendRefusalWithoutQuestion = repo.appendRefusalWithoutQuestion
+    repo.appendRefusalWithoutQuestion = async (input) => { appendCalls.push(input); return appendRefusalWithoutQuestion(input) }
+    const service = createQaService({
+      chatRepository: repo,
+      articleRepository: repo,
+      providerAdapters: { llmProvider: { answer: provider } },
+      supportVerifier,
+      now: () => new Date(FIXED_NOW),
+    })
+    const completion = service.createAnswer({
+      auth,
+      question: 'Tin hôm nay có gì mới về AI?',
+      scope: { topics: ['AI'] },
+      idempotencyKey: 'intent-abort-pending-fence-1',
+      request: { signal: controller.signal },
+      signal: controller.signal,
+    }).then(() => null, (error) => error)
+    await actorFenceStarted
+    controller.abort()
+
+    // Act: race the request against a short bound, then release the deferred hook so cleanup can drain.
+    const timedOut = Symbol('actor-fence-pending')
+    let timeoutHandle
+    let boundedResult
+    try {
+      boundedResult = await Promise.race([
+        completion,
+        new Promise((resolve) => { timeoutHandle = setTimeout(() => resolve(timedOut), 100) }),
+      ])
+    } finally {
+      clearTimeout(timeoutHandle)
+      releaseActorFence()
+      await completion
+      if (originalAssertActorFence) repo.assertActorFence = originalAssertActorFence
+      else delete repo.assertActorFence
+    }
+
+    // Assert: cancellation is safe and terminal; no support/append work continues and no live attempt remains.
+    expect(boundedResult).toMatchObject({ status: 503, code: 'service_unavailable' })
+    expect(provider).not.toHaveBeenCalled()
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(appendCalls).toHaveLength(0)
+    expect(repo.attempts.size).toBeGreaterThan(0)
+    for (const attempt of repo.attempts.values()) {
+      expect(['reserved', 'provider-running']).not.toContain(attempt.status)
+    }
   })
 
 })
