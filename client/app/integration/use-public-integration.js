@@ -4,6 +4,8 @@ import { validateFeedFilters } from '../../features/feed/feed-validation.js'
 import { validateSearchInput } from '../../features/search/search-validation.js'
 import { createQaApi } from '../../features/qa/qa-api.js'
 import {
+  hasQaScope,
+  isQaScopeConfirmation,
   validateAnswerPayload,
   validateQuestionScope,
   validateSessionDetail,
@@ -109,6 +111,8 @@ export function usePublicIntegration({
   onSessionExpired,
   accountActions,
   sessionNotice,
+  allowNaturalLanguageScope = false,
+  scopeMode = null,
 }) {
   const contentApi = useMemo(() => createContentApi(api), [api])
   const qaApi = useMemo(() => createQaApi(api), [api])
@@ -199,7 +203,7 @@ export function usePublicIntegration({
     expire,
     onBack: () => onNavigate?.(articleReturnRoute || 'feed', { back: true }),
   })
-  const qaState = useQa({ articleId: routeArticleId, csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
+  const qaState = useQa({ articleId: routeArticleId, csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user, allowNaturalLanguageScope, scopeMode })
   const qa = {
     ...qaState,
     handlers: {
@@ -735,7 +739,7 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
   return { state, article, error, onBack, onAskAboutArticle, onRetry: retry }
 }
 
-export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user } = {}) {
+export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user, allowNaturalLanguageScope = false, scopeMode: requestedScopeMode = null } = {}) {
   const [state, setState] = useState('empty')
   const [sessions, setSessions] = useState([])
   const [messages, setMessages] = useState([])
@@ -745,10 +749,22 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     ...(initialArticleId ? { articleId: initialArticleId } : {}),
   }))
   const [error, setError] = useState(null)
+  const [scopeModeState, setScopeModeState] = useState(null)
+  const [scopeProposal, setScopeProposal] = useState(null)
+  const [scopeConfirmation, setScopeConfirmation] = useState(null)
   const sessionIdRef = useRef(undefined)
   const queueTailRef = useRef(null)
   const epochRef = useRef(0)
   const sessionResetEpochRef = useRef(null)
+  const pendingNaturalQuestionRef = useRef('')
+  const naturalScopeAllowed = allowNaturalLanguageScope === true || requestedScopeMode === 'natural-language'
+  const defaultScopeMode = naturalScopeAllowed ? 'natural-language' : 'explicit'
+  function resetNaturalScope() {
+    pendingNaturalQuestionRef.current = ''
+    setScopeModeState(defaultScopeMode)
+    setScopeProposal(null)
+    setScopeConfirmation(null)
+  }
 
   const listEpochRef = useRef(0)
   const routeArticleRef = useRef(initialArticleId)
@@ -772,6 +788,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     setScope({ topics: nextTopics, ...(enabled && initialArticleId ? { articleId: initialArticleId } : {}) })
     setState('empty')
     setError(null)
+    resetNaturalScope()
     return undefined
   }, [identityChanged, identityKey])
   useEffect(() => {
@@ -786,6 +803,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     setScope((current) => qaScopeForArticle(current, initialArticleId))
     setState('empty')
     setError(null)
+    resetNaturalScope()
     return undefined
   }, [initialArticleId, routeArticleChanged])
 
@@ -806,6 +824,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     setMessages([])
     setState('empty')
     setError(null)
+    resetNaturalScope()
     setScope((current) => ({ ...updateScope(current), sessionId: undefined }))
   }
 
@@ -850,6 +869,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
   }, [enabled, loadSessions])
 
   async function selectSession(id) {
+    resetNaturalScope()
     const epoch = ++epochRef.current
     sessionIdRef.current = id
     setState('loading')
@@ -872,12 +892,26 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
   }
 
   async function ask(payload) {
-    const validation = validateQuestionScope(payload.question, payload)
-    if (!validation.valid) {
-      const hasPriorConversation = messages.length > 0 || Boolean(sessionIdRef.current)
-      setError(new Error(validation.message))
-      if (!hasPriorConversation) setState('error')
-      return
+    const hasExplicitPayloadScope = hasQaScope(payload) || hasQaScope(payload?.scope)
+    const naturalPreview = payload?.scopeMode === 'preview' && !hasExplicitPayloadScope
+    const naturalConfirmed = payload?.scopeMode === 'confirmed' && !hasExplicitPayloadScope && isQaScopeConfirmation(payload?.scopeConfirmation)
+    let validation = { valid: true, scope: {} }
+    if (!naturalPreview && !naturalConfirmed) {
+      validation = validateQuestionScope(payload.question, payload)
+      if (!validation.valid) {
+        const hasPriorConversation = messages.length > 0 || Boolean(sessionIdRef.current)
+        setError(new Error(validation.message))
+        if (!hasPriorConversation) setState('error')
+        return
+      }
+      resetNaturalScope()
+    } else {
+      pendingNaturalQuestionRef.current = typeof payload.question === 'string' ? payload.question.trim() : ''
+      setScopeModeState(naturalPreview ? 'preview' : 'confirmed')
+      if (naturalPreview) {
+        setScopeProposal(null)
+        setScopeConfirmation(null)
+      }
     }
     const effectiveScope = validation.scope ?? {}
     const epoch = epochRef.current
@@ -889,21 +923,28 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
       setState('loading')
       setError(null)
       const currentSessionId = sessionIdRef.current ?? (sessionResetEpochRef.current === epoch ? undefined : payload.sessionId)
+      const requestSessionId = naturalPreview ? undefined : currentSessionId
+      const confirmedScope = naturalConfirmed && hasQaScope(scopeProposal) ? scopeProposal : {}
+      const requestBody = naturalPreview
+        ? { question: payload.question, scopeMode: 'preview' }
+        : naturalConfirmed
+          ? { question: payload.question, scopeMode: 'confirmed', scopeConfirmation: payload.scopeConfirmation }
+          : {
+              question: payload.question,
+              scope: {
+                ...(typeof effectiveScope.articleId === 'string' && effectiveScope.articleId.trim().length > 0 ? { articleId: effectiveScope.articleId } : {}),
+                ...(Array.isArray(effectiveScope.topics) && effectiveScope.topics.length > 0 ? { topics: effectiveScope.topics } : {}),
+                ...(effectiveScope.publishedAfter ? { publishedAfter: effectiveScope.publishedAfter } : {}),
+                ...(effectiveScope.publishedBefore ? { publishedBefore: effectiveScope.publishedBefore } : {}),
+              },
+            }
       try {
         const response = await qaApi.createAnswer(
-          {
-            question: payload.question,
-            scope: {
-              ...(typeof effectiveScope.articleId === 'string' && effectiveScope.articleId.trim().length > 0 ? { articleId: effectiveScope.articleId } : {}),
-              ...(Array.isArray(effectiveScope.topics) && effectiveScope.topics.length > 0 ? { topics: effectiveScope.topics } : {}),
-              ...(effectiveScope.publishedAfter ? { publishedAfter: effectiveScope.publishedAfter } : {}),
-              ...(effectiveScope.publishedBefore ? { publishedBefore: effectiveScope.publishedBefore } : {}),
-            }
-          },
+          requestBody,
           {
             csrfToken,
             idempotencyKey: createQaIdempotencyKey(),
-            chatSessionId: currentSessionId,
+            chatSessionId: requestSessionId,
           },
         )
         const checked = validateAnswerPayload(response)
@@ -918,13 +959,22 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
         ])
         setScope((current) => ({
           ...current,
-          ...effectiveScope,
+          ...(naturalConfirmed ? confirmedScope : effectiveScope),
           sessionId: returnedSessionId ?? current.sessionId,
         }))
+        resetNaturalScope()
         setState('ready')
         void loadSessions()
       } catch (requestError) {
         if (epoch !== epochRef.current) return
+        if (naturalPreview && requestError?.scopeProposal && requestError?.scopeConfirmation) {
+          pendingNaturalQuestionRef.current = payload.question
+          setScopeModeState('preview')
+          setScopeProposal(requestError.scopeProposal)
+          setScopeConfirmation(requestError.scopeConfirmation)
+        } else if (naturalConfirmed && requestError?.code === 'validation_error') {
+          resetNaturalScope()
+        }
         expire(requestError)
         setError(requestError)
         setState('error')
@@ -949,6 +999,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
         setSessions([])
         setMessages([])
         setScope((current) => ({ ...current, sessionId: undefined }))
+        resetNaturalScope()
         setState('empty')
       } catch (requestError) {
         if (epoch !== epochRef.current) return
@@ -970,12 +1021,19 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
       ? qaScopeForArticle(scope, initialArticleId)
       : scope
   const displayError = identityChanged || routeArticleChanged ? null : error
+  const displayScopeMode = identityChanged || routeArticleChanged ? defaultScopeMode : (scopeModeState ?? defaultScopeMode)
+  const displayScopeProposal = identityChanged || routeArticleChanged ? null : scopeProposal
+  const displayScopeConfirmation = identityChanged || routeArticleChanged ? null : scopeConfirmation
   return {
     state: displayState,
     sessions: displaySessions,
     messages: displayMessages,
     scope: displayScope,
     error: displayError,
+    scopeMode: displayScopeMode,
+    scopeProposal: displayScopeProposal,
+    scopeConfirmation: displayScopeConfirmation,
+    allowNaturalLanguageScope: naturalScopeAllowed,
     onAsk: ask,
     handlers: {
       onNewSession: () => {
@@ -986,10 +1044,24 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
         setScope((current) => ({ ...current, sessionId: undefined }))
         setState('empty')
         setError(null)
+        resetNaturalScope()
       },
       onSelectSession: selectSession,
       onClearSessions: clearSessions,
       onRetry: () => (sessionIdRef.current ? selectSession(sessionIdRef.current) : loadSessions()),
+      onConfirmScope: (payload) => {
+        if (payload?.scopeMode !== 'confirmed' || !isQaScopeConfirmation(payload.scopeConfirmation)) return false
+        if (!scopeProposal || !scopeConfirmation || JSON.stringify(payload.scopeConfirmation) !== JSON.stringify(scopeConfirmation)) return false
+        const question = typeof payload.question === 'string' ? payload.question.trim() : pendingNaturalQuestionRef.current
+        if (!question) return false
+        return ask({ question, scopeMode: 'confirmed', scopeConfirmation })
+      },
+      onCancelScope: () => {
+        epochRef.current += 1
+        resetNaturalScope()
+        setError(null)
+        setState('empty')
+      },
       onToggleTopic: (topic) =>
         resetSessionForScopeChange((current) => ({
           ...current,

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   ErrorState,
   FilterField,
@@ -8,10 +8,37 @@ import {
 } from '../components/reader-primitives.jsx'
 import { formatDate, TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
-import { hasQaScope, qaClarificationMessage, validateQuestionScope } from '../../qa/qa-validation.js'
+import {
+  hasQaScope,
+  isQaScopeConfirmation,
+  qaClarificationMessage,
+  validateQuestionScope,
+} from '../../qa/qa-validation.js'
 import { handleQaQuestionKeyDown } from '../../qa/qa-keyboard.js'
 import { topicsMatch } from '../../../../shared/topic-catalog.js'
 import { useDialogFocus } from '../../qa/dialog-focus.js'
+
+const pendingNaturalQuestions = new WeakMap()
+
+function naturalScopeEnabled(scopeMode, allowNaturalLanguageScope) {
+  return allowNaturalLanguageScope === true || scopeMode === 'natural-language' || scopeMode === 'preview'
+}
+
+function safeScopeProposal(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const proposal = Object.fromEntries(
+    Object.entries(value).filter(([key]) => ['articleId', 'topics', 'publishedAfter', 'publishedBefore'].includes(key)),
+  )
+  return hasQaScope(proposal) ? proposal : null
+}
+
+function scopeConfirmationSummary(scope) {
+  const entries = []
+  if (Array.isArray(scope.topics) && scope.topics.length > 0) entries.push(`Chủ đề: ${scope.topics.join(', ')}`)
+  if (typeof scope.articleId === 'string' && scope.articleId) entries.push(`Bài viết: ${scope.articleId}`)
+  if (scope.publishedAfter && scope.publishedBefore) entries.push(`Thời gian: ${scope.publishedAfter} – ${scope.publishedBefore}`)
+  return entries
+}
 
 export default function QaView({
   state = 'empty',
@@ -22,11 +49,18 @@ export default function QaView({
   error,
   onAsk,
   handlers = {},
+  scopeMode = 'explicit',
+  scopeProposal = null,
+  scopeConfirmation = null,
+  allowNaturalLanguageScope = false,
 }) {
   const [question, setQuestion] = useState('')
   const [questionError, setQuestionError] = useState('')
   const [selectedCitation, setSelectedCitation] = useState(null)
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
+  const pendingQuestionRef = useRef('')
+  const canceledScopeRef = useRef(false)
+  const confirmationKeyRef = useRef('')
   const closeCitation = useCallback(() => setSelectedCitation(null), [])
   const closeClearConfirmation = useCallback(() => setClearConfirmationOpen(false), [])
   const confirmClearSessions = useCallback(() => {
@@ -37,9 +71,42 @@ export default function QaView({
   const safeScope = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope : {}
   const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
   const activeTopics = Array.isArray(topics) ? topics : TOPICS
+  const hasExplicitScopeInput = Boolean(
+    (typeof safeScope.articleId === 'string' ? safeScope.articleId.trim() : safeScope.articleId)
+      || (Array.isArray(scopeTopics) && scopeTopics.length > 0)
+      || safeScope.publishedAfter
+      || safeScope.publishedBefore,
+  )
   const isTopicSelected = (topic) => scopeTopics.some((selectedTopic) => topicsMatch(selectedTopic, topic))
   const hasScope = hasQaScope(safeScope)
+  const naturalMode = naturalScopeEnabled(scopeMode, allowNaturalLanguageScope)
+  const proposedScope = safeScopeProposal(scopeProposal ?? error?.scopeProposal ?? error?.proposedScope)
+  const proposedConfirmation = isQaScopeConfirmation(scopeConfirmation)
+    ? scopeConfirmation
+    : isQaScopeConfirmation(error?.scopeConfirmation)
+      ? error.scopeConfirmation
+      : null
+  const confirmationKey = proposedConfirmation ? JSON.stringify(proposedConfirmation) : ''
+  if (!confirmationKey) confirmationKeyRef.current = ''
+  else if (!confirmationKeyRef.current) confirmationKeyRef.current = confirmationKey
+  const pendingQuestion = pendingQuestionRef.current || pendingNaturalQuestions.get(handlers) || question.trim()
+  const canConfirmScope = naturalMode && state !== 'loading' && Boolean(proposedScope) && Boolean(proposedConfirmation)
   const displayError = safeQaError(error)
+  const confirmScope = useCallback(() => {
+    if (state === 'loading' || canceledScopeRef.current || !canConfirmScope || !pendingQuestion || !isQaScopeConfirmation(proposedConfirmation) || confirmationKeyRef.current !== confirmationKey) return
+    handlers.onConfirmScope?.({
+      question: pendingQuestion,
+      scopeMode: 'confirmed',
+      scopeConfirmation: proposedConfirmation,
+    })
+  }, [canConfirmScope, confirmationKey, handlers.onConfirmScope, pendingQuestion, proposedConfirmation, state])
+  const cancelScope = useCallback(() => {
+    canceledScopeRef.current = true
+    confirmationKeyRef.current = ''
+    pendingQuestionRef.current = ''
+    pendingNaturalQuestions.delete(handlers)
+    handlers.onCancelScope?.()
+  }, [handlers])
   function submit(event) {
     if (!event.defaultPrevented) event.preventDefault()
     const value = question.trim()
@@ -48,10 +115,23 @@ export default function QaView({
       setQuestionError('Câu hỏi cần ít nhất 3 ký tự.')
       return
     }
+    if (naturalMode && !hasScope && !hasExplicitScopeInput) {
+      setQuestionError('')
+      canceledScopeRef.current = false
+      confirmationKeyRef.current = ''
+      pendingQuestionRef.current = value
+      pendingNaturalQuestions.set(handlers, value)
+      onAsk?.({ question: value, scopeMode: 'preview' })
+      return
+    }
     const askScope = Object.fromEntries(Object.entries({ ...safeScope, topics: scopeTopics }).filter(([key, scopeValue]) => key !== 'topics' || scopeValue.length > 0))
     const validation = validateQuestionScope(value, askScope)
     if (!validation.valid) return
     setQuestionError('')
+    canceledScopeRef.current = true
+    confirmationKeyRef.current = ''
+    pendingQuestionRef.current = ''
+    pendingNaturalQuestions.delete(handlers)
     onAsk?.({ ...validation.scope, question: value })
     setQuestion('')
   }
@@ -125,6 +205,14 @@ export default function QaView({
               <MessageThread messages={messages} onCitation={setSelectedCitation} />
             ) : null}
           </div>
+          {canConfirmScope ? (
+            <ScopeConfirmationPanel
+              scope={proposedScope}
+              canConfirm={Boolean(pendingQuestion)}
+              onConfirm={confirmScope}
+              onCancel={cancelScope}
+            />
+          ) : null}
           <div className="public-qa-composer">
             <form onSubmit={submit} noValidate>
               <label className="public-field" htmlFor="public-qa-question">
@@ -158,7 +246,7 @@ export default function QaView({
                   className="public-btn public-btn-primary"
                   type="submit"
                   aria-describedby={!hasScope ? 'public-qa-scope-hint' : undefined}
-                  disabled={!question.trim() || state === 'loading' || !hasScope}
+                  disabled={!question.trim() || state === 'loading' || (!hasScope && !naturalMode)}
                 >
                   Hỏi với nguồn
                 </button>
@@ -182,11 +270,13 @@ export default function QaView({
               </button>
             </div>
           ) : null}
-          {hasScope ? null : (
+          {!hasScope ? (
             <p id="public-qa-scope-hint" className="public-form-note">
-              Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.
+              {naturalMode
+                ? 'Phạm vi sẽ được đề xuất từ câu hỏi và cần xác nhận trước khi tìm nguồn.'
+                : 'Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.'}
             </p>
-          )}
+          ) : null}
           <div className="public-topic-row public-scope-topics">
             {activeTopics.map((topic) => (
               <button
@@ -258,6 +348,36 @@ export default function QaView({
           </section>
         </div>
       ) : null}
+    </section>
+  )
+}
+
+function ScopeConfirmationPanel({ scope, canConfirm, onConfirm, onCancel }) {
+  const summary = scopeConfirmationSummary(scope)
+  return (
+    <section
+      className="public-state-card public-qa-scope-confirmation"
+      role="region"
+      aria-labelledby="public-qa-scope-confirmation-title"
+      aria-describedby="public-qa-scope-confirmation-description"
+      aria-live="polite"
+    >
+      <p className="public-eyebrow">Xác nhận phạm vi</p>
+      <h2 id="public-qa-scope-confirmation-title">Phạm vi đề xuất</h2>
+      <p id="public-qa-scope-confirmation-description">
+        Hệ thống sẽ dùng phạm vi này để tìm nguồn. Hãy kiểm tra trước khi xác nhận.
+      </p>
+      <ul>
+        {summary.map((entry) => <li key={entry}>{entry}</li>)}
+      </ul>
+      <div className="public-dialog-actions">
+        <button className="public-btn public-btn-secondary" type="button" onClick={onCancel}>
+          Hủy
+        </button>
+        <button className="public-btn public-btn-primary" type="button" onClick={onConfirm} disabled={!canConfirm}>
+          Xác nhận phạm vi
+        </button>
+      </div>
     </section>
   )
 }

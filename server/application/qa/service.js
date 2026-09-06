@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { canonicalRequestHash } from '../../domain/jobs/idempotency.js'
 import { ContentError, contentActorFence } from '../articles/query.js'
 import { admitQuestion, detectSensitiveInput, PrivacyAdmissionError } from '../../domain/qa/privacy.js'
@@ -9,6 +9,7 @@ import { clarificationForCode, QA_CLARIFICATION_CODES } from '../../domain/qa/in
 import { hydrateAnswerCitations, validateParagraphCitations } from '../../domain/qa/citations.js'
 import { assertSupportedAnswer, deterministicRefusal } from '../../domain/qa/support.js'
 import { ProviderAdapterError } from '../../ai/provider-error-taxonomy.js'
+import { classifyTopicIds, TOPIC_BY_ID, TOPIC_TAXONOMY_VERSION } from '../../../shared/topic-catalog.js'
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
 const EXECUTION_BUDGET_MS = 30_000
@@ -16,6 +17,13 @@ const CLEANUP_GRACE_MS = 250
 const MAX_SUPPORT_SERIALIZED_CHARS = 30_000
 const MAX_SUPPORT_PARAGRAPH_CHARS = 10_000
 const MAX_QUERY_VARIANTS = 3
+const NATURAL_SCOPE_CONFIRMATION_VERSION = 'qa-scope-confirmation-v1'
+const NATURAL_SCOPE_POLICY_VERSION = 'qa-natural-scope-policy-v1'
+const NATURAL_SCOPE_CONFIRMATION_TTL_MS = 5 * 60 * 1000
+const MAX_NATURAL_SCOPE_TOPICS = 10
+const NATURAL_SCOPE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,512}$/
+const NATURAL_SCOPE_DIGEST_PATTERN = /^[a-f0-9]{64}$/
+const MIN_SCOPE_CONFIRMATION_SECRET_BYTES = 32
 
 function boundedQueryVariants(value) {
   if (!Array.isArray(value)) return Object.freeze([])
@@ -241,6 +249,92 @@ function scopeHashValue(scope) {
     ...(scope.publishedBefore ? { publishedBefore: scope.publishedBefore.toISOString() } : {}),
   }
 }
+function naturalScopeProposal(question) {
+  const parentTopicIds = classifyTopicIds({ titleOriginal: question })
+    .filter((topicId) => TOPIC_BY_ID[topicId]?.kind === 'parent' && TOPIC_BY_ID[topicId]?.status === 'active')
+    .slice(0, MAX_NATURAL_SCOPE_TOPICS)
+  if (parentTopicIds.length === 0) return null
+  return Object.freeze({ topics: Object.freeze([...parentTopicIds]) })
+}
+
+function naturalScopeDigest({ question, proposedScope }) {
+  return canonicalRequestHash({
+    confirmationVersion: NATURAL_SCOPE_CONFIRMATION_VERSION,
+    policyVersion: NATURAL_SCOPE_POLICY_VERSION,
+    topicTaxonomyVersion: TOPIC_TAXONOMY_VERSION,
+    question,
+    proposedScope: scopeHashValue(proposedScope),
+  })
+}
+
+function confirmationSecretValue(scopeConfirmationSecret) {
+  if (typeof scopeConfirmationSecret === 'string' && Buffer.byteLength(scopeConfirmationSecret, 'utf8') >= MIN_SCOPE_CONFIRMATION_SECRET_BYTES) return Buffer.from(scopeConfirmationSecret, 'utf8')
+  if (scopeConfirmationSecret instanceof Uint8Array && scopeConfirmationSecret.byteLength >= MIN_SCOPE_CONFIRMATION_SECRET_BYTES) return Buffer.from(scopeConfirmationSecret)
+  return null
+}
+
+function naturalScopeToken({ secret, actor, question, proposedScope, scopeDigest, expiresAt }) {
+  const payloadDigest = canonicalRequestHash({
+    actor: {
+      userId: actor.userId,
+      sessionId: actor.actorFence.sessionId,
+      sessionVersion: actor.actorFence.sessionVersion,
+    },
+    confirmationVersion: NATURAL_SCOPE_CONFIRMATION_VERSION,
+    policyVersion: NATURAL_SCOPE_POLICY_VERSION,
+    question,
+    proposedScope: scopeHashValue(proposedScope),
+    scopeDigest,
+    expiresAt,
+  })
+  return createHmac('sha256', secret).update(payloadDigest).digest('base64url')
+}
+
+function tokenMatches(actual, expected) {
+  const actualBytes = Buffer.from(actual, 'utf8')
+  const expectedBytes = Buffer.from(expected, 'utf8')
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes)
+}
+
+function naturalScopeConfirmation({ secret, actor, question, proposedScope, referenceInstant }) {
+  const expiresAt = new Date(referenceInstant.getTime() + NATURAL_SCOPE_CONFIRMATION_TTL_MS).toISOString()
+  const scopeDigest = naturalScopeDigest({ question, proposedScope })
+  return Object.freeze({
+    version: NATURAL_SCOPE_CONFIRMATION_VERSION,
+    token: naturalScopeToken({ secret, actor, question, proposedScope, scopeDigest, expiresAt }),
+    scopeDigest,
+    expiresAt,
+  })
+}
+
+function naturalScopeClarificationError(message, detail = {}) {
+  const clarification = Object.freeze({
+    field: '/scopeMode',
+    code: 'qa_clarify_scope_confirmation',
+    message,
+    ...detail,
+  })
+  return new ContentError(422, 'validation_error', message, [clarification])
+}
+
+function naturalScopeConfirmationMatches({ secret, actor, scopeConfirmation, question, proposedScope, referenceInstant }) {
+  if (!scopeConfirmation || typeof scopeConfirmation !== 'object' || Array.isArray(scopeConfirmation)) return false
+  const keys = Object.keys(scopeConfirmation).sort()
+  if (keys.length !== 4 || keys.join(',') !== 'expiresAt,scopeDigest,token,version') return false
+  if (scopeConfirmation.version !== NATURAL_SCOPE_CONFIRMATION_VERSION) return false
+  if (typeof scopeConfirmation.token !== 'string' || !NATURAL_SCOPE_TOKEN_PATTERN.test(scopeConfirmation.token)) return false
+  if (typeof scopeConfirmation.scopeDigest !== 'string' || !NATURAL_SCOPE_DIGEST_PATTERN.test(scopeConfirmation.scopeDigest)) return false
+  if (typeof scopeConfirmation.expiresAt !== 'string') return false
+  const expiry = new Date(scopeConfirmation.expiresAt)
+  if (Number.isNaN(expiry.getTime()) || expiry.toISOString() !== scopeConfirmation.expiresAt) return false
+  const referenceMs = referenceInstant.getTime()
+  const expiryMs = expiry.getTime()
+  if (!Number.isFinite(referenceMs) || expiryMs <= referenceMs || expiryMs - referenceMs > NATURAL_SCOPE_CONFIRMATION_TTL_MS) return false
+  const expectedScopeDigest = naturalScopeDigest({ question, proposedScope })
+  if (scopeConfirmation.scopeDigest !== expectedScopeDigest) return false
+  const expectedToken = naturalScopeToken({ secret, actor, question, proposedScope, scopeDigest: expectedScopeDigest, expiresAt: scopeConfirmation.expiresAt })
+  return tokenMatches(scopeConfirmation.token, expectedToken)
+}
 function safeClarificationDetail(value) {
   const code = QA_CLARIFICATION_CODES.includes(value?.code) ? value.code : 'qa_clarify_ambiguous_time'
   return { field: '/question', code, message: clarificationForCode(code) }
@@ -255,12 +349,13 @@ function clarificationFromAttempt(attempt) {
   return attempt?.error?.code?.startsWith('qa_clarify_') ? { code: attempt.error.code, field: '/question', message: attempt.error.message } : null
 }
 
-export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerRouter, providerAdapters = {}, rateLimitAdmission, queryEmbedding, privacyCapability = 'zdr-verified', supportVerifier, intentPlanner = planQaIntent, intentCompiler = compileQaExecutionPlan, qaTimeZone = QA_TIME_ZONE, now = () => new Date() } = {}) {
+export function createQaService({ articleRepository, chatRepository, answerAttemptRepository = chatRepository, providerRouter, providerAdapters = {}, rateLimitAdmission, queryEmbedding, privacyCapability = 'zdr-verified', supportVerifier, intentPlanner = planQaIntent, intentCompiler = compileQaExecutionPlan, qaTimeZone = QA_TIME_ZONE, scopeConfirmationSecret, now = () => new Date() } = {}) {
   if (!chatRepository || typeof chatRepository.reserveAnswerAttempt !== 'function') throw new Error('Chat repository is required')
   if (!providerRouter || typeof providerRouter.execute !== 'function') throw new Error('Provider router is required')
   const articleRepo = articleRepository ?? { findQnaEvidence: async () => [] }
   const adapters = providerAdapters
   const verifySupport = supportVerifier ?? (async () => ({ verdict: 'uncertain' }))
+  const naturalScopeSecret = confirmationSecretValue(scopeConfirmationSecret)
 
   async function actorFenceRead(actor, execution) {
     if (typeof chatRepository.assertActorFence !== 'function') return true
@@ -430,18 +525,47 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
     throw new ContentError(503, 'service_unavailable', 'Answer outcome is unavailable')
   }
 
-  async function createAnswer({ auth, question, scope, chatSessionId, idempotencyKey, request, signal, deadline } = {}) {
+  async function createAnswer({ auth, question, scope, scopeMode, scopeConfirmation, chatSessionId, idempotencyKey, request, signal, deadline } = {}) {
     let actor
     try { actor = contentActorFence(auth) } catch { throw new ContentError(401, 'unauthorized', 'Authentication is required') }
     if (!KEY_PATTERN.test(String(idempotencyKey ?? ''))) throw new ContentError(400, 'bad_request', 'Idempotency-Key is invalid')
     const referenceInstant = new Date(now())
-    const safeScope = scopeValue(scope)
-    if (typeof question !== 'string' || question.length < 3 || question.length > 1000) throw new ContentError(422, 'validation_error', 'Question is invalid')
+    const isNaturalScope = scopeMode === 'preview' || scopeMode === 'confirmed'
+    if (scopeMode !== undefined && !isNaturalScope) throw new ContentError(422, 'validation_error', 'Scope mode is invalid')
+    if (isNaturalScope && !naturalScopeSecret) throw new ContentError(503, 'service_unavailable', 'Q&A service is temporarily unavailable')
+    let safeScope
     let privacyError
     let admittedQuestion
-    try { admittedQuestion = admitQuestion(question, { capability: privacyCapability }) } catch (error) {
-      if (error instanceof PrivacyAdmissionError && error.code === 'sensitive-input') privacyError = error
-      else throw error
+    if (isNaturalScope) {
+      if (scope !== undefined) throw new ContentError(422, 'validation_error', 'Natural-language scope cannot include an explicit scope')
+      if (typeof question !== 'string' || question.length < 3 || question.length > 1000) throw new ContentError(422, 'validation_error', 'Question is invalid')
+      try {
+        admittedQuestion = admitQuestion(question, { capability: privacyCapability })
+      } catch (error) {
+        if (error instanceof PrivacyAdmissionError) {
+          if (error.code === 'sensitive-input') throw new ContentError(422, 'validation_error', 'Question cannot be processed safely')
+          if (error.code === 'provider-unavailable') throw new ContentError(503, 'service_unavailable', 'Current AI provider route is unavailable')
+          if (error.code === 'validation_error') throw new ContentError(422, 'validation_error', 'Question is invalid')
+        }
+        throw error
+      }
+      const proposedScope = naturalScopeProposal(admittedQuestion.question)
+      if (!proposedScope) throw naturalScopeClarificationError('A bounded topic scope could not be inferred')
+      const confirmation = naturalScopeConfirmation({ secret: naturalScopeSecret, actor, question: admittedQuestion.question, proposedScope, referenceInstant })
+      if (scopeMode === 'preview') {
+        throw naturalScopeClarificationError('Confirm the proposed topic scope before requesting an answer', { proposedScope, confirmation })
+      }
+      if (!naturalScopeConfirmationMatches({ secret: naturalScopeSecret, actor, scopeConfirmation, question: admittedQuestion.question, proposedScope, referenceInstant })) {
+        throw naturalScopeClarificationError('Scope confirmation is invalid or expired')
+      }
+      safeScope = scopeValue(proposedScope)
+    } else {
+      safeScope = scopeValue(scope)
+      if (typeof question !== 'string' || question.length < 3 || question.length > 1000) throw new ContentError(422, 'validation_error', 'Question is invalid')
+      try { admittedQuestion = admitQuestion(question, { capability: privacyCapability }) } catch (error) {
+        if (error instanceof PrivacyAdmissionError && error.code === 'sensitive-input') privacyError = error
+        else throw error
+      }
     }
     const sensitiveScope = detectSensitiveInput(JSON.stringify(safeScope))
     if (sensitiveScope && !privacyError) privacyError = new PrivacyAdmissionError('sensitive-input', 'Answer scope cannot be processed safely')

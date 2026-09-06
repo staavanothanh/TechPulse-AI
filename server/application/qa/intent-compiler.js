@@ -297,17 +297,23 @@ function queryMetadata(question, proposal) {
   return { retrievalQuery, queryVariants: boundedQueryVariants(retrievalQuery, proposal.queryVariants) }
 }
 
-function clarificationPlan(proposal, clarificationValue, reference, timeZone, plannerVersion, queryPlan) {
+function clarificationPlan(proposal, clarificationValue, reference, timeZone, plannerVersion, normalizerVersion, queryPlan) {
   return freezeDeep({
     planVersion: PLAN_VERSION,
     decision: 'clarify',
     effectiveScope: {},
     retrievalQuery: queryPlan.retrievalQuery,
     queryVariants: queryPlan.queryVariants,
-    temporal: { state: 'ambiguous', field: 'publishedAt', referenceInstant: reference.toISOString(), timeZone },
+    temporal: {
+      state: 'ambiguous',
+      field: 'publishedAt',
+      referenceInstant: reference.toISOString(),
+      timeZone,
+      provenance: { source: 'deterministic', plannerVersion, normalizerVersion },
+    },
     ordering: ['relevance'],
     plannerVersion,
-    normalizerVersion: QA_NORMALIZER_VERSION,
+    normalizerVersion,
     budget: { maxPlannerCalls: 1, maxQueryVariants: queryPlan.queryVariants.length, deadlineMs: 30_000 },
     disclosure: 'Khong truy xuat du lieu cho den khi khoang thoi gian duoc lam ro.',
     provenance: { policyVersion: POLICY_VERSION, source: 'deterministic-compiler', clarification: clarificationValue },
@@ -341,12 +347,12 @@ export function compileQaExecutionPlan({
   const unsupportedTemporalKind = ['ambiguous', 'unsupported', 'conflicting'].includes(checkedProposal.temporal.kind)
   const providerTemporalMismatch = !explicitDates && analysis?.kind === 'none' && ['absolute', 'relative', 'latest'].includes(checkedProposal.temporal.kind)
   if (providerTemporalMismatch) {
-    return clarificationPlan(checkedProposal, { code: 'qa_clarify_ambiguous_time', field: '/question', message: 'Vui long neu ro mot khoang thoi gian cu the de kiem tra.' }, reference, zone, planner, queryPlan)
+    return clarificationPlan(checkedProposal, { code: 'qa_clarify_ambiguous_time', field: '/question', message: 'Vui long neu ro mot khoang thoi gian cu the de kiem tra.' }, reference, zone, planner, normalizer, queryPlan)
   }
   if (analysis?.kind === 'ambiguous' || !explicitDates && (unsupportedTemporalKind || checkedProposal.clarification)) {
     const fallbackCode = checkedProposal.temporal.kind === 'conflicting' ? 'qa_clarify_conflicting_time' : checkedProposal.temporal.kind === 'unsupported' ? 'qa_clarify_unsupported_time' : 'qa_clarify_ambiguous_time'
     const clarificationValue = analysis?.clarification ?? checkedProposal.clarification ?? { code: fallbackCode, field: '/question', message: 'Vui long neu ro mot khoang thoi gian cu the de tim kiem.' }
-    return clarificationPlan(checkedProposal, clarificationValue, reference, zone, planner, queryPlan)
+    return clarificationPlan(checkedProposal, clarificationValue, reference, zone, planner, normalizer, queryPlan)
   }
 
   const temporalSource = explicitDates
@@ -359,10 +365,10 @@ export function compileQaExecutionPlan({
   const latest = temporalSource.kind === 'latest'
   const ordering = latest ? ['relevance', 'freshness'] : ['relevance']
   const temporal = range
-    ? { state: 'range', field: 'publishedAt', publishedAfter: range.publishedAfter, publishedBefore: range.publishedBefore, referenceInstant: reference.toISOString(), timeZone: zone }
+    ? { state: 'range', field: 'publishedAt', publishedAfter: range.publishedAfter, publishedBefore: range.publishedBefore, referenceInstant: reference.toISOString(), timeZone: zone, provenance: { source: 'deterministic', plannerVersion: planner, normalizerVersion: normalizer } }
     : latest
-      ? { state: 'latest', field: 'publishedAt', referenceInstant: reference.toISOString(), timeZone: zone }
-      : { state: 'none', field: 'publishedAt', referenceInstant: reference.toISOString(), timeZone: zone }
+      ? { state: 'latest', field: 'publishedAt', referenceInstant: reference.toISOString(), timeZone: zone, provenance: { source: 'deterministic', plannerVersion: planner, normalizerVersion: normalizer } }
+      : { state: 'none', field: 'publishedAt', referenceInstant: reference.toISOString(), timeZone: zone, provenance: { source: 'deterministic', plannerVersion: planner, normalizerVersion: normalizer } }
   const disclosure = temporal.state === 'range' && checkedProposal.temporal.kind === 'relative' && checkedProposal.temporal.preset === 'recent-30d'
     ? 'Gan day duoc hieu la 30 ngay gan nhat; thoi diem tham chieu do may chu quan ly.'
     : 'Khoang thoi gian va truong publication duoc may chu xac dinh theo mui gio da kiem chung.'
@@ -382,5 +388,6 @@ export function compileQaExecutionPlan({
     provenance: { policyVersion: POLICY_VERSION, source: 'deterministic-compiler', proposalVersion: checkedProposal.proposalVersion },
   })
 }
+
 
 export { PLAN_VERSION, POLICY_VERSION, DAY_MS }

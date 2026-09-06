@@ -1,4 +1,4 @@
-import { qaClarificationMessage } from './qa-validation.js'
+import { qaClarificationMessage, qaScopeConfirmationDetail } from './qa-validation.js'
 
 function retryAfterValue(response) {
   const value = Number(response.headers.get('Retry-After'))
@@ -39,6 +39,7 @@ const FIELD_COPY = Object.freeze({
   publishedAfter: 'Mốc bắt đầu chưa hợp lệ.',
   publishedBefore: 'Mốc kết thúc chưa hợp lệ.',
   scope: 'Phạm vi nguồn chưa hợp lệ.',
+  scopeMode: 'Cách chọn phạm vi chưa hợp lệ.',
 })
 
 function safeFieldErrors(details) {
@@ -75,6 +76,13 @@ export function createQaApi(generatedApi, fetchImpl = globalThis.fetch) {
           error.requestId = serverError?.requestId
           const fieldErrors = safeFieldErrors(serverError?.details)
           if (Object.keys(fieldErrors).length > 0) error.fieldErrors = fieldErrors
+          if (result.status === 422) {
+            const confirmationDetail = qaScopeConfirmationDetail(serverError?.details)
+            if (confirmationDetail) {
+              error.scopeProposal = confirmationDetail.proposedScope
+              error.scopeConfirmation = confirmationDetail.confirmation
+            }
+          }
           throw error
         }
         return payload

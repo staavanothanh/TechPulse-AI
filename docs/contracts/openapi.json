@@ -5654,6 +5654,19 @@
         "description": "At least one of articleId, topics, or a time-bounded topic query must be supplied."
       },
       "AnswerRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ExplicitAnswerRequest"
+          },
+          {
+            "$ref": "#/components/schemas/NaturalLanguageAnswerPreviewRequest"
+          },
+          {
+            "$ref": "#/components/schemas/NaturalLanguageAnswerConfirmedRequest"
+          }
+        ]
+      },
+      "ExplicitAnswerRequest": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -5674,6 +5687,89 @@
             "minLength": 24,
             "maxLength": 24,
             "pattern": "^[0-9a-fA-F]{24}$"
+          }
+        }
+      },
+      "NaturalLanguageAnswerPreviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "scopeMode"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1000
+          },
+          "scopeMode": {
+            "const": "preview"
+          },
+          "chatSessionId": {
+            "type": "string",
+            "minLength": 24,
+            "maxLength": 24,
+            "pattern": "^[0-9a-fA-F]{24}$"
+          }
+        }
+      },
+      "NaturalLanguageAnswerConfirmedRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "scopeMode",
+          "scopeConfirmation"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1000
+          },
+          "scopeMode": {
+            "const": "confirmed"
+          },
+          "scopeConfirmation": {
+            "$ref": "#/components/schemas/ScopeConfirmation"
+          },
+          "chatSessionId": {
+            "type": "string",
+            "minLength": 24,
+            "maxLength": 24,
+            "pattern": "^[0-9a-fA-F]{24}$"
+          }
+        }
+      },
+      "ScopeConfirmation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "token",
+          "scopeDigest",
+          "expiresAt"
+        ],
+        "properties": {
+          "version": {
+            "const": "qa-scope-confirmation-v1"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 512,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "scopeDigest": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -9917,6 +10013,12 @@
           },
           "code": {
             "type": "string"
+          },
+          "proposedScope": {
+            "$ref": "#/components/schemas/AnswerScope"
+          },
+          "confirmation": {
+            "$ref": "#/components/schemas/ScopeConfirmation"
           }
         }
       },

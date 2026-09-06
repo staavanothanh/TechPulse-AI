@@ -114,6 +114,8 @@ describe('Step 10 Q&A HTTP boundary', () => {
     })
     expect(invalid.status).toBe(422)
     expect((await invalid.json()).error.code).toBe('validation_error')
+    expect(invalid.headers.get('cache-control')).toBe('no-store, private')
+    expect(invalid.headers.get('vary')).toBe('Cookie')
     expect(calls.map(([name]) => name)).not.toContain('createAnswer-invalid')
 
     const missingKey = await fetch(`${origin}/api/v1/answers`, {

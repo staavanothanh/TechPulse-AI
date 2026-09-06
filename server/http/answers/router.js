@@ -107,17 +107,19 @@ export function createAnswersRouter({ qaService, authService } = {}) {
   const csrf = requireCsrf(authService)
 
   router.post('/api/v1/answers', requestAbortMiddleware, requireAuthenticated, csrf, asyncContentRoute(async (req, res) => {
+    noStoreContent(res)
     validateBody(req.body)
     const result = await service.createAnswer({
       auth: req.auth,
       question: req.body.question,
       scope: req.body.scope,
+      scopeMode: req.body.scopeMode,
+      scopeConfirmation: req.body.scopeConfirmation,
       chatSessionId: req.body.chatSessionId,
       idempotencyKey: idempotencyKey(req),
       request: req,
       signal: req.signal,
     })
-    noStoreContent(res)
     res.status(200).json({ data: validatePublicAnswerResponse(result?.answer ?? result) })
   }))
 

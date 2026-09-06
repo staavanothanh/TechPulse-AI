@@ -94,7 +94,7 @@ export async function assertQaEvidenceFenceReady(context) {
   }
 }
 
-export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, providerRouter, queryEmbedding, rateLimitAdmission, maintenanceRegistry, now = () => new Date(), verifySchema = assertChatSessionsReady, verifyProviderSchema = assertProviderRoutingReady, verifyEvidenceSchema = assertQaEvidenceFenceReady } = {}) {
+export async function createConfiguredQaService({ context, providerRegistry = { domains: [], routes: [] }, providerAdapters, providerAdmission, providerRouter, queryEmbedding, rateLimitAdmission, maintenanceRegistry, scopeConfirmationSecret, now = () => new Date(), verifySchema = assertChatSessionsReady, verifyProviderSchema = assertProviderRoutingReady, verifyEvidenceSchema = assertQaEvidenceFenceReady } = {}) {
   await verifySchema(context)
   await verifyProviderSchema(context)
   await verifyEvidenceSchema(context)
@@ -130,5 +130,5 @@ export async function createConfiguredQaService({ context, providerRegistry = { 
     : undefined
   if (intentPlanner) Object.defineProperty(intentPlanner, 'optionalProviderPlanner', { value: true, enumerable: false, writable: false, configurable: false })
   maintenanceRegistry.register('purge-answer-attempts', ({ cutoff, limit }) => chatRepository.purgeDueAnswerAttempts({ cutoff, limit }))
-  return createQaService({ articleRepository, chatRepository, providerRouter: configuredRouter, providerAdapters, queryEmbedding: safeQueryEmbedding, privacyCapability: generationPolicy.requiredCapability, rateLimitAdmission, supportVerifier, intentPlanner, qaTimeZone: process.env.QA_TIME_ZONE ?? QA_TIME_ZONE, now })
+  return createQaService({ articleRepository, chatRepository, providerRouter: configuredRouter, providerAdapters, queryEmbedding: safeQueryEmbedding, privacyCapability: generationPolicy.requiredCapability, rateLimitAdmission, supportVerifier, intentPlanner, qaTimeZone: process.env.QA_TIME_ZONE ?? QA_TIME_ZONE, scopeConfirmationSecret, now })
 }

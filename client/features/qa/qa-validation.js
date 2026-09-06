@@ -36,6 +36,8 @@ export function hasQaScope(scope = {}) {
   return Boolean(hasArticle || topics.length > 0 || hasAfter)
 }
 
+const QA_SCOPE_CONFIRMATION_VERSION = 'qa-scope-confirmation-v1'
+export const QA_SCOPE_CONFIRMATION_CODE = 'qa_clarify_scope_confirmation'
 const QA_CLARIFICATION_COPY = Object.freeze({
   qa_clarify_missing_year: 'Bạn vui lòng cho biết năm cụ thể của khoảng thời gian được hỏi.',
   qa_clarify_ambiguous_time: 'Bạn vui lòng nêu rõ một khoảng thời gian cụ thể để mình tìm kiếm.',
@@ -43,6 +45,7 @@ const QA_CLARIFICATION_COPY = Object.freeze({
   qa_clarify_conflicting_time: 'Câu hỏi có nhiều khoảng thời gian khác nhau; bạn vui lòng chọn một khoảng thời gian.',
   qa_clarify_latest_unsupported: 'Yêu cầu “mới nhất” chưa thể xác định an toàn; bạn vui lòng nêu khoảng thời gian cụ thể.',
   qa_clarify_invalid_date: 'Ngày hoặc tháng trong câu hỏi không hợp lệ; bạn vui lòng kiểm tra lại.',
+  [QA_SCOPE_CONFIRMATION_CODE]: 'Phạm vi đề xuất cần được xác nhận trước khi tìm kiếm.',
 })
 
 export function qaClarificationMessage(error) {
@@ -52,6 +55,33 @@ export function qaClarificationMessage(error) {
     .flatMap((detail) => [detail?.code, detail?.field])
     .find((value) => typeof value === 'string' && value.startsWith('qa_clarify_'))
   return code ? (QA_CLARIFICATION_COPY[code] ?? 'Bạn vui lòng nêu rõ một khoảng thời gian cụ thể để mình tìm kiếm.') : null
+}
+export function isQaScopeConfirmation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (Object.keys(value).sort().join(',') !== 'expiresAt,scopeDigest,token,version') return false
+  if (value.version !== QA_SCOPE_CONFIRMATION_VERSION) return false
+  if (typeof value.token !== 'string' || value.token.length === 0 || value.token.length > 4096) return false
+  if (typeof value.scopeDigest !== 'string' || value.scopeDigest.length === 0 || value.scopeDigest.length > 512) return false
+  if (typeof value.expiresAt !== 'string' || Number.isNaN(Date.parse(value.expiresAt))) return false
+  return true
+}
+
+export function qaScopeConfirmationDetail(details) {
+  if (!Array.isArray(details)) return null
+  const detail = details.find((candidate) => candidate?.code === QA_SCOPE_CONFIRMATION_CODE)
+  if (!detail || !isQaScopeConfirmation(detail.confirmation) || !hasQaScope(detail.proposedScope)) return null
+  const proposedScope = Object.fromEntries(
+    Object.entries(detail.proposedScope).filter(([key]) => ['articleId', 'topics', 'publishedAfter', 'publishedBefore'].includes(key)),
+  )
+  return {
+    proposedScope,
+    confirmation: {
+      version: detail.confirmation.version,
+      token: detail.confirmation.token,
+      scopeDigest: detail.confirmation.scopeDigest,
+      expiresAt: detail.confirmation.expiresAt,
+    },
+  }
 }
 
 const QA_FIELD_ORDER = Object.freeze(['question', 'articleId', 'topics', 'publishedAfter', 'publishedBefore', 'scope'])
