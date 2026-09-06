@@ -281,12 +281,13 @@ describe('worker scheduling', () => {
     let currentMs = STARTED_AT.getTime()
     const now = () => new Date(currentMs)
 
-    const slowMaterializer = vi.fn(async () => {
-      currentMs += 241_000
-    })
+    const slowMaterializer = vi.fn()
 
     const jobRepository = {
-      materializeDailyIngestion: vi.fn(async () => ({ hasMore: false })),
+      materializeDailyIngestion: vi.fn(async () => {
+        currentMs += 241_000
+        return { hasMore: false }
+      }),
     }
 
     const coordinatorRunner = vi.fn(async () => baseResult())
@@ -301,21 +302,18 @@ describe('worker scheduling', () => {
     })
 
     const result = await runner()
-
-    expect(slowMaterializer).toHaveBeenCalledTimes(1)
-    expect(jobRepository.materializeDailyIngestion).not.toHaveBeenCalled()
+    expect(slowMaterializer).not.toHaveBeenCalled()
+    expect(jobRepository.materializeDailyIngestion).toHaveBeenCalledTimes(1)
     expect(coordinatorRunner).not.toHaveBeenCalled()
     expect(indexingDrainRunner).not.toHaveBeenCalled()
     expect(result.queues.ingestion.claimed).toBe(0)
     expect(result.nextAvailableAt).toBeNull()
   })
-  it('continues coordinator and indexing drain with reduced budget after a stalled materialization timeout', async () => {
+  it('waits for timed-out materialization settlement and fails closed before coordination', async () => {
     vi.useFakeTimers()
     try {
-      // Arrange
       vi.setSystemTime(STARTED_AT)
       const materializationBudgetMs = 2_000
-      const globalBudgetMs = CRON_DUE_WORK_PROFILE.budgetMs
       const order = []
       let materializerSignal
       let materializerDeadline
@@ -323,16 +321,12 @@ describe('worker scheduling', () => {
         order.push('materializer')
         materializerSignal = signal
         materializerDeadline = deadline
-        return new Promise(() => {})
+        return new Promise((resolve) => {
+          signal.addEventListener('abort', () => globalThis.setTimeout(() => resolve({ hasMore: false }), 1), { once: true })
+        })
       })
-      const coordinatorRunner = vi.fn(async (options) => {
-        order.push('coordinator')
-        return { ...baseResult(), coordinatorOptions: options }
-      })
-      const indexingDrainRunner = vi.fn(async (coordinated) => {
-        order.push('indexing')
-        return coordinated
-      })
+      const coordinatorRunner = vi.fn(async () => { order.push('coordinator'); return baseResult() })
+      const indexingDrainRunner = vi.fn(async (coordinated) => { order.push('indexing'); return coordinated })
       const trace = vi.fn()
       const runner = createCronDueWorkRunner({
         jobRepository: { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false })) },
@@ -345,26 +339,21 @@ describe('worker scheduling', () => {
         materializationBudgetMs,
       })
 
-      // Act
       const pending = runner()
       const settlement = pending.then(
         (value) => ({ ok: true, value }),
         (error) => ({ ok: false, error }),
       )
       await vi.advanceTimersByTimeAsync(materializationBudgetMs)
+      expect(coordinatorRunner).not.toHaveBeenCalled()
+      expect(indexingDrainRunner).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
       const outcome = await settlement
 
-      // Assert: resolves rather than rejects and keeps downstream phases in order
       expect(outcome.ok).toBe(true)
       expect(materializerDeadline).toEqual(new Date(STARTED_AT.getTime() + materializationBudgetMs))
       expect(materializerSignal?.aborted).toBe(true)
-      expect(coordinatorRunner).toHaveBeenCalledTimes(1)
-      expect(indexingDrainRunner).toHaveBeenCalledTimes(1)
-      expect(order).toEqual(['materializer', 'coordinator', 'indexing'])
-      const coordinatorOptions = coordinatorRunner.mock.calls[0][0]
-      expect(coordinatorOptions.budgetMs).toBeLessThan(globalBudgetMs)
-      expect(coordinatorOptions.budgetMs).toBeGreaterThanOrEqual(globalBudgetMs - materializationBudgetMs - 100)
-      expect(coordinatorOptions.deadline).toEqual(new Date(STARTED_AT.getTime() + globalBudgetMs))
+      expect(order).toEqual(['materializer'])
       const events = trace.mock.calls.map(([event]) => event)
       const materializationTerminals = events.filter(
         (event) => event.stage === 'cron.materialization' && event.status !== 'started',
@@ -375,9 +364,7 @@ describe('worker scheduling', () => {
       expect(terminal.counters?.deferred ?? 0).toBeGreaterThanOrEqual(1)
       const cronTerminals = events.filter((event) => event.stage === 'cron' && event.status !== 'started')
       expect(cronTerminals.length).toBeGreaterThan(0)
-      for (const event of cronTerminals) {
-        expect(event.status).not.toBe('failed')
-      }
+      for (const event of cronTerminals) expect(event.status).not.toBe('failed')
     } finally {
       vi.useRealTimers()
     }

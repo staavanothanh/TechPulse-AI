@@ -4,6 +4,7 @@ import { createJobAuditEvent, validateJobAuditInput } from '../../audit/job-writ
 import { JobError, canonicalRequestHash, resolveIdempotentJob } from '../../domain/jobs/idempotency.js'
 import { DEFAULT_EMBEDDING_VERSION } from '../../ai/embedding.js'
 import { evaluateContentPolicy } from '../../domain/policy/content-policy.js'
+import { attachCleanupFailure, settleBeforeDeadline } from '../../jobs/runtime-bounds.js'
 
 const STATUSES = new Set(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled'])
 const TASKS = new Set(['summary', 'embedding', 'visibility-reconcile'])
@@ -63,13 +64,43 @@ function dateValue(value, label = 'Indexing job date') {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new Error(`${label} is invalid`)
   return value
 }
-function operationOptions({ signal, deadline } = {}) {
-  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
-  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw new Error('Indexing operation deadline is invalid')
-  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+function clockMilliseconds(clock) {
+  const value = typeof clock === 'function' ? clock() : Date.now()
+  const result = value instanceof Date ? value.getTime() : Number(value)
+  if (!Number.isFinite(result)) throw new Error('Indexing job clock is invalid')
+  return result
+}
+function deadlineMilliseconds(deadline) {
+  const result = new Date(deadline).getTime()
+  if (!Number.isFinite(result)) throw new Error('Indexing operation deadline is invalid')
+  return result
+}
+function remainingMilliseconds({ deadline, clock } = {}) {
+  if (deadline === undefined) return Number.POSITIVE_INFINITY
+  return deadlineMilliseconds(deadline) - clockMilliseconds(clock)
+}
+function deadlineError(code = 'runtime_deadline_exceeded', message = 'Indexing operation deadline was exceeded') {
+  const error = new Error(message)
+  error.code = code
+  error.status = 409
+  return error
+}
+async function closeSession(session, { deadline, clock } = {}) {
+  const remainingMs = remainingMilliseconds({ deadline, clock })
+  const settled = await settleBeforeDeadline(
+    Promise.resolve().then(() => session.endSession()),
+    remainingMs,
+    { timeoutError: () => deadlineError('runtime_cleanup_unresolved', 'Indexing transaction cleanup deadline was exceeded') },
+  )
+  if (settled.kind === 'deadline') throw settled.error
+  if (!settled.settled) throw settled.error
+}
+function operationOptions({ signal, deadline, clock = () => Date.now(), rejectExpired = false } = {}) {
+  const remainingMs = remainingMilliseconds({ deadline, clock })
+  if (rejectExpired && remainingMs <= 0) throw deadlineError()
   return {
     ...(signal ? { signal } : {}),
-    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+    ...(remainingMs !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
   }
 }
 function transactionOptions(options = {}) {
@@ -265,13 +296,35 @@ export class MongoIndexingJobRepository {
   articles() { return this.db.collection('articles') }
   audits() { return this.db.collection('adminAuditLogs') }
 
-  async withTransaction(work, transactionOptions = {}) {
+  async withTransaction(work, transactionConfig = {}, bounds = {}) {
+    const remainingMs = remainingMilliseconds({ deadline: bounds.deadline, clock: bounds.clock ?? this.clock })
+    if (remainingMs <= 0) throw deadlineError()
     const session = this.client.startSession()
+    let failure
     try {
       let result
-      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, ...transactionOptions })
+      bounds.signal?.throwIfAborted?.()
+      await session.withTransaction(async () => {
+        bounds.signal?.throwIfAborted?.()
+        result = await work(session)
+      }, {
+        readConcern: { level: 'snapshot' },
+        writeConcern: { w: 'majority' },
+        ...transactionConfig,
+        ...(remainingMs !== Number.POSITIVE_INFINITY ? { timeoutMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+      })
       return result
-    } finally { await session.endSession() }
+    } catch (error) {
+      failure = error
+      throw error
+    } finally {
+      try {
+        await closeSession(session, { deadline: bounds.settlementDeadline ?? bounds.deadline, clock: bounds.clock ?? this.clock })
+      } catch (error) {
+        if (!failure) throw error
+        throw attachCleanupFailure(failure, error)
+      }
+    }
   }
 
   async assertActorFence(fence, session) {
@@ -346,9 +399,11 @@ export class MongoIndexingJobRepository {
     }
   }
 
-  async selectPendingReconciliationSource({ sourceId, now = this.clock(), retryBackoffMs = 60_000 } = {}) {
+  async selectPendingReconciliationSource({ sourceId, now = this.clock(), retryBackoffMs = 60_000, signal, deadline } = {}) {
     const selectedAt = dateValue(now, 'Reconciliation selection time')
     if (!Number.isInteger(retryBackoffMs) || retryBackoffMs < 1 || retryBackoffMs > 24 * 60 * 60 * 1000) throw new JobError(422, 'validation_error', 'Reconciliation retry backoff is invalid')
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+    signal?.throwIfAborted?.()
     const retryEligibleAt = new Date(selectedAt.getTime() - retryBackoffMs)
     const filter = {
       operationalStatus: { $ne: 'archived' },
@@ -358,22 +413,24 @@ export class MongoIndexingJobRepository {
       ],
     }
     if (sourceId !== undefined) filter._id = idValue(sourceId)
-    const document = await this.sources().find(filter)
+    const document = await this.sources().find(filter, options)
       .sort({ 'reconciliation.requiredPolicyVersion': 1 }).hint('sources_reconciliation').limit(1).next()
     if (!document) return null
     return { id: document._id.toHexString(), policyVersion: document.policyVersion }
   }
-
-  async materializeReconciliationPage({ sourceId, fence, limit = 100, now = this.clock() } = {}) {
+  async materializeReconciliationPage({ sourceId, fence, limit = 100, now = this.clock(), signal, deadline, settlementDeadline = deadline } = {}) {
     const sourceObjectId = idValue(sourceId)
     const materializedAt = dateValue(now, 'Reconciliation materialization time')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || fence?.key !== `reconciliation:source:${sourceObjectId.toHexString()}`) throw new Error('Reconciliation page input is invalid')
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+    const sessionOptions = signal ? { signal } : {}
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const leaseFilter = {
         key: fence.key, 'activeOwner.jobId': sourceObjectId, 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: materializedAt },
       }
-      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: materializedAt, updatedAt: materializedAt } }, { session })
+      const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: materializedAt, updatedAt: materializedAt } }, { session, ...sessionOptions })
       if (touched.matchedCount !== 1) throw new JobError(409, 'conflict', 'Reconciliation lease fence is stale')
       const retryEligibleAt = new Date(materializedAt.getTime() - 60_000)
       const source = await this.sources().findOne({
@@ -382,16 +439,17 @@ export class MongoIndexingJobRepository {
           { 'reconciliation.status': 'failed', 'reconciliation.error.occurredAt': { $lte: retryEligibleAt } },
         ],
         $expr: { $eq: ['$policyVersion', '$reconciliation.requiredPolicyVersion'] },
-      }, { session })
+      }, { session, ...sessionOptions })
       if (!source) throw new JobError(409, 'conflict', 'Source reconciliation marker changed')
       const cursor = source.reconciliation?.cursorArticleId
       const articleFilter = { sourceId: sourceObjectId, ...(cursor ? { _id: { $gt: cursor } } : {}) }
-      const documents = await this.articles().find(articleFilter, { session }).sort({ _id: 1 }).hint('articles_source_reconciliation').limit(limit + 1).toArray()
+      const documents = await this.articles().find(articleFilter, { session, ...sessionOptions }).sort({ _id: 1 }).hint('articles_source_reconciliation').limit(limit + 1).toArray()
       const selected = documents.slice(0, limit)
       let created = 0
       for (const article of selected) {
+        signal?.throwIfAborted?.()
         for (const job of buildReconciliationJobs({ source: { ...source, id: sourceObjectId.toHexString() }, articleId: article._id.toHexString(), now: materializedAt, embeddingTarget: this.embeddingTarget })) {
-          const inserted = await this.jobs().updateOne({ actorScope: job.actorScope, idempotencyKey: job.idempotencyKey }, { $setOnInsert: indexingJobDocument(job) }, { upsert: true, session })
+          const inserted = await this.jobs().updateOne({ actorScope: job.actorScope, idempotencyKey: job.idempotencyKey }, { $setOnInsert: indexingJobDocument(job) }, { upsert: true, session, ...sessionOptions })
           created += inserted.upsertedCount === 1 ? 1 : 0
         }
       }
@@ -404,10 +462,10 @@ export class MongoIndexingJobRepository {
       const markerUpdate = hasMore
         ? { $set: { 'reconciliation.status': 'processing', 'reconciliation.cursorArticleId': selected.at(-1)._id, 'reconciliation.error': null, updatedAt: materializedAt } }
         : { $set: { 'reconciliation.status': 'completed', 'reconciliation.completedPolicyVersion': source.policyVersion, 'reconciliation.error': null, updatedAt: materializedAt }, $unset: { 'reconciliation.cursorArticleId': '' } }
-      const advanced = await this.sources().updateOne(markerFilter, markerUpdate, { session })
+      const advanced = await this.sources().updateOne(markerFilter, markerUpdate, { session, ...sessionOptions })
       if (advanced.matchedCount !== 1) throw new JobError(409, 'conflict', 'Source reconciliation cursor changed')
       return { inspected: selected.length, created, hasMore }
-    })
+    }, transactionOptions(options), { signal, deadline, settlementDeadline, clock: this.clock })
   }
   async previewReconciliationPage({ sourceId, limit = 100, now = this.clock(), retryBackoffMs = 60_000 } = {}) {
     const sourceObjectId = idValue(sourceId)
@@ -458,17 +516,20 @@ export class MongoIndexingJobRepository {
     }
   }
 
-  async markReconciliationFailure({ sourceId, fence, now = this.clock(), error } = {}) {
+  async markReconciliationFailure({ sourceId, fence, now = this.clock(), error, signal, deadline, settlementDeadline = deadline } = {}) {
     const id = idValue(sourceId)
     const occurredAt = dateValue(now, 'Reconciliation failure time')
     if (fence?.key !== `reconciliation:source:${id.toHexString()}`) return false
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+    const sessionOptions = signal ? { signal } : {}
     return this.withTransaction(async (session) => {
+      signal?.throwIfAborted?.()
       const lease = await this.leases().updateOne({
         key: fence.key, 'activeOwner.jobId': id, 'activeOwner.ownerTokenHash': fence.ownerTokenHash,
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: occurredAt },
-      }, { $set: { lastFenceValidatedAt: occurredAt, updatedAt: occurredAt } }, { session })
+      }, { $set: { lastFenceValidatedAt: occurredAt, updatedAt: occurredAt } }, { session, ...sessionOptions })
       if (lease.matchedCount !== 1) return false
-      const source = await this.sources().findOne({ _id: id }, { session })
+      const source = await this.sources().findOne({ _id: id }, { session, ...sessionOptions })
       const marker = source?.reconciliation
       if (!source || source.policyVersion !== marker?.requiredPolicyVersion || !['pending', 'processing', 'failed'].includes(marker.status)) return false
       const safe = { code: typeof error?.code === 'string' ? error.code.slice(0, 128) : 'reconciliation_failed', message: 'Reconciliation did not complete safely', retryable: Boolean(error?.retryable), occurredAt }
@@ -476,9 +537,9 @@ export class MongoIndexingJobRepository {
         _id: id, policyVersion: source.policyVersion, 'reconciliation.requiredPolicyVersion': source.policyVersion,
         'reconciliation.status': marker.status,
         ...(marker.cursorArticleId ? { 'reconciliation.cursorArticleId': marker.cursorArticleId } : { 'reconciliation.cursorArticleId': { $exists: false } }),
-      }, { $set: { 'reconciliation.status': 'failed', 'reconciliation.error': safe, updatedAt: occurredAt } }, { session })
+      }, { $set: { 'reconciliation.status': 'failed', 'reconciliation.error': safe, updatedAt: occurredAt } }, { session, ...sessionOptions })
       return updated.matchedCount === 1
-    })
+    }, transactionOptions(options), { signal, deadline, settlementDeadline, clock: this.clock })
   }
 
   async findIndexingJobById(jobId, options = {}) { return serializeIndexingJob(await this.jobs().findOne({ _id: idValue(jobId) }, options)) }
@@ -516,7 +577,7 @@ export class MongoIndexingJobRepository {
 
   async selectDueIndexing({ now = new Date(), task, tasks, excludeArticleIds, jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, signal, deadline } = {}) {
     dateValue(now, 'Indexing due clock')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     const taskFilter = dueTaskFilter({ task, tasks })
     const excluded = excludedArticleIds(excludeArticleIds)
@@ -537,7 +598,7 @@ export class MongoIndexingJobRepository {
   }
   async nextAvailableAt({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger, signal, deadline } = {}) {
     const scope = indexingScopeFilter({ jobIds, sourceId, expectedSourcePolicyVersion, actorScope, trigger })
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     const document = await this.jobs().find({ status: 'queued', ...scope }, options).sort({ availableAt: 1, _id: 1 }).hint('indexing_next_available').project({ availableAt: 1 }).limit(1).next()
     return document?.availableAt ?? null
@@ -556,7 +617,7 @@ export class MongoIndexingJobRepository {
 
   async claimQueuedWithFence({ jobId, fence, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
     if (deadlineAt !== Number.POSITIVE_INFINITY && now.getTime() >= deadlineAt) throw new JobError(409, 'conflict', 'Indexing admission deadline exceeded')
     signal?.throwIfAborted?.()
@@ -572,11 +633,11 @@ export class MongoIndexingJobRepository {
       const claimed = await this.jobs().updateOne({ _id: idValue(jobId), status: 'queued', availableAt: { $lte: now } }, { $set: { status: 'running', leaseGeneration: fence.leaseGeneration, startedAt: now, heartbeatAt: now, updatedAt: now } }, { session, ...options })
       if (claimed.matchedCount !== 1) throw new JobError(409, 'conflict', 'Indexing job is no longer claimable')
       return true
-    }, transactionOptions)
+    }, transactionOptions, { signal, deadline, clock: this.clock })
   }
   async cancellationRequestedWithFence({ jobId, fence, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
       signal?.throwIfAborted?.()
@@ -588,13 +649,13 @@ export class MongoIndexingJobRepository {
       const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, projection: { cancellationRequestedAt: 1 }, ...options })
       if (!current) throw new JobError(409, 'conflict', 'Indexing job changed before provider call')
       return Boolean(current.cancellationRequestedAt)
-    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
   }
 
   async completeWithFence({ jobId, fence, status, error, inputHash, signal, deadline } = {}) {
     if (!TERMINAL.has(status)) throw new Error('Terminal indexing status is invalid')
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
       signal?.throwIfAborted?.()
@@ -619,13 +680,13 @@ export class MongoIndexingJobRepository {
       const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
       if (released.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease release fence failed')
       return this.findIndexingJobById(jobId, { session, ...options })
-    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
   }
 
   async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000, incrementAttempt = false, signal, deadline } = {}) {
     if (!Number.isInteger(delayMs) || delayMs < 1_000 || delayMs > 15 * 60 * 1_000) throw new Error('Indexing defer delay is invalid')
     const now = dateValue(this.clock(), 'Authoritative indexing clock')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
       signal?.throwIfAborted?.()
@@ -641,7 +702,7 @@ export class MongoIndexingJobRepository {
       await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, update, { session, ...options })
       await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
       return this.findIndexingJobById(jobId, { session, ...options })
-    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
   }
 
   async cancelIndexingJob({ jobId, actor, reasonCode, request, actorFence, now = new Date() } = {}) {
@@ -667,7 +728,7 @@ export class MongoIndexingJobRepository {
   }
 
   async recoverExpiredIndexing({ leaseRepository, now = new Date(), limit = 10, signal, deadline } = {}) {
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     const expired = await leaseRepository.listExpired({ now, limit, namespace: 'indexing:article:', signal, deadline })
     const summary = { inspected: expired.length, recovered: 0, retriesCreated: 0, failed: 0 }

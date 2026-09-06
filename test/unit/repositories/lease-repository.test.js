@@ -65,6 +65,20 @@ describe('MongoLeaseRepository', () => {
       { returnDocument: 'after' },
     )
   })
+  it('rechecks the deadline before writing lease ownership', async () => {
+    let current = acquiredAt
+    const updateOne = vi.fn(async () => {
+      current = new Date(acquiredAt.getTime() + 1_000)
+      return { matchedCount: 1 }
+    })
+    const findOneAndUpdate = vi.fn(async () => ({ activeOwner: { leaseGeneration: 1 } }))
+    const collection = { updateOne, findOneAndUpdate, find: vi.fn() }
+    const repository = new MongoLeaseRepository({ db: { collection: vi.fn(() => collection) }, now: () => current })
+    const deadline = new Date(acquiredAt.getTime() + 500)
+
+    await expect(repository.acquire({ key, jobId, ownerToken: 'owner-token', deadline })).rejects.toThrow(/deadline/i)
+    expect(findOneAndUpdate).not.toHaveBeenCalled()
+  })
 
   it('rejects invalid acquire inputs and reports active lease conflicts', async () => {
     const { repository, collection } = repositoryWith()
@@ -121,6 +135,16 @@ describe('MongoLeaseRepository', () => {
     collection.updateOne.mockResolvedValueOnce({ matchedCount: 0 })
     await expect(repository.release({ key, jobId, leaseGeneration: 4, ownerToken: 'owner-token' })).resolves.toBe(false)
   })
+  it('bounds release with both server and client operation deadlines', async () => {
+    const { repository, collection } = repositoryWith({ matchedCount: 1 })
+    const deadline = new Date(acquiredAt.getTime() + 500)
+    await expect(repository.release({ key, jobId, leaseGeneration: 4, ownerTokenHash: 'hash-value', deadline })).resolves.toBe(true)
+    expect(collection.updateOne).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({ maxTimeMS: expect.any(Number), timeoutMS: expect.any(Number) }),
+    )
+  })
 
   it('lists expired ingestion and indexing leases with bounded query options', async () => {
     const now = new Date('2026-08-20T09:00:00.000Z')
@@ -151,5 +175,12 @@ describe('MongoLeaseRepository', () => {
     await expect(repository.clearExpiredReconciliation({ key: reconciliationKey, now: new Date('2026-08-21T00:00:00.000Z') })).resolves.toBe(false)
     await expect(repository.clearExpiredReconciliation({ key: indexingKey })).rejects.toThrow(/reconciliation/i)
     await expect(repository.clearExpiredReconciliation({ key: reconciliationKey, now: 'not-a-date' })).rejects.toThrow(/recovery time/i)
+  })
+  it('does not clear reconciliation ownership after the repository clock deadline', async () => {
+    const fixture = repositoryWith({ now: acquiredAt })
+    const deadline = new Date(acquiredAt.getTime() - 1)
+
+    await expect(fixture.repository.clearExpiredReconciliation({ key: reconciliationKey, now: acquiredAt, deadline })).rejects.toThrow(/deadline/i)
+    expect(fixture.collection.updateOne).not.toHaveBeenCalled()
   })
 })

@@ -134,33 +134,77 @@ function indexingDrainStatus(counters = {}) {
   if (failed > 0 || partial > 0 || deferred > 0) return 'partial'
   return 'succeeded'
 }
-async function runTracedPhase({ trace, stage, now, context, execute, successDetails = () => ({}) }) {
+const CONTROL_PHASE_RESULT = Symbol('cron-control-phase')
+
+async function runTracedPhase({ trace, stage, now, context, execute, signal, successDetails = () => ({}) }) {
   const phase = startRuntimePhase({ trace, stage, now, context })
   try {
     const result = await execute()
     phase.succeed(successDetails(result))
     return result
   } catch (error) {
+    if (isCronControlError(error, signal)) {
+      phase.timeout(error, { counters: { deferred: 1 } })
+      return { [CONTROL_PHASE_RESULT]: true, error }
+    }
     phase.fail(error)
     throw error
   }
 }
-async function runCronOperation({ operation, deadline, now }) {
+async function runCronOperation({ operation, deadline, settlementDeadline, now, signal }) {
   const current = now()
   if (!(current instanceof Date) || Number.isNaN(current.getTime())) throw new Error('Cron clock is invalid')
   const remainingMs = Math.max(0, deadline.getTime() - current.getTime())
-  const controller = new globalThis.AbortController()
+  if (remainingMs <= 0) throw runtimeFailure('runtime_error', 'Cron operation deadline was exceeded')
+  const timeoutController = new globalThis.AbortController()
+  let operationSignal = timeoutController.signal
+  let removeParentAbort
+  if (signal) {
+    if (typeof globalThis.AbortSignal?.any === 'function') {
+      operationSignal = globalThis.AbortSignal.any([signal, timeoutController.signal])
+    } else {
+      const forwardAbort = () => timeoutController.abort(signal.reason)
+      if (signal.aborted) forwardAbort()
+      else {
+        signal.addEventListener('abort', forwardAbort, { once: true })
+        removeParentAbort = () => signal.removeEventListener('abort', forwardAbort)
+      }
+    }
+  }
+  const operationPromise = Promise.resolve().then(() => {
+    operationSignal.throwIfAborted?.()
+    return operation({ signal: operationSignal, deadline, ...(settlementDeadline !== undefined ? { settlementDeadline } : {}) })
+  })
   const settled = await settleBeforeDeadline(
-    Promise.resolve().then(() => operation({ signal: controller.signal, deadline })),
+    operationPromise,
     remainingMs,
     {
       timeoutError: () => runtimeFailure('runtime_error', 'Cron operation deadline was exceeded'),
-      onTimeout: (error) => controller.abort(error),
+      onTimeout: (error) => timeoutController.abort(error),
     },
   )
-  if (settled.kind === 'deadline') throw settled.error
-  if (!settled.settled) throw settled.error
-  return settled.value
+  try {
+    if (settled.kind === 'deadline') {
+      try { await operationPromise } catch { /* parent remains fail-closed after late settlement */ }
+      throw settled.error
+    }
+    if (!settled.settled) throw settled.error
+    return settled.value
+  } finally {
+    removeParentAbort?.()
+}
+}
+function isCronControlError(error, signal) {
+  const code = typeof error?.code === 'string' ? error.code : ''
+  return Boolean(signal?.aborted || error && (
+    error.name === 'AbortError'
+    || code === 'aborted'
+    || code === 'runtime_deadline_exceeded'
+    || code === 'runtime_cleanup_unresolved'
+    || code.endsWith('_deadline_exceeded')
+    || code.endsWith('_finalization_unresolved')
+    || isMaterializationDeadlineError(error)
+  ))
 }
 
 function isMaterializationDeadlineError(error) {
@@ -178,6 +222,8 @@ async function runCronMaterializationPhase({
   context,
   overallDeadline,
   deadline,
+  settlementDeadline,
+  signal,
   materializers = [],
   jobRepository,
   pageLimit,
@@ -187,29 +233,42 @@ async function runCronMaterializationPhase({
   let pages = 0
   try {
     let hasMore = true
-    for (const materializer of materializers) {
-      if (now().getTime() >= overallDeadline.getTime()) break
-      await runCronOperation({ operation: (options) => materializer({ ...options, deadline }), deadline, now })
-    }
     while (hasMore && pages < maxPages) {
+      signal?.throwIfAborted?.()
       const pageNow = now()
       if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
       if (pageNow.getTime() >= deadline.getTime()) break
       const result = await runCronOperation({
         operation: (options) => jobRepository.materializeDailyIngestion({ now: pageNow, limit: pageLimit, ...options }),
         deadline,
+        settlementDeadline,
         now,
+        signal,
       })
+      signal?.throwIfAborted?.()
       pages += 1
       hasMore = result?.hasMore === true
       if (now().getTime() >= deadline.getTime()) break
     }
+    for (const materializer of materializers) {
+      signal?.throwIfAborted?.()
+      if (now().getTime() >= overallDeadline.getTime()) break
+      const materialized = await runCronOperation({
+        operation: (options) => materializer.run({ ...options, deadline }),
+        deadline,
+        settlementDeadline,
+        now,
+        signal,
+      })
+      signal?.throwIfAborted?.()
+      if (materializer.requiresCompleteMaterialization && materialized?.hasMore === true) throw runtimeFailure('runtime_deadline_exceeded', 'Cron materializer deferred before completion')
+    }
     phase.succeed({ counters: { updated: pages } })
-    return pages
+    return { pages, completed: true }
   } catch (error) {
-    if (isMaterializationDeadlineError(error)) {
+    if (isCronControlError(error, signal)) {
       phase.timeout(error, { counters: { deferred: 1 } })
-      return pages
+      return { pages, completed: false }
     }
     phase.fail(error)
     throw error
@@ -315,6 +374,10 @@ export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now 
       finishTrace(indexingDrainStatus(drainCounters), { counters: drainCounters })
       return result
     } catch (error) {
+      if (isCronControlError(error, options.signal)) {
+        finishTrace('deferred', { error })
+        throw error
+      }
       finishTrace('failed', { error })
       throw error
     }
@@ -326,6 +389,13 @@ export const DAILY_MATERIALIZATION_PAGE_LIMIT = 100
 export const MAX_DAILY_MATERIALIZATION_PAGES = 10
 export const DAILY_MATERIALIZATION_BUDGET_MS = 4_000
 
+function normalizeMaterializerDescriptor(materializer, index) {
+  if (typeof materializer === 'function') return { name: materializer.name || `materializer-${index + 1}`, run: materializer }
+  if (materializer && typeof materializer.name === 'string' && materializer.name.trim() && typeof materializer.run === 'function') {
+    return { name: materializer.name.trim(), run: materializer.run, ...(materializer.requiresCompleteMaterialization === true ? { requiresCompleteMaterialization: true } : {}) }
+  }
+  throw new Error('Cron materializer descriptor is invalid')
+}
 export function createCronDueWorkRunner({
   jobRepository,
   coordinatorRunner,
@@ -342,80 +412,116 @@ export function createCronDueWorkRunner({
   if (!Number.isInteger(materializationPageLimit) || materializationPageLimit < 1 || materializationPageLimit > DAILY_MATERIALIZATION_PAGE_LIMIT) throw new Error('Daily materialization page limit is invalid')
   if (!Number.isInteger(maxMaterializationPages) || maxMaterializationPages < 1) throw new Error('Daily materialization page cap is invalid')
   if (!Number.isFinite(materializationBudgetMs) || materializationBudgetMs <= 0) throw new Error('Daily materialization budget is invalid')
-  if (!Array.isArray(materializers) || materializers.some((materializer) => typeof materializer !== 'function')) throw new Error('Cron materializers are invalid')
+  if (!Array.isArray(materializers)) throw new Error('Cron materializers are invalid')
+  materializers.forEach(normalizeMaterializerDescriptor)
   if (typeof trace !== 'function' || typeof runIdFactory !== 'function') throw new Error('Cron trace dependencies are invalid')
-  return async () => {
+  return async ({ signal, deadline: requestedDeadline, settlementDeadline: requestedSettlementDeadline } = {}) => {
     const startedAt = now()
+    const normalizedMaterializers = materializers.map(normalizeMaterializerDescriptor)
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
-    const globalDeadline = new Date(startedAt.getTime() + CRON_DUE_WORK_PROFILE.budgetMs)
+    const profileDeadline = new Date(startedAt.getTime() + CRON_DUE_WORK_PROFILE.budgetMs)
+    const requestedDeadlineAt = requestedDeadline === undefined ? profileDeadline.getTime() : new Date(requestedDeadline).getTime()
+    if (!Number.isFinite(requestedDeadlineAt)) throw new Error('Cron deadline is invalid')
+    const globalDeadline = new Date(Math.min(profileDeadline.getTime(), requestedDeadlineAt))
+    const settlementDeadline = requestedSettlementDeadline === undefined ? globalDeadline : new Date(requestedSettlementDeadline)
+    if (Number.isNaN(settlementDeadline.getTime())) throw new Error('Cron settlement deadline is invalid')
     const materializationDeadline = new Date(Math.min(startedAt.getTime() + materializationBudgetMs, globalDeadline.getTime()))
     const runId = runIdFactory()
     const emitTrace = (event) => {
       try { trace(safeEvent(event, now)) } catch { /* telemetry cannot change cron outcomes */ }
     }
     const cronPhase = startRuntimePhase({ trace: emitTrace, stage: 'cron', now, context: { runId, deadlineAt: globalDeadline } })
+    const deferredResult = () => ({
+      runId,
+      startedAt,
+      finishedAt: now(),
+      recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+      queues: Object.fromEntries(QUEUE_ORDER.map((name) => [QUEUE_RESPONSE_KEY[name], { ...EMPTY_QUEUE_COUNTERS }])),
+      nextAvailableAt: null,
+    })
     try {
-      await runCronMaterializationPhase({
+      const materialization = await runCronMaterializationPhase({
         trace: emitTrace,
         now,
         context: { runId, deadlineAt: globalDeadline },
         overallDeadline: globalDeadline,
         deadline: materializationDeadline,
-        materializers,
+        settlementDeadline,
+        signal,
+        materializers: normalizedMaterializers,
         jobRepository,
         pageLimit: materializationPageLimit,
         maxPages: maxMaterializationPages,
       })
+      if (!materialization.completed) {
+        const result = deferredResult()
+        cronPhase.timeout(undefined, { counters: { deferred: 1 } })
+        return result
+      }
       const remainingBudgetMs = globalDeadline.getTime() - now().getTime()
       if (remainingBudgetMs < 1000) {
-        const result = {
-          runId,
-          startedAt,
-          finishedAt: now(),
-          recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
-          queues: Object.fromEntries(QUEUE_ORDER.map((name) => [QUEUE_RESPONSE_KEY[name], { ...EMPTY_QUEUE_COUNTERS }])),
-          nextAvailableAt: null,
-        }
+        const result = deferredResult()
         cronPhase.timeout(undefined, { counters: { deferred: 1 } })
         return result
       }
       const coordinated = await runTracedPhase({
+        signal,
         trace: emitTrace,
         stage: 'cron.coordinator',
         now,
         context: { runId, deadlineAt: globalDeadline },
         execute: () => runCronOperation({
-          operation: ({ signal, deadline }) => coordinatorRunner({
+          operation: ({ signal: operationSignal, deadline, settlementDeadline: operationSettlementDeadline }) => coordinatorRunner({
             maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
             budgetMs: remainingBudgetMs,
             runId,
-            signal,
+            signal: operationSignal,
             deadline,
+            settlementDeadline: operationSettlementDeadline,
           }),
           deadline: globalDeadline,
+          settlementDeadline,
           now,
+          signal,
         }),
         successDetails: (result) => ({ counters: { claimed: queueAttempts(result?.queues) } }),
       })
+      if (coordinated?.[CONTROL_PHASE_RESULT]) {
+        const result = deferredResult()
+        cronPhase.timeout(coordinated.error, { counters: { deferred: 1 } })
+        return result
+      }
       if (now().getTime() >= globalDeadline.getTime() || typeof indexingDrainRunner !== 'function') {
         cronPhase.succeed({ counters: coordinated?.queues?.indexing })
         return coordinated
       }
       const result = await runTracedPhase({
+        signal,
         trace: emitTrace,
         stage: 'cron.indexing',
         now,
         context: { runId, deadlineAt: globalDeadline },
         execute: () => runCronOperation({
-          operation: ({ signal, deadline }) => indexingDrainRunner(coordinated, { deadline, startedAt, runId, signal }),
+          operation: ({ signal: operationSignal, deadline, settlementDeadline: operationSettlementDeadline }) => indexingDrainRunner(coordinated, { deadline, startedAt, runId, signal: operationSignal, settlementDeadline: operationSettlementDeadline }),
           deadline: globalDeadline,
+          settlementDeadline,
           now,
+          signal,
         }),
         successDetails: (value) => ({ counters: value?.queues?.indexing }),
       })
+      if (result?.[CONTROL_PHASE_RESULT]) {
+        const deferred = deferredResult()
+        cronPhase.timeout(result.error, { counters: { deferred: 1 } })
+        return deferred
+      }
       cronPhase.succeed({ counters: result?.queues?.indexing })
       return result
     } catch (error) {
+      if (isCronControlError(error, signal)) {
+        cronPhase.timeout(error, { counters: { deferred: 1 } })
+        return deferredResult()
+      }
       cronPhase.fail(error)
       throw error
     } finally {
@@ -449,23 +555,26 @@ export async function createConfiguredJobRuntime({ context, cronEventRepository,
     maintenanceRegistry.register('purge-cron-lifecycle-events', ({ cutoff, limit }) => retentionRepository.purgeExpiredEvents({ cutoff, limit }))
   }
   if (retentionRepository && typeof retentionRepository.purgeExpiredEvents === 'function') {
-    cronMaterializers.push(async ({ deadline, signal } = {}) => {
-      let hasMore = true
-      let inspected = 0
-      let affected = 0
-      let pages = 0
-      while (hasMore && pages < MAX_DAILY_MATERIALIZATION_PAGES) {
-        const current = now()
-        if (!(current instanceof Date) || Number.isNaN(current.getTime())) throw new Error('Cron retention clock is invalid')
-        if (deadline instanceof Date && current.getTime() >= deadline.getTime()) break
-        signal?.throwIfAborted?.()
-        const result = await retentionRepository.purgeExpiredEvents({ cutoff: current, limit: DAILY_MATERIALIZATION_PAGE_LIMIT, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}) })
-        inspected += Math.max(0, Number(result?.inspected ?? 0))
-        affected += Math.max(0, Number(result?.affected ?? 0))
-        hasMore = result?.hasMore === true
-        pages += 1
-      }
-      return { inspected, affected, hasMore }
+    cronMaterializers.push({
+      name: 'cron-lifecycle-retention',
+      run: async ({ deadline, signal, settlementDeadline } = {}) => {
+        let hasMore = true
+        let inspected = 0
+        let affected = 0
+        let pages = 0
+        while (hasMore && pages < MAX_DAILY_MATERIALIZATION_PAGES) {
+          const current = now()
+          if (!(current instanceof Date) || Number.isNaN(current.getTime())) throw new Error('Cron retention clock is invalid')
+          if (deadline instanceof Date && current.getTime() >= deadline.getTime()) break
+          signal?.throwIfAborted?.()
+          const result = await retentionRepository.purgeExpiredEvents({ cutoff: current, limit: DAILY_MATERIALIZATION_PAGE_LIMIT, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}), ...(settlementDeadline ? { settlementDeadline } : {}) })
+          inspected += Math.max(0, Number(result?.inspected ?? 0))
+          affected += Math.max(0, Number(result?.affected ?? 0))
+          hasMore = result?.hasMore === true
+          pages += 1
+        }
+        return { inspected, affected, hasMore }
+      },
     })
   }
   const takedownRepository = context.db?.collection ? new MongoTakedownRepository({ ...context, governanceDb: deletionGovernanceDb, governanceKeyring }) : null
@@ -475,7 +584,10 @@ export async function createConfiguredJobRuntime({ context, cronEventRepository,
   if (takedownRepository) {
     maintenanceRegistry.register('purge-takedown-pii', ({ cutoff, limit }) => takedownRepository.purgePii({ cutoff, limit }))
     maintenanceRegistry.register('purge-takedown-workflows', ({ cutoff, limit }) => takedownRepository.purgeWorkflows({ cutoff, limit }))
-    cronMaterializers.push(() => takedownRepository.materializeCleanupBatch({ now: now(), limit: DAILY_MATERIALIZATION_PAGE_LIMIT }))
+    cronMaterializers.push({
+      name: 'takedown-cleanup',
+      run: ({ signal, deadline, settlementDeadline } = {}) => takedownRepository.materializeCleanupBatch({ now: now(), limit: DAILY_MATERIALIZATION_PAGE_LIMIT, ...(signal ? { signal } : {}), ...(deadline ? { deadline } : {}), ...(settlementDeadline ? { settlementDeadline } : {}) }),
+    })
   }
   if (accountDeletionRepository) maintenanceRegistry.register('purge-account-deletion-workflows', ({ cutoff, limit }) => accountDeletionRepository.purge({ cutoff, limit }))
   if (adminAuditRepository) maintenanceRegistry.register('purge-audit-ip-hmac', ({ cutoff, limit }) => adminAuditRepository.purgeAuditIpHmac({ cutoff, limit }))

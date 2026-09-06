@@ -87,7 +87,7 @@ describe('Mongo takedown repository integrity', () => {
     expect(repository.assertTerminalTargetsCurrent).toHaveBeenCalledWith(expect.objectContaining({ targetType: 'article', targetIds: [firstTarget], requestedScope: ['metadata'], session: {} }))
   })
 
-  it('exposes one bounded cleanup materialization transaction per invocation', async () => {
+  it('bounds one cleanup transaction by the supplied deadline', async () => {
     const fixture = makeContext()
     const session = { withTransaction: vi.fn(async (work) => work(session)), endSession: vi.fn(async () => {}) }
     fixture.context.client = { startSession: vi.fn(() => session) }
@@ -95,9 +95,29 @@ describe('Mongo takedown repository integrity', () => {
       ? { find: () => ({ sort: () => ({ limit: () => ({ toArray: async () => [] }) }) }) }
       : name === 'articles' ? fixture.articles : { findOne: vi.fn() })
     const repository = new MongoTakedownRepository(fixture.context)
-    expect(repository.materializeCleanupBatch).toEqual(expect.any(Function))
-    const result = await repository.materializeCleanupBatch({ now, limit: 100 })
-    expect(result).toEqual(expect.objectContaining({ processed: false }))
+    const deadline = new Date(now.getTime() + 5_000)
+
+    await expect(repository.materializeCleanupBatch({ now, limit: 100, deadline })).resolves.toEqual(expect.objectContaining({ processed: false }))
+    expect(session.withTransaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ timeoutMS: expect.any(Number) }))
+  })
+  it('rechecks cancellation after a takedown transaction read', async () => {
+    let resolveRows
+    const rows = new Promise((resolve) => { resolveRows = resolve })
+    const fixture = makeContext()
+    const session = { withTransaction: vi.fn(async (work) => work(session)), endSession: vi.fn(async () => {}) }
+    fixture.context.client = { startSession: vi.fn(() => session) }
+    fixture.context.db.collection.mockImplementation((name) => name === 'takedownRequests'
+      ? { find: () => ({ sort() { return this }, limit() { return this }, toArray: () => rows }) }
+      : name === 'articles' ? fixture.articles : { findOne: vi.fn() })
+    const repository = new MongoTakedownRepository(fixture.context)
+    const controller = new AbortController()
+    const pending = repository.materializeCleanupBatch({ now, limit: 100, signal: controller.signal, deadline: new Date(now.getTime() + 5_000) })
+    await Promise.resolve()
+    await Promise.resolve()
+    controller.abort()
+    resolveRows([])
+
+    await expect(pending).rejects.toThrow(/abort|deadline/i)
   })
 
   it('clears rich summary fields when a scoped summary cleanup is materialized', async () => {

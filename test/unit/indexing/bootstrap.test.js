@@ -104,6 +104,7 @@ describe('Step 9 indexing bootstrap readiness', () => {
     expect(registered.map(({ queueName }) => queueName)).toEqual(['indexing'])
     expect(maintenance.map(([name]) => name)).toEqual(['purge-indexing-jobs'])
     expect(jobRuntime.cronMaterializers).toHaveLength(1)
+    expect(jobRuntime.cronMaterializers[0]).toEqual(expect.objectContaining({ name: 'source-policy-reconciliation', requiresCompleteMaterialization: true, run: expect.any(Function) }))
     expect(runtime.indexingJobService).toEqual(expect.objectContaining({ createSummaryJob: expect.any(Function), createIndexingJob: expect.any(Function) }))
     expect(runtime.sourcePolicyReconciliationService).toEqual(expect.objectContaining({ preview: expect.any(Function), execute: expect.any(Function) }))
     expect(runtime.queryEmbedding.capability).toBe('nonconfidential')

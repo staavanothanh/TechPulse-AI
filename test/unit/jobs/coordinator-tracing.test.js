@@ -89,6 +89,25 @@ describe('coordinator tracing instrumentation', () => {
     expect(completion).toBeDefined()
     expect(completion.counters).toEqual({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })
   })
+  it('marks coordinator cancellation as deferred rather than failed', async () => {
+    const controller = new AbortController()
+    const ingestion = adapter('ingestion', 0)
+    ingestion.recoverExpired = vi.fn(async ({ signal }) => {
+      controller.abort(new Error('caller canceled'))
+      signal.throwIfAborted()
+    })
+    const registry = createQueueRegistry()
+    registry.register(ingestion)
+    const trace = vi.fn()
+    const runner = createCoordinatorRunner({ queueRegistry: registry, maxJobs: 1, maxRecoveries: 1, budgetMs: 2_000, trace, now: () => new Date('2026-08-10T00:00:00.000Z') })
+
+    await expect(runner({ signal: controller.signal })).rejects.toThrow('caller canceled')
+    const events = trace.mock.calls.map(([event]) => event)
+    expect(events.some((event) => event.stage === 'coordinator.recovery' && event.status === 'failed')).toBe(false)
+    expect(events.some((event) => event.stage === 'coordinator.recovery' && event.status === 'deferred')).toBe(true)
+    expect(events.some((event) => event.stage === 'coordinator' && event.status === 'failed')).toBe(false)
+  })
+
   it('emits a failed recovery event before propagating adapter errors', async () => {
     const registry = createQueueRegistry()
     const ingestion = adapter('ingestion', 0)

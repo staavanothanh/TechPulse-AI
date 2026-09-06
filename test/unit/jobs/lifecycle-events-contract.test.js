@@ -87,6 +87,31 @@ describe('canonical observability event contract and persistence', () => {
     expect(doc.elapsedMs).toBe(245)
     expect(doc.purgeAfter).toEqual(new Date(at.getTime() + 30 * 24 * 60 * 60 * 1000))
   })
+  it('persists a bounded child timeout with typed cleanup status fields', () => {
+    const at = new Date('2026-09-03T12:00:00.000Z')
+    const doc = createLifecycleEventDocument({
+      runId: 'cron-run-child-timeout',
+      queueName: 'ingestion',
+      stage: 'cron.materialization.daily',
+      status: 'timeout',
+      errorCode: 'runtime_cleanup_unresolved',
+      counters: { deferred: 1 },
+      elapsedMs: 500,
+      at,
+    })
+
+    expect(doc).toMatchObject({
+      runId: 'cron-run-child-timeout',
+      queueName: 'ingestion',
+      stage: 'cron.materialization.daily',
+      status: 'timeout',
+      counters: { deferred: 1 },
+      elapsedMs: 500,
+      occurredAt: at,
+      error: { code: 'runtime_cleanup_unresolved', retryable: false, occurredAt: at },
+    })
+    expect(doc.error).not.toHaveProperty('message')
+  })
   it('preserves non-null recovery counters and sequence for coordinator reconstruction', () => {
     const at = new Date('2026-09-03T12:00:00.000Z')
     const doc = createLifecycleEventDocument({

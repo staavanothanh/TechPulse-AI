@@ -5,6 +5,25 @@ export function runtimeFailure(code, message, retryable = false) {
   return error
 }
 
+export function attachCleanupFailure(primary, cleanup) {
+  const cleanupError = {
+    code: typeof cleanup?.code === 'string' ? cleanup.code : 'runtime_cleanup_failed',
+    ...(Number.isInteger(cleanup?.status) ? { status: cleanup.status } : {}),
+  }
+  if (primary && typeof primary === 'object') {
+    try {
+      primary.cleanupError = cleanupError
+      return primary
+    } catch {
+      // Fall through when the primary error is not extensible.
+    }
+  }
+  const wrapped = runtimeFailure('runtime_transaction_failed', 'Transaction failed and cleanup did not complete safely')
+  wrapped.cause = primary
+  wrapped.cleanupError = cleanupError
+  return wrapped
+}
+
 export function monotonicNow() {
   return globalThis.performance?.now?.() ?? Date.now()
 }

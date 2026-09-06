@@ -119,7 +119,11 @@ export async function createConfiguredIndexingRuntime({
   const reconciliationRunner = createReconciliationRunner({ repository: indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
   const sourcePolicyReconciliationWorker = reconciliationReady === false ? undefined : createSourcePolicyReconciliationWorker({ sourceRepository, indexingJobRepository, leaseRepository: jobRuntime.leaseRepository, now })
   const sourcePolicyReconciliationService = reconciliationReady === false ? undefined : createSourcePolicyReconciliationService({ worker: sourcePolicyReconciliationWorker, sourceRepository, rateLimitAdmission, now })
-  if (Array.isArray(jobRuntime.cronMaterializers)) jobRuntime.cronMaterializers.push(() => reconciliationRunner.runDueSources())
+  if (Array.isArray(jobRuntime.cronMaterializers)) jobRuntime.cronMaterializers.push({
+    name: 'source-policy-reconciliation',
+    requiresCompleteMaterialization: true,
+    run: ({ signal, deadline, settlementDeadline } = {}) => reconciliationRunner.runDueSources({ signal, deadline, settlementDeadline }),
+  })
   const indexingJobService = createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork: jobRuntime.coordinatorRunner, embeddingTarget, now })
   workloadPolicy(providerRegistry, 'summary')
   const embeddingRoute = configuredEmbeddingRoute(providerRegistry)

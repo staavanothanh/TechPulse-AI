@@ -20,6 +20,10 @@ function candidateTime(candidate) {
   const value = candidate?.availableAt instanceof Date ? candidate.availableAt : new Date(candidate?.availableAt ?? 0)
   return Number.isNaN(value.getTime()) ? Number.MAX_SAFE_INTEGER : value.getTime()
 }
+function isControlFlowError(error, signal) {
+  const code = typeof error?.code === 'string' ? error.code : ''
+  return Boolean(signal?.aborted || error?.name === 'AbortError' || code === 'aborted' || code === 'runtime_deadline_exceeded' || code === 'runtime_cleanup_unresolved' || code.endsWith('_deadline_exceeded') || code.endsWith('_finalization_unresolved'))
+}
 
 export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, budgetMs = 8000, now = () => new Date(), runId = randomUUID(), deadline, signal, trace } = {}) {
   if (!registry || typeof registry.registered !== 'function') throw new Error('Queue registry is required')
@@ -77,7 +81,7 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
             runId,
             queueName: adapter.queueName,
             stage: 'coordinator.recovery',
-            status: 'failed',
+            status: isControlFlowError(error, signal) ? 'deferred' : 'failed',
             sequence: nextRecoverySequence(),
             error,
           })
@@ -216,7 +220,8 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
   }
   }
   catch (error) {
-    coordinatorPhase.fail(error)
+    if (isControlFlowError(error, signal)) coordinatorPhase.timeout(error, { counters: { deferred: 1 } })
+    else coordinatorPhase.fail(error)
     throw error
   }
 }

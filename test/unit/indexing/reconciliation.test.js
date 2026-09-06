@@ -63,6 +63,126 @@ describe('Step 9 durable source reconciliation', () => {
     expect(repository.materializeReconciliationPage).not.toHaveBeenCalled()
     expect(leaseRepository.release).not.toHaveBeenCalled()
   })
+  it('does not mark a canceled page as failed before releasing its settled fence', async () => {
+    let rejectPage
+    const page = new Promise((_resolve, reject) => { rejectPage = reject })
+    const repository = {
+      selectPendingReconciliationSource: vi.fn(async () => ({ id: SOURCE_ID })),
+      materializeReconciliationPage: vi.fn(async () => page),
+      markReconciliationFailure: vi.fn(async () => true),
+    }
+    const fence = { key: `reconciliation:source:${SOURCE_ID}`, jobId: SOURCE_ID, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
+    const leaseRepository = {
+      clearExpiredReconciliation: vi.fn(async () => true),
+      acquire: vi.fn(async () => fence),
+      release: vi.fn(async () => true),
+    }
+    const controller = new AbortController()
+    const runner = createReconciliationRunner({
+      repository,
+      leaseRepository,
+      ownerToken: () => 'source-owner-token',
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+    const pending = runner.runDueSources({ signal: controller.signal, deadline: new Date('2026-08-10T00:00:01.000Z') })
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(repository.materializeReconciliationPage).toHaveBeenCalledOnce()
+
+    controller.abort()
+    expect(leaseRepository.release).not.toHaveBeenCalled()
+    rejectPage(Object.assign(new Error('aborted'), { name: 'AbortError', code: 'aborted' }))
+
+    await expect(pending).resolves.toMatchObject({ failed: 0 })
+    expect(repository.markReconciliationFailure).not.toHaveBeenCalled()
+    expect(leaseRepository.release).toHaveBeenCalledOnce()
+  })
+  it('passes runtime controls and releases the exact fence only after page settlement', async () => {
+    const fence = { key: `reconciliation:source:${SOURCE_ID}`, jobId: SOURCE_ID, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 7 }
+    let rejectPage
+    let pageSettled = false
+    const page = new Promise((_resolve, reject) => { rejectPage = reject })
+    const repository = {
+      selectPendingReconciliationSource: vi.fn(async () => ({ id: SOURCE_ID })),
+      materializeReconciliationPage: vi.fn(async () => page),
+      markReconciliationFailure: vi.fn(async () => true),
+    }
+    const leaseRepository = {
+      clearExpiredReconciliation: vi.fn(async () => true),
+      acquire: vi.fn(async () => fence),
+      release: vi.fn(async (input) => {
+        expect(pageSettled).toBe(true)
+        return input.leaseGeneration === fence.leaseGeneration
+      }),
+    }
+    const controller = new AbortController()
+    const deadline = new Date('2026-08-10T00:00:01.000Z')
+    const settlementDeadline = new Date('2026-08-10T00:00:02.000Z')
+    const runner = createReconciliationRunner({
+      repository,
+      leaseRepository,
+      ownerToken: () => 'source-owner-token',
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    const pending = runner.runDueSources({ signal: controller.signal, deadline, settlementDeadline })
+    await vi.waitFor(() => expect(repository.materializeReconciliationPage).toHaveBeenCalledOnce())
+    expect(repository.selectPendingReconciliationSource).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal, deadline }))
+    expect(leaseRepository.clearExpiredReconciliation).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal, deadline }))
+    expect(leaseRepository.acquire).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal, deadline }))
+    expect(repository.materializeReconciliationPage).toHaveBeenCalledWith(expect.objectContaining({ fence, signal: controller.signal, deadline, settlementDeadline }))
+
+    controller.abort()
+    pageSettled = true
+    rejectPage(Object.assign(new Error('aborted'), { name: 'AbortError', code: 'aborted' }))
+    await expect(pending).resolves.toMatchObject({ inspected: 0, created: 0, failed: 0 })
+    expect(repository.markReconciliationFailure).not.toHaveBeenCalled()
+    expect(leaseRepository.release).toHaveBeenCalledWith({ ...fence, ownerToken: 'source-owner-token', deadline })
+  })
+  it('fails closed when no cleanup budget remains and preserves successor fence acquisition', async () => {
+    let current = new Date('2026-08-10T00:00:00.000Z')
+    const deadline = new Date('2026-08-10T00:00:00.020Z')
+    const settlementDeadline = new Date('2026-08-10T00:00:00.010Z')
+    const expiresAt = new Date('2026-08-10T00:00:00.100Z')
+    const firstFence = { key: `reconciliation:source:${SOURCE_ID}`, jobId: SOURCE_ID, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1, expiresAt }
+    const successorFence = { ...firstFence, ownerTokenHash: 'b'.repeat(64), leaseGeneration: 2, expiresAt: new Date('2026-08-10T00:00:00.200Z') }
+    let activeFence = firstFence
+    const controller = new AbortController()
+    const repository = {
+      selectPendingReconciliationSource: vi.fn(async () => ({ id: SOURCE_ID })),
+      materializeReconciliationPage: vi.fn(async () => {
+        current = deadline
+        controller.abort()
+        throw Object.assign(new Error('aborted'), { name: 'AbortError', code: 'aborted' })
+      }),
+      markReconciliationFailure: vi.fn(),
+    }
+    const leaseRepository = {
+      clearExpiredReconciliation: vi.fn(async () => true),
+      acquire: vi.fn(async () => {
+        if (activeFence && activeFence.expiresAt > current) return activeFence
+        activeFence = successorFence
+        return activeFence
+      }),
+      release: vi.fn(async (input) => {
+        if (!activeFence || input.leaseGeneration !== activeFence.leaseGeneration || input.ownerTokenHash !== activeFence.ownerTokenHash) return false
+        activeFence = null
+        return true
+      }),
+    }
+    const runner = createReconciliationRunner({ repository, leaseRepository, ownerToken: () => 'source-owner-token', now: () => current })
+
+    await expect(runner.runDueSources({ signal: controller.signal, deadline, settlementDeadline })).resolves.toMatchObject({ failed: 0, hasMore: true })
+    expect(leaseRepository.release).not.toHaveBeenCalled()
+    expect(activeFence).toBe(firstFence)
+
+    current = expiresAt
+    await expect(leaseRepository.acquire({ key: firstFence.key, jobId: SOURCE_ID, ownerToken: 'successor-token' })).resolves.toEqual(successorFence)
+    await expect(leaseRepository.release({ ...firstFence, ownerToken: 'source-owner-token' })).resolves.toBe(false)
+    expect(activeFence).toBe(successorFence)
+    expect(activeFence.leaseGeneration).toBe(2)
+  })
   it('records a bounded exact-marker failure and lets a later invocation retry it', async () => {
     const repository = {
       selectPendingReconciliationSource: vi.fn(async () => ({ id: SOURCE_ID })),

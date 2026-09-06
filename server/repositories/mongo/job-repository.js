@@ -3,6 +3,7 @@ import { ObjectId } from 'mongodb'
 import { createJobAuditEvent, validateJobAuditInput } from '../../audit/job-writer.js'
 import { JobError, canonicalRequestHash, resolveIdempotentJob } from '../../domain/jobs/idempotency.js'
 import { safeErrorCode } from '../../jobs/runtime-trace.js'
+import { attachCleanupFailure, settleBeforeDeadline } from '../../jobs/runtime-bounds.js'
 
 const STATUSES = new Set(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled'])
 const TERMINAL = new Set(['succeeded', 'partial', 'failed', 'cancelled'])
@@ -27,6 +28,7 @@ export const INGESTION_JOB_LIST_PROJECTION = Object.freeze({
   finishedAt: 1,
 })
 const DAY_MS = 24 * 60 * 60 * 1000
+const MAX_MONGO_TIMEOUT_MS = 2_147_483_647
 
 function idValue(value) {
   if (value instanceof ObjectId) return value
@@ -44,13 +46,47 @@ function dateValue(value, label = 'Job date') {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new Error(`${label} is invalid`)
   return value
 }
-function operationOptions({ signal, deadline } = {}) {
-  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
-  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw new Error('Job operation deadline is invalid')
-  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+function clockMilliseconds(clock) {
+  const value = typeof clock === 'function' ? clock() : Date.now()
+  const result = value instanceof Date ? value.getTime() : Number(value)
+  if (!Number.isFinite(result)) throw new Error('Job clock is invalid')
+  return result
+}
+function deadlineMilliseconds(deadline) {
+  const result = new Date(deadline).getTime()
+  if (!Number.isFinite(result)) throw new Error('Job operation deadline is invalid')
+  return result
+}
+function remainingMilliseconds({ deadline, clock } = {}) {
+  if (deadline === undefined) return Number.POSITIVE_INFINITY
+  return deadlineMilliseconds(deadline) - clockMilliseconds(clock)
+}
+function boundedTimeoutMilliseconds(value) {
+  if (value === Number.POSITIVE_INFINITY || value <= 0) return value
+  return Math.min(MAX_MONGO_TIMEOUT_MS, Math.floor(value))
+}
+function deadlineError(code = 'runtime_deadline_exceeded', message = 'Job operation deadline was exceeded') {
+  const error = new Error(message)
+  error.code = code
+  error.status = 409
+  return error
+}
+async function closeSession(session, { deadline, clock } = {}) {
+  const remainingMs = boundedTimeoutMilliseconds(remainingMilliseconds({ deadline, clock }))
+  const settled = await settleBeforeDeadline(
+    Promise.resolve().then(() => session.endSession()),
+    remainingMs,
+    { timeoutError: () => deadlineError('runtime_cleanup_unresolved', 'Job transaction cleanup deadline was exceeded') },
+  )
+  if (settled.kind === 'deadline') throw settled.error
+  if (!settled.settled) throw settled.error
+}
+function operationOptions({ signal, deadline, clock = () => Date.now(), rejectExpired = false } = {}) {
+  const remainingMs = boundedTimeoutMilliseconds(remainingMilliseconds({ deadline, clock }))
+  if (rejectExpired && remainingMs <= 0) throw deadlineError()
   return {
     ...(signal ? { signal } : {}),
-    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+    ...(remainingMs !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, remainingMs) } : {}),
   }
 }
 function transactionOptions(options = {}) {
@@ -140,7 +176,6 @@ function purgeAfterFor(status, finishedAt, idempotencyExpiresAt) {
   const retentionDays = ['failed', 'partial'].includes(status) ? 30 : 14
   return new Date(Math.max(finishedAt.getTime() + retentionDays * DAY_MS, idempotencyExpiresAt.getTime()))
 }
-
 export class MongoJobRepository {
   constructor(context) {
     if (!context?.db || !context?.client) throw new Error('Mongo context is required')
@@ -155,13 +190,35 @@ export class MongoJobRepository {
   audits() { return this.db.collection('adminAuditLogs') }
   scheduleProgress() { return this.db.collection('ingestionScheduleProgress') }
 
-  async withTransaction(work, transactionOptions = {}) {
+  async withTransaction(work, transactionConfig = {}, bounds = {}) {
+    const remainingMs = boundedTimeoutMilliseconds(remainingMilliseconds({ deadline: bounds.deadline, clock: bounds.clock ?? this.clock }))
+    if (remainingMs <= 0) throw deadlineError()
     const session = this.client.startSession()
+    let failure
     try {
       let result
-      await session.withTransaction(async () => { result = await work(session) }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, ...transactionOptions })
+      bounds.signal?.throwIfAborted?.()
+      await session.withTransaction(async () => {
+        bounds.signal?.throwIfAborted?.()
+        result = await work(session)
+      }, {
+        readConcern: { level: 'snapshot' },
+        writeConcern: { w: 'majority' },
+        ...transactionConfig,
+        ...(remainingMs !== Number.POSITIVE_INFINITY ? { timeoutMS: Math.max(1, remainingMs) } : {}),
+      })
       return result
-    } finally { await session.endSession() }
+    } catch (error) {
+      failure = error
+      throw error
+    } finally {
+      try {
+        await closeSession(session, { deadline: bounds.settlementDeadline ?? bounds.deadline, clock: bounds.clock ?? this.clock })
+      } catch (error) {
+        if (!failure) throw error
+        throw attachCleanupFailure(failure, error)
+      }
+    }
   }
 
   async assertActorFence(fence, session) {
@@ -282,7 +339,6 @@ export class MongoJobRepository {
   async materializeDailyIngestion({ now = this.clock(), limit = 100, signal, deadline } = {}) {
     const materializedAt = dateValue(now, 'Scheduled materialization time')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Scheduled materialization limit is invalid')
-    const options = operationOptions({ signal, deadline })
     signal?.throwIfAborted?.()
     const period = materializedAt.toISOString().slice(0, 10)
     const eligibleSources = {
@@ -290,17 +346,19 @@ export class MongoJobRepository {
       'technicalCheck.status': 'passed', connectorType: { $in: ['rss', 'arxiv', 'hacker-news'] },
     }
     for (let attempt = 0; attempt < 4; attempt += 1) {
+      const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+      const sessionOptions = signal ? { signal } : {}
       try {
         return await this.withTransaction(async (session) => {
           signal?.throwIfAborted?.()
-          let progress = await this.scheduleProgress().findOne({ period }, { session, ...options })
+          let progress = await this.scheduleProgress().findOne({ period }, { session, ...sessionOptions })
           if (!progress) {
             progress = { _id: new ObjectId(), period, createdAt: materializedAt, updatedAt: materializedAt }
-            await this.scheduleProgress().insertOne(progress, { session, ...options })
+            await this.scheduleProgress().insertOne(progress, { session, ...sessionOptions })
           }
           if (progress.completedAt) return { inspected: 0, created: 0, hasMore: false, period }
           const filter = progress.cursorSourceId ? { ...eligibleSources, _id: { $gt: progress.cursorSourceId } } : eligibleSources
-          const candidates = await this.sources().find(filter, { session, ...options }).sort({ _id: 1 }).limit(limit + 1).toArray()
+          const candidates = await this.sources().find(filter, { session, ...sessionOptions }).sort({ _id: 1 }).limit(limit + 1).toArray()
           const selected = candidates.slice(0, limit)
           let created = 0
           for (const source of selected) {
@@ -318,7 +376,7 @@ export class MongoJobRepository {
             const existing = await this.jobs().updateOne(
               { actorScope: job.actorScope, idempotencyKey: job.idempotencyKey },
               { $setOnInsert: jobDocument(job) },
-              { upsert: true, session, ...options },
+              { upsert: true, session, ...sessionOptions },
             )
             if (existing.upsertedCount === 1) created += 1
           }
@@ -331,14 +389,14 @@ export class MongoJobRepository {
             ...(progress.cursorSourceId ? { cursorSourceId: progress.cursorSourceId } : { cursorSourceId: { $exists: false } }),
             completedAt: { $exists: false },
           }
-          const advanced = await this.scheduleProgress().updateOne(expectedProgress, update, { session, ...options })
+          const advanced = await this.scheduleProgress().updateOne(expectedProgress, update, { session, ...sessionOptions })
           if (advanced.matchedCount !== 1) {
             const conflict = new Error('Scheduled materialization cursor changed concurrently')
             conflict.code = 'materialization_conflict'
             throw conflict
           }
           return { inspected: selected.length, created, hasMore, period }
-        }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
+        }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
       } catch (error) {
         if (error?.code !== 11000 && error?.code !== 'materialization_conflict') throw error
       }
@@ -401,7 +459,7 @@ export class MongoJobRepository {
   }
 
   async selectDueIngestion({ now = new Date(), excludeSourceIds = [], signal, deadline } = {}) {
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     const filter = { status: 'queued', availableAt: { $lte: now }, ...(Array.isArray(excludeSourceIds) && excludeSourceIds.length > 0 ? { sourceId: { $nin: excludeSourceIds.map((id) => idValue(id)) } } : {}) }
     const aged = await this.jobs().find({ ...filter, agingEligibleAt: { $lte: now } }, options).sort({ agingEligibleAt: 1, availableAt: 1, createdAt: 1, _id: 1 }).hint('ingestion_due_aged').limit(1).next()
@@ -410,7 +468,7 @@ export class MongoJobRepository {
   }
 
   async nextAvailableAt({ signal, deadline } = {}) {
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     const document = await this.jobs().find({ status: 'queued' }, options).sort({ availableAt: 1, _id: 1 }).hint('ingestion_next_available').project({ availableAt: 1 }).limit(1).next()
     return document?.availableAt ?? null
@@ -434,7 +492,7 @@ export class MongoJobRepository {
 
   async claimQueuedWithFence({ jobId, fence, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative job clock')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
     if (deadlineAt !== Number.POSITIVE_INFINITY && now.getTime() >= deadlineAt) throw new JobError(409, 'conflict', 'Job admission deadline exceeded')
     signal?.throwIfAborted?.()
@@ -450,13 +508,13 @@ export class MongoJobRepository {
       const job = await this.jobs().updateOne({ _id: idValue(jobId), status: 'queued', availableAt: { $lte: now } }, { $set: { status: 'running', leaseGeneration: fence.leaseGeneration, startedAt: now, heartbeatAt: now, updatedAt: now } }, { session, ...options })
       if (job.matchedCount !== 1) throw new JobError(409, 'conflict', 'Job is no longer claimable')
       return true
-    }, transactionOptions)
+    }, transactionOptions, { signal, deadline, clock: this.clock })
   }
 
   async completeWithFence({ jobId, fence, status, error, checkpoint, counters, signal, deadline } = {}) {
     if (!TERMINAL.has(status)) throw new Error('Terminal job status is invalid')
     const now = dateValue(this.clock(), 'Authoritative job clock')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
       signal?.throwIfAborted?.()
@@ -486,12 +544,12 @@ export class MongoJobRepository {
       const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
       if (released.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease release fence failed')
       return this.findIngestionJobById(jobId, { session, ...options })
-    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
   }
   async finalizeOrphanedAttempt({ jobId, fence, error, now = this.clock(), signal, deadline } = {}) {
     const authoritativeNow = dateValue(now, 'Orphan finalization time')
     if (!fence?.key || !Number.isInteger(fence.leaseGeneration)) throw new Error('Orphan finalization fence is invalid')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
       signal?.throwIfAborted?.()
@@ -543,13 +601,13 @@ export class MongoJobRepository {
       })
       await this.insertAudit(audit, session, options)
       return true
-    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {})
+    }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
   }
 
   async deferWithFence({ jobId, fence, delayMs = 5 * 60 * 1000, signal, deadline } = {}) {
     const now = dateValue(this.clock(), 'Authoritative job clock')
     if (!Number.isInteger(delayMs) || delayMs < 1000 || delayMs > 15 * 60 * 1000) throw new Error('Job defer duration is invalid')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     return this.withTransaction(async (session) => {
       const leaseFilter = {
@@ -569,7 +627,7 @@ export class MongoJobRepository {
       const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
       if (released.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease release fence failed')
       return this.findIngestionJobById(jobId, { session, ...options })
-    }, transactionOptions(options))
+    }, transactionOptions(options), { signal, deadline, clock: this.clock })
   }
 
   async cancelIngestionJob({ jobId, actor, reasonCode, request, actorFence, now = new Date() } = {}) {
@@ -595,7 +653,7 @@ export class MongoJobRepository {
   }
 
   async recoverExpiredIngestion({ leaseRepository, now = new Date(), limit = 10, signal, deadline } = {}) {
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock })
     signal?.throwIfAborted?.()
     const expired = await leaseRepository.listExpired({ now, limit, namespace: 'ingestion:source:', signal, deadline })
     const summary = { inspected: expired.length, recovered: 0, retriesCreated: 0, failed: 0 }
@@ -634,7 +692,7 @@ export class MongoJobRepository {
           const cleared = await this.leases().updateOne(filter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
           if (cleared.matchedCount !== 1) throw new JobError(409, 'conflict', 'Expired lease changed during recovery')
           return { recovered: 1, retriesCreated }
-        }, transactionOptions(options))
+        }, transactionOptions(options), { signal, deadline, clock: this.clock })
         summary.recovered += outcome.recovered
         summary.retriesCreated += outcome.retriesCreated
       } catch (error) {
@@ -704,7 +762,7 @@ export class MongoJobRepository {
             })
             await this.insertAudit(audit, session, options)
             return { recovered: 1 }
-          }, transactionOptions(options))
+          }, transactionOptions(options), { signal, deadline, clock: this.clock })
 
           if (outcome?.recovered) {
             summary.recovered += 1

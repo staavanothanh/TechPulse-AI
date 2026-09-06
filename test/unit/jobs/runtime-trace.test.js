@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createLifecycleEventDocument, createRuntimeTracer, reportRuntimeTraceDegraded, safeEvent, startRuntimePhase } from '../../../server/jobs/runtime-trace.js'
+import { createLifecycleEventDocument, createRuntimeTracer, MATERIALIZER_PHASE_STAGES, reportRuntimeTraceDegraded, safeEvent, startRuntimePhase } from '../../../server/jobs/runtime-trace.js'
 
 describe('runtime trace', () => {
   it('emits only bounded correlation and error fields', () => {
@@ -38,6 +38,19 @@ describe('runtime trace', () => {
     expect(payload).not.toHaveProperty('rawPayload')
     expect(payload).not.toHaveProperty('ownerToken')
   })
+  it('redacts disallowed child materializer errors', () => {
+    const event = safeEvent({
+      stage: 'cron.materialization.daily',
+      status: 'failed',
+      error: Object.assign(new Error('mongodb://admin:secret@db.example/?token=private'), { code: 'mongo_raw_payload', provider: 'provider-secret' }),
+    })
+    expect(event.errorCode).toBe('runtime_error')
+    expect(JSON.stringify(event)).not.toContain('mongodb://')
+    expect(JSON.stringify(event)).not.toContain('admin:secret')
+    expect(JSON.stringify(event)).not.toContain('provider-secret')
+    expect(event).not.toHaveProperty('error')
+    expect(event).not.toHaveProperty('provider')
+  })
   it('maps token-shaped unknown error codes to a safe sentinel', () => {
     const log = vi.fn()
     const trace = createRuntimeTracer({ log, now: () => new Date('2026-08-10T00:00:00.000Z') })
@@ -71,7 +84,10 @@ describe('runtime trace', () => {
     'source_inactive',
     'source_policy_invalid',
     'source_scope_denied',
-  ])('preserves reviewed indexing error code %s', (errorCode) => {
+    'runtime_cleanup_unresolved',
+    'runtime_deadline_exceeded',
+    'runtime_transaction_failed',
+  ])('preserves reviewed runtime error code %s', (errorCode) => {
     const event = safeEvent({ stage: 'indexing.executor', status: 'failed', errorCode, at: '2026-08-10T00:00:00.000Z' })
     expect(event.errorCode).toBe(errorCode)
   })
@@ -159,5 +175,59 @@ describe('runtime trace', () => {
     const log = vi.fn()
     expect(reportRuntimeTraceDegraded({ failedWriteCount: 2, droppedWriteCount: 1 }, log)).toBe(true)
     expect(log).toHaveBeenCalledWith(JSON.stringify({ type: 'techpulse.runtime-trace-health', version: 1, status: 'degraded', failedWriteCount: 2, droppedWriteCount: 1 }))
+  })
+  it('emits one terminal event per child materializer stage', () => {
+    const trace = vi.fn()
+    const at = new Date('2026-09-03T10:00:00.000Z')
+    const expectedStages = [
+      'cron.materialization.daily',
+      'cron.materialization.takedown',
+      'cron.materialization.reconciliation',
+      'cron.materialization.retention',
+    ]
+    expect(MATERIALIZER_PHASE_STAGES).toEqual(expectedStages)
+    for (const stage of expectedStages) {
+      const phase = startRuntimePhase({ trace, stage, now: () => at, context: { runId: 'child-run' } })
+      phase.succeed({ counters: { updated: 1 } })
+    }
+    const events = trace.mock.calls.map(([event]) => event)
+    expect(events.filter(({ status }) => status === 'started')).toHaveLength(expectedStages.length)
+    expect(events.filter(({ status }) => status === 'succeeded')).toHaveLength(expectedStages.length)
+    expect(events.map(({ stage }) => stage)).toEqual(expectedStages.flatMap((stage) => [stage, stage]))
+  })
+  it('suppresses duplicate late child terminal events', () => {
+    const events = []
+    const trace = (event) => events.push(safeEvent(event))
+    const phase = startRuntimePhase({ trace, stage: 'cron.materialization.daily', now: () => new Date('2026-09-03T10:00:00.000Z'), context: { runId: 'late-child' } })
+    phase.timeout(Object.assign(new Error('cleanup unresolved'), { code: 'runtime_cleanup_unresolved' }), { counters: { deferred: 1 } })
+    phase.succeed({ counters: { updated: 1 } })
+    phase.fail(Object.assign(new Error('late failure'), { code: 'database_unavailable' }))
+    const terminals = events.filter(({ status }) => status !== 'started')
+    expect(terminals).toHaveLength(1)
+    expect(terminals[0]).toMatchObject({ status: 'timeout', errorCode: 'runtime_cleanup_unresolved' })
+  })
+
+  it('preserves deferred timeout status and typed error through durable flush', async () => {
+    const persisted = []
+    const resolveWrites = []
+    const repository = { recordLifecycleEvent: vi.fn((event) => new Promise((resolve) => { persisted.push(createLifecycleEventDocument(event)); resolveWrites.push(resolve) })) }
+    const trace = createRuntimeTracer({ log: vi.fn(), repository, now: () => new Date('2026-09-03T10:00:00.000Z') })
+    const phase = startRuntimePhase({ trace, stage: 'cron.materialization.reconciliation', now: () => new Date('2026-09-03T10:00:00.000Z'), context: { runId: 'flush-child' } })
+    phase.timeout(Object.assign(new Error('runtime cleanup'), { code: 'runtime_cleanup_unresolved' }), { counters: { deferred: 1 } })
+    const flushed = trace.flush({ maxWaitMs: 100 })
+    resolveWrites.forEach((resolve) => resolve(true))
+    await expect(flushed).resolves.toBe(true)
+    expect(persisted).toHaveLength(2)
+    expect(persisted.at(-1)).toMatchObject({ status: 'timeout', counters: { deferred: 1 }, error: { code: 'runtime_cleanup_unresolved' } })
+  })
+
+  it('does not report degraded child persistence as healthy', async () => {
+    const onPersistenceDegraded = vi.fn()
+    const trace = createRuntimeTracer({ log: vi.fn(), repository: { recordLifecycleEvent: vi.fn(async () => false) }, onPersistenceDegraded, now: () => new Date('2026-09-03T10:00:00.000Z') })
+    const phase = startRuntimePhase({ trace, stage: 'cron.materialization.retention', now: () => new Date('2026-09-03T10:00:00.000Z'), context: { runId: 'degraded-child' } })
+    phase.timeout(Object.assign(new Error('deadline'), { code: 'runtime_deadline_exceeded' }), { counters: { deferred: 1 } })
+    await expect(trace.flush({ maxWaitMs: 100 })).resolves.toBe(false)
+    expect(trace.persistenceHealthy).toBe(false)
+    expect(onPersistenceDegraded).toHaveBeenCalledWith({ failedWriteCount: 1, droppedWriteCount: 0 })
   })
 })

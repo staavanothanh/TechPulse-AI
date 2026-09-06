@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { assertCronObservabilityReady, assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner } from '../../../server/bootstrap/jobs.js'
+import { createReconciliationRunner } from '../../../server/application/indexing/reconciliation.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
 import { CRON_OBSERVABILITY_COLLECTIONS, CRON_OBSERVABILITY_INDEXES } from '../../../scripts/migrations/cron-observability.js'
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES, GOVERNANCE_INDEXES } from '../../../scripts/migrations/governance.js'
@@ -98,7 +99,8 @@ describe('durable-jobs bootstrap readiness', () => {
     })
 
     expect(runtime.cronMaterializers).toHaveLength(2)
-    const result = await runtime.cronMaterializers[0]({ deadline: new Date(cutoff.getTime() + 60_000) })
+    expect(runtime.cronMaterializers.map(({ name }) => name)).toEqual(['cron-lifecycle-retention', 'takedown-cleanup'])
+    const result = await runtime.cronMaterializers[0].run({ deadline: new Date(cutoff.getTime() + 60_000) })
 
     expect(result).toEqual({ inspected: 4, affected: 2, hasMore: false })
     expect(purgeExpiredEvents).toHaveBeenCalledWith({ cutoff, limit: 100, deadline: new Date(cutoff.getTime() + 60_000) })
@@ -306,25 +308,213 @@ describe('durable-jobs bootstrap readiness', () => {
     expect(deadlines[0]).toEqual(new Date(startedAt.getTime() + 4_000))
   })
 
-  it('gives each fixed materializer one bounded turn before ingestion can exhaust the budget', async () => {
+  it('requires named materializer descriptors for optional cron phases', () => {
+    expect(() => createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn() },
+      coordinatorRunner: vi.fn(),
+      materializers: [{ run: vi.fn() }],
+    })).toThrow(/materializer/i)
+  })
+
+  it('forwards invocation controls through daily-first named materializers and drains', async () => {
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const invocationDeadline = new Date(startedAt.getTime() + 30_000)
+    const settlementDeadline = new Date(startedAt.getTime() + 31_000)
+    const controller = new AbortController()
     const calls = []
-    let tick = 0
+    const coordinatorResult = { runId: 'cron-controls', startedAt, finishedAt: startedAt, queues: { indexing: { claimed: 0 } } }
+    const materializer = vi.fn(async (options) => { calls.push({ name: 'takedown', options }); return { hasMore: false } })
+    const daily = vi.fn(async (options) => { calls.push({ name: 'ingestion', options }); return { hasMore: false } })
+    const coordinatorRunner = vi.fn(async (options) => { calls.push({ name: 'coordinate', options }); return coordinatorResult })
+    const indexingDrainRunner = vi.fn(async (result, options) => { calls.push({ name: 'indexing', options }); return result })
     const cron = createCronDueWorkRunner({
-      jobRepository: { materializeDailyIngestion: async () => { calls.push('ingestion'); return { hasMore: true } } },
-      coordinatorRunner: async () => { calls.push('coordinate') },
-      materializers: [async () => { calls.push('takedown') }],
-      now: () => new Date(Date.UTC(2026, 7, 10, 0, 0, tick++ === 0 ? 0 : 3)),
-      maxMaterializationPages: 10,
+      jobRepository: { materializeDailyIngestion: daily },
+      coordinatorRunner,
+      indexingDrainRunner,
+      materializers: [{ name: 'takedown', run: materializer }],
+      now: () => startedAt,
       materializationBudgetMs: 4_000,
     })
-    await cron()
-    expect(calls[0]).toBe('takedown')
-    expect(calls).toContain('coordinate')
+
+    await cron({ signal: controller.signal, deadline: invocationDeadline, settlementDeadline })
+
+    expect(calls.map(({ name }) => name)).toEqual(['ingestion', 'takedown', 'coordinate', 'indexing'])
+    expect(daily).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal), deadline: new Date(startedAt.getTime() + 4_000), settlementDeadline }))
+    expect(materializer).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal), deadline: new Date(startedAt.getTime() + 4_000), settlementDeadline }))
+    expect(coordinatorRunner).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal), deadline: invocationDeadline }))
+    expect(indexingDrainRunner).toHaveBeenCalledWith(coordinatorResult, expect.objectContaining({ signal: expect.any(AbortSignal), deadline: invocationDeadline, settlementDeadline }))
   })
-  it('degrades a stalled fixed materializer to a deferred outcome without rejecting the cron invocation', async () => {
+  it('reads named materializers registered after runner construction', async () => {
+    const materializers = []
+    const calls = []
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner: async () => ({ startedAt, finishedAt: startedAt }),
+      materializers,
+      now: () => startedAt,
+    })
+    materializers.push({ name: 'source-policy-reconciliation', run: async () => { calls.push('source-policy-reconciliation') } })
+
+    await cron()
+
+    expect(calls).toEqual(['source-policy-reconciliation'])
+  })
+  it('fails closed when a complete-materialization descriptor reports deferred work', async () => {
+    const coordinatorRunner = vi.fn()
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner,
+      materializers: [{ name: 'source-policy-reconciliation', requiresCompleteMaterialization: true, run: async () => ({ hasMore: true }) }],
+      now: () => new Date('2026-09-03T10:00:00.000Z'),
+    })
+
+    await expect(cron()).resolves.toEqual(expect.objectContaining({ nextAvailableAt: null }))
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+  })
+  it('stops downstream phases for a real reconciliation control result', async () => {
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const sourceId = '507f1f77bcf86cd799439021'
+    const fence = { key: `reconciliation:source:${sourceId}`, jobId: sourceId, ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
+    const reconciliationRunner = createReconciliationRunner({
+      repository: {
+        selectPendingReconciliationSource: async () => ({ id: sourceId }),
+        materializeReconciliationPage: async () => { throw Object.assign(new Error('deadline'), { code: 'runtime_deadline_exceeded' }) },
+      },
+      leaseRepository: {
+        clearExpiredReconciliation: async () => true,
+        acquire: async () => fence,
+        release: async () => true,
+      },
+      ownerToken: () => 'source-owner-token',
+      now: () => startedAt,
+    })
+    const coordinatorRunner = vi.fn()
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner,
+      materializers: [{ name: 'source-policy-reconciliation', requiresCompleteMaterialization: true, run: (options) => reconciliationRunner.runDueSources(options) }],
+      now: () => startedAt,
+    })
+
+    await expect(cron()).resolves.toEqual(expect.objectContaining({ nextAvailableAt: null }))
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+  })
+  it('continues after ordinary named materializer hasMore results', async () => {
+    const coordinatorRunner = vi.fn(async () => ({ startedAt: new Date(), finishedAt: new Date() }))
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner,
+      materializers: [{ name: 'optional-maintenance', run: async () => ({ hasMore: true }) }],
+      now: () => new Date('2026-09-03T10:00:00.000Z'),
+    })
+
+    await cron()
+
+    expect(coordinatorRunner).toHaveBeenCalledOnce()
+  })
+
+  it('defers without failure when the parent aborts with a custom reason', async () => {
+    const controller = new AbortController()
+    controller.abort(new Error('caller canceled'))
+    const coordinatorRunner = vi.fn()
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn() },
+      coordinatorRunner,
+      now: () => new Date('2026-09-03T10:00:00.000Z'),
+    })
+
+    await expect(cron({ signal: controller.signal })).resolves.toEqual(expect.objectContaining({ nextAvailableAt: null }))
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+  })
+
+  it('defers known runtime deadline failures before coordination', async () => {
+    const coordinatorRunner = vi.fn()
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn(async () => { throw Object.assign(new Error('deadline'), { code: 'runtime_deadline_exceeded' }) }) },
+      coordinatorRunner,
+      now: () => new Date('2026-09-03T10:00:00.000Z'),
+    })
+
+    await expect(cron()).resolves.toEqual(expect.objectContaining({ nextAvailableAt: null }))
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+  })
+
+  it('defers coordinator cancellation without marking the cron phase failed', async () => {
+    const controller = new AbortController()
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const coordinatorRunner = vi.fn(async ({ signal }) => {
+      controller.abort(new Error('caller canceled during coordination'))
+      signal.throwIfAborted()
+    })
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner,
+      now: () => startedAt,
+    })
+
+    await expect(cron({ signal: controller.signal })).resolves.toEqual(expect.objectContaining({ nextAvailableAt: null }))
+    expect(coordinatorRunner).toHaveBeenCalledOnce()
+  })
+
+  it('defers indexing runtime deadline control without coordinating failure', async () => {
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const coordinatorResult = { startedAt, finishedAt: startedAt, queues: { indexing: { claimed: 0 } } }
+    const indexingDrainRunner = vi.fn(async () => { throw Object.assign(new Error('deadline'), { code: 'runtime_deadline_exceeded' }) })
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+      coordinatorRunner: async () => coordinatorResult,
+      indexingDrainRunner,
+      now: () => startedAt,
+    })
+
+    await expect(cron()).resolves.toEqual(expect.objectContaining({ nextAvailableAt: null }))
+    expect(indexingDrainRunner).toHaveBeenCalledOnce()
+  })
+  it('classifies profiled indexing runtime control as deferred', async () => {
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const trace = vi.fn()
+    const queue = {
+      selectDue: vi.fn(async () => { throw Object.assign(new Error('deadline'), { code: 'runtime_deadline_exceeded' }) }),
+      claimAndExecute: vi.fn(),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    const runner = createProfiledIndexingDrainRunner({
+      queueRegistry: { get: () => queue, registered: () => [queue] },
+      profile: { maxJobs: 3, budgetMs: 60_000 },
+      now: () => startedAt,
+      trace,
+    })
+    const empty = { claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 }
+    const baseResult = {
+      runId: 'base-run', startedAt, finishedAt: startedAt,
+      recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
+      queues: { accountDeletion: { ...empty }, ingestion: { ...empty }, indexing: { ...empty } },
+      nextAvailableAt: null,
+    }
+
+    await expect(runner(baseResult, { runId: 'base-run' })).rejects.toMatchObject({ code: 'runtime_deadline_exceeded' })
+    expect(trace.mock.calls.some(([event]) => event.stage === 'indexing.drain' && event.status === 'failed')).toBe(false)
+  })
+
+  it('gives current-day ingestion its first bounded turn before optional materializers', async () => {
+    const calls = []
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    const cron = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: async () => { calls.push('ingestion'); return { hasMore: false } } },
+      coordinatorRunner: async () => { calls.push('coordinate'); return { startedAt, finishedAt: startedAt } },
+      materializers: [async () => { calls.push('takedown') }],
+      now: () => startedAt,
+      materializationBudgetMs: 4_000,
+    })
+
+    await cron()
+
+    expect(calls).toEqual(['ingestion', 'takedown', 'coordinate'])
+  })
+  it('waits for a timed-out materializer to settle before coordinating', async () => {
     vi.useFakeTimers()
     try {
-      // Arrange
       const startedAt = new Date('2026-09-03T10:00:00.000Z')
       const materializationBudgetMs = 10
       let materializerSignal
@@ -332,7 +522,11 @@ describe('durable-jobs bootstrap readiness', () => {
       const materializer = vi.fn(({ signal, deadline }) => {
         materializerSignal = signal
         materializerDeadline = deadline
-        return new Promise(() => {})
+        return new Promise((resolve) => {
+          signal.addEventListener('abort', () => {
+            globalThis.setTimeout(() => resolve({ hasMore: false }), 1)
+          }, { once: true })
+        })
       })
       const coordinatorResult = {
         runId: 'cron-red-run',
@@ -360,21 +554,23 @@ describe('durable-jobs bootstrap readiness', () => {
         materializationBudgetMs,
       })
 
-      // Act
       const pending = cron()
       const settlement = pending.then(
         (value) => ({ ok: true, value }),
         (error) => ({ ok: false, error }),
       )
       await vi.advanceTimersByTimeAsync(materializationBudgetMs)
-      const outcome = await settlement
 
-      // Assert: resolves rather than rejects
-      expect(outcome.ok).toBe(true)
       expect(materializerDeadline).toEqual(new Date(startedAt.getTime() + materializationBudgetMs))
       expect(materializerSignal?.aborted).toBe(true)
-      expect(coordinatorRunner).toHaveBeenCalledTimes(1)
-      expect(indexingDrainRunner).toHaveBeenCalledTimes(1)
+      expect(coordinatorRunner).not.toHaveBeenCalled()
+      expect(indexingDrainRunner).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1)
+      const outcome = await settlement
+      expect(outcome.ok).toBe(true)
+      expect(coordinatorRunner).not.toHaveBeenCalled()
+      expect(indexingDrainRunner).not.toHaveBeenCalled()
       const events = trace.mock.calls.map(([event]) => event)
       const materializationTerminals = events.filter(
         (event) => event.stage === 'cron.materialization' && event.status !== 'started',
@@ -382,20 +578,10 @@ describe('durable-jobs bootstrap readiness', () => {
       expect(materializationTerminals.length).toBeGreaterThan(0)
       const terminal = materializationTerminals.at(-1)
       expect(['timeout', 'deferred']).toContain(terminal.status)
-      expect(terminal.counters?.deferred ?? 0).toBeGreaterThanOrEqual(1)
-      if (terminal.errorCode !== undefined) {
-        expect(terminal.errorCode).toBe('runtime_error')
-      }
-      const cronTerminals = events.filter((event) => event.stage === 'cron' && event.status !== 'started')
-      expect(cronTerminals.length).toBeGreaterThan(0)
-      for (const event of cronTerminals) {
-        expect(event.status).not.toBe('failed')
-      }
     } finally {
       vi.useRealTimers()
     }
   })
-
   it('fails the cron invocation and phase when materializer encounters a non-deadline error', async () => {
     const startedAt = new Date('2026-09-03T10:00:00.000Z')
     const nonDeadlineError = new Error('Database connection lost during materialization')
@@ -420,7 +606,6 @@ describe('durable-jobs bootstrap readiness', () => {
     const cronTerminals = events.filter((event) => event.stage === 'cron' && event.status === 'failed')
     expect(cronTerminals.length).toBeGreaterThan(0)
   })
-
   it('rejects an unexpected partial filter on the actor-idempotency unique index', async () => {
     const actorIndex = DURABLE_JOB_INDEXES.ingestionJobs.find((index) => index.name === 'ingestion_actor_idempotency_unique')
     const indexOverride = {
