@@ -10,6 +10,7 @@
 - Build: `npm run build`
 - Migration: `npm run db:migrate -- --to <migration>`; verify bằng `npm run db:verify -- <scope>`. Chỉ chạy khi blueprint step sở hữu đã implement migration tương ứng.
 - Mongo auth: `npm run db:migrate -- --to auth-core`, `npm run db:migrate:dry-run -- --to auth-core`, `npm run db:verify -- auth-core`; role gate production thêm `--require-role`. Seed admin: `npm run seed:admin` với `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD` chỉ qua environment.
+- Kiểm thử local dùng Mongo SRV: preload DNS bằng `node --env-file-if-exists=.env --import ./scripts/configure-dns.js ...`; E2E phải dùng `http://localhost:3000` khớp `PUBLIC_APP_ORIGINS`.
 - Kiểm tra diff: `git diff --check`
 
 # Tooling
