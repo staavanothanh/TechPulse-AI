@@ -47,6 +47,7 @@ const handlers = {
   onClear: noop,
   onClearFilters: noop,
   onClearSessions: noop,
+  onDeleteSession: noop,
   onFilterChange: noop,
   onNavigate: noop,
   onNextPage: noop,
@@ -440,6 +441,8 @@ describe('public coverage states', () => {
 
     expect(ready).toContain('Phiên hỏi đáp')
     expect(ready).toContain('Named')
+    expect(ready).toContain('public-session-delete')
+    expect(ready).toContain('Xóa phiên Named')
     expect(ready).toContain('Trả lời')
     expect(ready).toContain('Citation Source')
     expect(ready).toContain('Câu hỏi này nằm ngoài phạm vi hỗ trợ.')

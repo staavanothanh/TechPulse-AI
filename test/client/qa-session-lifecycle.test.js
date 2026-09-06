@@ -511,4 +511,83 @@ describe('useQa session lifecycle and race safety', () => {
     expect(runner.current.state).toBe('error')
     expect(runner.current.error).toBe(failure)
   })
+
+  it('deletes an inactive chat session and removes it from the sessions list', async () => {
+    const listDeferred = deferred()
+    const deleteDeferred = deferred()
+    const qaApi = {
+      listSessions: vi.fn(async () => listDeferred.promise),
+      deleteSession: vi.fn(async () => deleteDeferred.promise),
+    }
+    const expire = vi.fn()
+    const runner = createHookRunner(useQa)
+    runner.render({ csrfToken: 'csrf-token-1', enabled: true, expire, qaApi, user: { topicPreferences: ['AI'] } })
+    await new Promise((r) => setTimeout(r, 0))
+
+    listDeferred.resolve({
+      data: [
+        { id: 'session-1', title: 'Phiên 1', messageCount: 2 },
+        { id: 'session-2', title: 'Phiên 2', messageCount: 3 },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(runner.current.sessions).toHaveLength(2)
+
+    const pDelete = runner.current.handlers.onDeleteSession('session-1')
+    expect(qaApi.deleteSession).toHaveBeenCalledWith('session-1', 'csrf-token-1')
+
+    deleteDeferred.resolve({})
+    await pDelete
+
+    expect(runner.current.sessions).toEqual([
+      { id: 'session-2', title: 'Phiên 2', messageCount: 3 },
+    ])
+  })
+
+  it('deletes the currently active chat session and resets thread state to empty', async () => {
+    const listDeferred = deferred()
+    const getDeferred = deferred()
+    const deleteDeferred = deferred()
+    const qaApi = {
+      listSessions: vi.fn(async () => listDeferred.promise),
+      getSession: vi.fn(async () => getDeferred.promise),
+      deleteSession: vi.fn(async () => deleteDeferred.promise),
+    }
+    const expire = vi.fn()
+    const runner = createHookRunner(useQa)
+    runner.render({ csrfToken: 'csrf-token-1', enabled: true, expire, qaApi, user: { topicPreferences: ['AI'] } })
+    await new Promise((r) => setTimeout(r, 0))
+
+    listDeferred.resolve({
+      data: [
+        { id: 'session-active', title: 'Phiên đang xem', messageCount: 1 },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 10))
+
+    const pSelect = runner.current.handlers.onSelectSession('session-active')
+    getDeferred.resolve({
+      data: {
+        id: 'session-active',
+        messages: [{ id: 'm1', role: 'user', text: 'Chào bot' }],
+        messageCount: 1,
+      },
+    })
+    await pSelect
+
+    expect(runner.current.state).toBe('ready')
+    expect(runner.current.scope.sessionId).toBe('session-active')
+    expect(runner.current.messages).toHaveLength(1)
+
+    const pDelete = runner.current.handlers.onDeleteSession('session-active')
+    expect(qaApi.deleteSession).toHaveBeenCalledWith('session-active', 'csrf-token-1')
+
+    deleteDeferred.resolve({})
+    await pDelete
+
+    expect(runner.current.sessions).toEqual([])
+    expect(runner.current.messages).toEqual([])
+    expect(runner.current.state).toBe('empty')
+    expect(runner.current.scope.sessionId).toBeUndefined()
+  })
 })

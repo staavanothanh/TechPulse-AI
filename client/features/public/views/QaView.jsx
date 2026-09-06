@@ -81,15 +81,31 @@ export default function QaView({
           ) : (
             <div className="public-session-list">
               {sessions.map((session) => (
-                <button
+                <div
                   key={session.id}
-                  className={session.id === safeScope.sessionId ? 'active' : ''}
-                  type="button"
-                  onClick={() => handlers.onSelectSession?.(session.id)}
+                  className={`public-session-item ${session.id === safeScope.sessionId ? 'active' : ''}`}
                 >
-                  <strong>{session.title || 'Phiên hỏi đáp'}</strong>
-                  <small>{session.messageCount ?? 0} tin nhắn</small>
-                </button>
+                  <button
+                    className={`public-session-select ${session.id === safeScope.sessionId ? 'active' : ''}`}
+                    type="button"
+                    onClick={() => handlers.onSelectSession?.(session.id)}
+                  >
+                    <strong>{session.title || 'Phiên hỏi đáp'}</strong>
+                    <small>{session.messageCount ?? 0} tin nhắn</small>
+                  </button>
+                  <button
+                    className="public-session-delete"
+                    type="button"
+                    title="Xóa phiên này"
+                    aria-label={`Xóa phiên ${session.title || 'hỏi đáp'}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void handlers.onDeleteSession?.(session.id)
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           )}

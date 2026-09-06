@@ -938,6 +938,33 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     return enqueue(runClear)
   }
 
+  async function deleteSession(targetSessionId) {
+    if (!csrfToken || !targetSessionId) return
+    const epoch = ++epochRef.current
+    const isCurrent = sessionIdRef.current === targetSessionId
+
+    const runDelete = async () => {
+      try {
+        await qaApi.deleteSession(targetSessionId, csrfToken)
+        if (epoch !== epochRef.current) return
+        setSessions((current) => current.filter((item) => (item.id ?? item._id) !== targetSessionId))
+        if (isCurrent) {
+          sessionIdRef.current = undefined
+          setMessages([])
+          setScope((current) => ({ ...current, sessionId: undefined }))
+          setState('empty')
+        }
+      } catch (requestError) {
+        if (epoch !== epochRef.current) return
+        expire(requestError)
+        setError(requestError)
+        setState('error')
+      }
+    }
+
+    return enqueue(runDelete)
+  }
+
   const displayState = identityChanged || routeArticleChanged ? 'empty' : state
   const displaySessions = identityChanged || routeArticleChanged ? [] : sessions
   const displayMessages = identityChanged || routeArticleChanged ? [] : messages
@@ -964,6 +991,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
         setError(null)
       },
       onSelectSession: selectSession,
+      onDeleteSession: deleteSession,
       onClearSessions: clearSessions,
       onRetry: () => (sessionIdRef.current ? selectSession(sessionIdRef.current) : loadSessions()),
       onToggleTopic: (topic) =>

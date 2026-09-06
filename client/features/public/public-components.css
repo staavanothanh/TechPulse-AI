@@ -720,21 +720,64 @@
   display: grid;
   gap: 5px;
 }
-.public-session-list button {
-  display: grid;
-  gap: 3px;
-  width: 100%;
-  padding: 10px 12px;
+.public-session-item {
+  display: flex;
+  align-items: center;
+  position: relative;
   border: 1px solid transparent;
   border-radius: var(--public-radius-sm);
   background: transparent;
-  color: var(--public-fg);
-  text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
-.public-session-list button:hover,
-.public-session-list button.active {
+.public-session-item:hover,
+.public-session-item.active {
   border-color: var(--public-border);
   background: var(--public-bg);
+}
+.public-session-select {
+  display: grid;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--public-fg);
+  text-align: left;
+  cursor: pointer;
+}
+.public-session-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 8px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--public-radius-xs, 4px);
+  background: transparent;
+  color: var(--public-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.public-session-item:hover .public-session-delete,
+.public-session-delete:focus-visible {
+  opacity: 1;
+}
+.public-session-delete:hover {
+  opacity: 1;
+  color: var(--public-danger);
+  background: var(--public-danger-soft);
+  border-color: color-mix(in oklch, var(--public-danger) 35%, var(--public-border));
+}
+@media (hover: none) {
+  .public-session-delete {
+    opacity: 0.7;
+  }
 }
 .public-session-list strong {
   overflow-wrap: anywhere;
