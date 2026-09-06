@@ -6,13 +6,19 @@ const SAFE_CODE = /^[a-z0-9][a-z0-9_:-]{0,127}$/
 const SAFE_ERROR_CODES = new Set([
   'ambiguous_provider_outcome', 'article_checkpoint_invalid', 'article_conflict', 'article_invalid', 'article_unavailable', 'artifact_commit_stale', 'artifact_failed', 'candidate_invalid', 'cleanup_incomplete', 'conflict', 'database_unavailable', 'embedding_compatibility_mismatch', 'embedding_unavailable', 'embedding_version_mismatch',
   'indexing_cancelled', 'indexing_task_invalid', 'ingestion_aborted', 'ingestion_clock_invalid', 'ingestion_deadline_exceeded', 'ingestion_deadline_invalid', 'ingestion_finalization_unresolved', 'indexing_finalization_unresolved', 'ingestion_completion_failed', 'indexing_deadline_exceeded', 'lease_expired', 'lease_fence_stale',
-  'lease_heartbeat_lost', 'lease_heartbeat_unavailable', 'policy_blocked', 'policy_input_invalid', 'policy_version_mismatch', 'privacy_blocked', 'privacy_input_blocked', 'provider_config_invalid', 'provider_credential_unavailable', 'provider_domain_unavailable', 'provider_error', 'provider_failed', 'provider_http_error', 'provider_model_unavailable', 'provider_network_error', 'provider_response_invalid', 'provider_route_invalid', 'provider_schema_invalid', 'provider_support_invalid', 'provider_unavailable', 'reconciliation_failed', 'runtime_error', 'sensitive_input', 'service_unavailable', 'source_inactive', 'source_policy_invalid', 'source_policy_reconciliation_not_ready', 'source_scope_denied',
+  'lease_heartbeat_lost', 'lease_heartbeat_unavailable', 'policy_blocked', 'policy_input_invalid', 'policy_version_mismatch', 'privacy_blocked', 'privacy_input_blocked', 'provider_config_invalid', 'provider_credential_unavailable', 'provider_domain_unavailable', 'provider_error', 'provider_failed', 'provider_http_error', 'provider_model_unavailable', 'provider_network_error', 'provider_response_invalid', 'provider_route_invalid', 'provider_schema_invalid', 'provider_support_invalid', 'provider_unavailable', 'reconciliation_failed', 'runtime_cleanup_unresolved', 'runtime_deadline_exceeded', 'runtime_error', 'runtime_transaction_failed', 'sensitive_input', 'service_unavailable', 'source_inactive', 'source_policy_invalid', 'source_policy_reconciliation_not_ready', 'source_scope_denied',
   'source_address_blocked', 'source_policy_changed_mid_run', 'source_policy_unavailable', 'source_content_host_blocked', 'source_content_type_rejected', 'source_decode_failed', 'source_decoded_limit', 'source_dns_empty', 'source_dns_failed', 'source_encoding_rejected', 'source_expansion_limit', 'source_fetch_aborted', 'source_fetch_failed', 'source_fetch_timeout', 'source_payload_rejected', 'source_redirect_rejected', 'source_upstream_status', 'source_url_rejected', 'source_wire_limit', 'source_policy_blocked', 'temporary_input_unavailable', 'worker_failed', 'worker_outcome_invalid',
 ])
 const TRACE_COUNTERS = Object.freeze(['fetched', 'created', 'updated', 'duplicate', 'skipped', 'failed', 'claimed', 'succeeded', 'partial', 'deferred', 'inspected', 'recovered', 'retriesCreated'])
 const NOOP_TRACE = () => {}
 const MAX_PENDING_WRITES = 256
 const EVENT_RETENTION_DAYS = 30
+export const MATERIALIZER_PHASE_STAGES = Object.freeze([
+  'cron.materialization.daily',
+  'cron.materialization.takedown',
+  'cron.materialization.reconciliation',
+  'cron.materialization.retention',
+])
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function integer(value) {
@@ -272,9 +278,18 @@ export function startRuntimePhase({ trace = NOOP_TRACE, stage, now = () => Date.
   if (!context || typeof context !== 'object' || Array.isArray(context)) throw new Error('Runtime trace context is invalid')
   const startedAt = milliseconds(now(), 'Runtime phase clock')
   trace({ ...context, event: 'phase', stage, status: 'started' })
+  let terminal = false
   const finish = (status, details = {}) => {
+    if (terminal) return false
     const elapsedMs = Math.max(0, Math.floor(milliseconds(now(), 'Runtime phase clock') - startedAt))
-    trace({ ...context, event: 'phase', stage, status, elapsedMs, ...details })
+    terminal = true
+    try {
+      trace({ ...context, event: 'phase', stage, status, elapsedMs, ...details })
+      return true
+    } catch (error) {
+      terminal = false
+      throw error
+    }
   }
   return Object.freeze({
     succeed: (details = {}) => finish('succeeded', details),
