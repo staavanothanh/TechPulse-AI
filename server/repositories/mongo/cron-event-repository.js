@@ -43,12 +43,29 @@ function filterValue(value, label) {
   }
   return result
 }
-function operationOptions({ signal, deadline } = {}) {
-  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : date(deadline, 'Retention operation deadline').getTime()
-  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+function clockMilliseconds(clock) {
+  const value = typeof clock === 'function' ? clock() : Date.now()
+  const result = value instanceof Date ? value.getTime() : Number(value)
+  if (!Number.isFinite(result)) throw new Error('Retention clock is invalid')
+  return result
+}
+function remainingMilliseconds({ deadline, clock } = {}) {
+  if (deadline === undefined) return Number.POSITIVE_INFINITY
+  const deadlineAt = date(deadline, 'Retention operation deadline').getTime()
+  return deadlineAt - clockMilliseconds(clock)
+}
+function deadlineError() {
+  const error = new Error('Retention operation deadline was exceeded')
+  error.code = 'runtime_deadline_exceeded'
+  error.status = 409
+  return error
+}
+function operationOptions({ signal, deadline, clock = () => Date.now(), rejectExpired = false } = {}) {
+  const remainingMs = remainingMilliseconds({ deadline, clock })
+  if (rejectExpired && remainingMs <= 0) throw deadlineError()
   return {
     ...(signal ? { signal } : {}),
-    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+    ...(remainingMs !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
   }
 }
 
@@ -169,7 +186,7 @@ export class MongoCronEventRepository {
 
   async purgeExpiredEvents({ cutoff = this.clock(), limit = 100, signal, deadline } = {}) {
     const cutoffDate = date(cutoff, 'Retention cutoff')
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
     signal?.throwIfAborted?.()
     const parsedLimit = Number(limit)
     if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > MAX_LIMIT) {
@@ -189,7 +206,9 @@ export class MongoCronEventRepository {
     signal?.throwIfAborted?.()
     const selected = rows.slice(0, safeLimit)
     if (selected.length === 0) return { inspected: 0, affected: 0, hasMore: false }
-    const result = await this.collection().deleteMany({ _id: { $in: selected.map(({ _id }) => _id) }, ...filter }, options)
+    const deleteOptions = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+    signal?.throwIfAborted?.()
+    const result = await this.collection().deleteMany({ _id: { $in: selected.map(({ _id }) => _id) }, ...filter }, deleteOptions)
     return { inspected: selected.length, affected: result.deletedCount ?? 0, hasMore: rows.length > safeLimit }
   }
 }

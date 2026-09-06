@@ -214,6 +214,14 @@ describe('MongoIndexingJobRepository', () => {
     expect(fixture.collections.get('articles').find.mock.results[0].value.hint).toHaveBeenCalledWith('articles_source_reconciliation')
     await expect(fixture.repository.materializeReconciliationPage({ sourceId, fence: { ...leaseFence(), key: 'wrong' }, now })).rejects.toThrow(/input/i)
   })
+  it('does not select a reconciliation source after the repository clock deadline', async () => {
+    const fixture = createContext()
+    const sources = fixture.context.db.collection('sources')
+    const deadline = new Date(now.getTime() - 1)
+
+    await expect(fixture.repository.selectPendingReconciliationSource({ now, retryBackoffMs: 1_000, deadline })).rejects.toThrow(/deadline/i)
+    expect(sources.find).not.toHaveBeenCalled()
+  })
 
   it('marks reconciliation failures only with a current source and lease', async () => {
     const fixture = createContext({ findOne: { sources: [{ ...sourcePolicy, reconciliation: { status: 'pending', requiredPolicyVersion: 3 } }] }, updateResults: { leases: [{ matchedCount: 1 }], sources: [{ matchedCount: 1 }] } })

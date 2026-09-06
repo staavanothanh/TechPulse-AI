@@ -1,6 +1,7 @@
 import { ObjectId } from 'mongodb'
 import { createTakedownRepository, redactCitationsForTarget } from '../../application/takedowns/repository.js'
 import { buildRemovedArticleTombstone } from '../../domain/article/removed-tombstone.js'
+import { attachCleanupFailure, settleBeforeDeadline } from '../../jobs/runtime-bounds.js'
 
 const MAX_CITATION_PAGE = 100
 const MAX_RETENTION_BATCH = 100
@@ -22,6 +23,45 @@ function objectId(value) {
 }
 
 function unwrap(value) { return value?.value ?? value }
+function clockMilliseconds(clock) {
+  const value = typeof clock === 'function' ? clock() : Date.now()
+  const result = value instanceof Date ? value.getTime() : Number(value)
+  if (!Number.isFinite(result)) throw new Error('Takedown clock is invalid')
+  return result
+}
+function remainingMilliseconds({ deadline, clock } = {}) {
+  if (deadline === undefined) return Number.POSITIVE_INFINITY
+  const deadlineAt = new Date(deadline).getTime()
+  if (!Number.isFinite(deadlineAt)) throw new Error('Takedown operation deadline is invalid')
+  return deadlineAt - clockMilliseconds(clock)
+}
+function deadlineError(code = 'runtime_deadline_exceeded', message = 'Takedown operation deadline was exceeded') {
+  const error = new Error(message)
+  error.code = code
+  error.status = 409
+  return error
+}
+async function closeSession(session, { deadline, clock } = {}) {
+  const remainingMs = remainingMilliseconds({ deadline, clock })
+  const settled = await settleBeforeDeadline(
+    Promise.resolve().then(() => session.endSession()),
+    remainingMs,
+    { timeoutError: () => deadlineError('runtime_cleanup_unresolved', 'Takedown transaction cleanup deadline was exceeded') },
+  )
+  if (settled.kind === 'deadline') throw settled.error
+  if (!settled.settled) throw settled.error
+}
+function operationOptions({ signal, deadline, clock = () => Date.now(), rejectExpired = false } = {}) {
+  const remainingMs = remainingMilliseconds({ deadline, clock })
+  if (rejectExpired && remainingMs <= 0) throw deadlineError()
+  return {
+    ...(signal ? { signal } : {}),
+    ...(remainingMs !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+  }
+}
+function transactionOptions(options = {}) {
+  return options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}
+}
 
 function removedMetadataFilter(base) {
   return {
@@ -57,10 +97,35 @@ export class MongoTakedownRepository {
 
   collection(name) { return this.db.collection(name) }
 
-  withTransaction(work) {
+  async withTransaction(work, transactionConfig = {}, bounds = {}) {
+    const remainingMs = remainingMilliseconds({ deadline: bounds.deadline, clock: bounds.clock ?? this.clock })
+    if (remainingMs <= 0) throw deadlineError()
+    bounds.signal?.throwIfAborted?.()
     const session = this.client?.startSession?.()
     if (!session) throw new Error('Mongo transaction session is required')
-    return session.withTransaction(() => work(session), { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } }).finally(() => session.endSession())
+    let failure
+    try {
+      const result = await session.withTransaction(async () => {
+        bounds.signal?.throwIfAborted?.()
+        return work(session)
+      }, {
+        readConcern: { level: 'snapshot' },
+        writeConcern: { w: 'majority' },
+        ...transactionConfig,
+        ...(remainingMs !== Number.POSITIVE_INFINITY ? { timeoutMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+      })
+      return result
+    } catch (error) {
+      failure = error
+      throw error
+    } finally {
+      try {
+        await closeSession(session, { deadline: bounds.settlementDeadline ?? bounds.deadline, clock: bounds.clock ?? this.clock })
+      } catch (error) {
+        if (!failure) throw error
+        throw attachCleanupFailure(failure, error)
+      }
+    }
   }
 
   async list(query = {}) { return createTakedownRepository({ collection: this.collection('takedownRequests'), now: this.clock }).list(query) }
@@ -196,8 +261,14 @@ export class MongoTakedownRepository {
     return true
   }
 
-  async cleanupArtifacts({ targetType, targetIds, requestedScope, session, now, limit = MAX_CITATION_PAGE } = {}) {
+  async cleanupArtifacts({ targetType, targetIds, requestedScope, session, now, limit = MAX_CITATION_PAGE, signal, deadline } = {}) {
     const ids = targetIds.map(objectId)
+    const sessionOptions = signal ? { signal } : {}
+    const assertActive = () => {
+      signal?.throwIfAborted?.()
+      if (remainingMilliseconds({ deadline, clock: this.clock }) <= 0) throw deadlineError()
+    }
+    assertActive()
     const metadataRequested = requestedScope.includes('metadata')
     const completion = {
       metadataRemoved: false,
@@ -209,20 +280,21 @@ export class MongoTakedownRepository {
     const sourcePolicyVersions = new Map()
     if (targetType === 'article') {
       const lifecycleStatuses = metadataRequested ? ['hidden', 'removed'] : ['hidden']
-      const fence = await this.collection('articles').updateMany({ _id: { $in: ids }, status: { $in: lifecycleStatuses }, evidenceEligible: false }, { $set: { updatedAt: now } }, { session })
+      const fence = await this.collection('articles').updateMany({ _id: { $in: ids }, status: { $in: lifecycleStatuses }, evidenceEligible: false }, { $set: { updatedAt: now } }, { session, ...sessionOptions })
       if (fence.matchedCount !== ids.length) throw Object.assign(new Error('Article cleanup lifecycle changed'), { status: 409, code: 'conflict' })
     } else {
       const sources = this.collection('sources')
       for (const sourceId of ids) {
-        const source = await sources.findOne({ _id: sourceId, operationalStatus: 'paused' }, { session, projection: { policyVersion: 1 } })
+        assertActive()
+        const source = await sources.findOne({ _id: sourceId, operationalStatus: 'paused' }, { session, projection: { policyVersion: 1 }, ...sessionOptions })
         if (!source || !Number.isInteger(source.policyVersion)) throw Object.assign(new Error('Source cleanup lifecycle changed'), { status: 409, code: 'conflict' })
         sourcePolicyVersions.set(sourceId.toHexString(), source.policyVersion)
-        const fence = await sources.updateOne({ _id: sourceId, operationalStatus: 'paused', policyVersion: source.policyVersion }, { $set: { updatedAt: now } }, { session })
+        const fence = await sources.updateOne({ _id: sourceId, operationalStatus: 'paused', policyVersion: source.policyVersion }, { $set: { updatedAt: now } }, { session, ...sessionOptions })
         if (fence.matchedCount !== 1) throw Object.assign(new Error('Source cleanup lifecycle changed'), { status: 409, code: 'conflict' })
       }
       const visibleArticles = this.collection('articles')
       if (typeof visibleArticles.countDocuments === 'function') {
-        const visibleCount = await visibleArticles.countDocuments({ sourceId: { $in: ids }, status: { $in: ['published', 'processing', 'review-needed'] } }, { session, hint: 'articles_status_source_time' })
+        const visibleCount = await visibleArticles.countDocuments({ sourceId: { $in: ids }, status: { $in: ['published', 'processing', 'review-needed'] } }, { session, hint: 'articles_status_source_time', ...sessionOptions })
         if (visibleCount !== 0) throw Object.assign(new Error('Source cleanup lifecycle changed'), { status: 409, code: 'conflict' })
       }
     }
@@ -234,20 +306,21 @@ export class MongoTakedownRepository {
     const pageLimit = Math.max(1, Math.min(MAX_CITATION_PAGE, Number(limit) || MAX_CITATION_PAGE))
     let artifactHasMore = false
     if (metadataRequested) {
-      let articleQuery = articleCollection.find(pendingMetadataFilter(articleFilter), { session })
+      let articleQuery = articleCollection.find(pendingMetadataFilter(articleFilter), { session, ...sessionOptions })
       if (typeof articleQuery.hint === 'function') articleQuery = articleQuery.hint(targetType === 'source' ? 'articles_status_source_time' : '_id_')
       const articleRows = await articleQuery.limit(pageLimit + 1).toArray()
       for (const article of articleRows.slice(0, pageLimit)) {
+        assertActive()
         const policyVersion = article.removalPolicyVersion ?? article.rightsSnapshot?.sourcePolicyVersion ?? sourcePolicyVersions.get(article.sourceId?.toHexString?.())
         const tombstone = buildRemovedArticleTombstone({ ...article, removalPolicyVersion: policyVersion }, { now })
         const replaced = await articleCollection.replaceOne(
           { _id: article._id, status: article.status, evidenceEligible: false, updatedAt: article.updatedAt },
           tombstone,
-          { session },
+          { session, ...sessionOptions },
         )
         if (replaced.matchedCount !== 1) throw Object.assign(new Error('Article metadata cleanup lifecycle changed'), { status: 409, code: 'conflict' })
       }
-      const remainingMetadata = await articleCollection.countDocuments(pendingMetadataFilter(articleFilter), { session })
+      const remainingMetadata = await articleCollection.countDocuments(pendingMetadataFilter(articleFilter), { session, ...sessionOptions })
       completion.metadataRemoved = remainingMetadata === 0
       artifactHasMore = articleRows.length > pageLimit || remainingMetadata > 0
       if (requestedScope.includes('media-metadata')) completion.mediaMetadataRemoved = completion.metadataRemoved
@@ -258,8 +331,8 @@ export class MongoTakedownRepository {
       if (requestedScope.includes('media-metadata')) { set.leadMedia = null; set.leadMediaStatus = 'none' }
       if (requestedScope.includes('summary')) Object.assign(set, { summaryVi: null, summaryParagraphsVi: null, summaryStatus: 'removed', summaryDetailStatus: 'removed', summaryBasis: null, summaryModel: null, summaryInputHash: null, summarySourcePolicyVersion: null, summaryGeneratedAt: null, summaryError: null })
       if (requestedScope.includes('embedding')) Object.assign(set, { embedding: null, embeddingStatus: 'removed', embeddingModel: null, embeddingDimensions: null, embeddingInputHash: null, embeddingVersion: null, embeddingSourcePolicyVersion: null, embeddedAt: null, embeddingError: null })
-      const articleCount = typeof articleCollection.countDocuments === 'function' ? await articleCollection.countDocuments(articleFilter, { session, hint: 'articles_status_source_time' }) : null
-      const articleUpdate = await articleCollection.updateMany(articleFilter, { $set: set }, { session })
+      const articleCount = typeof articleCollection.countDocuments === 'function' ? await articleCollection.countDocuments(articleFilter, { session, hint: 'articles_status_source_time', ...sessionOptions }) : null
+      const articleUpdate = await articleCollection.updateMany(articleFilter, { $set: set }, { session, ...sessionOptions })
       if (articleCount !== null && articleUpdate.matchedCount !== articleCount) throw Object.assign(new Error('Article cleanup lifecycle changed'), { status: 409, code: 'conflict' })
       completion.mediaMetadataRemoved = requestedScope.includes('media-metadata')
       completion.summaryRemoved = requestedScope.includes('summary')
@@ -274,39 +347,44 @@ export class MongoTakedownRepository {
       [citationField]: { $in: ids },
       messages: { $elemMatch: { role: 'assistant', status: 'answered', citations: { $elemMatch: { [targetField]: { $in: ids }, status: 'available' } } } },
     }
-    let query = chat.find(filter, { session, projection: { _id: 1, updatedAt: 1, messageCount: 1, messages: 1 } })
+    let query = chat.find(filter, { session, projection: { _id: 1, updatedAt: 1, messageCount: 1, messages: 1 }, ...sessionOptions })
     if (typeof query.hint === 'function') query = query.hint(directIndex)
     const rows = await query.sort({ _id: 1 }).limit(pageLimit + 1).toArray()
     const selected = rows.slice(0, pageLimit)
     for (const row of selected) {
+      assertActive()
       const messages = (row.messages ?? []).map((message) => message.status === 'answered' ? { ...message, citations: redactCitationsForTarget(message.citations, { targetType, targetIds: ids }) } : message)
-      const updated = await chat.updateOne({ _id: row._id, updatedAt: row.updatedAt, messageCount: row.messageCount }, { $set: { messages, updatedAt: now } }, { session })
+      const updated = await chat.updateOne({ _id: row._id, updatedAt: row.updatedAt, messageCount: row.messageCount }, { $set: { messages, updatedAt: now } }, { session, ...sessionOptions })
       if (updated.matchedCount !== 1) throw Object.assign(new Error('Historical citation lifecycle changed'), { status: 409, code: 'conflict' })
     }
     const hasMore = artifactHasMore || rows.length > pageLimit
-    const remaining = await chat.countDocuments(filter, { session, hint: directIndex })
+    const remaining = await chat.countDocuments(filter, { session, hint: directIndex, ...sessionOptions })
     completion.historicalChatCitationsRedacted = remaining === 0 && !artifactHasMore
     return { ...completion, hasMore }
   }
 
-  async materializeCleanupBatch({ now = this.clock(), limit = MAX_CITATION_PAGE } = {}) {
+  async materializeCleanupBatch({ now = this.clock(), limit = MAX_CITATION_PAGE, signal, deadline, settlementDeadline = deadline } = {}) {
     const pageLimit = Math.max(1, Math.min(MAX_CITATION_PAGE, Number(limit) || MAX_CITATION_PAGE))
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+    const sessionOptions = signal ? { signal } : {}
     return this.withTransaction(async (session) => {
-      let query = this.collection('takedownRequests').find({ status: 'approved', 'completion.historicalChatCitationsRedacted': false }, { session })
+      signal?.throwIfAborted?.()
+      let query = this.collection('takedownRequests').find({ status: 'approved', 'completion.historicalChatCitationsRedacted': false }, { session, ...sessionOptions })
       if (typeof query.hint === 'function') query = query.hint('takedown_cleanup_due')
       const workflows = await query.sort({ updatedAt: 1, _id: 1 }).limit(1).toArray()
+      signal?.throwIfAborted?.()
       const workflow = workflows[0]
       if (!workflow) return { processed: false, hasMore: false }
-      const completion = await this.cleanupArtifacts({ targetType: workflow.targetType, targetIds: workflow.targetIds, requestedScope: workflow.requestedScope, session, now, limit: pageLimit })
+      const completion = await this.cleanupArtifacts({ targetType: workflow.targetType, targetIds: workflow.targetIds, requestedScope: workflow.requestedScope, session, now, limit: pageLimit, signal, deadline })
       const update = { updatedAt: now }
       for (const [field, value] of Object.entries(completion)) {
         if (field !== 'hasMore') update[`completion.${field}`] = value
       }
-      const result = await this.collection('takedownRequests').findOneAndUpdate({ _id: workflow._id, status: 'approved', updatedAt: workflow.updatedAt }, { $set: update }, { session, returnDocument: 'after' })
+      const result = await this.collection('takedownRequests').findOneAndUpdate({ _id: workflow._id, status: 'approved', updatedAt: workflow.updatedAt }, { $set: update }, { session, returnDocument: 'after', ...sessionOptions })
       const next = unwrap(result)
       if (!next) throw Object.assign(new Error('Takedown cleanup lifecycle changed'), { status: 409, code: 'conflict' })
       return { processed: true, requestId: next._id, hasMore: completion.hasMore === true, completion: next.completion }
-    })
+    }, transactionOptions(options), { signal, deadline, settlementDeadline, clock: this.clock })
   }
 
   async insertSuppression({ requestId, targetType, targetIds, requestedScope, now, session } = {}) {

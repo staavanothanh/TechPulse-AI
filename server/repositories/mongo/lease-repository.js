@@ -18,13 +18,33 @@ function validDate(value, label) {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new Error(`${label} is invalid`)
   return value
 }
-function operationOptions({ signal, deadline } = {}) {
-  const deadlineAt = deadline === undefined ? Number.POSITIVE_INFINITY : new Date(deadline).getTime()
-  if (!Number.isFinite(deadlineAt) && deadlineAt !== Number.POSITIVE_INFINITY) throw new Error('Lease operation deadline is invalid')
-  const remainingMs = deadlineAt === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : deadlineAt - Date.now()
+function clockMilliseconds(clock) {
+  const value = typeof clock === 'function' ? clock() : Date.now()
+  const result = value instanceof Date ? value.getTime() : Number(value)
+  if (!Number.isFinite(result)) throw new Error('Lease clock is invalid')
+  return result
+}
+function deadlineMilliseconds(deadline) {
+  const result = new Date(deadline).getTime()
+  if (!Number.isFinite(result)) throw new Error('Lease operation deadline is invalid')
+  return result
+}
+function remainingMilliseconds({ deadline, clock } = {}) {
+  if (deadline === undefined) return Number.POSITIVE_INFINITY
+  return deadlineMilliseconds(deadline) - clockMilliseconds(clock)
+}
+function deadlineError() {
+  const error = new Error('Lease operation deadline was exceeded')
+  error.code = 'runtime_deadline_exceeded'
+  error.status = 409
+  return error
+}
+function operationOptions({ signal, deadline, clock = () => Date.now(), rejectExpired = false } = {}) {
+  const remainingMs = remainingMilliseconds({ deadline, clock })
+  if (rejectExpired && remainingMs <= 0) throw deadlineError()
   return {
     ...(signal ? { signal } : {}),
-    ...(deadlineAt !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+    ...(remainingMs !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)), timeoutMS: Math.max(1, Math.floor(remainingMs)) } : {}),
   }
 }
 
@@ -43,14 +63,16 @@ export class MongoLeaseRepository {
     if (!Number.isInteger(leaseMs) || leaseMs < 100 || leaseMs > 15 * 60 * 1000) throw new Error('Lease duration is invalid')
     const ownerTokenHash = tokenHash(ownerToken)
     const normalizedJobId = idValue(jobId)
-    const options = operationOptions({ signal, deadline })
+    const insertOptions = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
     signal?.throwIfAborted?.()
     await this.collection().updateOne(
       { key },
       { $setOnInsert: { _id: new ObjectId(), key, generationHighWater: 0, createdAt: acquiredAt, updatedAt: acquiredAt } },
-      { upsert: true, ...options },
+      { upsert: true, ...insertOptions },
     )
     const expiresAt = new Date(acquiredAt.getTime() + leaseMs)
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+    signal?.throwIfAborted?.()
     const document = await this.collection().findOneAndUpdate(
       { key, activeOwner: { $exists: false } },
       [{ $set: {
@@ -77,7 +99,7 @@ export class MongoLeaseRepository {
     const heartbeatAt = validDate(this.clock(), 'Authoritative lease clock')
     if (!Number.isInteger(leaseMs) || leaseMs < 100 || leaseMs > 15 * 60 * 1000) throw new Error('Lease duration is invalid')
     const hash = suppliedHash ?? tokenHash(ownerToken)
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
     signal?.throwIfAborted?.()
     const filter = {
       key,
@@ -97,7 +119,7 @@ export class MongoLeaseRepository {
     assertCanonicalLeaseKey(key)
     const releasedAt = validDate(this.clock(), 'Authoritative lease clock')
     const hash = suppliedHash ?? tokenHash(ownerToken)
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
     signal?.throwIfAborted?.()
     const result = await this.collection().updateOne({
       key,
@@ -113,7 +135,7 @@ export class MongoLeaseRepository {
     const authoritativeNow = validDate(now, 'Lease recovery time')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !['ingestion:source:', 'indexing:article:'].includes(namespace)) throw new Error('Lease recovery query is invalid')
     const key = namespace === 'indexing:article:' ? /^indexing:article:/ : /^ingestion:source:/
-    const options = operationOptions({ signal, deadline })
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
     signal?.throwIfAborted?.()
     const cursor = Object.keys(options).length > 0
       ? this.collection().find({ key, 'activeOwner.expiresAt': { $lte: authoritativeNow } }, options)
@@ -121,11 +143,17 @@ export class MongoLeaseRepository {
     return cursor.sort({ 'activeOwner.expiresAt': 1 }).hint('job_lease_expiry').limit(limit).toArray()
   }
 
-  async clearExpiredReconciliation({ key, now = this.clock() } = {}) {
+  async clearExpiredReconciliation({ key, now = this.clock(), signal, deadline } = {}) {
     assertCanonicalLeaseKey(key)
     if (!key.startsWith('reconciliation:source:')) throw new Error('Only reconciliation ownership may be cleared directly')
     const authoritativeNow = validDate(now, 'Reconciliation recovery time')
-    const result = await this.collection().updateOne({ key, 'activeOwner.expiresAt': { $lte: authoritativeNow } }, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: authoritativeNow, updatedAt: authoritativeNow } })
+    const options = operationOptions({ signal, deadline, clock: this.clock, rejectExpired: true })
+    signal?.throwIfAborted?.()
+    const filter = { key, 'activeOwner.expiresAt': { $lte: authoritativeNow } }
+    const update = { $unset: { activeOwner: '' }, $set: { lastReleasedAt: authoritativeNow, updatedAt: authoritativeNow } }
+    const result = Object.keys(options).length > 0
+      ? await this.collection().updateOne(filter, update, options)
+      : await this.collection().updateOne(filter, update)
     return result.matchedCount === 1
   }
 }

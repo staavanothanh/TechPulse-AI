@@ -97,4 +97,17 @@ describe('MongoCronEventRepository', () => {
     expect(find).toHaveBeenCalledWith(expect.objectContaining({ purgeAfter: expect.any(Object) }), expect.objectContaining({ signal, maxTimeMS: expect.any(Number) }))
     expect(deleteMany).toHaveBeenCalledWith(expect.objectContaining({ _id: { $in: ['event-1'] } }), expect.objectContaining({ signal, maxTimeMS: expect.any(Number) }))
   })
+  it('does not read retention events after the repository clock deadline', async () => {
+    const toArray = vi.fn().mockResolvedValue([])
+    const project = vi.fn(() => ({ toArray }))
+    const limit = vi.fn(() => ({ project }))
+    const sort = vi.fn(() => ({ limit }))
+    const find = vi.fn(() => ({ sort }))
+    const collection = vi.fn(() => ({ find, deleteMany: vi.fn() }))
+    const now = new Date('2026-08-20T08:00:00.000Z')
+    const repo = new MongoCronEventRepository({ db: { collection }, now: () => now })
+
+    await expect(repo.purgeExpiredEvents({ cutoff: now, limit: 1, deadline: new Date(now.getTime() - 1) })).rejects.toThrow(/deadline/i)
+    expect(find).not.toHaveBeenCalled()
+  })
 })

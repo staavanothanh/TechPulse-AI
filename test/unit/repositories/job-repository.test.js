@@ -242,6 +242,50 @@ describe('MongoJobRepository', () => {
     await expect(completed.repository.materializeDailyIngestion({ now, limit: 0 })).rejects.toThrow(/limit/i)
     await expect(completed.repository.materializeDailyIngestion({ now: 'bad' })).rejects.toThrow(/materialization time/i)
   })
+  it('does not start daily materialization after the repository clock deadline', async () => {
+    const fixture = createContext({ nowValue: now })
+    const deadline = new Date(now.getTime() - 1)
+
+    await expect(fixture.repository.materializeDailyIngestion({ now, limit: 1, deadline })).rejects.toThrow(/deadline/i)
+    expect(fixture.context.client.startSession).not.toHaveBeenCalled()
+  })
+  it('settles a bounded transaction before its cleanup deadline', async () => {
+    vi.useFakeTimers()
+    let releaseSession
+    let settled = false
+    const fixture = createContext({ nowValue: now })
+    fixture.session.endSession = vi.fn(() => new Promise((resolve) => { releaseSession = resolve }))
+    const operation = fixture.repository.withTransaction(async () => 'done', {}, {
+      deadline: new Date(now.getTime() + 10),
+      settlementDeadline: new Date(now.getTime() + 20),
+      clock: () => now,
+    }).then(() => { settled = true }, () => { settled = true })
+    try {
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(true)
+    } finally {
+      releaseSession?.()
+      await operation
+      vi.useRealTimers()
+    }
+  })
+  it('preserves cleanup rejection metadata with the primary transaction failure', async () => {
+    const fixture = createContext({ nowValue: now })
+    const primary = Object.assign(new Error('aborted transaction'), { code: 'aborted', status: 409 })
+    fixture.session.endSession = vi.fn(async () => { throw Object.assign(new Error('cleanup unresolved'), { code: 'runtime_cleanup_unresolved', status: 409 }) })
+    let caught
+    try {
+      await fixture.repository.withTransaction(async () => { throw primary }, {}, {
+        deadline: new Date(now.getTime() + 100),
+        settlementDeadline: new Date(now.getTime() + 100),
+        clock: () => now,
+      })
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBe(primary)
+    expect(caught.cleanupError).toEqual({ code: 'runtime_cleanup_unresolved', status: 409 })
+  })
 
   it('lists jobs with filters, cursors, projections, due ordering, and retention purge', async () => {
     const document = serializedDocument()
