@@ -28,6 +28,12 @@ function repositories() {
   }
 }
 
+function deferred() {
+  let resolve
+  const promise = new Promise((resolvePromise) => { resolve = resolvePromise })
+  return { promise, resolve }
+}
+
 describe('provider admission router capability', () => {
   it('exposes immutable route metadata and delegates provider-domain state through the abstract boundary', async () => {
     const stores = repositories()
@@ -107,5 +113,111 @@ describe('provider admission router capability', () => {
     await expect(expired.run({
       routeId: 'primary', capability: 'zdr-verified', attemptId: 'attempt-1', kind: 'answer-primary', invoke: vi.fn(),
     })).rejects.toMatchObject({ failureClass: 'config', retryable: false })
+  })
+
+  it('releases a late call reservation when cancellation wins before reserve resolves', async () => {
+    const stores = repositories()
+    const pendingReserve = deferred()
+    stores.repository.reserveProviderCall.mockImplementation(() => pendingReserve.promise)
+    const boundary = createProviderAdmission({
+      ...stores,
+      registry,
+      reservationId: () => 'call-reservation',
+      now: () => new Date('2026-08-15T00:00:00.000Z'),
+    })
+    const invoke = vi.fn()
+    const controller = new AbortController()
+    const run = boundary.run({
+      routeId: 'primary', capability: 'zdr-verified', attemptId: 'attempt-1', kind: 'answer-primary',
+      signal: controller.signal, invoke,
+    })
+
+    await vi.waitFor(() => expect(stores.repository.reserveProviderCall).toHaveBeenCalledTimes(1))
+    controller.abort(new Error('caller cancelled'))
+
+    await expect(run).rejects.toMatchObject({
+      name: 'ProviderAdapterError', failureClass: 'policy', code: 'policy_blocked', retryable: false, providerLocalControl: true,
+    })
+    expect(stores.repository.releaseProviderCall).not.toHaveBeenCalled()
+
+    pendingReserve.resolve({ allowed: true, reservationId: 'call-reservation' })
+    await vi.waitFor(() => expect(stores.repository.releaseProviderCall).toHaveBeenCalledWith(expect.objectContaining({
+      admissionDomainId: 'admission-a', routeId: 'primary', reservationId: 'call-reservation', outcome: 'cancelled', errorCode: 'execution_cancelled',
+    })))
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('releases a late call reservation when deadline wins before reserve resolves', async () => {
+    vi.useFakeTimers()
+    try {
+      const startedAt = new Date('2026-08-15T00:00:00.000Z')
+      const deadline = new Date(startedAt.getTime() + 1_000)
+      let current = startedAt
+      const stores = repositories()
+      const pendingReserve = deferred()
+      stores.repository.reserveProviderCall.mockImplementation(() => pendingReserve.promise)
+      const boundary = createProviderAdmission({
+        ...stores,
+        registry,
+        reservationId: () => 'deadline-call-reservation',
+        now: () => current,
+      })
+      const invoke = vi.fn()
+      const run = boundary.run({
+        routeId: 'primary', capability: 'zdr-verified', attemptId: 'attempt-1', kind: 'answer-primary',
+        deadline, invoke,
+      })
+      const rejection = expect(run).rejects.toMatchObject({
+        name: 'ProviderAdapterError', failureClass: 'policy', code: 'policy_blocked', retryable: false, providerLocalControl: true,
+      })
+
+      await Promise.resolve()
+      expect(stores.repository.reserveProviderCall).toHaveBeenCalledTimes(1)
+      current = deadline
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      await rejection
+      expect(stores.repository.releaseProviderCall).not.toHaveBeenCalled()
+
+      pendingReserve.resolve({ allowed: true, reservationId: 'deadline-call-reservation' })
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(stores.repository.releaseProviderCall).toHaveBeenCalledWith(expect.objectContaining({
+        admissionDomainId: 'admission-a', routeId: 'primary', reservationId: 'deadline-call-reservation', outcome: 'cancelled', errorCode: 'execution_cancelled',
+      }))
+      expect(invoke).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases a late provider-domain reservation when cancellation wins before admission resolves', async () => {
+    const stores = repositories()
+    const pendingAdmission = deferred()
+    stores.failureDomainRepository.admitProviderDomain.mockImplementation(() => pendingAdmission.promise)
+    const boundary = createProviderAdmission({
+      ...stores,
+      registry,
+      providerDomainReservationId: () => 'domain-late-reservation',
+      now: () => new Date('2026-08-15T00:00:00.000Z'),
+    })
+    const controller = new AbortController()
+    const admission = boundary.admitProviderDomain({
+      routeId: 'primary', attemptId: 'attempt-1', signal: controller.signal,
+    })
+
+    await vi.waitFor(() => expect(stores.failureDomainRepository.admitProviderDomain).toHaveBeenCalledTimes(1))
+    controller.abort(new Error('caller cancelled'))
+
+    await expect(admission).rejects.toMatchObject({
+      name: 'ProviderAdapterError', failureClass: 'policy', code: 'policy_blocked', retryable: false, providerLocalControl: true,
+    })
+    expect(stores.failureDomainRepository.reportProviderDomain).not.toHaveBeenCalled()
+
+    pendingAdmission.resolve({ allowed: true, reservationId: 'domain-late-reservation' })
+    await vi.waitFor(() => expect(stores.failureDomainRepository.reportProviderDomain).toHaveBeenCalledWith(expect.objectContaining({
+      domain: failureDomain, reservationId: 'domain-late-reservation', outcome: 'cancelled',
+    })))
   })
 })

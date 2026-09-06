@@ -167,26 +167,48 @@ function absoluteDateRange(year, month, day, timeZone) {
   return rangeFromCivil(start, civilDateAdd(start, 1), timeZone)
 }
 
+function matchSpan(match) {
+  const start = match.index ?? 0
+  return [start, start + match[0].length]
+}
+
+function spansOverlap(left, right) {
+  return left[0] < right[1] && right[0] < left[1]
+}
+
 function monthIntent(text) {
   const explicit = allMatches(text, new RegExp(`${BOUNDARY}thang\\s+(1[0-2]|[1-9])\\s+nam\\s+(20\\d{2})${END_BOUNDARY}`, 'giu'))
-  if (explicit.length > 1) return { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.conflicting) }
-  if (explicit.length === 1) return { kind: 'absolute-month', month: Number(explicit[0][1]), year: Number(explicit[0][2]) }
   const current = allMatches(text, new RegExp(`${BOUNDARY}thang\\s+(1[0-2]|[1-9])\\s+nay${END_BOUNDARY}`, 'giu'))
-  if (current.length > 1) return { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.conflicting) }
-  if (current.length === 1) return { kind: 'current-month-number', month: Number(current[0][1]) }
-  const anyMonth = allMatches(text, new RegExp(`${BOUNDARY}thang\\s+(\\d{1,2})${END_BOUNDARY}`, 'giu'))
-  if (anyMonth.length > 0) {
-    const month = Number(anyMonth[0][1])
-    return month >= 1 && month <= 12 ? { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.missingYear) } : { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.invalid) }
+  const recognizedMonthSpans = [...explicit, ...current].map(matchSpan)
+  const bare = allMatches(text, new RegExp(`${BOUNDARY}thang\\s+(\\d{1,2})${END_BOUNDARY}`, 'giu'))
+  const standaloneBare = bare.filter((match) => !recognizedMonthSpans.some((span) => spansOverlap(matchSpan(match), span)))
+  const count = explicit.length + current.length + standaloneBare.length
+  if (count > 1) return { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.conflicting), matches: [...explicit, ...current, ...standaloneBare] }
+  if (explicit.length === 1) return { kind: 'absolute-month', month: Number(explicit[0][1]), year: Number(explicit[0][2]), matches: explicit }
+  if (current.length === 1) return { kind: 'current-month-number', month: Number(current[0][1]), matches: current }
+  if (standaloneBare.length === 1) {
+    const month = Number(standaloneBare[0][1])
+    return month >= 1 && month <= 12
+      ? { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.missingYear), matches: standaloneBare }
+      : { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.invalid), matches: standaloneBare }
   }
   return null
 }
 
+function hasUnsupportedTemporalRemainder(text, matches) {
+  const remainder = text.split('')
+  for (const match of matches) {
+    const [start, end] = matchSpan(match)
+    for (let index = start; index < end; index += 1) remainder[index] = ' '
+  }
+  return new RegExp(`${BOUNDARY}(?:ngay\\s+mai|tomorrow|date|quarter|quy|nam\\s+(?:nay|ngoai|truoc)|this\\s+year|last\\s+year|year\\s+20\\d{2}|thang|month|tuan|week)${END_BOUNDARY}`, 'iu').test(remainder.join(''))
+}
+
 function absoluteDateIntent(text) {
   const dates = allMatches(text, new RegExp(`${BOUNDARY}(20\\d{2})-(\\d{2})-(\\d{2})${END_BOUNDARY}`, 'giu'))
-  if (dates.length > 1) return { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.conflicting) }
+  if (dates.length > 1) return { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.conflicting), matches: dates }
   if (dates.length === 0) return null
-  return { kind: 'absolute-date', year: Number(dates[0][1]), month: Number(dates[0][2]), day: Number(dates[0][3]) }
+  return { kind: 'absolute-date', year: Number(dates[0][1]), month: Number(dates[0][2]), day: Number(dates[0][3]), matches: dates }
 }
 
 export function analyzeQaTemporal({ question, referenceInstant, timeZone = QA_TIME_ZONE } = {}) {
@@ -194,7 +216,8 @@ export function analyzeQaTemporal({ question, referenceInstant, timeZone = QA_TI
   const zone = validateTimeZone(timeZone)
   const text = normalizedText(question).toLocaleLowerCase('vi')
   if (!text) return Object.freeze({ kind: 'none' })
-  const relative = RELATIVE_PATTERNS.flatMap((entry) => allMatches(text, entry.regex).map((match) => ({ kind: 'relative', preset: entry.preset, start: match.index ?? 0 })))
+  const relativeMatches = RELATIVE_PATTERNS.flatMap((entry) => allMatches(text, entry.regex).map((match) => ({ ...match, kind: 'relative', preset: entry.preset })))
+  const relative = relativeMatches.map(({ kind, preset, index }) => ({ kind, preset, start: index ?? 0 }))
   const month = monthIntent(text)
   const absoluteDate = absoluteDateIntent(text)
   const explicit = [month, absoluteDate].filter(Boolean)
@@ -206,6 +229,8 @@ export function analyzeQaTemporal({ question, referenceInstant, timeZone = QA_TI
     const unknownTemporal = new RegExp(`${BOUNDARY}(?:ngay\\s+mai|tomorrow|date|quarter|quy|nam\\s+(?:nay|ngoai|truoc)|this\\s+year|last\\s+year|year\\s+20\\d{2}|thang|month|tuan|week)${END_BOUNDARY}`, 'iu').test(text)
     return Object.freeze(unknownTemporal ? { kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.unsupported) } : { kind: 'none' })
   }
+  const recognizedMatches = [...relativeMatches, ...(month?.matches ?? []), ...(absoluteDate?.matches ?? [])]
+  if (hasUnsupportedTemporalRemainder(text, recognizedMatches)) return Object.freeze({ kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.unsupported) })
   const intent = intents[0]
   if (intent.kind === 'relative') {
     if (intent.preset === 'latest') return Object.freeze({ kind: 'latest' })
@@ -222,6 +247,8 @@ export function analyzeQaTemporal({ question, referenceInstant, timeZone = QA_TI
   }
   return Object.freeze({ kind: 'ambiguous', clarification: clarification(TEMPORAL_CODES.unsupported) })
 }
+
+
 
 function entityProposals(question) {
   const entities = []

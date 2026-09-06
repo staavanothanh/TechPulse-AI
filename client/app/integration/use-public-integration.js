@@ -12,6 +12,16 @@ import { topicsMatch } from '../../../shared/topic-catalog.js'
 
 const PAGE_SIZE = 10
 const MAX_DIRECT_PAGE = 10_000
+const QA_SOURCE_SCOPE_FIELDS = Object.freeze(['topics', 'articleId', 'publishedAfter', 'publishedBefore'])
+let qaFallbackIdempotencyCounter = 0
+
+function createQaIdempotencyKey() {
+  const randomUUID = globalThis.crypto?.randomUUID
+  if (typeof randomUUID === 'function') return randomUUID.call(globalThis.crypto)
+  qaFallbackIdempotencyCounter += 1
+  return `qa-${Date.now()}-${qaFallbackIdempotencyCounter}`
+}
+
 const EMPTY_FILTERS = Object.freeze({
   topic: '',
   sourceId: '',
@@ -738,6 +748,8 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
   const sessionIdRef = useRef(undefined)
   const queueTailRef = useRef(null)
   const epochRef = useRef(0)
+  const sessionResetEpochRef = useRef(null)
+
   const listEpochRef = useRef(0)
   const routeArticleRef = useRef(initialArticleId)
   const routeArticleChanged = routeArticleRef.current !== initialArticleId
@@ -750,6 +762,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     epochRef.current += 1
     listEpochRef.current += 1
     sessionIdRef.current = undefined
+    sessionResetEpochRef.current = epochRef.current
   }
   useEffect(() => {
     if (!identityChanged) return undefined
@@ -767,6 +780,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     epochRef.current += 1
     listEpochRef.current += 1
     sessionIdRef.current = undefined
+    sessionResetEpochRef.current = epochRef.current
     setSessions([])
     setMessages([])
     setScope((current) => qaScopeForArticle(current, initialArticleId))
@@ -785,6 +799,15 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     })
     return undefined
   }, [enabled, initialArticleId])
+  function resetSessionForScopeChange(updateScope) {
+    epochRef.current += 1
+    sessionResetEpochRef.current = epochRef.current
+    sessionIdRef.current = undefined
+    setMessages([])
+    setState('empty')
+    setError(null)
+    setScope((current) => ({ ...updateScope(current), sessionId: undefined }))
+  }
 
   function trackQueue(taskPromise) {
     let tail
@@ -865,7 +888,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
       if (epoch !== epochRef.current) return
       setState('loading')
       setError(null)
-      const currentSessionId = sessionIdRef.current ?? payload.sessionId
+      const currentSessionId = sessionIdRef.current ?? (sessionResetEpochRef.current === epoch ? undefined : payload.sessionId)
       try {
         const response = await qaApi.createAnswer(
           {
@@ -879,7 +902,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
           },
           {
             csrfToken,
-            idempotencyKey: globalThis.crypto?.randomUUID?.() ?? `qa-${Date.now()}`,
+            idempotencyKey: createQaIdempotencyKey(),
             chatSessionId: currentSessionId,
           },
         )
@@ -916,6 +939,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     const epoch = ++epochRef.current
     listEpochRef.current += 1
     sessionIdRef.current = undefined
+    sessionResetEpochRef.current = epoch
 
     const runClear = async () => {
       try {
@@ -957,6 +981,7 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
       onNewSession: () => {
         epochRef.current += 1
         sessionIdRef.current = undefined
+        sessionResetEpochRef.current = epochRef.current
         setMessages([])
         setScope((current) => ({ ...current, sessionId: undefined }))
         setState('empty')
@@ -966,18 +991,26 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
       onClearSessions: clearSessions,
       onRetry: () => (sessionIdRef.current ? selectSession(sessionIdRef.current) : loadSessions()),
       onToggleTopic: (topic) =>
-        setScope((current) => ({
+        resetSessionForScopeChange((current) => ({
           ...current,
           topics: toggleTopicValue(current.topics, topic),
         })),
       onScopeChange: (field, value) => {
-        if (field === 'sessionId') sessionIdRef.current = value || undefined
+        if (field === 'sessionId') {
+          sessionIdRef.current = value || undefined
+          setScope((current) => ({ ...current, [field]: value }))
+          return
+        }
+        if (QA_SOURCE_SCOPE_FIELDS.includes(field)) {
+          resetSessionForScopeChange((current) => ({ ...current, [field]: value }))
+          return
+        }
         setScope((current) => ({ ...current, [field]: value }))
       },
       onScopeArticleId: (articleId) =>
-        setScope((current) => ({ ...current, articleId })),
+        resetSessionForScopeChange((current) => ({ ...current, articleId })),
       onClearArticleScope: () =>
-        setScope((current) => {
+        resetSessionForScopeChange((current) => {
           const { articleId: _removed, ...rest } = current
           return rest
         }),

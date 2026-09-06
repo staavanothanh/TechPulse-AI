@@ -148,6 +148,90 @@ describe('useQa session lifecycle and race safety', () => {
     expect(createAnswerCalls[1].body.scope).toEqual(effectiveScope)
     expect(createAnswerCalls[1].headers.chatSessionId).toBe('session-temporal-1')
   })
+  it('uses distinct fallback idempotency keys for same-millisecond asks without crypto.randomUUID', async () => {
+    const originalCryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto')
+    let nowSpy
+    const scenarios = [
+      { label: 'absent crypto', value: undefined, absent: true },
+      { label: 'crypto without randomUUID', value: {}, absent: false },
+    ]
+
+    try {
+      nowSpy = vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-09-04T15:30:00.000Z').getTime())
+      for (const scenario of scenarios) {
+        if (scenario.absent) Reflect.deleteProperty(globalThis, 'crypto')
+        else Object.defineProperty(globalThis, 'crypto', { configurable: true, enumerable: true, writable: true, value: scenario.value })
+
+        const createAnswerCalls = []
+        const qaApi = {
+          listSessions: vi.fn(async () => ({ data: [] })),
+          createAnswer: vi.fn(async (body, headers) => {
+            createAnswerCalls.push({ body, headers })
+            return {
+              data: {
+                id: `answer-${createAnswerCalls.length}`,
+                status: 'answered',
+                paragraphs: [{ text: 'Có căn cứ.', citationIds: ['C1'] }],
+                citations: [{ id: 'C1', articleId: '507f1f77bcf86cd799439011', sourceId: '507f1f77bcf86cd799439012' }],
+                refusalReason: null,
+                chatSessionId: 'session-idempotency-1',
+                createdAt: '2026-09-04T15:31:00.000Z',
+              },
+            }
+          }),
+        }
+        const runner = createHookRunner(useQa)
+        runner.render({ csrfToken: 'csrf-1', enabled: true, expire: vi.fn(), qaApi, user: { topicPreferences: ['AI'] } })
+
+        await runner.current.onAsk({ question: `Câu hỏi ${scenario.label} lần một`, topics: ['AI'] })
+        await runner.current.onAsk({ question: `Câu hỏi ${scenario.label} lần hai`, topics: ['AI'] })
+
+        expect(createAnswerCalls).toHaveLength(2)
+        expect(createAnswerCalls[0].headers.idempotencyKey).toBeTruthy()
+        expect(createAnswerCalls[1].headers.idempotencyKey).toBeTruthy()
+        expect(createAnswerCalls[1].headers.idempotencyKey).not.toBe(createAnswerCalls[0].headers.idempotencyKey)
+        runner.unmount()
+      }
+    } finally {
+      nowSpy?.mockRestore()
+      if (originalCryptoDescriptor) Object.defineProperty(globalThis, 'crypto', originalCryptoDescriptor)
+      else Reflect.deleteProperty(globalThis, 'crypto')
+    }
+  })
+
+  it('clears the selected chat session when a source scope changes before the next ask', async () => {
+    const createAnswerCalls = []
+    const qaApi = {
+      listSessions: vi.fn(async () => ({ data: [] })),
+      createAnswer: vi.fn(async (body, headers) => {
+        createAnswerCalls.push({ body, headers })
+        return {
+          data: {
+            id: `answer-${createAnswerCalls.length}`,
+            status: 'answered',
+            paragraphs: [{ text: 'Có căn cứ.', citationIds: ['C1'] }],
+            citations: [{ id: 'C1', articleId: '507f1f77bcf86cd799439011', sourceId: '507f1f77bcf86cd799439012' }],
+            refusalReason: null,
+            chatSessionId: 'session-scope-1',
+            createdAt: '2026-09-04T15:31:00.000Z',
+          },
+        }
+      }),
+    }
+    const runner = createHookRunner(useQa)
+    runner.render({ csrfToken: 'csrf-1', enabled: true, expire: vi.fn(), qaApi, user: { topicPreferences: ['AI'] } })
+
+    await runner.current.onAsk({ question: 'Câu hỏi trong phạm vi cũ', topics: ['AI'] })
+    expect(runner.current.scope.sessionId).toBe('session-scope-1')
+
+    runner.current.handlers.onScopeChange('topics', ['Security'])
+    await runner.current.onAsk({ question: 'Câu hỏi trong phạm vi mới', topics: ['Security'] })
+
+    expect(createAnswerCalls).toHaveLength(2)
+    expect(createAnswerCalls[1].headers.chatSessionId).toBeUndefined()
+    expect(createAnswerCalls[1].body.scope).toEqual({ topics: ['Security'] })
+  })
+
   it('serializes overlapping asks and passes the first canonical chatSessionId to the second ask', async () => {
     const ask1Deferred = deferred()
     const ask2Deferred = deferred()

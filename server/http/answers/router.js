@@ -38,6 +38,50 @@ function unavailable() {
   throw Object.assign(new Error('Grounded answer service is not configured'), { status: 503, code: 'service_unavailable' })
 }
 
+function bindEvent(target, event, listener) {
+  if (typeof target?.on === 'function') target.on(event, listener)
+}
+
+function unbindEvent(target, event, listener) {
+  if (typeof target?.removeListener === 'function') target.removeListener(event, listener)
+  else if (typeof target?.off === 'function') target.off(event, listener)
+}
+
+function requestAbortMiddleware(req, res, next) {
+  const controller = new globalThis.AbortController()
+  const signal = controller.signal
+  let cleanedUp = false
+  const onRequestAborted = () => controller.abort()
+  const onResponseClose = () => {
+    if (!res.writableEnded) controller.abort()
+    cleanup()
+  }
+  const cleanup = () => {
+    if (cleanedUp) return
+    cleanedUp = true
+    unbindEvent(req, 'aborted', onRequestAborted)
+    unbindEvent(res, 'close', onResponseClose)
+    unbindEvent(res, 'finish', cleanup)
+    unbindEvent(res, 'error', onResponseError)
+  }
+  const onResponseError = () => {
+    controller.abort()
+    cleanup()
+  }
+  req.signal = signal
+  bindEvent(req, 'aborted', onRequestAborted)
+  bindEvent(res, 'close', onResponseClose)
+  bindEvent(res, 'finish', cleanup)
+  bindEvent(res, 'error', onResponseError)
+  if (req.aborted || res.destroyed) controller.abort()
+  try {
+    next()
+  } catch (error) {
+    cleanup()
+    throw error
+  }
+}
+
 export function validatePublicAnswer(answer) {
   if (!answer || typeof answer !== 'object') throw new Error('Public answer is invalid')
   if (answer.status === 'refused') {
@@ -62,7 +106,7 @@ export function createAnswersRouter({ qaService, authService } = {}) {
   const service = qaService ?? { createAnswer: unavailable }
   const csrf = requireCsrf(authService)
 
-  router.post('/api/v1/answers', requireAuthenticated, csrf, asyncContentRoute(async (req, res) => {
+  router.post('/api/v1/answers', requestAbortMiddleware, requireAuthenticated, csrf, asyncContentRoute(async (req, res) => {
     validateBody(req.body)
     const result = await service.createAnswer({
       auth: req.auth,
@@ -71,6 +115,7 @@ export function createAnswersRouter({ qaService, authService } = {}) {
       chatSessionId: req.body.chatSessionId,
       idempotencyKey: idempotencyKey(req),
       request: req,
+      signal: req.signal,
     })
     noStoreContent(res)
     res.status(200).json({ data: validatePublicAnswerResponse(result?.answer ?? result) })

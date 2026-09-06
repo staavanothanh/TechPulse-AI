@@ -108,23 +108,27 @@ export async function createConfiguredQaService({ context, providerRegistry = { 
   const configuredRouter = providerRouter ?? createProviderRouter({ workloadPolicies, admission, now })
   const safeQueryEmbedding = typeof queryEmbedding === 'function' && QA_CAPABILITIES.has(queryEmbedding.capability) && capabilityAllows(queryEmbedding.capability, generationPolicy.requiredCapability) ? queryEmbedding : undefined
   const supportVerifier = providerAdapters.llmProvider.verifySupport
-    ? ({ route, question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }) => providerAdapters.llmProvider.verifySupport({ route, input: JSON.stringify({ question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }), locale: 'vi', tools: [] })
+    ? ({ route, question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap, signal, deadline }) => providerAdapters.llmProvider.verifySupport({ route, input: JSON.stringify({ question, addressesQuestion, paragraphs, evidenceBlocks, evidenceMap }), locale: 'vi', tools: [], signal, deadline })
     : undefined
   if (intentPolicy && typeof providerAdapters.llmProvider.planIntent !== 'function') throw new Error('Q&A intent provider adapter is not ready')
   const intentPlanner = intentPolicy
-    ? async (input, { attemptId } = {}) => {
+    ? async (input, { attemptId, signal, deadline } = {}) => {
+      if (signal?.aborted) throw new Error('Q&A intent planning was cancelled')
       const deterministic = planQaIntent(input)
       if (deterministic.temporal.kind !== 'none') return deterministic
       const result = await configuredRouter.execute({
         workloadId: 'qa-intent',
         admittedInput: input,
         attemptId: String(attemptId ?? 'qa-intent'),
-        invoke: ({ route, admittedInput }) => providerAdapters.llmProvider.planIntent({ route, input: `<qa-planner-input>${JSON.stringify(admittedInput)}</qa-planner-input>`, locale: 'vi', tools: [] }),
+        signal,
+        deadline,
+        invoke: ({ route, admittedInput, signal: invocationSignal, deadline: invocationDeadline }) => providerAdapters.llmProvider.planIntent({ route, input: `<qa-planner-input>${JSON.stringify(admittedInput)}</qa-planner-input>`, locale: 'vi', tools: [], signal: invocationSignal ?? signal, deadline: invocationDeadline ?? deadline }),
         validateOutput: ({ output }) => assertQaIntentProposal(output),
       })
       return result.output
     }
     : undefined
+  if (intentPlanner) Object.defineProperty(intentPlanner, 'optionalProviderPlanner', { value: true, enumerable: false, writable: false, configurable: false })
   maintenanceRegistry.register('purge-answer-attempts', ({ cutoff, limit }) => chatRepository.purgeDueAnswerAttempts({ cutoff, limit }))
   return createQaService({ articleRepository, chatRepository, providerRouter: configuredRouter, providerAdapters, queryEmbedding: safeQueryEmbedding, privacyCapability: generationPolicy.requiredCapability, rateLimitAdmission, supportVerifier, intentPlanner, qaTimeZone: process.env.QA_TIME_ZONE ?? QA_TIME_ZONE, now })
 }

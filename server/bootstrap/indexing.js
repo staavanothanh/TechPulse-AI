@@ -123,12 +123,12 @@ export async function createConfiguredIndexingRuntime({
   const indexingJobService = createIndexingJobService({ indexingJobRepository, articleRepository, sourceRepository, rateLimitAdmission, runDueWork: jobRuntime.coordinatorRunner, embeddingTarget, now })
   workloadPolicy(providerRegistry, 'summary')
   const embeddingRoute = configuredEmbeddingRoute(providerRegistry)
-  const queryEmbedding = async (query) => {
+  const queryEmbedding = async (query, { signal, deadline } = {}) => {
     if (!embeddingProvider || typeof embeddingProvider.embed !== 'function') throw new Error('Query embedding is unavailable')
     const input = sanitizeText(query, 300)
     const result = await providerRouter.execute({
-      workloadId: 'embedding', admittedInput: { purpose: 'retrieval', text: input }, attemptId: new ObjectId().toHexString(),
-      invoke: ({ route, admittedInput }) => embeddingProvider.embed({ route, input: admittedInput.text, model: route.model, dimensions: embeddingTarget.dimensions }),
+      workloadId: 'embedding', admittedInput: { purpose: 'retrieval', text: input }, attemptId: new ObjectId().toHexString(), signal, deadline,
+      invoke: ({ route, admittedInput, signal: invocationSignal, deadline: invocationDeadline }) => embeddingProvider.embed({ route, input: admittedInput.text, model: route.model, dimensions: embeddingTarget.dimensions, signal: invocationSignal ?? signal, deadline: invocationDeadline ?? deadline }),
       validateOutput: ({ route, output }) => {
         if (typeof route?.model !== 'string' || !route.model || typeof route.artifactCompatibilityId !== 'string' || !route.artifactCompatibilityId || route.artifactCompatibilityId !== embeddingTarget.artifactCompatibilityId) throw new ProviderAdapterError('config')
         if (output?.model !== undefined && output.model !== route.model) throw new ProviderAdapterError('schema')
@@ -138,6 +138,7 @@ export async function createConfiguredIndexingRuntime({
     return result.output
   }
   Object.defineProperty(queryEmbedding, 'capability', { value: embeddingRoute.capability, enumerable: true, writable: false, configurable: false })
+  Object.defineProperty(queryEmbedding, 'executionContextAware', { value: true, enumerable: false, writable: false, configurable: false })
   Object.freeze(queryEmbedding)
   return { indexingJobService, indexingJobRepository, providerAdmissionRepository, providerFailureDomainRepository, providerAdmission, providerRouter, artifactProcessor, reconciliationRunner, sourcePolicyReconciliationWorker, sourcePolicyReconciliationService, queryEmbedding }
 }
