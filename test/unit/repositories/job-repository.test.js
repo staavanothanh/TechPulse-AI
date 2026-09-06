@@ -269,6 +269,22 @@ describe('MongoJobRepository', () => {
       vi.useRealTimers()
     }
   })
+  it('bounds Mongo timeout budgets when the injected clock exceeds the signed 32-bit deadline range', async () => {
+    const injectedNow = new Date('2026-08-10T03:00:00.000Z')
+    const fixture = createContext({ nowValue: injectedNow, findOne: { ingestionJobs: [serializedDocument({ status: 'running', leaseGeneration: 2 })] } })
+    const mongoMax = 2_147_483_647
+    const deadline = new Date(injectedNow.getTime() + mongoMax + 1_000)
+    await fixture.repository.deferWithFence({ jobId: jobId.toHexString(), fence: fence(), deadline })
+
+    const leaseOptions = fixture.collections.get('jobLeases').updateOne.mock.calls[0][2]
+    const transactionOptions = fixture.session.withTransaction.mock.calls[0][1]
+    expect(leaseOptions.maxTimeMS).toBeGreaterThan(0)
+    expect(leaseOptions.maxTimeMS).toBeLessThanOrEqual(mongoMax)
+    expect(transactionOptions.maxCommitTimeMS).toBeGreaterThan(0)
+    expect(transactionOptions.maxCommitTimeMS).toBeLessThanOrEqual(mongoMax)
+    expect(transactionOptions.timeoutMS).toBeGreaterThan(0)
+    expect(transactionOptions.timeoutMS).toBeLessThanOrEqual(mongoMax)
+  })
   it('preserves cleanup rejection metadata with the primary transaction failure', async () => {
     const fixture = createContext({ nowValue: now })
     const primary = Object.assign(new Error('aborted transaction'), { code: 'aborted', status: 409 })

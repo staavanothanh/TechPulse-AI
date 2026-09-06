@@ -28,6 +28,7 @@ export const INGESTION_JOB_LIST_PROJECTION = Object.freeze({
   finishedAt: 1,
 })
 const DAY_MS = 24 * 60 * 60 * 1000
+const MAX_MONGO_TIMEOUT_MS = 2_147_483_647
 
 function idValue(value) {
   if (value instanceof ObjectId) return value
@@ -60,6 +61,10 @@ function remainingMilliseconds({ deadline, clock } = {}) {
   if (deadline === undefined) return Number.POSITIVE_INFINITY
   return deadlineMilliseconds(deadline) - clockMilliseconds(clock)
 }
+function boundedTimeoutMilliseconds(value) {
+  if (value === Number.POSITIVE_INFINITY || value <= 0) return value
+  return Math.min(MAX_MONGO_TIMEOUT_MS, Math.floor(value))
+}
 function deadlineError(code = 'runtime_deadline_exceeded', message = 'Job operation deadline was exceeded') {
   const error = new Error(message)
   error.code = code
@@ -67,7 +72,7 @@ function deadlineError(code = 'runtime_deadline_exceeded', message = 'Job operat
   return error
 }
 async function closeSession(session, { deadline, clock } = {}) {
-  const remainingMs = remainingMilliseconds({ deadline, clock })
+  const remainingMs = boundedTimeoutMilliseconds(remainingMilliseconds({ deadline, clock }))
   const settled = await settleBeforeDeadline(
     Promise.resolve().then(() => session.endSession()),
     remainingMs,
@@ -77,11 +82,11 @@ async function closeSession(session, { deadline, clock } = {}) {
   if (!settled.settled) throw settled.error
 }
 function operationOptions({ signal, deadline, clock = () => Date.now(), rejectExpired = false } = {}) {
-  const remainingMs = remainingMilliseconds({ deadline, clock })
+  const remainingMs = boundedTimeoutMilliseconds(remainingMilliseconds({ deadline, clock }))
   if (rejectExpired && remainingMs <= 0) throw deadlineError()
   return {
     ...(signal ? { signal } : {}),
-    ...(remainingMs !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+    ...(remainingMs !== Number.POSITIVE_INFINITY ? { maxTimeMS: Math.max(1, remainingMs) } : {}),
   }
 }
 function transactionOptions(options = {}) {
@@ -186,7 +191,7 @@ export class MongoJobRepository {
   scheduleProgress() { return this.db.collection('ingestionScheduleProgress') }
 
   async withTransaction(work, transactionConfig = {}, bounds = {}) {
-    const remainingMs = remainingMilliseconds({ deadline: bounds.deadline, clock: bounds.clock ?? this.clock })
+    const remainingMs = boundedTimeoutMilliseconds(remainingMilliseconds({ deadline: bounds.deadline, clock: bounds.clock ?? this.clock }))
     if (remainingMs <= 0) throw deadlineError()
     const session = this.client.startSession()
     let failure
@@ -200,7 +205,7 @@ export class MongoJobRepository {
         readConcern: { level: 'snapshot' },
         writeConcern: { w: 'majority' },
         ...transactionConfig,
-        ...(remainingMs !== Number.POSITIVE_INFINITY ? { timeoutMS: Math.max(1, Math.floor(remainingMs)) } : {}),
+        ...(remainingMs !== Number.POSITIVE_INFINITY ? { timeoutMS: Math.max(1, remainingMs) } : {}),
       })
       return result
     } catch (error) {
@@ -687,7 +692,7 @@ export class MongoJobRepository {
           const cleared = await this.leases().updateOne(filter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
           if (cleared.matchedCount !== 1) throw new JobError(409, 'conflict', 'Expired lease changed during recovery')
           return { recovered: 1, retriesCreated }
-        }, transactionOptions(options))
+        }, transactionOptions(options), { signal, deadline, clock: this.clock })
         summary.recovered += outcome.recovered
         summary.retriesCreated += outcome.retriesCreated
       } catch (error) {
@@ -757,7 +762,7 @@ export class MongoJobRepository {
             })
             await this.insertAudit(audit, session, options)
             return { recovered: 1 }
-          }, transactionOptions(options))
+          }, transactionOptions(options), { signal, deadline, clock: this.clock })
 
           if (outcome?.recovered) {
             summary.recovered += 1
