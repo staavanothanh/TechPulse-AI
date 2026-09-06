@@ -1,8 +1,9 @@
 import { randomUUID as generateRandomUUID } from 'node:crypto'
+import { readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { normalizeAnswerBody } from '../client/features/qa/qa-api.js'
-import { qaClarificationMessage, validateQuestionScope } from '../client/features/qa/qa-validation.js'
+import { qaClarificationMessage, qaScopeConfirmationDetail, isQaScopeConfirmation, validateQuestionScope } from '../client/features/qa/qa-validation.js'
 import { COOKIE_NAME, parseSessionCookie } from '../server/http/cookies.js'
 
 const DEFAULT_BASE_URL = 'http://localhost:3000'
@@ -15,6 +16,8 @@ const CSRF_MIN_LENGTH = 32
 const CSRF_MAX_LENGTH = 256
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 const RESPONSE_TOO_LARGE_CODE = 'response_too_large'
+const MAX_SCOPE_CONFIRMATION_BYTES = 64 * 1024
+const QA_SCOPE_CONFIRMATION_MODE = Object.freeze({ preview: 'preview', confirmed: 'confirmed' })
 
 const SAFE_ERROR_CODES = new Set(['unauthorized', 'forbidden', 'not_found', 'conflict', 'validation_error', 'rate_limit_exceeded', 'service_unavailable', 'bad_request', 'csrf_invalid', 'idempotency_mismatch'])
 const SAFE_CLARIFICATION_CODES = new Set(['qa_clarify_missing_year', 'qa_clarify_ambiguous_time', 'qa_clarify_unsupported_time', 'qa_clarify_conflicting_time', 'qa_clarify_latest_unsupported', 'qa_clarify_invalid_date'])
@@ -26,6 +29,8 @@ const OPTION_NAMES = new Set([
   '--published-after',
   '--published-before',
   '--chat-session-id',
+  '--scope-mode',
+  '--scope-confirmation-file',
   '--idempotency-key',
   '--timeout-ms',
   '--base-url',
@@ -38,6 +43,8 @@ const OPTION_NAMES = new Set([
 
 export const QA_CLI_USAGE = `Usage:
   node --env-file-if-exists=.env scripts/qa-cli.js --question=<question> (--article-id=<24-hex-id> | --topic=<topic>... | --published-after=<ISO> --published-before=<ISO>) [options]
+  node --env-file-if-exists=.env scripts/qa-cli.js --question=<question> --scope-mode=preview [--chat-session-id=<24-hex-id>] [options]
+  node --env-file-if-exists=.env scripts/qa-cli.js --question=<question> --scope-mode=confirmed --scope-confirmation-file=<path> [--chat-session-id=<24-hex-id>] [options]
   Run from the repository root so the checked-in API contract is loaded consistently.
 
 Required authentication (choose one; environment values take precedence over flags):
@@ -47,7 +54,9 @@ Required authentication (choose one; environment values take precedence over fla
   Prefer environment variables: command-line arguments can be visible in process listings; flags are never logged.
 
 Options:
-  --timeout-ms=<100..300000>        Abort each HTTP request after this bound (default: 120000; QA_TIMEOUT_MS also supported)
+  --scope-mode=<preview|confirmed>   Use natural-language scope negotiation
+  --scope-confirmation-file=<path>   Read confirmed scope metadata from a bounded JSON file
+  --timeout-ms=<100..300000>         Abort each HTTP request after this bound (default: 120000; QA_TIMEOUT_MS also supported)
   --article-id=<24-hex-id>          Restrict retrieval to one article
   --topic=<topic>                   Restrict retrieval to a topic; may be repeated
   --topics=<topic,topic>            Provide comma-separated topics
@@ -65,6 +74,7 @@ Options:
 
 Output:
   Success and HTTP errors are emitted as one JSON object. Success mirrors the web API {"data": ...} envelope.
+  Natural preview errors include safe proposed scope and server-issued confirmation metadata for the follow-up file.
   Credentials, session cookies, prompts, and provider payloads are never printed.`
 
 export class QaCliError extends Error {
@@ -128,6 +138,11 @@ function boundedTimeout(value) {
   }
   return timeoutMs
 }
+function scopeModeValue(value) {
+  if (value !== QA_SCOPE_CONFIRMATION_MODE.preview && value !== QA_SCOPE_CONFIRMATION_MODE.confirmed)
+    throw new QaCliError(400, 'bad_request', '--scope-mode must be preview or confirmed')
+  return value
+}
 
 export function parseQaCliArgs(argv = []) {
   if (!Array.isArray(argv)) throw new QaCliError(400, 'bad_request', 'arguments must be an array')
@@ -169,6 +184,8 @@ export function parseQaCliArgs(argv = []) {
       '--published-before': 'publishedBefore',
       '--timeout-ms': 'timeoutMs',
       '--chat-session-id': 'chatSessionId',
+      '--scope-mode': 'scopeMode',
+      '--scope-confirmation-file': 'scopeConfirmationFile',
       '--idempotency-key': 'idempotencyKey',
       '--base-url': 'baseUrl',
       '--session-token': 'sessionToken',
@@ -178,18 +195,46 @@ export function parseQaCliArgs(argv = []) {
       '--password': 'password',
     }[option]
     const selected = argumentValue(argv, index, argument, option)
-    const parsedValue = field === 'timeoutMs' ? boundedTimeout(selected.value) : selected.value
+    const parsedValue =
+      field === 'timeoutMs'
+        ? boundedTimeout(selected.value)
+        : field === 'scopeMode'
+          ? scopeModeValue(selected.value)
+          : selected.value
     options = setOnce(options, field, parsedValue, option)
     index = selected.nextIndex
   }
+  const hasExplicitScope =
+    options.articleId !== undefined ||
+    options.topics.length > 0 ||
+    options.publishedAfter !== undefined ||
+    options.publishedBefore !== undefined
+  if (options.scopeMode !== undefined && hasExplicitScope)
+    throw new QaCliError(400, 'bad_request', 'Natural scope mode cannot be combined with explicit scope')
+  if (options.scopeConfirmationFile !== undefined && options.scopeMode !== 'confirmed')
+    throw new QaCliError(400, 'bad_request', '--scope-confirmation-file requires --scope-mode=confirmed')
   return Object.freeze({ ...options, topics: Object.freeze([...options.topics]) })
 }
 
-export function normalizeQaRequest({ question, scope = {}, chatSessionId } = {}) {
+export function normalizeQaRequest({ question, scope = {}, chatSessionId, scopeMode, scopeConfirmation } = {}) {
+  const normalizedQuestion = typeof question === 'string' ? question.trim() : question
+  if (scopeMode === QA_SCOPE_CONFIRMATION_MODE.preview)
+    return {
+      question: normalizedQuestion,
+      scopeMode: QA_SCOPE_CONFIRMATION_MODE.preview,
+      ...(chatSessionId ? { chatSessionId } : {}),
+    }
+  if (scopeMode === QA_SCOPE_CONFIRMATION_MODE.confirmed)
+    return {
+      question: normalizedQuestion,
+      scopeMode: QA_SCOPE_CONFIRMATION_MODE.confirmed,
+      scopeConfirmation,
+      ...(chatSessionId ? { chatSessionId } : {}),
+    }
   const normalizedScope =
     scope && typeof scope === 'object' && !Array.isArray(scope) ? { ...scope } : scope
   return normalizeAnswerBody({
-    question: typeof question === 'string' ? question.trim() : question,
+    question: normalizedQuestion,
     scope: normalizedScope,
     ...(chatSessionId ? { chatSessionId } : {}),
   })
@@ -277,18 +322,85 @@ function answerScope(options) {
   }
 }
 
+function hasExplicitScope(options) {
+  return (
+    options?.articleId !== undefined ||
+    (Array.isArray(options?.topics) && options.topics.length > 0) ||
+    options?.publishedAfter !== undefined ||
+    options?.publishedBefore !== undefined
+  )
+}
+
+function cliValidationError(validation) {
+  throw new QaCliError(422, 'validation_error', validation.message, [
+    {
+      field: validation.firstInvalid,
+      message: validation.message,
+      code: 'invalid_cli_input',
+    },
+  ])
+}
+
+function readScopeConfirmation(filePath) {
+  if (typeof filePath !== 'string' || filePath.length === 0)
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file is required')
+  let metadata
+  try {
+    metadata = statSync(filePath)
+  } catch {
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file could not be read')
+  }
+  if (!metadata.isFile())
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file is invalid')
+  if (metadata.size > MAX_SCOPE_CONFIRMATION_BYTES)
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file exceeds the safe size limit')
+
+  let content
+  try {
+    content = readFileSync(filePath)
+  } catch {
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file could not be read')
+  }
+  if (content.byteLength > MAX_SCOPE_CONFIRMATION_BYTES)
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file exceeds the safe size limit')
+  let parsed
+  try {
+    parsed = JSON.parse(content.toString('utf8'))
+  } catch {
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file is invalid')
+  }
+  if (!isQaScopeConfirmation(parsed))
+    throw new QaCliError(400, 'bad_request', 'Scope confirmation file is invalid')
+  return parsed
+}
+
+function naturalAnswerRequest(options) {
+  if (hasExplicitScope(options))
+    throw new QaCliError(400, 'bad_request', 'Natural scope mode cannot be combined with explicit scope')
+  if (options.scopeConfirmationFile !== undefined && options.scopeMode !== 'confirmed')
+    throw new QaCliError(400, 'bad_request', '--scope-confirmation-file requires --scope-mode=confirmed')
+  if (options.scopeMode !== QA_SCOPE_CONFIRMATION_MODE.preview && options.scopeMode !== QA_SCOPE_CONFIRMATION_MODE.confirmed)
+    throw new QaCliError(400, 'bad_request', '--scope-mode must be preview or confirmed')
+
+  const validation = validateQuestionScope(options.question, { topics: ['natural-language'] })
+  if (!validation.valid) cliValidationError(validation)
+  const scopeConfirmation =
+    options.scopeMode === QA_SCOPE_CONFIRMATION_MODE.confirmed
+      ? readScopeConfirmation(options.scopeConfirmationFile)
+      : undefined
+  return normalizeQaRequest({
+    question: options.question,
+    scopeMode: options.scopeMode,
+    ...(scopeConfirmation !== undefined ? { scopeConfirmation } : {}),
+    chatSessionId: options.chatSessionId,
+  })
+}
+
 function answerRequest(options) {
+  if (options.scopeMode !== undefined) return naturalAnswerRequest(options)
   const scope = answerScope(options)
   const validation = validateQuestionScope(options.question, scope)
-  if (!validation.valid) {
-    throw new QaCliError(422, 'validation_error', validation.message, [
-      {
-        field: validation.firstInvalid,
-        message: validation.message,
-        code: 'invalid_cli_input',
-      },
-    ])
-  }
+  if (!validation.valid) cliValidationError(validation)
   return normalizeQaRequest({
     question: options.question,
     scope: validation.scope ?? scope,
@@ -424,11 +536,45 @@ function hasOnlyData(body) {
 }
 function safeErrorDetails(details) {
   if (!Array.isArray(details)) return undefined
-  const safeFields = new Set(['question', 'articleId', 'topics', 'publishedAfter', 'publishedBefore', 'scope', 'quota', 'body'])
+  const safeFields = new Set([
+    'question',
+    'articleId',
+    'topics',
+    'publishedAfter',
+    'publishedBefore',
+    'scope',
+    'scopeMode',
+    'quota',
+    'body',
+  ])
   return details.flatMap((detail) => {
     if (!isPlainObject(detail)) return []
+    if (detail.code === 'qa_clarify_scope_confirmation') {
+      const field = typeof detail.field === 'string' && detail.field.length <= 256 ? detail.field : undefined
+      const fieldName = field?.split('/').filter(Boolean).at(-1)
+      const confirmationDetail = qaScopeConfirmationDetail([detail])
+      if (!field || !safeFields.has(fieldName) || !confirmationDetail) return []
+      return [
+        {
+          field,
+          code: detail.code,
+          ...(typeof detail.message === 'string' && detail.message.length <= 500
+            ? { message: detail.message }
+            : {}),
+          proposedScope: confirmationDetail.proposedScope,
+          confirmation: confirmationDetail.confirmation,
+        },
+      ]
+    }
     const code = typeof detail.code === 'string' && SAFE_CLARIFICATION_CODES.has(detail.code) ? detail.code : undefined
-    if (code) return [{ field: '/question', code, message: qaClarificationMessage({ code: 'validation_error', details: [{ field: '/question', code }] }) }]
+    if (code)
+      return [
+        {
+          field: '/question',
+          code,
+          message: qaClarificationMessage({ code: 'validation_error', details: [{ field: '/question', code }] }),
+        },
+      ]
     const field = typeof detail.field === 'string' && detail.field.length <= 256 ? detail.field : undefined
     const safeCode = typeof detail.code === 'string' && /^[a-z0-9_:-]{1,128}$/iu.test(detail.code) ? detail.code : undefined
     if (!field || !safeFields.has(field.split('/').filter(Boolean).at(-1))) return []
@@ -472,7 +618,23 @@ function resolveTimeoutMs(options, environment) {
   return value === undefined ? DEFAULT_TIMEOUT_MS : boundedTimeout(value)
 }
 
-async function requestJson({ fetchImpl, url, init, stage, timeoutMs }) {
+function retryAfterValue(response) {
+  const value = Number(response?.headers?.get?.('Retry-After'))
+  return Number.isInteger(value) && value > 0 ? value : undefined
+}
+
+function failedResponse({ response, stage, body, includeRetryAfter }) {
+  const retryAfter = includeRetryAfter ? retryAfterValue(response) : undefined
+  return Object.freeze({
+    ok: false,
+    status: response.status,
+    stage,
+    ...(retryAfter !== undefined ? { retryAfter } : {}),
+    body,
+  })
+}
+
+async function requestJson({ fetchImpl, url, init, stage, timeoutMs, includeRetryAfter = false }) {
   if (typeof fetchImpl !== 'function')
     throw new QaCliError(503, 'service_unavailable', 'Fetch is unavailable')
   const controller = new globalThis.AbortController()
@@ -493,16 +655,22 @@ async function requestJson({ fetchImpl, url, init, stage, timeoutMs }) {
       parsed = await responseBody(response)
     } catch (error) {
       if (error?.code === RESPONSE_TOO_LARGE_CODE && !response.ok)
-        return Object.freeze({
-          ok: false,
-          status: response.status,
+        return failedResponse({
+          response,
           stage,
           body: fallbackErrorBody(response.status),
+          includeRetryAfter,
         })
       throw error
     }
     const body = parsed && typeof parsed === 'object' ? parsed : fallbackErrorBody(response.status)
-    if (!response.ok) return Object.freeze({ ok: false, status: response.status, stage, body: safeErrorBody(body, response.status) })
+    if (!response.ok)
+      return failedResponse({
+        response,
+        stage,
+        body: safeErrorBody(body, response.status),
+        includeRetryAfter,
+      })
     return Object.freeze({ ok: true, status: response.status, stage, body, response })
   })()
   try {
@@ -597,6 +765,7 @@ export async function runQaCli({
     options.baseUrl ?? valueFromEnvironment(environment, 'QA_BASE_URL') ?? DEFAULT_BASE_URL,
   )
   const timeoutMs = resolveTimeoutMs(options, environment)
+  const includeRetryAfter = options.scopeMode !== undefined
   const auth = resolveQaCliAuth({ options, environment })
   const key = idempotencyKey(options, environment, randomUuid)
   let answerAuth = auth
@@ -611,6 +780,7 @@ export async function runQaCli({
       },
       stage: 'login',
       timeoutMs,
+      includeRetryAfter,
     })
     if (!loginResult.ok) return loginResult
     answerAuth = Object.freeze({ mode: 'session', ...loginSession(loginResult) })
@@ -626,6 +796,7 @@ export async function runQaCli({
     },
     stage: 'answer',
     timeoutMs,
+    includeRetryAfter,
   })
   if (!result.ok) return result
   try {

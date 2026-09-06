@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   QA_CLI_USAGE,
   main,
@@ -816,5 +819,346 @@ describe('local Q&A CLI', () => {
     })
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain(secret)
     process.exitCode = undefined
+  })
+})
+
+describe('local Q&A CLI natural scope parity (RED)', () => {
+  const NATURAL_QUESTION = 'Hôm nay có tin gì mới về AI không?'
+  const AUTH_ENV = { QA_SESSION_TOKEN: SESSION_TOKEN, QA_CSRF_TOKEN: CSRF_TOKEN }
+  const SCOPE_CONFIRMATION = Object.freeze({
+    version: 'qa-scope-confirmation-v1',
+    token: 'natural-scope-token-0123456789abcdefXYZ-_0123ABCD',
+    scopeDigest: '0123456789abcdef'.repeat(4),
+    expiresAt: '2026-09-06T13:00:00.000Z',
+  })
+  const PROPOSED_SCOPE = Object.freeze({ topics: Object.freeze(['AI']) })
+  const PREVIEW_422 = Object.freeze({
+    error: Object.freeze({
+      code: 'validation_error',
+      message: 'Xác nhận phạm vi trước khi thực hiện.',
+      requestId: 'req-natural-preview-1',
+      details: Object.freeze([
+        Object.freeze({
+          field: '/scopeMode',
+          code: 'qa_clarify_scope_confirmation',
+          message: 'Xác nhận phạm vi trước khi thực hiện.',
+          proposedScope: PROPOSED_SCOPE,
+          confirmation: SCOPE_CONFIRMATION,
+        }),
+      ]),
+    }),
+  })
+
+  function tempDir() {
+    return mkdtempSync(join(tmpdir(), 'qa-cli-scope-'))
+  }
+
+  function writeConfirmationFile(dir, value) {
+    const file = join(dir, 'scope-confirmation.json')
+    writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value))
+    return file
+  }
+
+  it('parses --scope-mode preview/confirmed and --scope-confirmation-file out of argv', () => {
+    expect(
+      parseQaCliArgs(['--question', NATURAL_QUESTION, '--scope-mode', 'preview']),
+    ).toMatchObject({ help: false, question: NATURAL_QUESTION, scopeMode: 'preview' })
+    const dir = tempDir()
+    try {
+      const file = writeConfirmationFile(dir, SCOPE_CONFIRMATION)
+      expect(
+        parseQaCliArgs([
+          '--question',
+          NATURAL_QUESTION,
+          '--scope-mode=confirmed',
+          `--scope-confirmation-file=${file}`,
+        ]),
+      ).toMatchObject({ scopeMode: 'confirmed', scopeConfirmationFile: file })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+    expect(() => parseQaCliArgs(['--question', NATURAL_QUESTION, '--scope-mode', 'auto'])).toThrow(
+      /scope-mode/i,
+    )
+    expect(() =>
+      parseQaCliArgs(['--question', NATURAL_QUESTION, '--scope-mode', 'preview', '--scope-mode', 'confirmed']),
+    ).toThrow(/duplicated|scope-mode/i)
+  })
+
+  it('posts the exact preview DTO without explicit scope keys', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(ANSWER))
+    await runQaCli({
+      options: parseQaCliArgs(['--question', `  ${NATURAL_QUESTION}  `, '--scope-mode', 'preview']),
+      environment: AUTH_ENV,
+      fetchImpl,
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      question: NATURAL_QUESTION,
+      scopeMode: 'preview',
+    })
+
+    const withSession = vi.fn(async () => jsonResponse(ANSWER))
+    await runQaCli({
+      options: parseQaCliArgs([
+        '--question',
+        NATURAL_QUESTION,
+        '--scope-mode=preview',
+        '--chat-session-id',
+        SESSION_ID,
+      ]),
+      environment: AUTH_ENV,
+      fetchImpl: withSession,
+    })
+    expect(JSON.parse(withSession.mock.calls[0][1].body)).toEqual({
+      question: NATURAL_QUESTION,
+      scopeMode: 'preview',
+      chatSessionId: SESSION_ID,
+    })
+  })
+
+  it('reads the confirmation file and posts the exact confirmed DTO unchanged (preview→file→confirmed)', async () => {
+    const dir = tempDir()
+    try {
+      const file = writeConfirmationFile(dir, SCOPE_CONFIRMATION)
+      const fetchImpl = vi.fn(async () => jsonResponse(ANSWER))
+      const result = await runQaCli({
+        options: parseQaCliArgs([
+          '--question',
+          NATURAL_QUESTION,
+          '--scope-mode',
+          'confirmed',
+          '--scope-confirmation-file',
+          file,
+        ]),
+        environment: AUTH_ENV,
+        fetchImpl,
+      })
+      expect(result).toMatchObject({ ok: true, status: 200 })
+      const posted = JSON.parse(fetchImpl.mock.calls[0][1].body)
+      expect(posted).toEqual({
+        question: NATURAL_QUESTION,
+        scopeMode: 'confirmed',
+        scopeConfirmation: { ...SCOPE_CONFIRMATION },
+      })
+      expect(posted).not.toHaveProperty('scope')
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('surfaces preview 422 proposedScope and versioned confirmation metadata without retry', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(PREVIEW_422, 422))
+    const result = await runQaCli({
+      options: parseQaCliArgs(['--question', NATURAL_QUESTION, '--scope-mode', 'preview']),
+      environment: AUTH_ENV,
+      fetchImpl,
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ ok: false, status: 422, stage: 'answer' })
+    expect(result.body?.error?.code).toBe('validation_error')
+    expect(result.body?.error?.requestId).toBe('req-natural-preview-1')
+    const detail = result.body?.error?.details?.[0]
+    expect(detail?.field).toBe('/scopeMode')
+    expect(detail?.code).toBe('qa_clarify_scope_confirmation')
+    expect(detail?.proposedScope).toEqual({ topics: ['AI'] })
+    expect(detail?.confirmation).toEqual({ ...SCOPE_CONFIRMATION })
+    expect(detail?.confirmation?.version).toBe('qa-scope-confirmation-v1')
+
+    const errorLog = vi.fn()
+    const logged = await main(['--question', NATURAL_QUESTION, '--scope-mode', 'preview'], {
+      environment: AUTH_ENV,
+      fetchImpl: vi.fn(async () => jsonResponse(PREVIEW_422, 422)),
+      errorLog,
+    })
+    expect(logged.ok).toBe(false)
+    expect(JSON.stringify(errorLog.mock.calls)).toContain(SCOPE_CONFIRMATION.token)
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(SESSION_TOKEN)
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(CSRF_TOKEN)
+    process.exitCode = undefined
+  })
+
+  it('keeps altered/expired/cross-user confirmed 422 envelopes canonical and does not retry', async () => {
+    const cases = [
+      {
+        name: 'altered',
+        body: {
+          error: {
+            code: 'validation_error',
+            message: 'Phạm vi đã thay đổi.',
+            requestId: 'req-natural-altered',
+          },
+        },
+      },
+      {
+        name: 'expired',
+        body: {
+          error: {
+            code: 'validation_error',
+            message: 'Xác nhận đã hết hạn.',
+            requestId: 'req-natural-expired',
+          },
+        },
+      },
+      {
+        name: 'cross-user',
+        body: {
+          error: {
+            code: 'validation_error',
+            message: 'Xác nhận không thuộc phiên này.',
+            requestId: 'req-natural-cross-user',
+          },
+        },
+      },
+    ]
+    const dir = tempDir()
+    try {
+      const file = writeConfirmationFile(dir, SCOPE_CONFIRMATION)
+      for (const fixture of cases) {
+        const fetchImpl = vi.fn(async () => jsonResponse(fixture.body, 422))
+        const result = await runQaCli({
+          options: parseQaCliArgs([
+            '--question',
+            NATURAL_QUESTION,
+            '--scope-mode=confirmed',
+            `--scope-confirmation-file=${file}`,
+          ]),
+          environment: AUTH_ENV,
+          fetchImpl,
+        })
+        expect(fetchImpl).toHaveBeenCalledTimes(1)
+        expect(result).toEqual({
+          ok: false,
+          status: 422,
+          stage: 'answer',
+          body: fixture.body,
+        })
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects explicit scope together with scope-mode and unsafe confirmation files as safe bad_request', async () => {
+    expect(() =>
+      parseQaCliArgs(['--question', NATURAL_QUESTION, '--topic', 'AI', '--scope-mode', 'preview']),
+    ).toThrow(/explicit.*scope|scope.*explicit|together|mutually exclusive/i)
+
+    const dir = tempDir()
+    try {
+      const missing = join(dir, 'missing-confirmation.json')
+      await expect(
+        runQaCli({
+          options: parseQaCliArgs([
+            '--question',
+            NATURAL_QUESTION,
+            '--scope-mode',
+            'confirmed',
+            '--scope-confirmation-file',
+            missing,
+          ]),
+          environment: AUTH_ENV,
+          fetchImpl: vi.fn(),
+        }),
+      ).rejects.toMatchObject({ status: 400, code: 'bad_request' })
+
+      const malformed = writeConfirmationFile(dir, '{not-json')
+      const malformedFetch = vi.fn()
+      await expect(
+        runQaCli({
+          options: parseQaCliArgs([
+            '--question',
+            NATURAL_QUESTION,
+            '--scope-mode=confirmed',
+            `--scope-confirmation-file=${malformed}`,
+          ]),
+          environment: AUTH_ENV,
+          fetchImpl: malformedFetch,
+        }),
+      ).rejects.toMatchObject({ status: 400, code: 'bad_request' })
+      expect(malformedFetch).not.toHaveBeenCalled()
+
+      const oversized = join(dir, 'oversized-confirmation.json')
+      writeFileSync(oversized, 'x'.repeat(512 * 1024))
+      await expect(
+        runQaCli({
+          options: parseQaCliArgs([
+            '--question',
+            NATURAL_QUESTION,
+            '--scope-mode',
+            'confirmed',
+            '--scope-confirmation-file',
+            oversized,
+          ]),
+          environment: AUTH_ENV,
+          fetchImpl: vi.fn(),
+        }),
+      ).rejects.toMatchObject({ status: 400, code: 'bad_request' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps explicit article/topic/date request bodies byte-compatible', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(ANSWER))
+    await runQaCli({
+      options: parseQaCliArgs([
+        '--question',
+        '  Bài viết kết luận gì?  ',
+        '--article-id',
+        ARTICLE_ID,
+        '--topic',
+        'AI',
+        '--published-after=2026-08-01T00:00:00.000Z',
+        '--published-before=2026-08-02T00:00:00.000Z',
+      ]),
+      environment: AUTH_ENV,
+      fetchImpl,
+    })
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      question: 'Bài viết kết luận gì?',
+      scope: {
+        articleId: ARTICLE_ID,
+        topics: ['AI'],
+        publishedAfter: '2026-08-01T00:00:00.000Z',
+        publishedBefore: '2026-08-02T00:00:00.000Z',
+      },
+    })
+  })
+
+  it('preserves 429 Retry-After without retrying the answer request', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        {
+          error: {
+            code: 'rate_limit_exceeded',
+            message: 'Too many attempts',
+            requestId: 'req-natural-429',
+          },
+        },
+        429,
+        { 'Retry-After': '17' },
+      ),
+    )
+    const result = await runQaCli({
+      options: parseQaCliArgs(['--question', NATURAL_QUESTION, '--scope-mode', 'preview']),
+      environment: AUTH_ENV,
+      fetchImpl,
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({
+      ok: false,
+      status: 429,
+      stage: 'answer',
+      retryAfter: 17,
+      body: {
+        error: {
+          code: 'rate_limit_exceeded',
+          message: 'Too many attempts',
+          requestId: 'req-natural-429',
+        },
+      },
+    })
   })
 })
