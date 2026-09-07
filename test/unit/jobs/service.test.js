@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ObjectId } from 'mongodb'
 import { createJobService } from '../../../server/application/jobs/service.js'
-import { createFlushedCoordinatorRunner } from '../../../server/bootstrap/jobs.js'
 const NOW = new Date('2026-08-10T00:00:00.000Z')
 const auth = {
   user: { id: '507f1f77bcf86cd799439011', role: 'admin', status: 'active' },
@@ -11,14 +10,6 @@ const source = {
   id: '507f1f77bcf86cd799439013', connectorType: 'rss', connectorConfig: { kind: 'rss', feedUrl: 'https://example.com/feed.xml', batchSize: 20 },
   operationalStatus: 'active', licenseStatus: 'metadata-only', policyVersion: 4,
   technicalCheck: { status: 'passed' },
-}
-function sourceForConnector(connectorType) {
-  const connector = {
-    rss: { accessMethod: 'rss', authorityTier: 'editorial', connectorConfig: { kind: 'rss', feedUrl: 'https://example.com/feed.xml', batchSize: 20 } },
-    arxiv: { accessMethod: 'api', authorityTier: 'primary', connectorConfig: { kind: 'arxiv', arxivQuery: 'cat:cs.AI', batchSize: 20 } },
-    'hacker-news': { accessMethod: 'api', authorityTier: 'community-signal', connectorConfig: { kind: 'hacker-news', hackerNewsStream: 'topstories', batchSize: 20 } },
-  }[connectorType]
-  return { ...source, connectorType, ...connector }
 }
 
 
@@ -47,37 +38,23 @@ describe('ingestion job service', () => {
     expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledWith(expect.objectContaining({ actorFence: expect.objectContaining({ sessionVersion: 2 }), audit: expect.objectContaining({ reasonCode: 'ingestion_trigger_requested' }), admission: { scope: 'admin-trigger', subject: auth.user.id } }))
   })
 
-  it.each(['rss', 'arxiv', 'hacker-news'])('returns the committed %s job when its inline kick fails', async (connectorType) => {
-    const connectorSource = sourceForConnector(connectorType)
+  it('returns the committed queued job without invoking an injected coordinator', async () => {
     const coordinator = vi.fn(async () => {
-      throw Object.assign(new Error('upstream details must not escape'), { code: 'source_fetch_failed', retryable: true })
+      throw new Error('coordinator must not run during job creation')
     })
     const trace = vi.fn()
-    const { service, jobRepository } = fixture({
-      runDueWork: coordinator,
-      trace,
-      sourceRepository: { findSourceById: vi.fn(async () => connectorSource) },
-    })
+    const { service, jobRepository } = fixture({ runDueWork: coordinator, trace })
 
     const job = await service.createIngestionJob({
       auth,
-      input: { sourceId: connectorSource.id },
-      idempotencyKey: `kick-failure-${connectorType}-1`,
+      input: { sourceId: source.id },
+      idempotencyKey: 'enqueue-only-create-1',
     })
 
-    expect(job).toMatchObject({ status: 'queued', connectorType })
+    expect(job).toMatchObject({ status: 'queued', sourceId: source.id, connectorType: source.connectorType })
     expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledOnce()
-    expect(coordinator).toHaveBeenCalledOnce()
-    expect(trace).toHaveBeenCalledWith(expect.objectContaining({
-      queueName: 'ingestion',
-      stage: 'ingestion.trigger_kick',
-      status: 'failed',
-      jobId: job.id,
-      sourceId: connectorSource.id,
-      errorCode: 'source_fetch_failed',
-      retryable: true,
-    }))
-    expect(JSON.stringify(trace.mock.calls)).not.toContain('upstream details')
+    expect(coordinator).not.toHaveBeenCalled()
+    expect(trace).not.toHaveBeenCalled()
   })
 
   it('normalizes a Mongo admin identifier before rate-limit admission', async () => {
@@ -108,15 +85,90 @@ describe('ingestion job service', () => {
     await expect(service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-ingest-0001' })).rejects.toThrow(new RegExp(message, 'i'))
     expect(jobRepository.createOrReuseIngestionJobWithAdmission).not.toHaveBeenCalled()
   })
+  it('propagates source lookup failures before job persistence', async () => {
+    const sourceError = new Error('source lookup failed')
+    const coordinator = vi.fn(async () => {
+      throw new Error('coordinator must not run')
+    })
+    const { service, jobRepository } = fixture({
+      runDueWork: coordinator,
+      sourceRepository: { findSourceById: vi.fn(async () => { throw sourceError }) },
+    })
 
-  it('creates a bounded linked retry only for retryable failed or partial jobs', async () => {
+    await expect(service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'source-failure-1' })).rejects.toBe(sourceError)
+    expect(jobRepository.createOrReuseIngestionJobWithAdmission).not.toHaveBeenCalled()
+    expect(coordinator).not.toHaveBeenCalled()
+  })
+
+  it('propagates admission failures before returning a committed job', async () => {
+    const admissionError = new Error('admission unavailable')
+    const coordinator = vi.fn(async () => {
+      throw new Error('coordinator must not run')
+    })
+    const rateLimitAdmission = { reserve: vi.fn(async () => { throw admissionError }) }
+    const jobRepository = {
+      createOrReuseIngestionJobWithAdmission: vi.fn(async ({ rateLimitAdmission: admission }) => admission.reserve()),
+    }
+    const { service } = fixture({ runDueWork: coordinator, rateLimitAdmission, jobRepository })
+
+    await expect(service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'admission-failure-1' })).rejects.toBe(admissionError)
+    expect(rateLimitAdmission.reserve).toHaveBeenCalledOnce()
+    expect(coordinator).not.toHaveBeenCalled()
+  })
+
+  it('propagates repository failures before returning a committed job', async () => {
+    const repositoryError = new Error('repository write failed')
+    const coordinator = vi.fn(async () => {
+      throw new Error('coordinator must not run')
+    })
+    const jobRepository = {
+      createOrReuseIngestionJobWithAdmission: vi.fn(async () => { throw repositoryError }),
+    }
+    const { service } = fixture({ runDueWork: coordinator, jobRepository })
+
+    await expect(service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'repository-failure-1' })).rejects.toBe(repositoryError)
+    expect(coordinator).not.toHaveBeenCalled()
+  })
+
+  it('returns the same committed job for an idempotent replay without executing a coordinator', async () => {
+    const committed = { id: '507f1f77bcf86cd799439015', sourceId: source.id, status: 'queued', trigger: 'admin' }
+    const coordinator = vi.fn(async () => {
+      throw new Error('coordinator must not run')
+    })
+    const jobRepository = { createOrReuseIngestionJobWithAdmission: vi.fn(async () => committed) }
+    const { service } = fixture({ runDueWork: coordinator, jobRepository })
+
+    const first = await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'replay-stable-1' })
+    const replay = await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'replay-stable-1' })
+
+    expect(first).toBe(committed)
+    expect(replay).toBe(committed)
+    expect(replay).toEqual(first)
+    expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledTimes(2)
+    expect(coordinator).not.toHaveBeenCalled()
+  })
+
+  it('creates a bounded linked retry and preserves its explicit kick semantics', async () => {
     const parent = { id: '507f1f77bcf86cd799439014', sourceId: source.id, status: 'failed', error: { retryable: true }, attempt: 1, batchSize: 20 }
-    const { service, jobRepository } = fixture({ jobRepository: { findIngestionJobById: vi.fn(async () => parent) } })
+    const coordinator = vi.fn(async () => {
+      throw Object.assign(new Error('retry upstream details must not escape'), { code: 'source_fetch_failed', retryable: true })
+    })
+    const trace = vi.fn()
+    const { service, jobRepository } = fixture({
+      runDueWork: coordinator,
+      trace,
+      jobRepository: { findIngestionJobById: vi.fn(async () => parent) },
+    })
+
     const retry = await service.retryIngestionJob({ auth, jobId: parent.id, idempotencyKey: 'retry-ingest-0001', reasonCode: 'job_retry_requested', request: { serverRequestId: 'request-2' } })
+
     expect(retry.parentJobId).toBe(parent.id)
     expect(retry.attempt).toBe(2)
     expect(retry.trigger).toBe('retry')
     expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledWith(expect.objectContaining({ audit: expect.objectContaining({ reasonCode: 'job_retry_requested' }), parentJobId: parent.id, nextAttempt: 2 }))
+    expect(coordinator).toHaveBeenCalledOnce()
+    expect(trace).toHaveBeenCalledWith(expect.objectContaining({ stage: 'ingestion.trigger_kick', status: 'failed', jobId: retry.id, sourceId: source.id, errorCode: 'source_fetch_failed', retryable: true }))
+    expect(JSON.stringify(trace.mock.calls)).not.toContain('retry upstream details')
   })
 
   it('rejects non-retryable failure and uses exact cancel reason', async () => {
@@ -155,57 +207,6 @@ describe('ingestion job service', () => {
     expect(() => createJobService({ jobRepository: {}, sourceRepository: {}, rateLimitAdmission: { reserve() {} } })).toThrow(/atomic/i)
   })
 
-  it('runs only the injected shared coordinator after manual creation', async () => {
-    const coordinator = vi.fn(async () => ({ processed: 1 }))
-    const materializeDailyIngestion = vi.fn()
-    const jobRepository = {
-      createOrReuseIngestionJobWithAdmission: vi.fn(async ({ job }) => job),
-      materializeDailyIngestion,
-    }
-    const service = createJobService({
-      jobRepository,
-      sourceRepository: { findSourceById: vi.fn(async () => source) },
-      rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) },
-      runDueWork: coordinator,
-      now: () => new Date(NOW),
-    })
-    await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-coordinator-0001' })
-    expect(coordinator).toHaveBeenCalledTimes(1)
-    expect(materializeDailyIngestion).not.toHaveBeenCalled()
-  })
-  it('waits for lifecycle trace writes before the auto-kick resolves', async () => {
-    const coordinator = vi.fn(async () => ({ processed: 1 }))
-    const trace = vi.fn()
-    trace.flush = vi.fn(async () => true)
-    const flushedCoordinator = createFlushedCoordinatorRunner({ coordinatorRunner: coordinator, trace })
-    const { service } = fixture({ runDueWork: flushedCoordinator })
-
-    await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-flush-0001' })
-
-    expect(coordinator).toHaveBeenCalledOnce()
-    expect(trace.flush).toHaveBeenCalledOnce()
-  })
-
-  it('keeps create auto-kick short while explicit admin due-work uses the bounded drain runner', async () => {
-    const kickDueWork = vi.fn(async () => ({ runId: 'short-kick' }))
-    const runAdminDueWork = vi.fn(async () => ({ runId: 'admin-drain' }))
-    const service = createJobService({
-      jobRepository: { createOrReuseIngestionJobWithAdmission: vi.fn(async ({ job }) => job) },
-      sourceRepository: { findSourceById: vi.fn(async () => source) },
-      rateLimitAdmission: { reserve: vi.fn(async () => ({ allowed: true })) },
-      kickDueWork,
-      runAdminDueWork,
-      now: () => new Date(NOW),
-    })
-
-    await service.createIngestionJob({ auth, input: { sourceId: source.id }, idempotencyKey: 'manual-runner-split-0001' })
-    expect(kickDueWork).toHaveBeenCalledTimes(1)
-    expect(runAdminDueWork).not.toHaveBeenCalled()
-
-    await expect(service.runDueWork({ auth })).resolves.toEqual({ runId: 'admin-drain' })
-    expect(runAdminDueWork).toHaveBeenCalledTimes(1)
-    expect(kickDueWork).toHaveBeenCalledTimes(1)
-  })
 
   it('lets only an active admin run one bounded shared coordinator turn', async () => {
     const result = {
