@@ -1210,7 +1210,7 @@ export const openApiDocument = {
         ],
         "operationId": "getAdminOverview",
         "x-persistence": "mongo",
-        "summary": "Get actionable operational counts",
+        "summary": "Get operational counts and ingestion failure review metrics",
         "responses": {
           "200": {
             "description": "Successful response",
@@ -8571,7 +8571,10 @@ export const openApiDocument = {
           "pausedSources",
           "sourcesNeedingReview",
           "queuedJobs",
+          "activeJobs",
           "failedJobs",
+          "actionableFailedJobs",
+          "terminalFailedJobs",
           "articlesNeedingReview",
           "failedIndexes",
           "openTakedowns",
@@ -8595,6 +8598,18 @@ export const openApiDocument = {
             "minimum": 0
           },
           "failedJobs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "activeJobs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "actionableFailedJobs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "terminalFailedJobs": {
             "type": "integer",
             "minimum": 0
           },

@@ -11,10 +11,18 @@ function liveRepository(repository) {
 describe('admin governance service', () => {
   it('returns safe overview counters without private fields', async () => {
     const repository = {
-      getOverview: vi.fn(async () => ({ activeSources: 2, pausedSources: 1, sourcesNeedingReview: 0, queuedJobs: 3, failedJobs: 1, articlesNeedingReview: 4, failedIndexes: 1, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null, passwordHash: 'must-not-leak' })),
+      getOverview: vi.fn(async () => ({ activeSources: 2, pausedSources: 1, sourcesNeedingReview: 0, queuedJobs: 3, activeJobs: 2, failedJobs: 1, actionableFailedJobs: 1, terminalFailedJobs: 0, articlesNeedingReview: 4, failedIndexes: 1, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null, passwordHash: 'must-not-leak' })),
     }
     const service = createAdminGovernanceService({ repository: liveRepository(repository) })
-    await expect(service.getAdminOverview({ auth: adminAuth })).resolves.toEqual({ activeSources: 2, pausedSources: 1, sourcesNeedingReview: 0, queuedJobs: 3, failedJobs: 1, articlesNeedingReview: 4, failedIndexes: 1, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null })
+    await expect(service.getAdminOverview({ auth: adminAuth })).resolves.toEqual({ activeSources: 2, pausedSources: 1, sourcesNeedingReview: 0, queuedJobs: 3, activeJobs: 2, failedJobs: 1, actionableFailedJobs: 1, terminalFailedJobs: 0, articlesNeedingReview: 4, failedIndexes: 1, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null })
+  })
+
+  it('coerces invalid overview counters to non-negative integers', async () => {
+    const repository = {
+      getOverview: vi.fn(async () => ({ activeJobs: -1, actionableFailedJobs: 1.5, terminalFailedJobs: '4' })),
+    }
+    const service = createAdminGovernanceService({ repository: liveRepository(repository) })
+    await expect(service.getAdminOverview({ auth: adminAuth })).resolves.toMatchObject({ activeJobs: 0, actionableFailedJobs: 0, terminalFailedJobs: 0 })
   })
 
   it('preserves the repository receiver for overview reads', async () => {

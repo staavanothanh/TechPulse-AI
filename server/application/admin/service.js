@@ -138,7 +138,7 @@ function safeArticle(document, detail = false) {
 }
 
 function safeOverview(value = {}) {
-  const fields = ['activeSources', 'pausedSources', 'sourcesNeedingReview', 'queuedJobs', 'failedJobs', 'articlesNeedingReview', 'failedIndexes', 'openTakedowns', 'failedAccountDeletions']
+  const fields = ['activeSources', 'pausedSources', 'sourcesNeedingReview', 'queuedJobs', 'activeJobs', 'failedJobs', 'actionableFailedJobs', 'terminalFailedJobs', 'articlesNeedingReview', 'failedIndexes', 'openTakedowns', 'failedAccountDeletions']
   return Object.fromEntries([...fields.map((field) => [field, Number.isInteger(value[field]) && value[field] >= 0 ? value[field] : 0]), ['lastSuccessfulIngestionAt', dateIso(value.lastSuccessfulIngestionAt, true)]])
 }
 

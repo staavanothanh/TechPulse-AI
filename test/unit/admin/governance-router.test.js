@@ -12,7 +12,7 @@ const authService = {
 describe('admin governance HTTP boundaries', () => {
   it('exposes overview, safe articles and audit only to admins', async () => {
     const service = {
-      getAdminOverview: vi.fn(async () => ({ activeSources: 1, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, failedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null })),
+      getAdminOverview: vi.fn(async () => ({ activeSources: 1, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, activeJobs: 0, failedJobs: 0, actionableFailedJobs: 0, terminalFailedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null })),
       listAdminArticles: vi.fn(async () => ({ articles: [article], hasNext: false, nextCursor: null })),
       listAuditLogs: vi.fn(async () => ({ logs: [], hasNext: false, nextCursor: null })),
     }

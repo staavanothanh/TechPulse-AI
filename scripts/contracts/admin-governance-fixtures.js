@@ -75,7 +75,7 @@ function fixtureServices() {
     async updateUserStatus({ userId, status }) { if (userId !== USER_ID) throw new AuthError(404, 'not_found', 'User not found'); return { ...ADMIN_USER, status, updatedAt: new Date(NOW) } },
   }
   const adminGovernanceService = {
-    async getAdminOverview() { return { activeSources: 4, pausedSources: 1, sourcesNeedingReview: 2, queuedJobs: 3, failedJobs: 1, articlesNeedingReview: 2, failedIndexes: 1, openTakedowns: 1, failedAccountDeletions: 1, lastSuccessfulIngestionAt: NOW } },
+    async getAdminOverview() { return { activeSources: 4, pausedSources: 1, sourcesNeedingReview: 2, queuedJobs: 3, activeJobs: 2, failedJobs: 1, actionableFailedJobs: 1, terminalFailedJobs: 0, articlesNeedingReview: 2, failedIndexes: 1, openTakedowns: 1, failedAccountDeletions: 1, lastSuccessfulIngestionAt: NOW } },
     async listAdminArticles({ query } = {}) { if (query?.status === 'hidden') throw new AdminGovernanceError(422, 'validation_error', 'Article filter is invalid'); return { articles: [ARTICLE], hasNext: false, nextCursor: null } },
     async getAdminArticle({ articleId }) { if (articleId !== ARTICLE_ID) throw new AdminGovernanceError(404, 'not_found', 'Article not found'); return ARTICLE_DETAIL },
     async updateAdminArticle({ articleId, patch }) {

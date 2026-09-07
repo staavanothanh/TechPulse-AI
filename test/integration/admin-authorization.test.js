@@ -3,7 +3,7 @@ import { createApp } from '../../server/app.js'
 
 const adminToken = 'step11-admin-authorization-token'
 const userToken = 'step11-user-authorization-token'
-const service = { getAdminOverview: vi.fn(async () => ({ activeSources: 0, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, failedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null })) }
+const service = { getAdminOverview: vi.fn(async () => ({ activeSources: 0, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, activeJobs: 0, failedJobs: 0, actionableFailedJobs: 0, terminalFailedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 0, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null })) }
 const authService = {
   authenticate: vi.fn(async ({ token }) => ({
     user: { id: '507f1f77bcf86cd799439001', role: token === adminToken ? 'admin' : 'user', status: 'active' },

@@ -32,7 +32,10 @@ describe('admin Mongo performance boundaries', () => {
       ])],
       ['ingestionJobs', aggregateCollection([
         { key: 'queuedJobs', value: 4 },
+        { key: 'activeJobs', value: 2 },
         { key: 'failedJobs', value: 5 },
+        { key: 'actionableFailedJobs', value: 1 },
+        { key: 'terminalFailedJobs', value: 4 },
         { key: 'lastSuccessfulIngestionAt', value: new Date('2026-08-20T00:00:00.000Z') },
       ])],
       ['articles', aggregateCollection({ articlesNeedingReview: 6, failedIndexes: 7 })],
@@ -49,7 +52,10 @@ describe('admin Mongo performance boundaries', () => {
       pausedSources: 1,
       sourcesNeedingReview: 3,
       queuedJobs: 4,
+      activeJobs: 2,
       failedJobs: 5,
+      actionableFailedJobs: 1,
+      terminalFailedJobs: 4,
       articlesNeedingReview: 6,
       failedIndexes: 7,
       openTakedowns: 8,
@@ -60,7 +66,7 @@ describe('admin Mongo performance boundaries', () => {
     for (const name of ['sources', 'ingestionJobs']) {
       const pipeline = collections.get(name).aggregate.mock.calls[0][0]
       expect(pipeline.some((stage) => stage.$group)).toBe(false)
-      expect(pipeline.filter((stage) => stage.$unionWith)).toHaveLength(2)
+      expect(pipeline.filter((stage) => stage.$unionWith)).toHaveLength(name === 'ingestionJobs' ? 5 : 2)
     }
   })
 

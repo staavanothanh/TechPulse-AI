@@ -41,15 +41,40 @@ export const ARTICLE_OVERVIEW_PIPELINE = Object.freeze([
 ])
 
 export const INGESTION_OVERVIEW_PIPELINE = Object.freeze([
-  { $match: { status: { $in: ['queued', 'running', 'partial'] } } },
+  { $match: { status: 'queued' } },
   { $count: 'value' },
   { $set: { key: 'queuedJobs' } },
   { $unionWith: { coll: 'ingestionJobs', pipeline: [
-    { $match: { status: 'failed', 'error.retryable': true } },
+    { $match: { $or: [{ status: 'running' }, { status: 'partial', attempt: { $lt: 3 } }] } },
     { $lookup: { from: 'ingestionJobs', localField: '_id', foreignField: 'parentJobId', as: 'children' } },
-    { $match: { 'children.status': { $ne: 'succeeded' } } },
+    { $match: { $or: [{ status: 'running' }, { status: 'partial', 'children.0': { $exists: false } }] } },
+    { $count: 'value' },
+    { $set: { key: 'activeJobs' } },
+  ] } },
+  { $unionWith: { coll: 'ingestionJobs', pipeline: [
+    { $match: { status: 'failed' } },
     { $count: 'value' },
     { $set: { key: 'failedJobs' } },
+  ] } },
+  { $unionWith: { coll: 'ingestionJobs', pipeline: [
+    { $match: { $or: [{ status: 'partial' }, { status: 'failed', 'error.retryable': true }], attempt: { $lt: 3 } } },
+    { $lookup: { from: 'ingestionJobs', localField: '_id', foreignField: 'parentJobId', as: 'children' } },
+    { $match: { 'children.0': { $exists: false } } },
+    { $count: 'value' },
+    { $set: { key: 'actionableFailedJobs' } },
+  ] } },
+  { $unionWith: { coll: 'ingestionJobs', pipeline: [
+    { $match: { status: { $in: ['failed', 'partial'] } } },
+    { $lookup: { from: 'ingestionJobs', localField: '_id', foreignField: 'parentJobId', as: 'children' } },
+    { $match: { $or: [
+      { status: 'failed', 'error.retryable': { $ne: true } },
+      { status: 'failed', attempt: { $gte: 3 } },
+      { status: 'failed', 'children.0': { $exists: true } },
+      { status: 'partial', attempt: { $gte: 3 } },
+      { status: 'partial', 'children.0': { $exists: true } },
+    ] } },
+    { $count: 'value' },
+    { $set: { key: 'terminalFailedJobs' } },
   ] } },
   { $unionWith: { coll: 'ingestionJobs', pipeline: [
     { $match: { status: 'succeeded', finishedAt: { $type: 'date' } } },
@@ -249,7 +274,10 @@ export class MongoAdminRepository {
       pausedSources: sourceMetrics.pausedSources ?? 0,
       sourcesNeedingReview: sourceMetrics.sourcesNeedingReview ?? 0,
       queuedJobs: jobMetrics.queuedJobs ?? 0,
+      activeJobs: jobMetrics.activeJobs ?? 0,
       failedJobs: jobMetrics.failedJobs ?? 0,
+      actionableFailedJobs: jobMetrics.actionableFailedJobs ?? 0,
+      terminalFailedJobs: jobMetrics.terminalFailedJobs ?? 0,
       articlesNeedingReview: articleMetrics?.articlesNeedingReview ?? 0,
       failedIndexes: articleMetrics?.failedIndexes ?? 0,
       openTakedowns,

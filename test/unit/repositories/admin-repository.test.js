@@ -221,27 +221,78 @@ function createConcurrentArticleContext() {
 }
 
 describe('MongoAdminRepository', () => {
-  it('computes overview metrics and exposes immutable pipeline constants', async () => {
+  it('computes distinct overview job metrics with canonical retry predicates', async () => {
     const fixture = createContext({
       aggregateResults: {
         sources: [[{ key: 'activeSources', value: 2 }, { key: 'pausedSources', value: 1 }]],
-        ingestionJobs: [[{ key: 'queuedJobs', value: 4 }, { key: 'lastSuccessfulIngestionAt', value: now }]],
+        ingestionJobs: [[
+          { key: 'queuedJobs', value: 2 },
+          { key: 'activeJobs', value: 3 },
+          { key: 'failedJobs', value: 5 },
+          { key: 'actionableFailedJobs', value: 1 },
+          { key: 'terminalFailedJobs', value: 4 },
+          { key: 'lastSuccessfulIngestionAt', value: now },
+        ]],
         articles: [{ articlesNeedingReview: 3, failedIndexes: 1 }],
         takedownRequests: [{ count: 2 }],
         accountDeletionRequests: [{ count: 1 }],
       },
     })
-    await expect(fixture.repository.getOverview()).resolves.toEqual({ activeSources: 2, pausedSources: 1, sourcesNeedingReview: 0, queuedJobs: 4, failedJobs: 0, articlesNeedingReview: 3, failedIndexes: 1, openTakedowns: 2, failedAccountDeletions: 1, lastSuccessfulIngestionAt: now })
-    expect(SOURCE_OVERVIEW_PIPELINE).toHaveLength(6)
-    expect(fixture.collections.get('sources').aggregate).toHaveBeenCalled()
-  })
+    await expect(fixture.repository.getOverview()).resolves.toEqual({
+      activeSources: 2,
+      pausedSources: 1,
+      sourcesNeedingReview: 0,
+      queuedJobs: 2,
+      activeJobs: 3,
+      failedJobs: 5,
+      actionableFailedJobs: 1,
+      terminalFailedJobs: 4,
+      articlesNeedingReview: 3,
+      failedIndexes: 1,
+      openTakedowns: 2,
+      failedAccountDeletions: 1,
+      lastSuccessfulIngestionAt: now,
+    })
+    const branchFor = (key) => INGESTION_OVERVIEW_PIPELINE.find((stage) => stage.$unionWith?.pipeline?.some((pipelineStage) => pipelineStage.$set?.key === key))?.$unionWith.pipeline
+    expect(INGESTION_OVERVIEW_PIPELINE[0].$match).toEqual({ status: 'queued' })
+    expect(branchFor('activeJobs')).toEqual([
+      { $match: { $or: [{ status: 'running' }, { status: 'partial', attempt: { $lt: 3 } }] } },
+      { $lookup: { from: 'ingestionJobs', localField: '_id', foreignField: 'parentJobId', as: 'children' } },
+      { $match: { $or: [{ status: 'running' }, { status: 'partial', 'children.0': { $exists: false } }] } },
+      { $count: 'value' },
+      { $set: { key: 'activeJobs' } },
+    ])
+    expect(branchFor('failedJobs').find((stage) => stage.$match)).toEqual({ $match: { status: 'failed' } })
 
-  it('only counts retryable failed ingestion jobs without successful retries in overview', async () => {
-    const failedStage = INGESTION_OVERVIEW_PIPELINE.find((stage) => stage.$unionWith?.pipeline?.some((p) => p.$set?.key === 'failedJobs'))
-    expect(failedStage).toBeDefined()
-    const pipeline = failedStage.$unionWith.pipeline
-    const matchStage = pipeline.find((p) => p.$match)
-    expect(matchStage.$match).toEqual(expect.objectContaining({ status: 'failed', 'error.retryable': true }))
+    const actionable = branchFor('actionableFailedJobs')
+    expect(actionable.find((stage) => stage.$match)).toEqual({
+      $match: {
+        $or: [
+          { status: 'partial' },
+          { status: 'failed', 'error.retryable': true },
+        ],
+        attempt: { $lt: 3 },
+      },
+    })
+    expect(actionable.find((stage) => stage.$lookup)).toEqual({
+      $lookup: { from: 'ingestionJobs', localField: '_id', foreignField: 'parentJobId', as: 'children' },
+    })
+    expect(actionable.find((stage) => stage.$match?.['children.0'])).toEqual({ $match: { 'children.0': { $exists: false } } })
+
+    const terminal = branchFor('terminalFailedJobs')
+    expect(terminal).toEqual([
+      { $match: { status: { $in: ['failed', 'partial'] } } },
+      { $lookup: { from: 'ingestionJobs', localField: '_id', foreignField: 'parentJobId', as: 'children' } },
+      { $match: { $or: [
+        { status: 'failed', 'error.retryable': { $ne: true } },
+        { status: 'failed', attempt: { $gte: 3 } },
+        { status: 'failed', 'children.0': { $exists: true } },
+        { status: 'partial', attempt: { $gte: 3 } },
+        { status: 'partial', 'children.0': { $exists: true } },
+      ] } },
+      { $count: 'value' },
+      { $set: { key: 'terminalFailedJobs' } },
+    ])
   })
 
   it('inserts allowlisted admin audit records and replays existing events', async () => {

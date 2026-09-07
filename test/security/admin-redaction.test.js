@@ -9,7 +9,7 @@ const authService = {
 const privateFields = {
   rawHtml: '<script>secret</script>', vector: [0.1, 0.2], embeddingInput: 'private corpus', providerPayload: { prompt: 'secret' }, requesterContact: 'private@example.com', question: 'private question', stack: 'private stack', arbitraryDiagnostic: 'private debug',
 }
-const overview = { activeSources: 1, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, failedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 1, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null }
+const overview = { activeSources: 1, pausedSources: 0, sourcesNeedingReview: 0, queuedJobs: 0, activeJobs: 0, failedJobs: 0, actionableFailedJobs: 0, terminalFailedJobs: 0, articlesNeedingReview: 0, failedIndexes: 0, openTakedowns: 1, failedAccountDeletions: 0, lastSuccessfulIngestionAt: null }
 const service = {
   getAdminOverview: vi.fn(async () => ({ ...overview, ...privateFields })),
   listTakedownRequests: vi.fn(async () => ({ requests: [{ id: '507f1f77bcf86cd799439010', status: 'reviewing', targetType: 'article', targetIds: ['507f1f77bcf86cd799439011'], requestedScope: ['summary'], createdAt: '2026-08-13T00:00:00.000Z', updatedAt: '2026-08-13T00:00:00.000Z', ...privateFields }], hasNext: false, nextCursor: null })),
