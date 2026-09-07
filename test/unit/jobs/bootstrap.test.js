@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { assertCronObservabilityReady, assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner } from '../../../server/bootstrap/jobs.js'
+import { assertCronObservabilityReady, assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner, DAILY_MATERIALIZATION_BUDGET_MS } from '../../../server/bootstrap/jobs.js'
 import { createReconciliationRunner } from '../../../server/application/indexing/reconciliation.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
 import { CRON_OBSERVABILITY_COLLECTIONS, CRON_OBSERVABILITY_INDEXES } from '../../../scripts/migrations/cron-observability.js'
@@ -290,6 +290,25 @@ describe('durable-jobs bootstrap readiness', () => {
     await cron()
     expect(materializeDailyIngestion).toHaveBeenCalledTimes(2)
     expect(coordinatorRunner).toHaveBeenCalledTimes(1)
+  })
+  it('uses the bounded ten-second daily materialization default', async () => {
+    const startedAt = new Date('2026-09-03T10:00:00.000Z')
+    let dailyDeadline
+    const cron = createCronDueWorkRunner({
+      jobRepository: {
+        materializeDailyIngestion: vi.fn(async ({ deadline }) => {
+          dailyDeadline = deadline
+          return { hasMore: false }
+        }),
+      },
+      coordinatorRunner: async () => ({ startedAt, finishedAt: startedAt }),
+      now: () => startedAt,
+    })
+
+    await cron()
+
+    expect(DAILY_MATERIALIZATION_BUDGET_MS).toBe(10_000)
+    expect(dailyDeadline).toEqual(new Date(startedAt.getTime() + DAILY_MATERIALIZATION_BUDGET_MS))
   })
   it('forwards the bounded materialization deadline to fixed callbacks', async () => {
     const startedAt = new Date('2026-09-03T10:00:00.000Z')

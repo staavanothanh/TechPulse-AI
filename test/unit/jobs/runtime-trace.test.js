@@ -206,6 +206,24 @@ describe('runtime trace', () => {
     expect(terminals).toHaveLength(1)
     expect(terminals[0]).toMatchObject({ status: 'timeout', errorCode: 'runtime_cleanup_unresolved' })
   })
+  it('keeps materializer terminal counters bounded and omits raw errors', () => {
+    const event = safeEvent({
+      stage: 'cron.materialization.daily',
+      status: 'succeeded',
+      counters: { inspected: 10, created: 8, updated: 1, failed: -1, secret: 99 },
+      error: Object.assign(new Error('mongodb://admin:secret@db.example'), { code: 'runtime_error' }),
+    })
+
+    expect(event).toMatchObject({
+      stage: 'cron.materialization.daily',
+      status: 'succeeded',
+      counters: { inspected: 10, created: 8, updated: 1 },
+      errorCode: 'runtime_error',
+    })
+    expect(event.counters).not.toHaveProperty('secret')
+    expect(JSON.stringify(event)).not.toContain('mongodb://')
+    expect(event).not.toHaveProperty('error')
+  })
 
   it('preserves deferred timeout status and typed error through durable flush', async () => {
     const persisted = []

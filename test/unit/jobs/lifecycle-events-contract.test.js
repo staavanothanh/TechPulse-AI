@@ -112,6 +112,25 @@ describe('canonical observability event contract and persistence', () => {
     })
     expect(doc.error).not.toHaveProperty('message')
   })
+  it('persists successful daily materializer counters without raw error fields', () => {
+    const at = new Date('2026-09-03T12:00:00.000Z')
+    const doc = createLifecycleEventDocument({
+      runId: 'cron-run-daily-success',
+      stage: 'cron.materialization.daily',
+      status: 'succeeded',
+      counters: { inspected: 10, created: 8, updated: 1 },
+      at,
+    })
+
+    expect(doc).toMatchObject({
+      runId: 'cron-run-daily-success',
+      stage: 'cron.materialization.daily',
+      status: 'succeeded',
+      counters: { inspected: 10, created: 8, updated: 1 },
+      occurredAt: at,
+    })
+    expect(doc).not.toHaveProperty('error')
+  })
   it('preserves non-null recovery counters and sequence for coordinator reconstruction', () => {
     const at = new Date('2026-09-03T12:00:00.000Z')
     const doc = createLifecycleEventDocument({
