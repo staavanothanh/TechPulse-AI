@@ -58,6 +58,9 @@ describe('Step 10 Q&A HTTP boundary', () => {
       }
       calls.push(['createAnswer', input])
       if (input.question === 'Xung đột idempotency') throw Object.assign(new Error('Idempotency mismatch'), { status: 409, code: 'idempotency_mismatch' })
+      if (input.question === 'Từ chối toàn vẹn trích dẫn') return { answer: { id: 'answer-integrity-refusal', status: 'refused', paragraphs: [], citations: [], refusalReason: 'insufficient-evidence', chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
+      if (input.question === 'Lỗi toàn vẹn thô chưa xử lý') throw new Error('Answer citation does not resolve')
+      if (input.question === 'Lỗi hạ tầng không xác định') throw new Error('unclassified QA failure')
       if (input.question === 'Câu trả lời có citation lỗi') return { answer: { id: 'answer-invalid', status: 'answered', paragraphs: [{ text: 'Không được công khai.', citationIds: ['C-missing'] }], citations: [], refusalReason: null, chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
       if (input.question === 'Câu trả lời hợp lệ') return { answer: { id: 'answer-valid', status: 'answered', paragraphs: [{ text: 'Câu trả lời có căn cứ.', citationIds: ['C1'] }], citations: [{ id: 'C1', articleId: ARTICLE_ID, sourceId: '507f1f77bcf86cd799439012', sourceName: 'Nguồn biên tập', titleOriginal: 'Bài nguồn', originalUrl: 'https://example.com/source', author: null, publishedAt: '2026-08-10T00:00:00.000Z', sourceLanguage: 'vi' }], refusalReason: null, chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
       if (input.question === 'Replay có citation đã ẩn') return { answer: { id: 'answer-replay', status: 'refused', paragraphs: [], citations: [], refusalReason: 'policy-blocked', chatSessionId: CHAT_ID, createdAt: '2026-08-12T00:00:00.000Z' } }
@@ -195,6 +198,34 @@ describe('Step 10 Q&A HTTP boundary', () => {
     })
     expect(response.status).toBe(409)
     expect((await response.json()).error.code).toBe('idempotency_mismatch')
+  })
+
+  it('accepts the service controlled insufficient-evidence refusal for a citation integrity fault', async () => {
+    const response = await fetch(`${origin}/api/v1/answers`, {
+      method: 'POST',
+      headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-integrity-refusal-key', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Từ chối toàn vẹn trích dẫn', scope: { topics: ['ai'] } }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: { status: 'refused', refusalReason: 'insufficient-evidence', paragraphs: [], citations: [] } })
+  })
+  it('preserves 500 internal_error for a raw known citation integrity error without a service refusal', async () => {
+    const response = await fetch(`${origin}/api/v1/answers`, {
+      method: 'POST',
+      headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-raw-integrity-key', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Lỗi toàn vẹn thô chưa xử lý', scope: { topics: ['ai'] } }),
+    })
+    expect(response.status).toBe(500)
+    expect(await response.json()).toMatchObject({ error: { code: 'internal_error' } })
+  })
+  it('preserves 500 internal_error for an unknown raw service error', async () => {
+    const response = await fetch(`${origin}/api/v1/answers`, {
+      method: 'POST',
+      headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-unknown-error-key', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Lỗi hạ tầng không xác định', scope: { topics: ['ai'] } }),
+    })
+    expect(response.status).toBe(500)
+    expect(await response.json()).toMatchObject({ error: { code: 'internal_error' } })
   })
 
   it('does not dispatch an answer after the client disconnects before CSRF completes', async () => {
