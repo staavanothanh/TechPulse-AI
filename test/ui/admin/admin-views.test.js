@@ -10,6 +10,7 @@ import {
   AdminSourcesView,
   AdminUsersView,
 } from '../../../client/features/admin/ui/AdminViews.jsx'
+import { selectOverviewExceptions } from '../../../client/features/admin/ui/AdminOverviewView.jsx'
 import { ArticlePreviewDialog } from '../../../client/features/admin/ui/AdminShared.jsx'
 import { JobList, JobsActionBar } from '../../../client/features/admin/ui/AdminJobsView.jsx'
 import {
@@ -151,15 +152,86 @@ describe('admin feature views', () => {
     expect(keys.get('status:article-opaque:hidden')).toBeUndefined()
   })
 
-  it('only exposes retry for server-eligible attempts across ingestion and indexing', () => {
-    expect(isAdminJobRetryable({ status: 'partial', attempt: 2 })).toBe(true)
-    expect(isAdminJobRetryable({ status: 'failed', attempt: 2, error: { retryable: true } })).toBe(
-      true,
+  it('uses the canonical retryability predicate for mixed job states', () => {
+    const jobs = [
+      {
+        id: 'failed-retryable',
+        status: 'failed',
+        attempt: 2,
+        error: { retryable: true },
+      },
+      { id: 'partial-retryable', status: 'partial', attempt: 2 },
+      {
+        id: 'explicitly-unavailable',
+        status: 'failed',
+        attempt: 2,
+        retryAvailable: false,
+        error: { retryable: true },
+      },
+      {
+        id: 'error-nonretryable',
+        status: 'failed',
+        attempt: 2,
+        error: { retryable: false },
+      },
+      {
+        id: 'attempt-exhausted',
+        status: 'failed',
+        attempt: 3,
+        error: { retryable: true },
+      },
+      { id: 'missing-retryability', status: 'failed', attempt: 2 },
+      { id: 'queued', status: 'queued', attempt: 1, error: { retryable: true } },
+      { id: 'active', status: 'running', attempt: 1, error: { retryable: true } },
+    ]
+
+    expect(jobs.filter(isAdminJobRetryable).map(({ id }) => id)).toEqual([
+      'failed-retryable',
+      'partial-retryable',
+    ])
+  })
+
+  it('fails closed for historical failed jobs without actionable retries', () => {
+    expect(selectOverviewExceptions({ failedJobs: 4, actionableFailedJobs: 0 })).not.toContainEqual(
+      expect.objectContaining({ key: 'failedJobs' }),
     )
-    expect(isAdminJobRetryable({ status: 'failed', attempt: 2, error: { retryable: false } })).toBe(
-      false,
+    expect(selectOverviewExceptions({ failedJobs: 4 })).not.toContainEqual(
+      expect.objectContaining({ key: 'failedJobs' }),
     )
-    expect(isAdminJobRetryable({ status: 'partial', attempt: 3 })).toBe(false)
+  })
+
+  it('uses actionable failed jobs while preserving other exception metric keys', () => {
+    const exceptions = selectOverviewExceptions({
+      failedJobs: 4,
+      actionableFailedJobs: 2,
+      failedIndexes: 1,
+      sourcesNeedingReview: 3,
+    })
+
+    expect(exceptions).toContainEqual(
+      expect.objectContaining({ key: 'failedJobs', valueKey: 'actionableFailedJobs' }),
+    )
+    expect(exceptions).toContainEqual(
+      expect.objectContaining({ key: 'failedIndexes', valueKey: 'failedIndexes' }),
+    )
+    expect(exceptions).toContainEqual(
+      expect.objectContaining({ key: 'sourcesNeedingReview', valueKey: 'sourcesNeedingReview' }),
+    )
+  })
+
+  it('renders actionable failed count while keeping historical failed metrics', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AdminOverviewView, {
+        api: {},
+        cacheScope: {},
+        initialData: { failedJobs: 4, actionableFailedJobs: 2 },
+      }),
+    )
+    const jobException = html.match(
+      /<button class="admin-exception"[\s\S]*?<strong>Job lỗi<\/strong>[\s\S]*?<b class="admin-value-danger">([^<]+)<\/b>[\s\S]*?<\/button>/,
+    )
+    expect(jobException?.[1]).toBe('2')
+    expect(html).toContain('<strong>4</strong>')
   })
 
   it('uses a fixed-reason confirmation dialog with no free-form reason input', () => {

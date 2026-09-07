@@ -42,6 +42,13 @@ export function overviewExceptionRoute(key) {
   return 'articles'
 }
 
+export function selectOverviewExceptions(data = {}) {
+  return OVERVIEW_METRICS.flatMap(([key, label, tone]) => {
+    const valueKey = key === 'failedJobs' ? 'actionableFailedJobs' : key
+    return Number(data?.[valueKey]) > 0 ? [{ key, label, tone, valueKey }] : []
+  })
+}
+
 export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpired, cacheScope }) {
   const resource = useAdminResource(api, 'getAdminOverview', {
     initialData,
@@ -49,7 +56,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
     cacheScope,
   })
   const data = readResponseData(resource.data) ?? {}
-  const exceptions = OVERVIEW_METRICS.filter(([key]) => Number(data[key]) > 0)
+  const exceptions = selectOverviewExceptions(data)
   return (
     <div className="admin-view admin-overview-view">
       <PageHeader
@@ -75,7 +82,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
           <Panel title="Cần xử lý">
             <div className="admin-exception-list">
               {exceptions.length ? (
-                exceptions.map(([key, label, tone]) => (
+                exceptions.map(({ key, label, tone, valueKey }) => (
                   <button
                     className="admin-exception"
                     key={key}
@@ -86,7 +93,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
                       <strong>{label}</strong>
                       <small>{key}</small>
                     </span>
-                    <b className={`admin-value-${tone}`}>{formatCount(data[key])}</b>
+                    <b className={`admin-value-${tone}`}>{formatCount(data[valueKey])}</b>
                     <Icon name="arrow" size={16} />
                   </button>
                 ))
