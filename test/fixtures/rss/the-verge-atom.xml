@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>The Verge</title>
+  <id>https://www.theverge.com/rss/index.xml</id>
+  <updated>2026-08-10T00:00:00Z</updated>
+  <entry>
+    <id>tag:theverge.com,2026:story-1</id>
+    <title>Why Espa&ntilde;a is having an &iacute;ntense tech summer</title>
+    <link rel="alternate" href="https://www.theverge.com/tech/2026/08/10/story-1" />
+    <updated>2026-08-10T00:00:00Z</updated>
+    <summary type="html"><![CDATA[An &eacute;lite guide to the gadgets shaping the week.]]></summary>
+  </entry>
+</feed>

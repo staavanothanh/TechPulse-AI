@@ -83,6 +83,13 @@ describe('RSS/Atom connector', () => {
       excerptOriginal: 'Use “metadata-only” …',
     })
   })
+  it('rejects unrecognized named entities as non-retryable source payload errors', async () => {
+    const body = '<rss version="2.0"><channel><item><title>Unknown &not-allowlisted;</title><link>https://news.example.test/unknown</link><guid>unknown-entity</guid></item></channel></rss>'
+    await expect(createRssConnector().run({
+      source: source(),
+      payload: { body, contentType: 'application/rss+xml', url: 'https://feeds.example.test/rss.xml' },
+    })).rejects.toMatchObject({ code: 'source_payload_rejected', retryable: false })
+  })
 
   it('normalizes Atom and namespace-prefixed fields through the same interface', async () => {
     const connector = createRssConnector({ now: () => RETRIEVED_AT })
@@ -102,6 +109,16 @@ describe('RSS/Atom connector', () => {
       mediaCandidate: { url: 'https://media.example.test/video.mp4', type: 'video', alt: 'A video', credit: 'Research Lab' },
     })
     expect(result.candidates[0]).not.toHaveProperty('content')
+  })
+  it('parses The Verge Atom entities and normalizes canonical accents', async () => {
+    const [candidate] = (await createRssConnector({ now: () => RETRIEVED_AT }).run({
+      source: source({ accessMethod: 'atom', connectorConfig: { kind: 'rss', feedUrl: 'https://www.theverge.com/rss/index.xml' } }),
+      payload: { body: await fixture('the-verge-atom.xml'), contentType: 'application/atom+xml', url: 'https://www.theverge.com/rss/index.xml' },
+    })).candidates
+    const normalizedText = `${candidate.titleOriginal} ${candidate.excerptOriginal}`
+    expect(normalizedText).toContain('ñ')
+    expect(normalizedText).toContain('í')
+    expect(normalizedText).toContain('é')
   })
 
   it('preserves explicit empty fields while omitting missing optional fields', async () => {
