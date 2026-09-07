@@ -38,6 +38,8 @@ function unavailable() {
   throw Object.assign(new Error('Grounded answer service is not configured'), { status: 503, code: 'service_unavailable' })
 }
 
+const REQUEST_ABORT_SIGNAL = Symbol('requestAbortSignal')
+
 function bindEvent(target, event, listener) {
   if (typeof target?.on === 'function') target.on(event, listener)
 }
@@ -68,7 +70,7 @@ function requestAbortMiddleware(req, res, next) {
     controller.abort()
     cleanup()
   }
-  req.signal = signal
+  res.locals[REQUEST_ABORT_SIGNAL] = signal
   bindEvent(req, 'aborted', onRequestAborted)
   bindEvent(res, 'close', onResponseClose)
   bindEvent(res, 'finish', cleanup)
@@ -118,7 +120,7 @@ export function createAnswersRouter({ qaService, authService } = {}) {
       chatSessionId: req.body.chatSessionId,
       idempotencyKey: idempotencyKey(req),
       request: req,
-      signal: req.signal,
+      signal: res.locals[REQUEST_ABORT_SIGNAL],
     })
     res.status(200).json({ data: validatePublicAnswerResponse(result?.answer ?? result) })
   }))

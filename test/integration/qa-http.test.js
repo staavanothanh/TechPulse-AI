@@ -159,9 +159,12 @@ describe('Step 10 Q&A HTTP boundary', () => {
       expect(valid.status).toBe(200)
       expect((await valid.json()).data.status).toBe('answered')
     })
-    expect(calls.slice(before).filter(([name]) => name === 'createAnswer')).toHaveLength(1)
-  })
+    const readonlyCalls = calls.slice(before).filter(([name]) => name === 'createAnswer')
+    expect(readonlyCalls).toHaveLength(1)
+    expect(readonlyCalls[0][1].signal).toBeInstanceOf(globalThis.AbortSignal)
+    expect(readonlyCalls[0][1].signal.aborted).toBe(false)
 
+  })
   it('rejects a non-canonical chat session path before repository dispatch', async () => {
     const before = calls.length
     const detail = await fetch(`${origin}/api/v1/chat-sessions/chat-1`, { headers: headers() })
@@ -301,6 +304,7 @@ describe('Step 10 Q&A HTTP boundary', () => {
       const abortedInputs = abortedServiceInputs.slice(abortedBefore)
       expect(disconnectedCalls).toHaveLength(0)
       expect(abortedInputs.every((input) => input.signal?.aborted)).toBe(true)
+      expect(abortedInputs).toHaveLength(1)
     } finally {
       gate.release()
       clientRequest?.destroy()
