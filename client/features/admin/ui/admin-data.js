@@ -395,10 +395,10 @@ export function statusLabel(value) {
 }
 
 export function statusTone(value) {
-  if (['failed', 'rejected', 'suspended', 'deleted'].includes(value)) return 'danger'
+  if (['failed', 'failed-actionable', 'rejected', 'suspended', 'deleted'].includes(value)) return 'danger'
   if (['partial', 'reviewing', 'received', 'paused', 'review-needed'].includes(value))
     return 'warning'
-  if (['active', 'approved', 'completed', 'published', 'succeeded', 'passed'].includes(value))
+  if (['active', 'stable', 'approved', 'completed', 'published', 'succeeded', 'passed'].includes(value))
     return 'success'
   if (['queued', 'running', 'testing', 'processing'].includes(value)) return 'accent'
   return 'muted'

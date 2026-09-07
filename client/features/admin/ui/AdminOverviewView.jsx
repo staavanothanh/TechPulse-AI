@@ -4,6 +4,7 @@ import {
   readResponseData,
   useAdminResource,
 } from './admin-data.js'
+import { deriveIngestionPipelineStatus } from './pipeline-status.js'
 import {
   AdminButton,
   EmptyState,
@@ -56,6 +57,7 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
     cacheScope,
   })
   const data = readResponseData(resource.data) ?? {}
+  const ingestionStatus = deriveIngestionPipelineStatus(data)
   const exceptions = selectOverviewExceptions(data)
   return (
     <div className="admin-view admin-overview-view">
@@ -111,12 +113,11 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
                 <span className="admin-pipeline-index">01</span>
                 <span>
                   <strong>Ingestion</strong>
-                  <small>{formatCount(data.queuedJobs)} job đang chờ</small>
+                  <small>
+                    {formatCount(data.queuedJobs)} job đang chờ · {formatCount(data.activeJobs)} job đang chạy
+                  </small>
                 </span>
-                <StatusBadge
-                  value={Number(data.failedJobs) ? 'failed' : Number(data.queuedJobs) ? 'queued' : 'active'}
-                  label={Number(data.failedJobs) ? 'Cần xem' : Number(data.queuedJobs) ? 'Đang chờ' : 'Ổn định'}
-                />
+                <StatusBadge value={ingestionStatus.value} label={ingestionStatus.label} />
               </div>
               <div>
                 <span className="admin-pipeline-index">02</span>

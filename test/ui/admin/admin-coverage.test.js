@@ -428,6 +428,56 @@ describe('admin coverage states', () => {
     expect(overviewQueued).toContain('Đang chờ')
     expect(overviewEmpty).toContain('Ổn định')
   })
+  it('renders independent ingestion status signals and keeps terminal failures stable', () => {
+    const renderOverview = (data) => render(AdminOverviewView, {
+      api: adminApi,
+      cacheScope: {},
+      initialData: data,
+      onNavigate: noop,
+    })
+
+    const actionable = renderOverview({
+      queuedJobs: 0,
+      activeJobs: 0,
+      failedJobs: 1,
+      actionableFailedJobs: 1,
+      terminalFailedJobs: 0,
+      sourcesNeedingReview: 0,
+    })
+    expect(actionable).toContain('Cần xem')
+    expect(actionable).toContain('0 job đang chờ')
+    expect(actionable).toContain('0 job đang chạy')
+
+    const active = renderOverview({
+      queuedJobs: 2,
+      activeJobs: 1,
+      actionableFailedJobs: 0,
+      terminalFailedJobs: 0,
+      sourcesNeedingReview: 0,
+    })
+    expect(active).toContain('Đang chạy')
+    expect(active).toContain('2 job đang chờ')
+    expect(active).toContain('1 job đang chạy')
+
+    const reviewNeeded = renderOverview({
+      queuedJobs: 0,
+      activeJobs: 0,
+      actionableFailedJobs: 0,
+      terminalFailedJobs: 0,
+      sourcesNeedingReview: 2,
+    })
+    expect(reviewNeeded).toContain('Cần xem xét')
+
+    const terminalOnly = renderOverview({
+      queuedJobs: 0,
+      activeJobs: 0,
+      failedJobs: 2,
+      actionableFailedJobs: 0,
+      terminalFailedJobs: 2,
+      sourcesNeedingReview: 0,
+    })
+    expect(terminalOnly).toContain('Ổn định')
+  })
 
   it('covers source registry, policy review and account views without secret fields', () => {
     const sources = render(AdminSourcesView, {
