@@ -115,7 +115,6 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
         job, audit, actorFence: actorFence(auth), rateLimitAdmission,
         admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) },
       })
-      await kickAfterCommit(created)
       return created
     },
     async retryIngestionJob({ auth, jobId, idempotencyKey, reasonCode, request } = {}) {
