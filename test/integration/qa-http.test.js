@@ -1,4 +1,4 @@
-import { request as httpRequest } from 'node:http'
+import { IncomingMessage, request as httpRequest } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp } from '../../server/app.js'
 
@@ -31,6 +31,17 @@ function withinTimeout(promise, label, timeoutMs = 2000) {
       (error) => { clearTimeout(timeout); reject(error) },
     )
   })
+}
+
+async function withReadOnlyRequestSignal(work) {
+  const descriptor = Object.getOwnPropertyDescriptor(IncomingMessage.prototype, 'signal')
+  Object.defineProperty(IncomingMessage.prototype, 'signal', { configurable: true, enumerable: false, get: () => undefined })
+  try {
+    return await work()
+  } finally {
+    if (descriptor) Object.defineProperty(IncomingMessage.prototype, 'signal', descriptor)
+    else delete IncomingMessage.prototype.signal
+  }
 }
 const AUTH = {
   async authenticate() { return { user: { id: 'user-1', status: 'active' }, session: { version: 1 } } },
@@ -128,6 +139,27 @@ describe('Step 10 Q&A HTTP boundary', () => {
     })
     expect(missingKey.status).toBe(400)
     expect((await missingKey.json()).error.code).toBe('bad_request')
+  })
+  it('keeps validation and service dispatch working when request.signal is read-only', async () => {
+    const before = calls.length
+    await withReadOnlyRequestSignal(async () => {
+      const invalid = await fetch(`${origin}/api/v1/answers`, {
+        method: 'POST',
+        headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-readonly-invalid', 'Content-Type': 'application/json' }),
+        body: JSON.stringify({}),
+      })
+      expect(invalid.status).toBe(422)
+      expect((await invalid.json()).error.code).toBe('validation_error')
+
+      const valid = await fetch(`${origin}/api/v1/answers`, {
+        method: 'POST',
+        headers: headers({ Origin: 'http://localhost:3000', 'X-CSRF-Token': 'csrf', 'Idempotency-Key': 'qa-http-readonly-valid', 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ question: 'Câu trả lời hợp lệ', scope: { topics: ['ai'] } }),
+      })
+      expect(valid.status).toBe(200)
+      expect((await valid.json()).data.status).toBe('answered')
+    })
+    expect(calls.slice(before).filter(([name]) => name === 'createAnswer')).toHaveLength(1)
   })
 
   it('rejects a non-canonical chat session path before repository dispatch', async () => {
