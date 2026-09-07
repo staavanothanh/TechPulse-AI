@@ -258,7 +258,7 @@ describe('Step 10 grounded answer service', () => {
 
     const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'missing-block-key' })
 
-    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'provider-unavailable', paragraphs: [], citations: [] })
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence', paragraphs: [], citations: [] })
     expect(repo.sessions).toHaveLength(1)
     expect(repo.sessions[0].answer).not.toHaveProperty('evidenceBlockIds')
   })
@@ -909,5 +909,81 @@ describe('Step 10 grounded answer service', () => {
     if (failureClass === 'schema') await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: `terminal-fallback-${failureClass}` })).resolves.toMatchObject({ answer: { status } })
     else await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: `terminal-fallback-${failureClass}` })).rejects.toMatchObject({ status: 503 })
     expect([...repo.attempts.values()][0]).toMatchObject({ status, providerRouteId: 'qa-model-fallback', providerFailureDomainId: 'domain-a', fallbackKind: 'model' })
+  })
+  it('refuses all-invalid citation metadata without any provider call and persists one refused attempt', async () => {
+    const invalid = {
+      article: { id: 'article-bad', sourceId: 'source-1', status: 'published', evidenceEligible: true, titleOriginal: 'Bài viết lỗi', originalUrl: 'http://example.com/bad', publishedAt: '2026-08-10T00:00:00Z', excerptOriginal: 'Nội dung không đạt.', rightsSnapshot: { sourcePolicyVersion: 1, licenseStatus: 'permitted', llmInputScope: 'excerpt' } },
+      source: evidence()[0].source,
+    }
+    const repo = repository({ records: [invalid] })
+    const answer = vi.fn()
+    const supportVerifier = vi.fn()
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { topics: ['AI'] }, idempotencyKey: 'all-invalid-metadata-key' })
+
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence', paragraphs: [], citations: [] })
+    expect(providerRouter.execute).not.toHaveBeenCalled()
+    expect(answer).not.toHaveBeenCalled()
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(repo.sessions).toHaveLength(1)
+    expect([...repo.attempts.values()][0]).toMatchObject({ status: 'refused', resultStatus: 'refused' })
+  })
+
+  it('answers from the valid record when mixed with invalid citation metadata', async () => {
+    const valid = evidence()[0]
+    const invalid = {
+      article: { ...valid.article, id: 'article-bad', originalUrl: 'http://example.com/bad' },
+      source: valid.source,
+    }
+    const repo = repository({ records: [invalid, valid] })
+    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { topics: ['AI'] }, idempotencyKey: 'mixed-metadata-key' })
+
+    expect(result.answer.status).toBe('answered')
+    expect(result.answer.citations).toHaveLength(1)
+    expect(result.answer.citations[0]).toMatchObject({ articleId: 'article-1', originalUrl: 'https://example.com/a' })
+    expect(JSON.stringify(result.answer)).not.toContain('article-bad')
+    expect(answer).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves a post-generation citation metadata fault to the controlled refusal without provider retry', async () => {
+    const records = evidence()
+    const repo = repository()
+    repo.findQnaEvidence = vi.fn(async () => records)
+    repo.findQnaEvidenceByIds = vi.fn(async () => evidence())
+    repo.getAnswerResult = vi.fn(async () => repo.sessions[0]?.answer)
+    const answer = vi.fn(async () => {
+      records[0].article.originalUrl = 'http://example.com/mutated'
+      return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
+    })
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const appendAnswer = vi.spyOn(repo, 'appendAnswer')
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } }, supportVerifier })
+
+    const input = { auth, question: 'Bài viết kết luận gì?', scope: { topics: ['AI'] }, idempotencyKey: 'post-generation-integrity-key' }
+    const outcome = await service.createAnswer(input).then((value) => ({ value, error: null }), (error) => ({ value: null, error }))
+
+    expect(outcome.error).toBeNull()
+    expect(outcome.value?.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence', paragraphs: [], citations: [] })
+    expect(answer).toHaveBeenCalledTimes(1)
+    expect(supportVerifier).toHaveBeenCalledTimes(1)
+    expect(providerRouter.execute).toHaveBeenCalledTimes(2)
+    expect(appendAnswer).toHaveBeenCalledTimes(1)
+    expect(repo.sessions).toHaveLength(1)
+    expect([...repo.attempts.values()][0]).toMatchObject({ status: 'refused', resultStatus: 'refused' })
+
+    const replay = await service.createAnswer(input)
+    expect(replay.answer).toEqual(outcome.value.answer)
+    expect(repo.sessions).toHaveLength(1)
   })
 })

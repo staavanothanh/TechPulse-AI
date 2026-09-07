@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ProviderAdapterError } from '../../../server/ai/provider-error-taxonomy.js'
+import { QaCitationIntegrityError } from '../../../server/domain/qa/citations.js'
 import { createProviderAdmission } from '../../../server/ai/provider-admission.js'
 import { createProviderRouter, ProviderRoutingError } from '../../../server/ai/provider-router.js'
 
@@ -99,6 +100,26 @@ describe('config-driven provider router', () => {
     await expect(execute(router, invoke)).rejects.toBe(localControl)
     expect(invoke).toHaveBeenCalledTimes(1)
     expect(boundary.run).toHaveBeenCalledTimes(1)
+    expect(boundary.reportProviderDomain).toHaveBeenCalledWith(expect.objectContaining({
+      routeId: 'primary', outcome: 'cancelled',
+    }))
+  })
+
+  it('rejects a QA citation-integrity carrier from validateOutput as local control without fallback', async () => {
+    const boundary = admission()
+    const router = createProviderRouter({ workloadPolicies: workloads, admission: boundary })
+    const integrity = new QaCitationIntegrityError('Answer paragraph citation coverage is invalid')
+    const carrier = new ProviderAdapterError('schema', { localControl: true })
+    carrier.qaCitationIntegrity = true
+    carrier.cause = integrity
+    const invoke = vi.fn(async () => ({ paragraphs: [] }))
+    const validateOutput = vi.fn(() => { throw carrier })
+
+    await expect(execute(router, invoke, { validateOutput })).rejects.toBe(carrier)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(validateOutput).toHaveBeenCalledTimes(1)
+    expect(boundary.run.mock.calls.map(([call]) => call.routeId)).toEqual(['primary'])
+    expect(boundary.reportProviderDomain).toHaveBeenCalledTimes(1)
     expect(boundary.reportProviderDomain).toHaveBeenCalledWith(expect.objectContaining({
       routeId: 'primary', outcome: 'cancelled',
     }))

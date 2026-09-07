@@ -103,12 +103,10 @@ describe('Step 10 evidence and prompt boundary', () => {
     expect(prompt.prompt).not.toContain('originalUrl')
     expect(prompt.prompt).not.toContain('example.com')
 
-    const missingDate = buildGroundedPrompt({
+    expect(() => buildGroundedPrompt({
       question: 'Bài viết kết luận gì?',
       evidence: [{ article: article({ publishedAt: 'not-a-date' }), source: source() }],
-    })
-    expect(missingDate.prompt).not.toContain('[published-at=')
-    expect(missingDate.prompt).not.toContain('Invalid Date')
+    })).toThrow(EvidenceSelectionError)
   })
 
   it('does not send an excerpt when the current source permits metadata only', () => {
@@ -130,6 +128,25 @@ describe('Step 10 evidence and prompt boundary', () => {
       paragraphs: [{ text: 'Sai block.', citationIds: ['C1'], evidenceBlockIds: ['E2'] }],
       citationIds: ['C1', 'C2'], evidenceBlocks: [{ id: 'E1', citationId: 'C1' }, { id: 'E2', citationId: 'C2' }],
     })).toThrow(/citation/i)
+  })
+})
+describe('Step 10 citation metadata admission guard', () => {
+  it.each([
+    ['non-https url', { originalUrl: 'http://example.com/articles/1' }],
+    ['url userinfo', { originalUrl: 'https://user:pass@example.com/articles/1' }],
+    ['empty title', { titleOriginal: '   ' }],
+    ['missing publication date', { publishedAt: undefined }],
+    ['invalid publication date', { publishedAt: 'not-a-date' }],
+  ])('filters a poisoned %s record while keeping the valid record', (_label, override) => {
+    const poisoned = { article: article(override), source: source() }
+    const valid = { article: article(), source: source() }
+    expect(() => filterQnaEvidence([poisoned])).toThrow(EvidenceSelectionError)
+    expect(filterQnaEvidence([poisoned, valid])).toHaveLength(1)
+  })
+
+  it('admits valid HTTPS/title/date records with string or Date publication values', () => {
+    expect(filterQnaEvidence([{ article: article(), source: source() }])).toHaveLength(1)
+    expect(filterQnaEvidence([{ article: article({ publishedAt: new Date('2026-08-10T00:00:00.000Z') }), source: source() }])).toHaveLength(1)
   })
 })
 

@@ -1,5 +1,4 @@
 import { Router } from 'express'
-import { ContentError } from '../../application/articles/service.js'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { loadOpenApi } from '../../../scripts/contracts/openapi-utils.js'
@@ -13,18 +12,6 @@ for (const [name, schema] of Object.entries(openApi.components.schemas)) ajv.add
 const validateAnswerRequest = ajv.compile({ $ref: '#/components/schemas/AnswerRequest' })
 const validateAnswerResponse = ajv.compile({ $ref: '#/components/schemas/AnswerResponse' })
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
-const ANSWER_INTEGRITY_MESSAGES = new Set([
-  'Answer citation does not resolve',
-  'Citation evidence is unavailable',
-  'Citation date is invalid',
-  'Answer citations are invalid',
-  'Answer paragraph citation coverage is invalid',
-])
-
-function classifyAnswerIntegrityError(error) {
-  if (!ANSWER_INTEGRITY_MESSAGES.has(error?.message)) return error
-  return new ContentError(503, 'service_unavailable', 'Q&A answer validation is temporarily unavailable')
-}
 
 function validationError(message, details) {
   return Object.assign(new Error(message), { status: 422, code: 'validation_error', details })
@@ -120,24 +107,20 @@ export function createAnswersRouter({ qaService, authService } = {}) {
   const csrf = requireCsrf(authService)
 
   router.post('/api/v1/answers', requestAbortMiddleware, requireAuthenticated, csrf, asyncContentRoute(async (req, res) => {
-    try {
-      noStoreContent(res)
-      validateBody(req.body)
-      const result = await service.createAnswer({
-        auth: req.auth,
-        question: req.body.question,
-        scope: req.body.scope,
-        scopeMode: req.body.scopeMode,
-        scopeConfirmation: req.body.scopeConfirmation,
-        chatSessionId: req.body.chatSessionId,
-        idempotencyKey: idempotencyKey(req),
-        request: req,
-        signal: req.signal,
-      })
-      res.status(200).json({ data: validatePublicAnswerResponse(result?.answer ?? result) })
-    } catch (error) {
-      throw classifyAnswerIntegrityError(error)
-    }
+    noStoreContent(res)
+    validateBody(req.body)
+    const result = await service.createAnswer({
+      auth: req.auth,
+      question: req.body.question,
+      scope: req.body.scope,
+      scopeMode: req.body.scopeMode,
+      scopeConfirmation: req.body.scopeConfirmation,
+      chatSessionId: req.body.chatSessionId,
+      idempotencyKey: idempotencyKey(req),
+      request: req,
+      signal: req.signal,
+    })
+    res.status(200).json({ data: validatePublicAnswerResponse(result?.answer ?? result) })
   }))
 
   return router

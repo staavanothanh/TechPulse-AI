@@ -1,10 +1,24 @@
+export class QaCitationIntegrityError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'QaCitationIntegrityError'
+    this.code = 'qa_citation_integrity'
+    this.retryable = false
+    Object.setPrototypeOf(this, new.target.prototype)
+  }
+}
+
+export function isQaCitationIntegrityError(error) {
+  return error instanceof QaCitationIntegrityError || error?.qaCitationIntegrity === true && error?.cause instanceof QaCitationIntegrityError
+}
+
 function idValue(value) {
   return value?.toHexString?.() ?? String(value ?? '')
 }
 
 function dateValue(value) {
   const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) throw new Error('Citation date is invalid')
+  if (Number.isNaN(date.getTime())) throw new QaCitationIntegrityError('Citation date is invalid')
   return date.toISOString()
 }
 
@@ -18,8 +32,8 @@ export function citationEvidenceMetadata(evidence) {
     const parsed = new URL(article?.originalUrl)
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('invalid')
     originalUrl = parsed.toString()
-  } catch { throw new Error('Citation evidence is unavailable') }
-  if (!articleId || !sourceId || typeof article?.titleOriginal !== 'string' || !article.titleOriginal || article.publishedAt === undefined) throw new Error('Citation evidence is unavailable')
+  } catch { throw new QaCitationIntegrityError('Citation evidence is unavailable') }
+  if (!articleId || !sourceId || typeof article?.titleOriginal !== 'string' || !article.titleOriginal.trim() || article.publishedAt === undefined) throw new QaCitationIntegrityError('Citation evidence is unavailable')
   return {
     articleId,
     sourceId,
@@ -37,22 +51,22 @@ function citationRecord(evidence, index) {
 }
 
 export function validateParagraphCitations({ paragraphs, citationIds, evidenceBlocks } = {}) {
-  if (!Array.isArray(paragraphs) || paragraphs.length < 1 || paragraphs.length > 12 || !Array.isArray(citationIds) || !Array.isArray(evidenceBlocks)) throw new Error('Answer paragraph citation coverage is invalid')
+  if (!Array.isArray(paragraphs) || paragraphs.length < 1 || paragraphs.length > 12 || !Array.isArray(citationIds) || !Array.isArray(evidenceBlocks)) throw new QaCitationIntegrityError('Answer paragraph citation coverage is invalid')
   const known = new Set(citationIds)
   const blockCitationIds = new Map(evidenceBlocks.map(({ id, citationId }) => [id, citationId]))
   return paragraphs.map((paragraph) => {
     const valid = paragraph && typeof paragraph.text === 'string' && paragraph.text.trim().length > 0 && paragraph.text.length <= 2000 && Array.isArray(paragraph.citationIds) && paragraph.citationIds.length >= 1 && paragraph.citationIds.length <= 10 && new Set(paragraph.citationIds).size === paragraph.citationIds.length && paragraph.citationIds.every((id) => typeof id === 'string' && known.has(id)) && Array.isArray(paragraph.evidenceBlockIds) && paragraph.evidenceBlockIds.length >= 1 && paragraph.evidenceBlockIds.length <= 10 && new Set(paragraph.evidenceBlockIds).size === paragraph.evidenceBlockIds.length && paragraph.evidenceBlockIds.every((id) => typeof id === 'string' && blockCitationIds.has(id) && paragraph.citationIds.includes(blockCitationIds.get(id)))
-    if (!valid) throw new Error('Answer paragraph citation coverage is invalid')
+    if (!valid) throw new QaCitationIntegrityError('Answer paragraph citation coverage is invalid')
     return { text: paragraph.text, citationIds: [...paragraph.citationIds], evidenceBlockIds: [...paragraph.evidenceBlockIds] }
   })
 }
 
 export function hydrateAnswerCitations({ citationIds, evidence = [] } = {}) {
-  if (!Array.isArray(citationIds) || citationIds.length < 1 || citationIds.length > 50) throw new Error('Answer citations are invalid')
+  if (!Array.isArray(citationIds) || citationIds.length < 1 || citationIds.length > 50) throw new QaCitationIntegrityError('Answer citations are invalid')
   const map = new Map(evidence.map((item, index) => [`C${index + 1}`, item]))
   return citationIds.map((id) => {
     const record = map.get(id)
-    if (!record) throw new Error('Answer citation does not resolve')
+    if (!record) throw new QaCitationIntegrityError('Answer citation does not resolve')
     return citationRecord(record, Number(String(id).slice(1)) - 1)
   })
 }

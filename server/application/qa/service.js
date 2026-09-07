@@ -6,7 +6,7 @@ import { buildGroundedPrompt, evidenceAdmissionFence, filterQnaEvidence, Evidenc
 import { planQaIntent, assertQaIntentProposal, QA_TIME_ZONE } from './intent-planner.js'
 import { compileQaExecutionPlan } from './intent-compiler.js'
 import { clarificationForCode, QA_CLARIFICATION_CODES } from '../../domain/qa/intent.js'
-import { hydrateAnswerCitations, validateParagraphCitations } from '../../domain/qa/citations.js'
+import { isQaCitationIntegrityError, hydrateAnswerCitations, validateParagraphCitations } from '../../domain/qa/citations.js'
 import { assertSupportedAnswer, deterministicRefusal } from '../../domain/qa/support.js'
 import { ProviderAdapterError } from '../../ai/provider-error-taxonomy.js'
 import { classifyTopicIds, TOPIC_BY_ID, TOPIC_TAXONOMY_VERSION } from '../../../shared/topic-catalog.js'
@@ -190,6 +190,13 @@ function providerMetadataUpdate(metadata) {
   if (!metadata?.routeId || !metadata?.providerFailureDomainId) return null
   const fallbackKind = metadata.fallback === 'model' || metadata.fallback === 'provider' ? metadata.fallback : 'none'
   return { providerRouteId: metadata.routeId, providerFailureDomainId: metadata.providerFailureDomainId, fallbackKind }
+}
+
+function citationIntegrityProviderCarrier(error) {
+  const carrier = new ProviderAdapterError('schema', { localControl: true })
+  carrier.qaCitationIntegrity = true
+  carrier.cause = error
+  return carrier
 }
 
 function isLocalControlFailure(error) {
@@ -679,6 +686,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
             await renewProviderStage(route)
             await assertCurrentEvidenceFence({ providerInput, scope: executionScope, ordering: retrievalOrdering, execution })
           } catch (error) {
+            if (isQaCitationIntegrityError(error)) throw citationIntegrityProviderCarrier(error)
             if (isLocalControlFailure(error)) {
               localControlFailure = error
               throw new ProviderAdapterError('policy', { localControl: true })
@@ -695,7 +703,10 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
           if (parsedCandidate.status !== 'answered' || !Array.isArray(parsedCandidate.paragraphs)) throw new ProviderAdapterError('schema')
           try {
             return { ...parsedCandidate, paragraphs: validateParagraphCitations({ paragraphs: parsedCandidate.paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks }) }
-          } catch { throw new ProviderAdapterError('schema') }
+          } catch (error) {
+            if (isQaCitationIntegrityError(error)) throw citationIntegrityProviderCarrier(error)
+            throw new ProviderAdapterError('schema')
+          }
         }
         let output
         const generation = await awaitExecution(() => providerRouter.execute({ workloadId: 'qa-generation', admittedInput: providerInput.routerInput, attemptId: attempt._id?.toHexString?.() ?? String(attempt._id), signal: execution.signal, deadline: execution.deadline, invoke: invokeAnswer, validateOutput: validateGenerationOutput }), execution, now)
@@ -725,6 +736,7 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
               await renewProviderStage(route, { recordRoute: false })
               await assertCurrentEvidenceFence({ providerInput, scope: executionScope, ordering: retrievalOrdering, execution })
             } catch (error) {
+              if (isQaCitationIntegrityError(error)) throw citationIntegrityProviderCarrier(error)
               if (isLocalControlFailure(error)) {
                 localControlFailure = error
                 throw new ProviderAdapterError('policy', { localControl: true })
@@ -762,6 +774,9 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
         return { answer: { ...answer, chatSessionId: chat.chatSessionId } }
       } catch (error) {
         if (isExecutionUnavailable(error, execution, now)) throw new ContentError(503, 'service_unavailable', 'Q&A service is temporarily unavailable')
+        if (isQaCitationIntegrityError(error)) {
+          return { answer: await refusal({ actor, attempt, reason: 'insufficient-evidence', scope: safeScope, question: admittedQuestion?.question ?? question, execution }) }
+        }
         if (localControlFailure) {
           const controlFailure = localControlFailure
           if (controlFailure instanceof EvidenceSelectionError && controlFailure.discard) throw new ContentError(409, 'conflict', 'Answer evidence changed during processing')
