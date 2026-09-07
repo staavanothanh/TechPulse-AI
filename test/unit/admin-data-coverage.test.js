@@ -1,6 +1,7 @@
 import React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  ADMIN_FILTER_DEBOUNCE_MS,
   OVERVIEW_METRICS,
   acquireAdminResourceRequest,
   aggregateDueWorkCounters,
@@ -437,6 +438,82 @@ describe('admin-data helpers and cache requests', () => {
     await expect(failing.promise).rejects.toThrow('network')
     failing.release()
     invalidateAdminResourceCache(scope)
+  })
+
+  it('reloads an overview resource with fresh data while retaining prior data during loading', async () => {
+    vi.useFakeTimers()
+    const scope = {}
+    clearAdminResourceCache(scope)
+    let resolveSecondFetch
+    const secondFetch = new Promise((resolve) => {
+      resolveSecondFetch = resolve
+    })
+    let rejectThirdFetch
+    const thirdFetch = new Promise((_, reject) => {
+      rejectThirdFetch = reject
+    })
+    const apiCalls = []
+    const firstData = { data: { queuedJobs: 1, failedJobs: 2 } }
+    const secondData = { data: { queuedJobs: 3, failedJobs: 0 } }
+    let requestCount = 0
+    const fetchImpl = vi.fn((url) => {
+      requestCount += 1
+      if (requestCount === 1) return Promise.resolve(fetchResponse(firstData))
+      if (requestCount === 2) return secondFetch
+      if (requestCount === 3) return thirdFetch
+      throw new Error(`Unexpected overview request: ${String(url)}`)
+    })
+    const api = {
+      getAdminOverview: vi.fn(async ({ credentials, fetchImpl: request, signal }) => {
+        apiCalls.push({ credentials, signal })
+        const response = await request('https://techpulse.test/api/v1/admin/overview', { signal })
+        return response.json()
+      }),
+    }
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchImpl
+    const runner = createHookRunner((props) => useAdminResource(api, 'getAdminOverview', props))
+    try {
+      runner.render({ cacheScope: scope })
+      expect(runner.current.state).toBe('loading')
+
+      await vi.advanceTimersByTimeAsync(ADMIN_FILTER_DEBOUNCE_MS)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(api.getAdminOverview).toHaveBeenCalledTimes(1)
+      expect(apiCalls[0].credentials).toBe('same-origin')
+      expect(runner.current.state).toBe('ready')
+      expect(runner.current.data).toEqual(firstData)
+
+      runner.current.reload()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(api.getAdminOverview).toHaveBeenCalledTimes(2)
+      expect(apiCalls[1].credentials).toBe('same-origin')
+      expect(runner.current.state).toBe('loading')
+      expect(runner.current.data).toEqual(firstData)
+
+      resolveSecondFetch(fetchResponse(secondData))
+      await vi.runAllTimersAsync()
+      expect(runner.current.state).toBe('ready')
+      expect(runner.current.data).toEqual(secondData)
+
+      runner.current.reload()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+      expect(api.getAdminOverview).toHaveBeenCalledTimes(3)
+      expect(runner.current.state).toBe('loading')
+      expect(runner.current.data).toEqual(secondData)
+
+      rejectThirdFetch(new Error('overview unavailable'))
+      await vi.runAllTimersAsync()
+      expect(runner.current.state).toBe('error')
+      expect(runner.current.data).toEqual(secondData)
+    } finally {
+      runner.unmount()
+      globalThis.fetch = originalFetch
+      clearAdminResourceCache(scope)
+      vi.useRealTimers()
+    }
   })
 
   it('guards pagination across status changes and preserves a newer query loading lock', async () => {

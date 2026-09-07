@@ -65,8 +65,13 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
         eyebrow="Bảng điều hành"
         title="Tổng quan vận hành"
         action={
-          <AdminButton icon="refresh" onClick={resource.reload}>
-            Làm mới
+          <AdminButton
+            icon="refresh"
+            onClick={resource.reload}
+            disabled={resource.state === 'loading'}
+            aria-busy={resource.state === 'loading' || undefined}
+          >
+            {resource.state === 'loading' ? 'Đang tải…' : 'Làm mới'}
           </AdminButton>
         }
       />
