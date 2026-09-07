@@ -1,7 +1,7 @@
 import { ObjectId } from 'mongodb'
 import { createJobAuditEvent } from '../../audit/job-writer.js'
 import { JobError, actorScopeForAdmin, canonicalRequestHash } from '../../domain/jobs/idempotency.js'
-
+import { safeEvent } from '../../jobs/runtime-trace.js'
 const DAY_MS = 24 * 60 * 60 * 1000
 const AGING_MS = 30 * 60 * 1000
 const MAX_ATTEMPTS = 3
@@ -57,12 +57,37 @@ function auditRequest(request, idempotencyKey, auth) {
   return { serverRequestId: request?.requestId ?? request?.serverRequestId ?? idempotencyKey, idempotencyKey, actorSessionId: auth.session?._id ?? auth.session?.id }
 }
 
-export function createJobService({ jobRepository, sourceRepository, rateLimitAdmission, runDueWork, kickDueWork = runDueWork, runAdminDueWork = runDueWork, now = () => new Date() } = {}) {
+function reportKickFailure(trace, job, error) {
+  if (typeof trace !== 'function') return
+  try {
+    trace(safeEvent({
+      queueName: 'ingestion',
+      jobId: job?.id,
+      sourceId: job?.sourceId,
+      stage: 'ingestion.trigger_kick',
+      status: 'failed',
+      error,
+    }))
+  } catch {
+    // Telemetry cannot change the durable job response.
+  }
+}
+
+
+export function createJobService({ jobRepository, sourceRepository, rateLimitAdmission, runDueWork, kickDueWork = runDueWork, runAdminDueWork = runDueWork, trace = () => {}, now = () => new Date() } = {}) {
   if (!jobRepository || !sourceRepository) throw new Error('Job and source repositories are required')
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   if (typeof jobRepository.createOrReuseIngestionJobWithAdmission !== 'function') throw new Error('Atomic job admission repository is required')
   const coordinateDueWork = kickDueWork
   const coordinateAdminDueWork = runAdminDueWork
+  const kickAfterCommit = async (job) => {
+    if (typeof coordinateDueWork !== 'function') return
+    try {
+      await coordinateDueWork()
+    } catch (error) {
+      reportKickFailure(trace, job, error)
+    }
+  }
   const sourceFor = async (sourceId) => {
     const source = await sourceRepository.findSourceById(objectIdString(sourceId, 'sourceId'))
     assertEligibleSource(source)
@@ -90,7 +115,7 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
         job, audit, actorFence: actorFence(auth), rateLimitAdmission,
         admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) },
       })
-      await coordinateDueWork?.()
+      await kickAfterCommit(created)
       return created
     },
     async retryIngestionJob({ auth, jobId, idempotencyKey, reasonCode, request } = {}) {
@@ -110,7 +135,7 @@ export function createJobService({ jobRepository, sourceRepository, rateLimitAdm
         job, audit, actorFence: actorFence(auth), rateLimitAdmission,
         admission: { scope: 'admin-trigger', subject: String(actor.id ?? actor._id) }, parentJobId: parent.id, nextAttempt: parent.attempt + 1,
       })
-      await coordinateDueWork?.()
+      await kickAfterCommit(created)
       return created
     },
     async runDueWork({ auth } = {}) {

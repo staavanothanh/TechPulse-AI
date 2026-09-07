@@ -61,14 +61,14 @@ export async function assertCronObservabilityReady(context) {
   }
 }
 
-export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork, runAdminDueWork, verifySchema = assertDurableJobsReady } = {}) {
+export async function createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork, runAdminDueWork, trace, verifySchema = assertDurableJobsReady } = {}) {
   if (typeof rateLimitAdmission?.reserve !== 'function') throw new Error('Rate-limit admission is required')
   await verifySchema(context)
   const jobRepository = new MongoJobRepository(context)
   const leaseRepository = new MongoLeaseRepository(context)
   const sourceRepository = new MongoSourceRepository(context)
   return {
-    jobService: createJobService({ jobRepository, sourceRepository, now, rateLimitAdmission, runDueWork, runAdminDueWork }),
+    jobService: createJobService({ jobRepository, sourceRepository, now, rateLimitAdmission, runDueWork, runAdminDueWork, trace }),
     jobRepository,
     leaseRepository,
   }
@@ -695,7 +695,7 @@ export async function createConfiguredJobRuntime({ context, cronEventRepository,
     trace,
     runIdFactory,
   })
-  const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunnerWithFlush, runAdminDueWork: adminDueWorkRunner, verifySchema: verifyJobsSchema })
+  const configured = await createConfiguredJobService({ context, now, rateLimitAdmission, runDueWork: coordinatorRunnerWithFlush, runAdminDueWork: adminDueWorkRunner, trace, verifySchema: verifyJobsSchema })
   return {
     ...configured,
     queueRegistry,

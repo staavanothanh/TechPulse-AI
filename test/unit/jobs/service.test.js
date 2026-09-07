@@ -12,6 +12,15 @@ const source = {
   operationalStatus: 'active', licenseStatus: 'metadata-only', policyVersion: 4,
   technicalCheck: { status: 'passed' },
 }
+function sourceForConnector(connectorType) {
+  const connector = {
+    rss: { accessMethod: 'rss', authorityTier: 'editorial', connectorConfig: { kind: 'rss', feedUrl: 'https://example.com/feed.xml', batchSize: 20 } },
+    arxiv: { accessMethod: 'api', authorityTier: 'primary', connectorConfig: { kind: 'arxiv', arxivQuery: 'cat:cs.AI', batchSize: 20 } },
+    'hacker-news': { accessMethod: 'api', authorityTier: 'community-signal', connectorConfig: { kind: 'hacker-news', hackerNewsStream: 'topstories', batchSize: 20 } },
+  }[connectorType]
+  return { ...source, connectorType, ...connector }
+}
+
 
 function fixture(overrides = {}) {
   const jobRepository = {
@@ -23,7 +32,7 @@ function fixture(overrides = {}) {
   }
   const sourceRepository = { findSourceById: vi.fn(async () => source), ...overrides.sourceRepository }
   const rateLimitAdmission = overrides.rateLimitAdmission ?? { reserve: vi.fn(async () => ({ allowed: true })) }
-  return { jobRepository, sourceRepository, rateLimitAdmission, service: createJobService({ jobRepository, sourceRepository, rateLimitAdmission, runDueWork: overrides.runDueWork, now: () => new Date(NOW) }) }
+  return { jobRepository, sourceRepository, rateLimitAdmission, service: createJobService({ jobRepository, sourceRepository, rateLimitAdmission, runDueWork: overrides.runDueWork, trace: overrides.trace, now: () => new Date(NOW) }) }
 }
 
 describe('ingestion job service', () => {
@@ -36,6 +45,39 @@ describe('ingestion job service', () => {
     expect(job.idempotencyExpiresAt.getTime() - job.createdAt.getTime()).toBeGreaterThanOrEqual(14 * 24 * 60 * 60 * 1000)
     expect(job.agingEligibleAt.getTime() - job.createdAt.getTime()).toBe(30 * 60 * 1000)
     expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledWith(expect.objectContaining({ actorFence: expect.objectContaining({ sessionVersion: 2 }), audit: expect.objectContaining({ reasonCode: 'ingestion_trigger_requested' }), admission: { scope: 'admin-trigger', subject: auth.user.id } }))
+  })
+
+  it.each(['rss', 'arxiv', 'hacker-news'])('returns the committed %s job when its inline kick fails', async (connectorType) => {
+    const connectorSource = sourceForConnector(connectorType)
+    const coordinator = vi.fn(async () => {
+      throw Object.assign(new Error('upstream details must not escape'), { code: 'source_fetch_failed', retryable: true })
+    })
+    const trace = vi.fn()
+    const { service, jobRepository } = fixture({
+      runDueWork: coordinator,
+      trace,
+      sourceRepository: { findSourceById: vi.fn(async () => connectorSource) },
+    })
+
+    const job = await service.createIngestionJob({
+      auth,
+      input: { sourceId: connectorSource.id },
+      idempotencyKey: `kick-failure-${connectorType}-1`,
+    })
+
+    expect(job).toMatchObject({ status: 'queued', connectorType })
+    expect(jobRepository.createOrReuseIngestionJobWithAdmission).toHaveBeenCalledOnce()
+    expect(coordinator).toHaveBeenCalledOnce()
+    expect(trace).toHaveBeenCalledWith(expect.objectContaining({
+      queueName: 'ingestion',
+      stage: 'ingestion.trigger_kick',
+      status: 'failed',
+      jobId: job.id,
+      sourceId: connectorSource.id,
+      errorCode: 'source_fetch_failed',
+      retryable: true,
+    }))
+    expect(JSON.stringify(trace.mock.calls)).not.toContain('upstream details')
   })
 
   it('normalizes a Mongo admin identifier before rate-limit admission', async () => {
