@@ -309,6 +309,47 @@ describe('worker scheduling', () => {
     expect(result.queues.ingestion.claimed).toBe(0)
     expect(result.nextAvailableAt).toBeNull()
   })
+  it('traces daily materialization timeout and blocks downstream phases', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(STARTED_AT)
+      const trace = vi.fn()
+      const daily = vi.fn(({ signal }) => new Promise((resolve) => {
+        signal.addEventListener('abort', () => globalThis.setTimeout(() => resolve({ hasMore: false }), 1), { once: true })
+      }))
+      const materializer = vi.fn()
+      const coordinatorRunner = vi.fn()
+      const indexingDrainRunner = vi.fn()
+      const runner = createCronDueWorkRunner({
+        jobRepository: { materializeDailyIngestion: daily },
+        coordinatorRunner,
+        indexingDrainRunner,
+        materializers: [{ name: 'source-policy-reconciliation', run: materializer }],
+        trace,
+        runIdFactory: () => 'daily-timeout-run',
+        now: () => new Date(),
+        materializationBudgetMs: 2_000,
+      })
+
+      const pending = runner()
+      const outcome = pending.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }))
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(coordinatorRunner).not.toHaveBeenCalled()
+      expect(indexingDrainRunner).not.toHaveBeenCalled()
+      expect(materializer).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect((await outcome).ok).toBe(true)
+
+      const events = trace.mock.calls.map(([event]) => event)
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ runId: 'daily-timeout-run', stage: 'cron.materialization.daily', status: 'started' }),
+        expect.objectContaining({ runId: 'daily-timeout-run', stage: 'cron.materialization.daily', status: 'timeout', counters: { deferred: 1, updated: 0 } }),
+        expect.objectContaining({ runId: 'daily-timeout-run', stage: 'cron.materialization', status: 'timeout', counters: { deferred: 1 } }),
+      ]))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('waits for timed-out materialization settlement and fails closed before coordination', async () => {
     vi.useFakeTimers()
     try {
@@ -374,7 +415,7 @@ describe('worker scheduling', () => {
     const coordinatorRunner = vi.fn(async ({ runId }) => ({ ...baseResult(), runId }))
     const indexingDrainRunner = vi.fn(async (result) => result)
     const runner = createCronDueWorkRunner({
-      jobRepository: { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false, created: 1 })) },
+      jobRepository: { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false, inspected: 1, created: 1 })) },
       coordinatorRunner,
       indexingDrainRunner,
       trace,
@@ -392,5 +433,11 @@ describe('worker scheduling', () => {
       ['cron.indexing', 'succeeded'],
       ['cron', 'succeeded'],
     ]))
+    expect(trace.mock.calls.map(([event]) => [event.stage, event.status])).toEqual(expect.arrayContaining([
+      ['cron.materialization.daily', 'succeeded'],
+    ]))
+    expect(trace.mock.calls.map(([event]) => event).find((event) => event.stage === 'cron.materialization.daily' && event.status === 'succeeded')).toMatchObject({
+      counters: { inspected: 1, created: 1, updated: 1 },
+    })
   })
 })

@@ -23,7 +23,7 @@ import { MongoAdminRepository } from '../repositories/mongo/admin-repository.js'
 import { MongoCronEventRepository } from '../repositories/mongo/cron-event-repository.js'
 import { assertGovernanceReady } from './governance-readiness.js'
 import { runtimeFailure, settleBeforeDeadline } from '../jobs/runtime-bounds.js'
-import { flushRuntimeTrace, safeEvent, startRuntimePhase } from '../jobs/runtime-trace.js'
+import { flushRuntimeTrace, MATERIALIZER_PHASE_STAGES, safeEvent, startRuntimePhase } from '../jobs/runtime-trace.js'
 
 const EMPTY_QUEUE_COUNTERS = Object.freeze({ claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 })
 const QUEUE_RESPONSE_KEY = Object.freeze({ ingestion: 'ingestion', indexing: 'indexing', 'account-deletion': 'accountDeletion' })
@@ -216,6 +216,79 @@ function isMaterializationDeadlineError(error) {
   )
 }
 
+const MATERIALIZER_STAGE_BY_NAME = Object.freeze({
+  'source-policy-reconciliation': MATERIALIZER_PHASE_STAGES[2],
+  'takedown-cleanup': MATERIALIZER_PHASE_STAGES[1],
+  'cron-lifecycle-retention': MATERIALIZER_PHASE_STAGES[3],
+})
+
+function materializerStage(name) {
+  if (Object.hasOwn(MATERIALIZER_STAGE_BY_NAME, name)) return MATERIALIZER_STAGE_BY_NAME[name]
+  const suffix = String(name ?? 'unknown').toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').slice(0, 96) || 'unknown'
+  return `${MATERIALIZER_PHASE_STAGES[0]}:${suffix}`
+}
+
+function materializationTraceCounters(result = {}, additional = {}) {
+  const counters = { ...additional }
+  for (const key of ['inspected', 'created', 'updated', 'failed', 'deferred']) {
+    if (Number.isSafeInteger(result[key]) && result[key] >= 0) counters[key] = result[key]
+  }
+  if (Number.isSafeInteger(result.affected) && result.affected >= 0) counters.updated = result.affected
+  if (result.hasMore === true) counters.deferred = Math.max(1, Number(counters.deferred ?? 0))
+  return counters
+}
+
+function addMaterializationTraceCounters(target, result = {}) {
+  for (const key of ['inspected', 'created']) {
+    if (Number.isSafeInteger(result[key]) && result[key] >= 0) target[key] = Number(target[key] ?? 0) + result[key]
+  }
+  return target
+}
+
+async function runTracedMaterializerOperation({ trace, stage, now, context, execute, signal, requiresCompleteMaterialization = false } = {}) {
+  const phase = startRuntimePhase({ trace, stage, now, context })
+  try {
+    const result = await execute()
+    signal?.throwIfAborted?.()
+    if (requiresCompleteMaterialization && result?.hasMore === true) throw runtimeFailure('runtime_deadline_exceeded', 'Cron materializer deferred before completion')
+    phase.succeed({ counters: materializationTraceCounters(result) })
+    return result
+  } catch (error) {
+    const control = isCronControlError(error, signal)
+    const counters = materializationTraceCounters(undefined, { [control ? 'deferred' : 'failed']: 1 })
+    if (control) phase.timeout(error, { counters })
+    else phase.fail(error, { counters })
+    throw error
+  }
+}
+
+async function runDailyMaterializationOperation({ trace, now, context, execute, signal, deadline, settlementDeadline, pageLimit, maxPages } = {}) {
+  const phase = startRuntimePhase({ trace, stage: MATERIALIZER_PHASE_STAGES[0], now, context })
+  const totals = {}
+  let pages = 0
+  let hasMore = true
+  try {
+    while (hasMore && pages < maxPages) {
+      signal?.throwIfAborted?.()
+      const pageNow = now()
+      if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
+      const result = await execute({ pageNow, pageLimit, deadline, settlementDeadline, signal })
+      signal?.throwIfAborted?.()
+      addMaterializationTraceCounters(totals, result)
+      pages += 1
+      hasMore = result?.hasMore === true
+      if (now().getTime() >= deadline.getTime()) break
+    }
+    phase.succeed({ counters: materializationTraceCounters(totals, { updated: pages }) })
+    return { pages, completed: true }
+  } catch (error) {
+    const control = isCronControlError(error, signal)
+    phase[control ? 'timeout' : 'fail'](error, { counters: materializationTraceCounters(totals, { [control ? 'deferred' : 'failed']: 1, updated: pages }) })
+    throw error
+  }
+}
+
+
 async function runCronMaterializationPhase({
   trace,
   now,
@@ -232,36 +305,42 @@ async function runCronMaterializationPhase({
   const phase = startRuntimePhase({ trace, stage: 'cron.materialization', now, context })
   let pages = 0
   try {
-    let hasMore = true
-    while (hasMore && pages < maxPages) {
-      signal?.throwIfAborted?.()
-      const pageNow = now()
-      if (!(pageNow instanceof Date) || Number.isNaN(pageNow.getTime())) throw new Error('Cron clock is invalid')
-      if (pageNow.getTime() >= deadline.getTime()) break
-      const result = await runCronOperation({
-        operation: (options) => jobRepository.materializeDailyIngestion({ now: pageNow, limit: pageLimit, ...options }),
-        deadline,
-        settlementDeadline,
+    const daily = await runDailyMaterializationOperation({
+      trace,
+      now,
+      context,
+      deadline,
+      settlementDeadline,
+      signal,
+      pageLimit,
+      maxPages,
+      execute: ({ pageNow, pageLimit: limit, deadline: operationDeadline, settlementDeadline: operationSettlementDeadline, signal: operationSignal }) => runCronOperation({
+        operation: (options) => jobRepository.materializeDailyIngestion({ now: pageNow, limit, ...options }),
+        deadline: operationDeadline,
+        settlementDeadline: operationSettlementDeadline,
         now,
-        signal,
-      })
-      signal?.throwIfAborted?.()
-      pages += 1
-      hasMore = result?.hasMore === true
-      if (now().getTime() >= deadline.getTime()) break
-    }
+        signal: operationSignal,
+      }),
+    })
+    pages = daily.pages
     for (const materializer of materializers) {
       signal?.throwIfAborted?.()
       if (now().getTime() >= overallDeadline.getTime()) break
-      const materialized = await runCronOperation({
-        operation: (options) => materializer.run({ ...options, deadline }),
-        deadline,
-        settlementDeadline,
+      await runTracedMaterializerOperation({
+        trace,
+        stage: materializerStage(materializer.name),
         now,
+        context,
         signal,
+        requiresCompleteMaterialization: materializer.requiresCompleteMaterialization === true,
+        execute: () => runCronOperation({
+          operation: (options) => materializer.run({ ...options, deadline }),
+          deadline,
+          settlementDeadline,
+          now,
+          signal,
+        }),
       })
-      signal?.throwIfAborted?.()
-      if (materializer.requiresCompleteMaterialization && materialized?.hasMore === true) throw runtimeFailure('runtime_deadline_exceeded', 'Cron materializer deferred before completion')
     }
     phase.succeed({ counters: { updated: pages } })
     return { pages, completed: true }
@@ -387,7 +466,7 @@ export function createProfiledIndexingDrainRunner({ queueRegistry, profile, now 
 
 export const DAILY_MATERIALIZATION_PAGE_LIMIT = 100
 export const MAX_DAILY_MATERIALIZATION_PAGES = 10
-export const DAILY_MATERIALIZATION_BUDGET_MS = 4_000
+export const DAILY_MATERIALIZATION_BUDGET_MS = 10_000
 
 function normalizeMaterializerDescriptor(materializer, index) {
   if (typeof materializer === 'function') return { name: materializer.name || `materializer-${index + 1}`, run: materializer }
