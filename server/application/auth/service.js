@@ -351,7 +351,8 @@ export function createAuthService({ repository, runtime, environment = process.e
    * - Tài khoản đã có mật khẩu thật (`passwordEnabled !== false`): bắt buộc nhập đúng
    *   `currentPassword`. Tài khoản Google-only (`passwordEnabled === false`, chỉ mang
    *   hash "mồi" không dùng để đăng nhập): cho phép ĐẶT mật khẩu lần đầu mà không cần
-   *   currentPassword — người dùng đã chứng minh quyền sở hữu qua session + CSRF.
+   *   currentPassword sau khi session hiện tại mang bằng chứng Google OAuth đã xác minh
+   *   trong vòng 10 phút.
    * - Mật khẩu mới dùng chung ràng buộc 10..128 ký tự như khi đăng ký.
    * - Thành công: `updatePassword` tăng `sessionVersion` (khiến mọi session cũ mất hiệu
    *   lực), thu hồi session cũ, rồi cấp lại MỘT session mới cho chính request này và ghi

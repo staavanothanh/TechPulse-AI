@@ -6,12 +6,13 @@ import { AUTH_CORE_COLLECTIONS } from './auth-core.js'
  * Migration `password-change`: mở rộng schema để hỗ trợ tính năng khách hàng đổi
  * mật khẩu (kể cả tài khoản Google-only đặt mật khẩu lần đầu).
  *
- * Phạm vi collMod (3 collection, không sửa migration auth-core):
+ * Phạm vi collMod (4 collection, không sửa migration auth-core):
  * - `users`: thêm field optional `passwordEnabled` (bool) vào active schema.
  *   `passwordEnabled === false` đánh dấu tài khoản chỉ có hash "mồi" (OAuth-only,
  *   chưa đặt mật khẩu thật); `true`/thiếu nghĩa là đã có mật khẩu dùng được.
  * - `adminAuditLogs`: cho phép action `user_password_changed` trong allowlist.
  * - `rateLimitBuckets`: cho phép scope `password-change` theo IP, tối đa 5 lần/15 phút.
+ * - `sessions`: lưu thời điểm Google OAuth đã được server xác minh để step-up đặt mật khẩu.
  *
  * Không tạo index mới: `passwordEnabled` không phải khoá truy vấn; `googleSub`
  * đã có unique index từ migration google-oauth.
