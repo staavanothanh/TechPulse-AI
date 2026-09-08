@@ -216,4 +216,53 @@ describe('application session actions', () => {
     expect(authErrorForRedirect(undefined)).toBeNull()
     expect(authErrorForRedirect('')).toBeNull()
   })
+
+  it('commits the rotated session after a password change and omits currentPassword for first-time setup', async () => {
+    const rotatedUser = { id: 'user-opaque', role: 'user', hasPassword: true }
+    const api = { changePassword: vi.fn().mockResolvedValue(response(rotatedUser, 'csrf-rotated')) }
+    const applySession = vi.fn()
+    const actions = createSessionActions({
+      api,
+      getCsrfToken: () => 'csrf-in-memory',
+      applySession,
+    })
+
+    await actions.changePassword({ currentPassword: 'old-password-1', newPassword: 'new-password-1' })
+    expect(api.changePassword).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: 'same-origin',
+        body: JSON.stringify({ newPassword: 'new-password-1', currentPassword: 'old-password-1' }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'csrf-in-memory' },
+      }),
+    )
+    expect(applySession).toHaveBeenLastCalledWith(rotatedUser, 'csrf-rotated', null)
+
+    await actions.changePassword({ newPassword: 'first-password-1' })
+    expect(api.changePassword).toHaveBeenLastCalledWith(
+      expect.objectContaining({ body: JSON.stringify({ newPassword: 'first-password-1' }) }),
+    )
+  })
+
+  it('ignores a stale password change completion after a newer session transition starts', async () => {
+    let epoch = 0
+    let resolveChange
+    const api = {
+      changePassword: vi.fn(() => new Promise((resolve) => { resolveChange = resolve })),
+    }
+    const applySession = vi.fn()
+    const actions = createSessionActions({
+      api,
+      getCsrfToken: () => 'csrf-current',
+      applySession,
+      beginSessionTransition: () => { epoch += 1; return epoch },
+      isSessionTransitionCurrent: (value) => value === epoch,
+    })
+
+    const pending = actions.changePassword({ newPassword: 'new-password-1' })
+    epoch += 1
+    resolveChange(response({ id: 'old-user' }, 'old-csrf'))
+    await pending
+
+    expect(applySession).not.toHaveBeenCalled()
+  })
 })

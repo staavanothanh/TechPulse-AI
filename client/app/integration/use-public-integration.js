@@ -1166,6 +1166,15 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
     }
   }
 
+  async function onChangePassword(payload) {
+    try {
+      return await accountActions.changePassword(payload)
+    } catch (requestError) {
+      if (requestError?.status === 401) expire(requestError, identityKey)
+      throw requestError
+    }
+  }
+
   return {
     user: user ? { ...user, topicPreferences: displayDraft } : null,
     saving: displayBusy,
@@ -1175,6 +1184,7 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
     onToggleTopic: (topic) => setDraft((current) => toggleTopicValue(current, topic)),
     onSavePreferences: () => run(() => accountActions.updatePreferences(displayDraft), setBusy, 'Đã lưu chủ đề quan tâm.'),
     onRequestDeletion: () => run(accountActions.requestDeletion, setDeleting),
+    onChangePassword,
     onLogout: () => run(accountActions.logout, setBusy),
   }
 }

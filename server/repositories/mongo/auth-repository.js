@@ -77,6 +77,7 @@ export class MongoAuthRepository {
     if (input.suspendedAt) document.suspendedAt = input.suspendedAt
     if (input.suspensionReason) document.suspensionReason = input.suspensionReason
     if (input.googleSub !== undefined) document.googleSub = input.googleSub
+    if (input.passwordEnabled !== undefined) document.passwordEnabled = input.passwordEnabled
     await this.collection('users').insertOne(document, options)
     return document
   }
@@ -144,6 +145,16 @@ export class MongoAuthRepository {
     const result = await this.collection('users').findOneAndUpdate(
       { _id: idValue(userId), status: 'active', ...(expectedSessionVersion === undefined ? {} : { sessionVersion: expectedSessionVersion }) },
       { $set: { topicPreferences, topicPreferenceIds: derivedIds, topicPreferenceTaxonomyVersion: version, updatedAt: new Date() } },
+      { ...mongoOptions, returnDocument: 'after' },
+    )
+    return result
+  }
+
+  async updatePassword(userId, passwordHash, options = {}) {
+    const { expectedSessionVersion, ...mongoOptions } = options
+    const result = await this.collection('users').findOneAndUpdate(
+      { _id: idValue(userId), status: 'active', ...(expectedSessionVersion === undefined ? {} : { sessionVersion: expectedSessionVersion }) },
+      { $set: { passwordHash, passwordEnabled: true, updatedAt: new Date() }, $inc: { sessionVersion: 1 } },
       { ...mongoOptions, returnDocument: 'after' },
     )
     return result

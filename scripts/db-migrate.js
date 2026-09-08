@@ -36,6 +36,7 @@ import { migrationUriEnvName } from './migration-credential.js'
 import { buildGoogleOAuthMigration, runGoogleOAuthMigration, withGoogleOAuthAuditCompatibility } from './migrations/google-oauth.js'
 import { buildTopicTaxonomyMigration, runTopicTaxonomyMigration } from './migrations/topic-taxonomy-v1.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, buildSourcePolicyReconciliationMigration, runSourcePolicyReconciliationMigration } from './migrations/source-policy-reconciliation.js'
+import { buildPasswordChangeMigration, runPasswordChangeMigration } from './migrations/password-change.js'
 
 configureDns()
 function stableJson(value) {
@@ -55,9 +56,9 @@ const targetIndex = process.argv.indexOf('--to')
 const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : 'auth-core'
 const dryRun = args.has('--dry-run')
 const summaryDetailWriterMode = args.has('--writers-paused') ? 'paused' : undefined
-if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'chat-sessions-source-name-v1', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation', 'cron-observability'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'chat-sessions-source-name-v1', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation', 'cron-observability', 'password-change'].includes(target)) {
   console.error(
-    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, chat-sessions-source-name-v1, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation, cron-observability',
+    'Supported migration targets: auth-core, sources, durable-jobs, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, chat-sessions-source-name-v1, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation, cron-observability, password-change',
   )
   process.exitCode = 2
 } else {
@@ -102,6 +103,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? buildTopicTaxonomyMigration
               : target === 'source-policy-reconciliation'
                 ? buildSourcePolicyReconciliationMigration
+              : target === 'password-change'
+                ? buildPasswordChangeMigration
                 : buildAuthCoreMigration
     const runMigration =
       target === 'sources'
@@ -134,6 +137,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'articles', 'indexing-jobs', 'inde
                 ? runTopicTaxonomyMigration
               : target === 'source-policy-reconciliation'
                 ? runSourcePolicyReconciliationMigration
+              : target === 'password-change'
+                ? runPasswordChangeMigration
                 : runAuthCoreWithStep4Compatibility
     const plan = dryRun
       ? target === 'governance'

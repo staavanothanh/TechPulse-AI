@@ -3,6 +3,7 @@ export const AUDIT_RULES = Object.freeze({
   user_logged_in: Object.freeze({ reasonCode: 'user_login', changedFields: [] }),
   user_logged_out: Object.freeze({ reasonCode: 'user_logout', changedFields: [] }),
   user_preferences_updated: Object.freeze({ reasonCode: 'preferences_updated', changedFields: ['topicPreferences'] }),
+  user_password_changed: Object.freeze({ reasonCode: 'password_changed', changedFields: ['passwordHash', 'sessionVersion'] }),
   user_suspended: Object.freeze({ reasonCode: 'user_suspended', changedFields: ['status', 'sessionVersion'] }),
   user_restored: Object.freeze({ reasonCode: 'user_restored', changedFields: ['status', 'sessionVersion'] }),
   google_oauth_registered: Object.freeze({ reasonCode: 'google_oauth_registered', changedFields: ['status'] }),

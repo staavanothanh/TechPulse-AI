@@ -17,7 +17,7 @@ const ajv = new Ajv({ allErrors: true, strict: false })
 addFormats(ajv)
 for (const [name, schema] of Object.entries(OPENAPI.components.schemas)) ajv.addSchema(schema, `#/components/schemas/${name}`)
 const validators = new Map()
-for (const name of ['RegisterRequest', 'LoginRequest', 'PreferencesRequest', 'AdminUserUpdateRequest']) validators.set(name, ajv.compile({ $ref: `#/components/schemas/${name}` }))
+for (const name of ['RegisterRequest', 'LoginRequest', 'PreferencesRequest', 'ChangePasswordRequest', 'AdminUserUpdateRequest']) validators.set(name, ajv.compile({ $ref: `#/components/schemas/${name}` }))
 const responseValidators = new Map(['AdminUserListResponse', 'AdminUserResponse'].map((name) => [name, ajv.compile({ $ref: `#/components/schemas/${name}` })]))
 
 function noStore(res) {
@@ -86,7 +86,7 @@ function asyncRoute(handler) {
 export function createAuthRouter({ authService } = {}) {
   const router = Router()
   const unavailable = () => { throw new AuthError(503, 'service_unavailable', 'Authentication service is not configured') }
-  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable, googleLogin: unavailable, verifyGoogleState: unavailable, generateGoogleAuthUrl: unavailable }
+  const service = authService ?? { register: unavailable, login: unavailable, currentUser: unavailable, logout: unavailable, updatePreferences: unavailable, changePassword: unavailable, listAdminUsers: unavailable, getAdminUser: unavailable, updateUserStatus: unavailable, authenticate: unavailable, googleLogin: unavailable, verifyGoogleState: unavailable, generateGoogleAuthUrl: unavailable }
 
   router.post('/api/v1/auth/register', asyncRoute(async (req, res) => {
     validateBody('RegisterRequest', req.body)
@@ -125,6 +125,14 @@ export function createAuthRouter({ authService } = {}) {
     const user = await service.updatePreferences({ auth, csrfToken: req.get('X-CSRF-Token'), topicPreferences: req.body.topicPreferences, request: req })
     noStore(res)
     res.status(200).json({ data: user })
+  }))
+
+  router.post('/api/v1/me/password', asyncRoute(async (req, res) => {
+    validateBody('ChangePasswordRequest', req.body)
+    const auth = await requireAuth(service, req)
+    const result = await service.changePassword({ auth, csrfToken: req.get('X-CSRF-Token'), currentPassword: req.body.currentPassword, newPassword: req.body.newPassword, request: req })
+    setAuthCookie(res, result)
+    res.status(200).json(authPayload(result))
   }))
 
   router.get('/api/v1/admin/users', asyncRoute(async (req, res) => {

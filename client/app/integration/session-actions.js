@@ -127,11 +127,29 @@ export function createSessionActions({
     return response
   }
 
+  // Đổi/đặt mật khẩu: server thu hồi mọi session cũ và cấp lại MỘT session mới,
+  // nên phải commit user + CSRF token MỚI (token cũ đã hết hiệu lực).
+  // currentPassword chỉ gửi khi tài khoản đã có mật khẩu thật (OAuth-only bỏ trống).
+  async function changePassword({ currentPassword, newPassword } = {}) {
+    const transition = startTransition()
+    const csrfToken = getCsrfToken()
+    const body = newPassword === undefined ? {} : { newPassword }
+    if (currentPassword !== undefined && currentPassword !== null) body.currentPassword = currentPassword
+    const response = await api.changePassword({
+      body: JSON.stringify(body),
+      credentials: 'same-origin',
+      headers: csrfHeaders(csrfToken, { 'Content-Type': 'application/json' }),
+    })
+    if (canCommit(transition)) commitSession(response.data.user, response.data.csrfToken, null, transition)
+    return response
+  }
+
   return Object.freeze({
     authenticate,
     authenticateWithGoogle,
     logout,
     requestDeletion,
     updatePreferences,
+    changePassword,
   })
 }

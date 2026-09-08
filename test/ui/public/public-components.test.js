@@ -294,6 +294,38 @@ describe('public feature presentation contract', () => {
     expect(account).toMatch(/aria-pressed="true"[^>]*>Bảo mật/)
     expect(account).toMatch(/aria-pressed="true"[^>]*>AI/)
   })
+  it('renders the change-password form with a current-password field for accounts that already have a password', () => {
+    const account = render(AccountView, {
+      user: { id: 'u-1', email: 'reader@example.com', role: 'user', topicPreferences: [], hasPassword: true },
+      onChangePassword: handlers.onSubmit,
+    })
+    expect(account).toContain('Đổi mật khẩu')
+    expect(account).toContain('id="account-current-password"')
+    expect(account).toContain('id="account-new-password"')
+    expect(account).toContain('id="account-confirm-password"')
+    expect(account).toContain('autoComplete="current-password"')
+    expect(account).toContain('class="public-input"')
+    expect(account).not.toContain('đăng nhập bằng Google')
+
+    // Dữ liệu cũ không có hasPassword → mặc định an toàn vẫn yêu cầu mật khẩu hiện tại
+    const legacy = render(AccountView, {
+      user: { id: 'u-2', email: 'legacy@example.com', role: 'user', topicPreferences: [] },
+      onChangePassword: handlers.onSubmit,
+    })
+    expect(legacy).toContain('id="account-current-password"')
+  })
+  it('switches to first-time password setup without a current-password field for Google-only accounts', () => {
+    const account = render(AccountView, {
+      user: { id: 'u-3', email: 'google@example.com', role: 'user', topicPreferences: [], hasPassword: false },
+      onChangePassword: handlers.onSubmit,
+    })
+    expect(account).toContain('Đặt mật khẩu')
+    expect(account).not.toContain('Đổi mật khẩu')
+    expect(account).toContain('đăng nhập bằng Google')
+    expect(account).not.toContain('id="account-current-password"')
+    expect(account).toContain('id="account-new-password"')
+    expect(account).toContain('autoComplete="new-password"')
+  })
   it('marks Q&A topic buttons active when scope uses legacy aliases', () => {
     const html = render(QaView, {
       state: 'empty',

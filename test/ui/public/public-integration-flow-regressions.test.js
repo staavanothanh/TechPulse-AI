@@ -593,4 +593,34 @@ describe('public integration request and state regressions', () => {
     expect(result.saved.clearOpen).toBe(false)
     expect(result.saved.saveError).toBeNull()
   })
+
+  it('forwards password change payloads and expires the session only on unauthorized failures', async () => {
+    const unauthorized = Object.assign(new Error('unauthorized'), { status: 401 })
+    const forbidden = Object.assign(new Error('wrong current password'), { status: 403 })
+    const changePassword = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { user: { id: 'user-1', hasPassword: true } } })
+      .mockRejectedValueOnce(forbidden)
+      .mockRejectedValueOnce(unauthorized)
+    const onSessionExpired = vi.fn()
+    const runner = createHookRunner(usePublicIntegration)
+    const props = integrationProps({ route: 'account', accountActions: { changePassword }, onSessionExpired })
+    runner.render(props)
+    await flushMicrotasks()
+    const result = runner.render(props)
+
+    await expect(result.account.onChangePassword({ newPassword: 'first-password-1' })).resolves.toMatchObject({
+      data: { user: { id: 'user-1', hasPassword: true } },
+    })
+    expect(changePassword).toHaveBeenLastCalledWith({ newPassword: 'first-password-1' })
+    expect(onSessionExpired).not.toHaveBeenCalled()
+
+    await expect(
+      result.account.onChangePassword({ currentPassword: 'wrong', newPassword: 'new-password-1' }),
+    ).rejects.toBe(forbidden)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+
+    await expect(result.account.onChangePassword({ newPassword: 'new-password-1' })).rejects.toBe(unauthorized)
+    expect(onSessionExpired).toHaveBeenCalledOnce()
+  })
 })
