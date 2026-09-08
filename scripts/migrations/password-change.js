@@ -1,4 +1,4 @@
-import { TOPIC_TAXONOMY_USERS_VALIDATOR, TOPIC_TAXONOMY_USERS_COMPATIBILITY_VALIDATOR } from './topic-taxonomy-v1.js'
+import { TOPIC_TAXONOMY_USERS_VALIDATOR } from './topic-taxonomy-v1.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } from './source-policy-reconciliation.js'
 import { AUTH_CORE_COLLECTIONS } from './auth-core.js'
 
@@ -81,7 +81,6 @@ export const PASSWORD_CHANGE_COLLECTIONS = Object.freeze({
 
 const KNOWN_USERS_PREDECESSORS = Object.freeze([
   TOPIC_TAXONOMY_USERS_VALIDATOR,
-  TOPIC_TAXONOMY_USERS_COMPATIBILITY_VALIDATOR,
 ])
 const KNOWN_AUDIT_PREDECESSORS = Object.freeze([
   SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR,
@@ -94,7 +93,7 @@ const KNOWN_SESSION_PREDECESSORS = Object.freeze([
 ])
 
 /**
- * Kiểm tra predecessor: users đang ở validator của topic-taxonomy (hoặc compatibility),
+ * Kiểm tra predecessor: users đang ở validator cuối của topic-taxonomy,
  * audit đang ở validator của source-policy-reconciliation, rateLimitBuckets và sessions
  * đang ở validator auth-core — hoặc cả bốn đã là bản password-change (cho phép chạy lại).
  */
