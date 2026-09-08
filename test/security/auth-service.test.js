@@ -196,8 +196,8 @@ describe('change password', () => {
       insertAudit: vi.fn(async () => undefined),
     }
   }
-  function serviceFor(repository) {
-    return createAuthService({ repository, quotaKeyring: keyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp } })
+  function serviceFor(repository, options = {}) {
+    return createAuthService({ repository, quotaKeyring: keyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp }, ...options })
   }
   it('rejects wrong-password attempts at the password-change quota before scrypt and without echoing secrets', async () => {
     const repository = repositoryFor(null)
@@ -243,10 +243,10 @@ describe('change password', () => {
     expect(repository.updatePassword).toHaveBeenCalledWith(user._id, expect.any(String), { session: 'mongo-session', expectedSessionVersion: 0 })
   })
 
-  function authFor(passwordHash, passwordEnabled) {
+  function authFor(passwordHash, passwordEnabled, sessionOptions = {}) {
     return {
       user: { ...user, passwordHash, passwordEnabled },
-      session: { _id: 'session-1', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) },
+      session: { _id: 'session-1', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken), ...sessionOptions },
     }
   }
 
@@ -288,13 +288,22 @@ describe('change password', () => {
     expect(repository.createSession).toHaveBeenCalled()
     expect(repository.insertAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'user_password_changed', reasonCode: 'password_changed' }), { session: 'mongo-session' })
   })
+  it('blocks Google-only enrollment without a recent verified provider step-up', async () => {
+    const dummyHash = await hashPassword('oauth-dummy:irrelevant')
+    const updatedUser = { ...user, passwordHash: await hashPassword(newPassword), passwordEnabled: true, sessionVersion: 1 }
+    const repository = repositoryFor(updatedUser)
+    const service = serviceFor(repository)
+
+    await expect(service.changePassword({ auth: authFor(dummyHash, false), csrfToken, newPassword, request: request() })).rejects.toMatchObject({ status: 403, code: 'google_reauth_required' })
+    expect(repository.updatePassword).not.toHaveBeenCalled()
+  })
 
   it('lets a Google-only account set a first password without a current password', async () => {
     const dummyHash = await hashPassword('oauth-dummy:irrelevant')
     const updatedUser = { ...user, passwordHash: await hashPassword(newPassword), passwordEnabled: true, sessionVersion: 1 }
     const repository = repositoryFor(updatedUser)
     const service = serviceFor(repository)
-    const result = await service.changePassword({ auth: authFor(dummyHash, false), csrfToken, newPassword, request: request() })
+    const result = await service.changePassword({ auth: authFor(dummyHash, false, { googleAuthenticatedAt: new Date(Date.now() - 60_000) }), csrfToken, newPassword, request: request() })
     expect(result.user.hasPassword).toBe(true)
     expect(repository.updatePassword).toHaveBeenCalledWith(user._id, expect.any(String), { session: 'mongo-session', expectedSessionVersion: 0 })
   })

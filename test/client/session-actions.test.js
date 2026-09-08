@@ -127,7 +127,6 @@ describe('application session actions', () => {
 
     await actions.updatePreferences(['AI'])
     await actions.logout()
-    await actions.requestDeletion()
 
     expect(api.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -138,17 +137,24 @@ describe('application session actions', () => {
       credentials: 'same-origin',
       headers: { 'X-CSRF-Token': 'csrf-in-memory' },
     })
-    expect(api.requestAccountDeletion).toHaveBeenCalledWith(
-      expect.objectContaining({
-        headers: { 'Idempotency-Key': 'account-deletion-test', 'X-CSRF-Token': 'csrf-in-memory' },
-      }),
-    )
     expect(applySession).toHaveBeenCalledWith(null, null, null)
-    expect(applySession).toHaveBeenLastCalledWith(
-      null,
-      null,
-      'Yêu cầu xóa tài khoản đã được chấp nhận. Phiên của bạn đã bị thu hồi.',
-    )
+  })
+  it('sends the current CSRF token for account deletion before clearing the session', async () => {
+    const api = { requestAccountDeletion: vi.fn().mockResolvedValue({ data: {} }) }
+    const applySession = vi.fn()
+    const actions = createSessionActions({
+      api,
+      getCsrfToken: () => 'csrf-in-memory',
+      applySession,
+      createIdempotencyKey: () => 'account-deletion-test',
+    })
+
+    await actions.requestDeletion()
+
+    expect(api.requestAccountDeletion).toHaveBeenCalledWith(expect.objectContaining({
+      headers: { 'Idempotency-Key': 'account-deletion-test', 'X-CSRF-Token': 'csrf-in-memory' },
+    }))
+    expect(applySession).toHaveBeenCalledWith(null, null, 'Yêu cầu xóa tài khoản đã được chấp nhận. Phiên của bạn đã bị thu hồi.')
   })
 
   it('rejects invalid preferences before calling the API', async () => {
@@ -264,5 +270,32 @@ describe('application session actions', () => {
     await pending
 
     expect(applySession).not.toHaveBeenCalled()
+  })
+  it('serializes password rotation ahead of concurrent preference saves and uses the rotated CSRF token', async () => {
+    let resolvePassword
+    let resolvePreferences
+    let csrfToken = 'csrf-initial'
+    const api = {
+      changePassword: vi.fn(() => new Promise((resolve) => { resolvePassword = resolve })),
+      updatePreferences: vi.fn((init) => new Promise((resolve) => {
+        resolvePreferences = () => resolve({ data: { id: 'user-opaque', topicPreferences: ['AI'] }, init })
+      })),
+    }
+    const applySession = vi.fn((_user, nextCsrfToken) => { csrfToken = nextCsrfToken })
+    const actions = createSessionActions({ api, getCsrfToken: () => csrfToken, applySession })
+
+    const passwordPending = actions.changePassword({ newPassword: 'new-password-1' })
+    const preferencesPending = actions.updatePreferences(['AI'])
+    await Promise.resolve()
+    expect(api.updatePreferences).not.toHaveBeenCalled()
+
+    resolvePassword(response({ id: 'user-opaque', hasPassword: true }, 'csrf-rotated'))
+    await passwordPending
+    expect(api.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'csrf-rotated' },
+    }))
+
+    resolvePreferences()
+    await preferencesPending
   })
 })

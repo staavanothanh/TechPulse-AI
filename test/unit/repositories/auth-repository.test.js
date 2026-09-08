@@ -162,8 +162,8 @@ describe('MongoAuthRepository', () => {
 
   it('creates, touches and revokes sessions with user lifecycle fences', async () => {
     const fixture = createContext({ findOne: { users: [{}], sessions: [{ _id: sessionId, status: 'active' }] }, findOneAndUpdateResults: { sessions: [{ _id: sessionId, status: 'active' }] } })
-    const session = await fixture.repository.createSession({ _id: sessionId, tokenHash: 'token', userId, userSessionVersion: 2, csrfSecretHash: 'csrf', createdIpHmac: 'ip', ipHmacKeyVersion: 1, userAgentSummary: 'browser', createdAt: now, absoluteExpiresAt: new Date(now.getTime() + 1000) }, { expectedUserSessionVersion: 2 })
-    expect(session).toEqual(expect.objectContaining({ _id: sessionId, status: 'active', userId }))
+    const session = await fixture.repository.createSession({ _id: sessionId, tokenHash: 'token', userId, userSessionVersion: 2, csrfSecretHash: 'csrf', createdIpHmac: 'ip', ipHmacKeyVersion: 1, userAgentSummary: 'browser', googleAuthenticatedAt: now, createdAt: now, absoluteExpiresAt: new Date(now.getTime() + 1000) }, { expectedUserSessionVersion: 2 })
+    expect(session).toEqual(expect.objectContaining({ _id: sessionId, status: 'active', userId, googleAuthenticatedAt: now }))
     await expect(fixture.repository.findSessionByTokenHash('token')).resolves.toEqual(expect.objectContaining({ status: 'active' }))
     await expect(fixture.repository.touchSession(sessionId, now, { userId, expectedSessionVersion: 2 })).resolves.toEqual(expect.objectContaining({ status: 'active' }))
     await expect(fixture.repository.revokeSession(sessionId)).resolves.toEqual(expect.objectContaining({ matchedCount: expect.anything() }))
