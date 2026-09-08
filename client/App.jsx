@@ -134,6 +134,10 @@ export default function App() {
     },
     [navigate],
   )
+  const publicNavigateRef = useRef(handlePublicNavigate)
+  useLayoutEffect(() => {
+    publicNavigateRef.current = handlePublicNavigate
+  }, [handlePublicNavigate])
 
   const handleAdminNavigate = useCallback(
     (nextRoute) => {
@@ -227,9 +231,9 @@ export default function App() {
       error: null,
       notice: nextNotice,
     }))
-    if (!nextUser) handlePublicNavigate('feed')
+    if (!nextUser) publicNavigateRef.current('feed')
     return true
-  }, [handlePublicNavigate])
+  }, [])
 
   const expireSession = useCallback(
     (notice, expectedIdentity, expectedEpoch) => {
