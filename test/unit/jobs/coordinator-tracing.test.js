@@ -153,4 +153,64 @@ describe('coordinator tracing instrumentation', () => {
 
     expect(trace.flush).toHaveBeenCalledOnce()
   })
+
+  it('records a rejected first candidate as deferred and traces the next independent source candidate', async () => {
+    const registry = createQueueRegistry()
+    const staleCompletion = Object.assign(new Error('stale completion fence rejected'), {
+      code: 'ingestion_finalization_unresolved',
+      retryable: false,
+    })
+    const candidates = [
+      { id: 'job-trace-1', sourceId: 'source-trace-A', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+      { id: 'job-trace-2', sourceId: 'source-trace-B', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+    ]
+    const claimed = []
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async ({ excludeSourceIds = [] } = {}) => candidates.find((candidate) => !claimed.includes(candidate.id) && !excludeSourceIds.includes(candidate.sourceId)) ?? null),
+      claimAndExecute: vi.fn(async ({ candidate }) => {
+        claimed.push(candidate.id)
+        if (candidate.id === 'job-trace-1') throw staleCompletion
+        return { status: 'succeeded', claimed: true, sourceId: candidate.sourceId }
+      }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+    const trace = vi.fn()
+    const runner = createCoordinatorRunner({
+      queueRegistry: registry,
+      maxJobs: 2,
+      maxRecoveries: 0,
+      budgetMs: 5_000,
+      runIdFactory: () => 'trace-rejection-run',
+      trace,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    const result = await runner()
+
+    expect(result.queues.ingestion).toEqual({ claimed: 2, succeeded: 1, partial: 0, failed: 0, deferred: 1 })
+    const events = trace.mock.calls.map(([event]) => event)
+    expect(events).toContainEqual(expect.objectContaining({
+      runId: 'trace-rejection-run',
+      queueName: 'ingestion',
+      jobId: 'job-trace-1',
+      sourceId: 'source-trace-A',
+      stage: 'coordinator.claim',
+      status: 'deferred',
+      errorCode: 'ingestion_finalization_unresolved',
+      retryable: false,
+    }))
+    expect(events).toContainEqual(expect.objectContaining({
+      runId: 'trace-rejection-run',
+      queueName: 'ingestion',
+      jobId: 'job-trace-2',
+      sourceId: 'source-trace-B',
+      stage: 'coordinator.claim',
+      status: 'succeeded',
+    }))
+    expect(events).toContainEqual(expect.objectContaining({ stage: 'coordinator', status: 'succeeded', runId: 'trace-rejection-run' }))
+  })
 })

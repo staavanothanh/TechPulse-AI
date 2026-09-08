@@ -22,7 +22,26 @@ function candidateTime(candidate) {
 }
 function isControlFlowError(error, signal) {
   const code = typeof error?.code === 'string' ? error.code : ''
-  return Boolean(signal?.aborted || error?.name === 'AbortError' || code === 'aborted' || code === 'runtime_deadline_exceeded' || code === 'runtime_cleanup_unresolved' || code.endsWith('_deadline_exceeded') || code.endsWith('_finalization_unresolved'))
+  return Boolean(signal?.aborted || error?.name === 'AbortError' || code === 'aborted' || code === 'lease_heartbeat_lost' || code === 'lease_heartbeat_unavailable' || code === 'runtime_deadline_exceeded' || code === 'runtime_cleanup_unresolved' || code.endsWith('_deadline_exceeded') || code.endsWith('_finalization_unresolved'))
+}
+function isConfirmedPostClaimError(error) {
+  const code = typeof error?.code === 'string' ? error.code : ''
+  return code.endsWith('_finalization_unresolved') || code === 'lease_heartbeat_lost' || code === 'lease_heartbeat_unavailable'
+}
+async function claimAndExecuteCandidate({ adapter, candidate, now, runId, deadline, signal }) {
+  try {
+    return await adapter.claimAndExecute({ candidate, now, runId, deadline, ...(signal ? { signal } : {}) })
+  } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError' || error?.code === 'aborted') throw error
+    const controlFlow = isControlFlowError(error, signal)
+    return {
+      status: controlFlow ? 'deferred' : 'failed',
+      claimed: isConfirmedPostClaimError(error),
+      ...(candidate?.sourceId ? { sourceId: candidate.sourceId } : {}),
+      ...(candidate?.articleId ? { articleId: candidate.articleId } : {}),
+      error,
+    }
+  }
 }
 
 export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, budgetMs = 8000, now = () => new Date(), runId = randomUUID(), deadline, signal, trace } = {}) {
@@ -173,7 +192,7 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
       exhaustedQueues.add(adapter.queueName)
       continue
     }
-    handleResult(await adapter.claimAndExecute({ candidate, now: claimNow, runId, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) }), adapter.queueName, candidate)
+    handleResult(await claimAndExecuteCandidate({ adapter, candidate, now: claimNow, runId, deadline: new Date(workDeadline), signal }), adapter.queueName, candidate)
     slots -= 1
   }
 
@@ -194,7 +213,7 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
     const selected = heads[0]
     const claimNow = canStart()
     if (!claimNow) break
-    handleResult(await selected.adapter.claimAndExecute({ candidate: selected.candidate, now: claimNow, runId, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) }), selected.adapter.queueName, selected.candidate)
+    handleResult(await claimAndExecuteCandidate({ adapter: selected.adapter, candidate: selected.candidate, now: claimNow, runId, deadline: new Date(workDeadline), signal }), selected.adapter.queueName, selected.candidate)
     slots -= 1
   }
   const availability = await Promise.all(adapters.map((adapter) => adapter.nextAvailableAt({ now: startedAt, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) })))

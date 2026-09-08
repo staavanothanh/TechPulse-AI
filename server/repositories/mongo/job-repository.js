@@ -523,9 +523,9 @@ export class MongoJobRepository {
         'activeOwner.leaseGeneration': fence.leaseGeneration, 'activeOwner.expiresAt': { $gt: now },
       }
       const touched = await this.leases().updateOne(leaseFilter, { $set: { lastFenceValidatedAt: now, updatedAt: now } }, { session, ...options })
-      if (touched.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease fence is stale or expired')
+      if (touched.matchedCount !== 1) throw new JobError(409, 'lease_fence_stale', 'Lease fence is stale or expired')
       const current = await this.jobs().findOne({ _id: idValue(jobId), status: 'running', leaseGeneration: fence.leaseGeneration }, { session, ...options })
-      if (!current) throw new JobError(409, 'conflict', 'Lease fence no longer owns this job')
+      if (!current) throw new JobError(409, 'lease_fence_stale', 'Lease fence no longer owns this job')
       const source = await this.sources().findOne({
         _id: current.sourceId, policyVersion: current.expectedSourcePolicyVersion,
         operationalStatus: 'active', licenseStatus: { $in: ['permitted', 'metadata-only'] }, connectorType: current.connectorType,
@@ -542,7 +542,7 @@ export class MongoJobRepository {
       }
       await this.jobs().updateOne({ _id: current._id, status: 'running', leaseGeneration: fence.leaseGeneration }, { $set: set }, { session, ...options })
       const released = await this.leases().updateOne(leaseFilter, { $unset: { activeOwner: '' }, $set: { lastReleasedAt: now, updatedAt: now } }, { session, ...options })
-      if (released.matchedCount !== 1) throw new JobError(409, 'conflict', 'Lease release fence failed')
+      if (released.matchedCount !== 1) throw new JobError(409, 'lease_fence_stale', 'Lease release fence failed')
       return this.findIngestionJobById(jobId, { session, ...options })
     }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
   }

@@ -287,6 +287,164 @@ describe('bounded cross-queue fairness', () => {
     expect(calls[1].now).toEqual(new Date('2026-08-10T00:00:00.700Z'))
     expect(calls[1].deadline).toEqual(new Date('2026-08-10T00:00:00.750Z'))
   })
+  it('continues to the next independent candidate when a reserved candidate rejects with ingestion_finalization_unresolved', async () => {
+    const registry = createQueueRegistry()
+    const rejection = Object.assign(new Error('stale completion fence rejected'), {
+      code: 'ingestion_finalization_unresolved',
+      retryable: false,
+    })
+    const candidates = [
+      { id: 'job-cron-1', sourceId: 'source-A', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+      { id: 'job-cron-2', sourceId: 'source-B', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+    ]
+    const claimed = []
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async ({ excludeSourceIds = [] } = {}) => candidates.find((c) => !claimed.includes(c.id) && !excludeSourceIds.includes(c.sourceId)) ?? null),
+      claimAndExecute: vi.fn(async ({ candidate }) => {
+        claimed.push(candidate.id)
+        if (candidate.id === 'job-cron-1') throw rejection
+        return { status: 'succeeded', claimed: true, sourceId: candidate.sourceId }
+      }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    const result = await runDueWork({
+      registry,
+      maxJobs: 2,
+      maxRecoveries: 0,
+      budgetMs: 5000,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    expect(claimed).toEqual(['job-cron-1', 'job-cron-2'])
+    expect(result.queues.ingestion).toEqual({ claimed: 2, succeeded: 1, partial: 0, failed: 0, deferred: 1 })
+  })
+
+  it('does not count a pre-claim rejection as claimed and skips its still-queued source', async () => {
+    const registry = createQueueRegistry()
+    const preClaimFailure = Object.assign(new Error('database unavailable before claim'), { code: 'database_unavailable' })
+    const candidates = [
+      { id: 'queued-source-A', sourceId: 'source-A', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+      { id: 'queued-source-B', sourceId: 'source-B', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+    ]
+    const attempts = []
+    const selections = []
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async (options = {}) => {
+        selections.push(options)
+        return candidates.find((candidate) => !(options.excludeSourceIds ?? []).includes(candidate.sourceId)) ?? null
+      }),
+      claimAndExecute: vi.fn(async ({ candidate }) => {
+        attempts.push(candidate.id)
+        if (candidate.id === 'queued-source-A') throw preClaimFailure
+        return { status: 'succeeded', claimed: true, sourceId: candidate.sourceId }
+      }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    const result = await runDueWork({
+      registry,
+      maxJobs: 2,
+      maxRecoveries: 0,
+      budgetMs: 5000,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    expect(attempts).toEqual(['queued-source-A', 'queued-source-B'])
+    expect(selections[1].excludeSourceIds).toEqual(['source-A'])
+    expect(result.queues.ingestion).toEqual({ claimed: 1, succeeded: 1, partial: 0, failed: 1, deferred: 0 })
+  })
+
+  it('keeps direct post-claim heartbeat loss deferred while preserving claimed accounting', async () => {
+    const registry = createQueueRegistry()
+    const heartbeatLoss = Object.assign(new Error('heartbeat ownership lost'), { code: 'lease_heartbeat_lost', retryable: true })
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => ({ id: 'heartbeat-job', sourceId: 'heartbeat-source', availableAt: new Date('2026-08-10T00:00:00.000Z') })),
+      claimAndExecute: vi.fn(async () => { throw heartbeatLoss }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    const result = await runDueWork({ registry, maxJobs: 1, maxRecoveries: 0, budgetMs: 5000, now: () => new Date('2026-08-10T00:00:00.000Z') })
+
+    expect(result.queues.ingestion).toEqual({ claimed: 1, succeeded: 0, partial: 0, failed: 0, deferred: 1 })
+  })
+
+  it('propagates an abort rejection from candidate execution instead of reporting coordinator success', async () => {
+    const registry = createQueueRegistry()
+    const abortError = Object.assign(new Error('candidate aborted'), { name: 'AbortError', code: 'aborted' })
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => ({ id: 'aborted-job', sourceId: 'aborted-source', availableAt: new Date('2026-08-10T00:00:00.000Z') })),
+      claimAndExecute: vi.fn(async () => { throw abortError }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(ingestion)
+
+    await expect(runDueWork({ registry, maxJobs: 1, maxRecoveries: 0, budgetMs: 5000, now: () => new Date('2026-08-10T00:00:00.000Z') })).rejects.toMatchObject({ name: 'AbortError', code: 'aborted' })
+    expect(ingestion.nextAvailableAt).not.toHaveBeenCalled()
+  })
+
+  it('keeps reserved cross-queue fairness after one candidate rejects with ingestion_finalization_unresolved', async () => {
+    const registry = createQueueRegistry()
+    const indexingCandidate = { id: 'job-indexing-1', availableAt: new Date('2026-08-10T00:00:00.000Z') }
+    const indexing = {
+      queueName: 'indexing',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => indexingCandidate),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    const ingestionCandidates = [
+      { id: 'job-cron-1', sourceId: 'source-A', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+      { id: 'job-cron-2', sourceId: 'source-B', availableAt: new Date('2026-08-10T00:00:00.000Z') },
+    ]
+    const staleCompletion = Object.assign(new Error('stale completion fence rejected'), {
+      code: 'ingestion_finalization_unresolved',
+      retryable: false,
+    })
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async ({ excludeSourceIds = [] } = {}) => ingestionCandidates.find((c) => !excludeSourceIds.includes(c.sourceId)) ?? null),
+      claimAndExecute: vi.fn(async ({ candidate }) => {
+        if (candidate.id === 'job-cron-1') throw staleCompletion
+        return { status: 'succeeded', claimed: true, sourceId: candidate.sourceId }
+      }),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    registry.register(indexing)
+    registry.register(ingestion)
+
+    const result = await runDueWork({
+      registry,
+      maxJobs: 2,
+      maxRecoveries: 0,
+      budgetMs: 5000,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    })
+
+    expect(indexing.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(ingestion.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(result.queues.indexing.claimed).toBe(1)
+    expect(result.queues.ingestion).toEqual({ claimed: 1, succeeded: 0, partial: 0, failed: 0, deferred: 1 })
+  })
+
   it('does not claim a reserved candidate selected after the safety deadline', async () => {
     const registry = createQueueRegistry()
     let currentMs = new Date('2026-08-10T00:00:00.000Z').getTime()

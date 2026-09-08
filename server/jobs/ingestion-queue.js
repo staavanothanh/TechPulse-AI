@@ -323,7 +323,7 @@ export function createIngestionQueueAdapter({
           completionPhase.fail(completionError)
           throw completionError
         }
-        if (completionError?.code === 'lease_heartbeat_lost') {
+        if (completionError?.code === 'lease_heartbeat_lost' || completionError?.code === 'lease_fence_stale') {
           const finalized = await attemptOrphanFinalization({ jobRepository, candidate, fence, error: completionError, reportStage, maxWaitMs: grace, deadline: finalizationDeadline })
           if (finalized) {
             completionPhase.succeed({ status: 'failed' })

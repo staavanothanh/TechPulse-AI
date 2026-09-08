@@ -329,6 +329,95 @@ describe('ingestion queue adapter', () => {
     await expect(adapter.claimAndExecute({ candidate: { id: fence.jobId, sourceId: '507f1f77bcf86cd799439012' } })).rejects.toMatchObject({ code: 'ingestion_finalization_unresolved', retryable: false })
     expect(finalizeOrphanedAttempt).not.toHaveBeenCalled()
   })
+  it('orphan-finalizes stale completion after a long 100-candidate commit without releasing a newer owner', async () => {
+    vi.useFakeTimers()
+    try {
+      const now = new Date('2026-08-10T00:00:00.000Z')
+      const fence = {
+        key: 'ingestion:source:507f1f77bcf86cd799439012',
+        jobId: '507f1f77bcf86cd799439011',
+        ownerTokenHash: 'c'.repeat(64),
+        leaseGeneration: 12,
+        expiresAt: new Date(now.getTime() + 50),
+      }
+      const staleCompletion = Object.assign(new Error('Lease fence is stale or expired'), { status: 409, code: 'lease_fence_stale', retryable: true })
+      const completeWithFence = vi.fn(async () => { throw staleCompletion })
+      const finalizeOrphanedAttempt = vi.fn(async () => true)
+      const release = vi.fn(async () => true)
+      let observedJob
+      const candidates = Array.from({ length: 100 }, (_, index) => ({ externalId: `article-${index}` }))
+      const executor = vi.fn(({ job }) => {
+        observedJob = job
+        return new Promise((resolve) => globalThis.setTimeout(() => resolve({ status: 'succeeded', counters: { fetched: 100 } }), 120))
+      })
+      const adapter = createIngestionQueueAdapter({
+        jobRepository: { claimQueuedWithFence: vi.fn(async () => true), completeWithFence, finalizeOrphanedAttempt },
+        leaseRepository: { acquire: vi.fn(async () => fence), release },
+        executor,
+        leaseMs: 1_000,
+        executionTimeoutMs: 100,
+        finalizationGraceMs: 25,
+        ownerToken: () => 'stale-owner-token',
+      })
+      const candidate = { id: fence.jobId, sourceId: '507f1f77bcf86cd799439012', batchSize: 100, candidates }
+
+      const run = adapter.claimAndExecute({ candidate, runId: 'cron-long-commit', now, deadline: new Date(now.getTime() + 100) })
+      await vi.advanceTimersByTimeAsync(125)
+
+      await expect(run).resolves.toEqual({ status: 'failed', claimed: true })
+      expect(executor).toHaveBeenCalledTimes(1)
+      expect(observedJob).toEqual(expect.objectContaining({ leaseGeneration: fence.leaseGeneration, candidates: expect.arrayContaining(candidates) }))
+      expect(observedJob.candidates).toHaveLength(100)
+      expect(completeWithFence).toHaveBeenCalledWith(expect.objectContaining({ jobId: fence.jobId, fence, status: 'failed', error: expect.objectContaining({ code: 'ingestion_deadline_exceeded' }) }))
+      expect(finalizeOrphanedAttempt).toHaveBeenCalledWith(expect.objectContaining({ jobId: fence.jobId, fence, error: expect.objectContaining({ code: 'lease_fence_stale' }) }))
+      expect(release).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds stale orphan recovery after the deadline and preserves the exact stale fence', async () => {
+    vi.useFakeTimers()
+    try {
+      const now = new Date('2026-08-10T00:00:00.000Z')
+      const fence = {
+        key: 'ingestion:source:507f1f77bcf86cd799439012',
+        jobId: '507f1f77bcf86cd799439011',
+        ownerTokenHash: 'd'.repeat(64),
+        leaseGeneration: 12,
+        expiresAt: new Date(now.getTime() + 50),
+      }
+      const staleCompletion = Object.assign(new Error('Lease fence is stale or expired'), { status: 409, code: 'lease_fence_stale', retryable: true })
+      const completeWithFence = vi.fn(async () => { throw staleCompletion })
+      const finalizeOrphanedAttempt = vi.fn(() => new Promise(() => {}))
+      const release = vi.fn(async () => true)
+      const adapter = createIngestionQueueAdapter({
+        jobRepository: { claimQueuedWithFence: vi.fn(async () => true), completeWithFence, finalizeOrphanedAttempt },
+        leaseRepository: { acquire: vi.fn(async () => fence), release },
+        executor: vi.fn(() => new Promise((resolve) => globalThis.setTimeout(() => resolve({ status: 'succeeded' }), 120))),
+        leaseMs: 1_000,
+        executionTimeoutMs: 100,
+        finalizationGraceMs: 25,
+        ownerToken: () => 'stale-owner-token',
+      })
+
+      const run = adapter.claimAndExecute({ candidate: { id: fence.jobId, sourceId: '507f1f77bcf86cd799439012' }, now, deadline: new Date(now.getTime() + 100) })
+      let settled = false
+      const observed = run.catch((error) => {
+        settled = true
+        return error
+      })
+      await vi.advanceTimersByTimeAsync(120)
+
+      expect(finalizeOrphanedAttempt).toHaveBeenCalledWith(expect.objectContaining({ jobId: fence.jobId, fence, error: expect.objectContaining({ code: 'lease_fence_stale' }), signal: expect.any(globalThis.AbortSignal) }))
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(25)
+      await expect(observed).resolves.toMatchObject({ code: 'ingestion_finalization_unresolved', retryable: false })
+      expect(release).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('sanitizes raw worker diagnostics before trace emission', async () => {
     const fence = { key: 'ingestion:source:507f1f77bcf86cd799439012', jobId: '507f1f77bcf86cd799439011', ownerTokenHash: 'a'.repeat(64), leaseGeneration: 1 }
     const trace = vi.fn()

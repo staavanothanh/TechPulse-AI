@@ -71,7 +71,7 @@ describeMongo('durable jobs and lease fencing', () => {
       authoritativeNow = new Date(start.getTime() + 2001)
       const second = await leases.acquire({ key, jobId: children[0]._id.toHexString(), ownerToken: 'owner-token-two', now: new Date(start.getTime() + 2001), leaseMs: 1000 })
       expect(second.leaseGeneration).toBe(2)
-      await expect(jobs.completeWithFence({ jobId: parent.id, fence: first, ownerToken: 'owner-token-one', status: 'succeeded', now: new Date(start.getTime() + 2100) })).rejects.toThrow(/lease fence/i)
+      await expect(jobs.completeWithFence({ jobId: parent.id, fence: first, ownerToken: 'owner-token-one', status: 'succeeded', now: new Date(start.getTime() + 2100) })).rejects.toMatchObject({ status: 409, code: 'lease_fence_stale' })
       const lease = await context.db.collection('jobLeases').findOne({ key })
       expect(Number(lease.generationHighWater)).toBe(2)
     } finally {
