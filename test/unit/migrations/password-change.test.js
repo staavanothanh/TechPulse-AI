@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   PASSWORD_CHANGE_AUDIT_VALIDATOR,
   PASSWORD_CHANGE_COLLECTIONS,
+  PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR,
   PASSWORD_CHANGE_USERS_VALIDATOR,
   buildPasswordChangeMigration,
   runPasswordChangeMigration,
@@ -16,6 +17,7 @@ function readyDb() {
     listCollections: vi.fn(() => ({ toArray: async () => [
       { name: 'users', options: { validator: TOPIC_TAXONOMY_USERS_VALIDATOR } },
       { name: 'adminAuditLogs', options: { validator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } },
+      { name: 'rateLimitBuckets', options: { validator: AUTH_CORE_COLLECTIONS.rateLimitBuckets.validator } },
     ] })),
     command: vi.fn(async () => undefined),
     collection: vi.fn(() => ({ updateMany })),
@@ -38,6 +40,11 @@ describe('password-change migration contract', () => {
     expect(rules).toContainEqual(expect.objectContaining({ action: 'user_password_changed', reasonCode: 'password_changed', changedFields: ['passwordHash', 'sessionVersion'] }))
     expect(rules).toContainEqual(expect.objectContaining({ action: 'source_policy_reconciliation_requested' }))
   })
+  it('extends the rate-limit validator with a bounded password-change scope', () => {
+    const rules = PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR.$and[0].$or
+    expect(rules).toContainEqual({ scope: 'password-change', subjectType: 'ip', limit: 5 })
+    expect(PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR.$and[1].$jsonSchema.properties.scope.enum).toContain('password-change')
+  })
 
   it('builds only idempotent collMod operations for users and adminAuditLogs', () => {
     const plan = buildPasswordChangeMigration({ dryRun: true })
@@ -46,15 +53,17 @@ describe('password-change migration contract', () => {
     expect(plan).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'collMod', collection: 'users', options: expect.objectContaining({ validator: PASSWORD_CHANGE_USERS_VALIDATOR }) }),
       expect.objectContaining({ type: 'collMod', collection: 'adminAuditLogs', options: expect.objectContaining({ validator: PASSWORD_CHANGE_AUDIT_VALIDATOR }) }),
+      expect.objectContaining({ type: 'collMod', collection: 'rateLimitBuckets', options: expect.objectContaining({ validator: PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR }) }),
     ]))
     expect(PASSWORD_CHANGE_COLLECTIONS.users.validator).toBe(PASSWORD_CHANGE_USERS_VALIDATOR)
+    expect(PASSWORD_CHANGE_COLLECTIONS.rateLimitBuckets.validator).toBe(PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR)
   })
 
   it('applies the validators then backfills passwordEnabled for existing accounts', async () => {
     const { db, updateMany } = readyDb()
     const plan = await runPasswordChangeMigration({ db })
-    expect(plan).toHaveLength(2)
-    expect(db.command).toHaveBeenCalledTimes(2)
+    expect(plan).toHaveLength(3)
+    expect(db.command).toHaveBeenCalledTimes(3)
     // Two idempotent backfills: OAuth-only accounts to false, everyone else to true.
     expect(updateMany).toHaveBeenCalledTimes(2)
     const [oauthFilter, oauthSet] = updateMany.mock.calls[0]
@@ -71,19 +80,20 @@ describe('password-change migration contract', () => {
       listCollections: vi.fn(() => ({ toArray: async () => [
         { name: 'users', options: { validator: PASSWORD_CHANGE_USERS_VALIDATOR } },
         { name: 'adminAuditLogs', options: { validator: PASSWORD_CHANGE_AUDIT_VALIDATOR } },
+        { name: 'rateLimitBuckets', options: { validator: PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR } },
       ] })),
       command: vi.fn(async () => undefined),
       collection: vi.fn(() => ({ updateMany })),
     }
-    await expect(runPasswordChangeMigration({ db })).resolves.toHaveLength(2)
-    expect(db.command).toHaveBeenCalledTimes(2)
+    await expect(runPasswordChangeMigration({ db })).resolves.toHaveLength(3)
+    expect(db.command).toHaveBeenCalledTimes(3)
   })
-
   it('refuses to run when the users predecessor validator is not ready', async () => {
     const db = {
       listCollections: vi.fn(() => ({ toArray: async () => [
         { name: 'users', options: { validator: AUTH_CORE_COLLECTIONS.users.validator } },
         { name: 'adminAuditLogs', options: { validator: SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } },
+        { name: 'rateLimitBuckets', options: { validator: AUTH_CORE_COLLECTIONS.rateLimitBuckets.validator } },
       ] })),
       command: vi.fn(async () => undefined),
       collection: vi.fn(() => ({ updateMany: vi.fn(async () => ({})) })),
