@@ -293,7 +293,7 @@ export function ArticleIdBadge({ id, label = 'Mã bài viết', length = 7, clas
   )
 }
 
-export function ArticleCard({ article, busy = false, savedOverride, onOpenArticle, onSaveToggle }) {
+export function ArticleCard({ article, busy = false, savedOverride, onOpenArticle, onSaveToggle, onAskAboutArticle }) {
   const saved = typeof savedOverride === 'boolean' ? savedOverride : Boolean(article?.isSaved)
   const sourceLabel = sourceName(article)
   const topics = Array.isArray(article?.topics)
@@ -384,6 +384,15 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
           </svg>
           <span>{busy ? 'Đang cập nhật...' : saved ? 'Bỏ lưu bài' : 'Lưu bài'}</span>
         </button>
+        {onAskAboutArticle ? (
+          <button
+            className="public-text-action"
+            type="button"
+            onClick={() => onAskAboutArticle(article)}
+          >
+            Hỏi đáp
+          </button>
+        ) : null}
         <button
           className="public-text-action"
           type="button"

@@ -108,7 +108,7 @@ export default function PublicApp({
   const shared = { api, csrfToken, onSessionExpired, onNavigate }
   const viewProps = {
     feed: { ...feed, ...shared },
-    search: { ...search, ...shared },
+    search: { ...search, sources: search.sources || feed.sources || [], ...shared },
     saved: { ...saved, ...shared },
     article: { ...article, ...shared },
     qa: { ...qa, ...shared },

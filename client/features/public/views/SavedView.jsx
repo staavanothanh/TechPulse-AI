@@ -97,6 +97,7 @@ export default function SavedView({
                 busy={pendingArticleId === item.id}
                 onSaveToggle={handlers.onUnsave || handlers.onSaveToggle}
                 onOpenArticle={handlers.onOpenArticle}
+                onAskAboutArticle={handlers.onAskAboutArticle}
               />
             ))
           : null}

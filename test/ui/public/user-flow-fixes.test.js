@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { FeedView } from '../../../client/features/public/views/FeedView.jsx'
 import { SearchView } from '../../../client/features/public/views/SearchView.jsx'
+import { SavedView } from '../../../client/features/public/views/SavedView.jsx'
 import { QaView, CitationDrawer } from '../../../client/features/public/views/QaView.jsx'
 import { ArticleView } from '../../../client/features/public/views/ArticleView.jsx'
 
@@ -34,6 +35,42 @@ describe('public user-flow regressions', () => {
 
     expect(html).toContain('id="public-search-before"')
     expect(html).toContain('value="2026-08-31T23:59"')
+  })
+
+  it('renders the topic search filter as a select dropdown with active topics', () => {
+    const html = render(SearchView, {
+      query: { topic: 'AI' },
+      topics: ['AI', 'Cloud', 'Security'],
+    })
+
+    expect(html).toContain('id="public-search-topic"')
+    expect(html).toContain('<select')
+    expect(html).toContain('Tất cả chủ đề')
+    expect(html).toContain('value="AI"')
+    expect(html).toContain('Cloud')
+  })
+
+  it('renders the source search filter as a select dropdown with human-readable source names', () => {
+    const html = render(SearchView, {
+      query: { sourceId: 'source-flow' },
+      sources: [{ id: 'source-flow', name: 'Nguồn kiểm thử' }],
+    })
+
+    expect(html).toContain('id="public-search-source"')
+    expect(html).toContain('<select')
+    expect(html).toContain('Tất cả nguồn')
+    expect(html).toContain('value="source-flow"')
+    expect(html).toContain('Nguồn kiểm thử')
+  })
+
+  it('renders source options in search from results when sources prop is empty', () => {
+    const html = render(SearchView, {
+      results: [{ article }],
+    })
+
+    expect(html).toContain('id="public-search-source"')
+    expect(html).toContain('value="source-flow"')
+    expect(html).toContain('Nguồn luồng người dùng')
   })
 
   it('keeps the Q&A composer bounded to questions of at least three characters', () => {
@@ -85,5 +122,93 @@ describe('public user-flow regressions', () => {
 
     expect(html).toContain('Citation lịch sử')
     expect(html).toContain('Nguồn còn khả dụng')
+  })
+
+  it('renders suggested prompt chips in the Q&A empty state', () => {
+    const html = render(QaView, { state: 'empty' })
+
+    expect(html).toContain('Gợi ý câu hỏi mẫu từ nguồn tin có trong hệ thống:')
+    expect(html).toContain('Google DeepMind có bài viết nào về Gemini 3.1 Flash TTS không?')
+    expect(html).toContain('public-suggestion-chip')
+  })
+
+  it('renders helpful guidance when a Q&A answer is refused due to insufficient evidence', () => {
+    const html = render(QaView, {
+      state: 'ready',
+      messages: [
+        {
+          role: 'assistant',
+          status: 'refused',
+          refusalReason: 'insufficient-evidence',
+        },
+      ],
+    })
+
+    expect(html).toContain('Chưa đủ bằng chứng để trả lời câu hỏi này.')
+    expect(html).toContain('Hệ thống chưa tìm thấy bài viết hoặc dữ liệu liên quan')
+    expect(html).toContain('Bảng tin (Feed)')
+    expect(html).toContain('Tìm kiếm')
+  })
+
+  it('renders rich article context card in Q&A when asking about an article and hides generic suggested prompts', () => {
+    const html = render(QaView, {
+      state: 'empty',
+      scope: {
+        articleId: '507f1f77bcf86cd799439011',
+        article,
+      },
+    })
+
+    expect(html).toContain('public-qa-article-context')
+    expect(html).toContain('Đang hỏi về bài viết')
+    expect(html).toContain('Bỏ chọn')
+    expect(html).toContain(article.titleVi)
+    expect(html).toContain('Nguồn luồng người dùng')
+    expect(html).toContain('Tóm tắt kiểm thử.')
+    expect(html).toContain('Hỏi đáp về bài viết')
+    expect(html).toContain('placeholder="Nhập câu hỏi về bài viết này"')
+    expect(html).not.toContain('Gợi ý câu hỏi mẫu từ nguồn tin có trong hệ thống:')
+    expect(html).not.toContain('public-suggestion-chip')
+  })
+
+  it('renders fallback article context in Q&A when only articleId is provided', () => {
+    const html = render(QaView, {
+      state: 'empty',
+      scope: {
+        articleId: '507f1f77bcf86cd799439011',
+      },
+    })
+
+    expect(html).toContain('public-qa-article-context')
+    expect(html).toContain('Đang hỏi về bài viết')
+    expect(html).toContain('Bỏ chọn')
+    expect(html).toContain('Bài viết #507f1f77…')
+    expect(html).toContain('507f1f77bcf86cd799439011')
+  })
+
+  it('renders direct Hỏi đáp button on feed article cards when handler is supplied', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [article],
+      handlers: { onAskAboutArticle: noop },
+    })
+
+    expect(html).toContain('>Hỏi đáp</button>')
+  })
+
+  it('renders direct Hỏi đáp button on search and saved article cards when handler is supplied', () => {
+    const searchHtml = render(SearchView, {
+      state: 'ready',
+      results: [{ article }],
+      handlers: { onAskAboutArticle: noop },
+    })
+    expect(searchHtml).toContain('>Hỏi đáp</button>')
+
+    const savedHtml = render(SavedView, {
+      state: 'ready',
+      articles: [article],
+      handlers: { onAskAboutArticle: noop },
+    })
+    expect(savedHtml).toContain('>Hỏi đáp</button>')
   })
 })

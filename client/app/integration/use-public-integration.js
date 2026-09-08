@@ -81,9 +81,11 @@ const QA_ARTICLE_ID_PATTERN = /^[0-9a-fA-F]{24}$/
 function validQaArticleId(value) {
   return typeof value === 'string' && QA_ARTICLE_ID_PATTERN.test(value) ? value : null
 }
-function qaScopeForArticle(scope, articleId) {
-  const { articleId: _previousArticleId, sessionId: _previousSessionId, ...rest } = scope
-  return articleId ? { ...rest, articleId } : rest
+function qaScopeForArticle(scope, articleId, article = null) {
+  const { articleId: _previousArticleId, sessionId: _previousSessionId, article: previousArticle, ...rest } = scope
+  const targetArticle = article || (previousArticle?.id === articleId ? previousArticle : null)
+  if (!articleId) return rest
+  return targetArticle ? { ...rest, articleId, article: targetArticle } : { ...rest, articleId }
 }
 
 
@@ -154,42 +156,7 @@ export function usePublicIntegration({
     [contentApi, csrfToken, expire, markSaved],
   )
 
-  const feed = useFeed({
-    contentApi,
-    enabled: Boolean(user) && route === 'feed',
-    expire,
-    openArticle,
-    onNavigate,
-    savedOverrides,
-    toggleSave,
-  })
-  const search = useSearch({
-    contentApi,
-    expire,
-    openArticle,
-    savedOverrides,
-    toggleSave,
-    initialParams: routeSearchParams,
-    onSearchSubmit: (query) => onNavigate?.('search', { searchParams: query }),
-  })
-  const saved = useSaved({
-    contentApi,
-    csrfToken,
-    enabled: Boolean(user) && route === 'saved',
-    expire,
-    markSaved,
-    openArticle,
-    onNavigate,
-  })
-  const activeArticleId = routeArticleId ?? articleId
-  const articleState = useArticle({
-    articleId: activeArticleId,
-    contentApi,
-    enabled: Boolean(user) && route === 'article',
-    expire,
-    onBack: () => onNavigate?.(articleReturnRoute || 'feed', { back: true }),
-  })
-  const qaState = useQa({ articleId: routeArticleId, csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
+  const qaState = useQa({ articleId: routeArticleId, contentApi, csrfToken, enabled: Boolean(user) && route === 'qa', expire, qaApi, user })
   const qa = {
     ...qaState,
     handlers: {
@@ -203,11 +170,51 @@ export function usePublicIntegration({
   const articleAskHandler = useCallback(
     (targetArticle) => {
       if (!targetArticle?.id) return
-      qa.handlers.onScopeArticleId(targetArticle.id)
+      qa.handlers.onScopeArticleId(targetArticle)
       onNavigate?.('qa', { articleId: targetArticle.id })
     },
     [qa, onNavigate],
   )
+
+  const feed = useFeed({
+    contentApi,
+    enabled: Boolean(user) && route === 'feed',
+    expire,
+    openArticle,
+    onNavigate,
+    savedOverrides,
+    toggleSave,
+    onAskAboutArticle: articleAskHandler,
+  })
+  const search = useSearch({
+    contentApi,
+    expire,
+    openArticle,
+    savedOverrides,
+    toggleSave,
+    initialParams: routeSearchParams,
+    onSearchSubmit: (query) => onNavigate?.('search', { searchParams: query }),
+    onAskAboutArticle: articleAskHandler,
+  })
+  const saved = useSaved({
+    contentApi,
+    csrfToken,
+    enabled: Boolean(user) && route === 'saved',
+    expire,
+    markSaved,
+    openArticle,
+    onNavigate,
+    onAskAboutArticle: articleAskHandler,
+  })
+  const activeArticleId = routeArticleId ?? articleId
+  const articleState = useArticle({
+    articleId: activeArticleId,
+    contentApi,
+    enabled: Boolean(user) && route === 'article',
+    expire,
+    onBack: () => onNavigate?.(articleReturnRoute || 'feed', { back: true }),
+    onAskAboutArticle: articleAskHandler,
+  })
   const article = {
     ...articleState,
     onAskAboutArticle: articleAskHandler,
@@ -224,6 +231,7 @@ function useFeed({
   onNavigate,
   savedOverrides,
   toggleSave,
+  onAskAboutArticle,
 }) {
   const [state, setState] = useState('loading')
   const [articles, setArticles] = useState([])
@@ -402,6 +410,7 @@ function useFeed({
       onDismissSaveError: dismissSaveError,
       onOpenArticle: openArticle,
       onOpenSearch: () => onNavigate?.('search'),
+      onAskAboutArticle,
     },
   }
 }
@@ -414,6 +423,7 @@ function useSearch({
   toggleSave,
   initialParams = null,
   onSearchSubmit,
+  onAskAboutArticle,
 }) {
   const [state, setState] = useState('initial')
   const [query, setQuery] = useState(() => ({ ...EMPTY_QUERY, ...(initialParams || {}) }))
@@ -548,11 +558,12 @@ function useSearch({
       onSaveRetry: retrySave,
       onDismissSaveError: dismissSaveError,
       onOpenArticle: openArticle,
+      onAskAboutArticle,
     },
   }
 }
 
-function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArticle, onNavigate }) {
+function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArticle, onNavigate, onAskAboutArticle }) {
   const [state, setState] = useState('loading')
   const [articles, setArticles] = useState([])
   const [meta, setMeta] = useState({ hasNext: false, nextCursor: null, page: 1 })
@@ -660,6 +671,7 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
       onConfirmClear: clear,
       onSaveRetry: retrySave,
       onDismissSaveError: dismissSaveError,
+      onAskAboutArticle,
       clearBusy,
     },
   }
@@ -725,7 +737,7 @@ function useArticle({ articleId, contentApi, enabled, expire, onBack, onAskAbout
   return { state, article, error, onBack, onAskAboutArticle, onRetry: retry }
 }
 
-export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, expire, qaApi, user, now = () => new Date() } = {}) {
+export function useQa({ articleId: routeArticleId = null, contentApi, csrfToken, enabled, expire, qaApi, user, now = () => new Date() } = {}) {
   const [state, setState] = useState('empty')
   const [sessions, setSessions] = useState([])
   const [messages, setMessages] = useState([])
@@ -780,11 +792,32 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
     setScope((current) => {
       if (initialArticleId) return current.articleId === initialArticleId ? current : { ...current, articleId: initialArticleId }
       if (!Object.prototype.hasOwnProperty.call(current, 'articleId')) return current
-      const { articleId: _removed, ...rest } = current
+      const { articleId: _removed, article: _removedArt, ...rest } = current
       return rest
     })
     return undefined
   }, [enabled, initialArticleId])
+
+  useEffect(() => {
+    if (!enabled || !initialArticleId || !contentApi?.getArticle) return undefined
+    let active = true
+    contentApi
+      .getArticle(initialArticleId)
+      .then((response) => {
+        if (!active) return
+        const item = responseData(response, null)
+        if (item) {
+          setScope((current) => {
+            if (current.articleId !== initialArticleId || current.article?.id === initialArticleId) return current
+            return { ...current, article: item }
+          })
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [contentApi, enabled, initialArticleId])
 
   function trackQueue(taskPromise) {
     let tail
@@ -1003,11 +1036,16 @@ export function useQa({ articleId: routeArticleId = null, csrfToken, enabled, ex
         if (field === 'sessionId') sessionIdRef.current = value || undefined
         setScope((current) => ({ ...current, [field]: value }))
       },
-      onScopeArticleId: (articleId) =>
-        setScope((current) => ({ ...current, articleId })),
+      onScopeArticleId: (target) =>
+        setScope((current) => {
+          if (target && typeof target === 'object' && target.id) {
+            return { ...current, articleId: target.id, article: target }
+          }
+          return { ...current, articleId: target }
+        }),
       onClearArticleScope: () =>
         setScope((current) => {
-          const { articleId: _removed, ...rest } = current
+          const { articleId: _removed, article: _removedArt, ...rest } = current
           return rest
         }),
     },

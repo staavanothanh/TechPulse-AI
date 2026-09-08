@@ -297,8 +297,8 @@
 }
 .public-qa-article-selected {
   display: grid;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 12px 14px;
   border: 1px solid var(--public-border);
   border-radius: var(--public-radius-sm);
   background: color-mix(in oklch, var(--public-muted) 8%, var(--public-surface));
@@ -306,6 +306,43 @@
 .public-qa-article-selected code {
   overflow-wrap: anywhere;
   font-size: 12px;
+}
+.public-qa-article-context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.public-qa-article-context-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--public-accent, #3b82f6);
+}
+.public-qa-article-context-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0;
+  color: var(--public-text);
+}
+.public-qa-article-context-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--public-muted);
+}
+.public-qa-article-context-summary {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--public-text-secondary, var(--public-muted));
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .public-card-media-figure {
   position: relative;
@@ -863,6 +900,78 @@
   padding: 12px 15px;
   border-radius: 14px;
   background: var(--public-bg);
+}
+.public-refusal-bubble {
+  border: 1px solid color-mix(in oklch, var(--public-border) 80%, transparent);
+  background: var(--public-bg);
+}
+.public-refusal-title {
+  margin-bottom: 6px;
+}
+.public-refusal-guidance {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.public-refusal-guidance p {
+  margin-bottom: 0;
+}
+.public-refusal-tips {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--public-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.public-refusal-tips li {
+  margin-bottom: 4px;
+}
+.public-qa-empty-wrap {
+  display: grid;
+  gap: 16px;
+}
+.public-qa-suggestions {
+  display: grid;
+  gap: 10px;
+}
+.public-suggestion-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.public-suggestion-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--public-border);
+  border-radius: var(--public-radius-sm);
+  background: var(--public-bg);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
+}
+.public-suggestion-chip:hover {
+  border-color: var(--public-accent);
+  background: var(--public-accent-soft);
+  transform: translateX(3px);
+}
+.public-suggestion-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--public-accent-soft);
+  color: var(--public-accent);
+  font-weight: 650;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.public-suggestion-text {
+  flex: 1;
+  color: var(--public-fg);
+  font-size: 13.5px;
 }
 .public-message-user .public-message-bubble {
   background: var(--public-accent);

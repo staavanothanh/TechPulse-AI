@@ -148,6 +148,7 @@ export default function FeedView({
                   busy={pendingArticleId === item.id}
                   onSaveToggle={handlers.onSaveToggle}
                   onOpenArticle={handlers.onOpenArticle}
+                  onAskAboutArticle={handlers.onAskAboutArticle}
                 />
               ))
             : null}
