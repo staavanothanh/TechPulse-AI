@@ -10,6 +10,7 @@ export default function AccountView({
   onToggleTopic,
   onSavePreferences,
   onRequestDeletion,
+  onChangePassword,
   onLogout,
   saving = false,
   deleting = false,
@@ -17,6 +18,52 @@ export default function AccountView({
   error = null,
 }) {
   const [deletionConfirmationOpen, setDeletionConfirmationOpen] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false)
+  const [passwordError, setPasswordError] = useState(null)
+  const [passwordSuccess, setPasswordSuccess] = useState(null)
+  // hasPassword === false → tài khoản Google-only, cho phép ĐẶT mật khẩu lần đầu
+  // mà không cần mật khẩu hiện tại.
+  const needsCurrentPassword = user?.hasPassword !== false
+  const describePasswordError = (requestError) => {
+    if (requestError?.code === 'csrf_invalid') return 'Phiên bảo mật đã thay đổi. Vui lòng tải lại trang rồi thử lại.'
+    if (requestError?.code === 'google_reauth_required') return 'Vui lòng đăng nhập lại bằng Google rồi thử đặt mật khẩu.'
+    if (requestError?.status === 403) return 'Mật khẩu hiện tại không đúng.'
+    if (requestError?.status === 422) return 'Mật khẩu mới không hợp lệ (10–128 ký tự).'
+    if (requestError?.status === 401) return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.'
+    return requestError?.message || 'Không thể đổi mật khẩu. Vui lòng thử lại.'
+  }
+  const submitPassword = async (event) => {
+    event.preventDefault()
+    setPasswordError(null)
+    setPasswordSuccess(null)
+    if (needsCurrentPassword && !currentPassword) {
+      setPasswordError('Vui lòng nhập mật khẩu hiện tại.')
+      return
+    }
+    if (newPassword.length < 10 || newPassword.length > 128) {
+      setPasswordError('Mật khẩu mới phải từ 10 đến 128 ký tự.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Mật khẩu xác nhận không khớp.')
+      return
+    }
+    setPasswordSubmitting(true)
+    try {
+      await onChangePassword?.(needsCurrentPassword ? { currentPassword, newPassword } : { newPassword })
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setPasswordSuccess(needsCurrentPassword ? 'Đổi mật khẩu thành công.' : 'Đặt mật khẩu thành công.')
+    } catch (requestError) {
+      setPasswordError(describePasswordError(requestError))
+    } finally {
+      setPasswordSubmitting(false)
+    }
+  }
   const closeDeletionConfirmation = useCallback(() => setDeletionConfirmationOpen(false), [])
   const confirmDeletion = useCallback(() => {
     closeDeletionConfirmation()
@@ -101,6 +148,77 @@ export default function AccountView({
           >
             {saving ? 'Đang lưu...' : 'Lưu chủ đề'}
           </button>
+        </section>
+        <section className="public-account-card public-account-security">
+          <h2>{needsCurrentPassword ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}</h2>
+          <p>
+            {needsCurrentPassword
+              ? 'Đặt mật khẩu mới. Sau khi đổi, các thiết bị khác sẽ bị đăng xuất.'
+              : 'Tài khoản của bạn đang đăng nhập bằng Google. Đặt mật khẩu để có thể đăng nhập bằng email.'}
+          </p>
+          <form className="public-password-form public-field-group" onSubmit={submitPassword} noValidate>
+            {needsCurrentPassword ? (
+              <div className="public-field">
+                <label htmlFor="account-current-password">Mật khẩu hiện tại</label>
+                <input
+                  id="account-current-password"
+                  name="currentPassword"
+                  className="public-input"
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                />
+              </div>
+            ) : null}
+            <div className="public-field">
+              <label htmlFor="account-new-password">Mật khẩu mới</label>
+              <input
+                id="account-new-password"
+                name="newPassword"
+                className="public-input"
+                type="password"
+                autoComplete="new-password"
+                minLength={10}
+                maxLength={128}
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </div>
+            <div className="public-field">
+              <label htmlFor="account-confirm-password">Xác nhận mật khẩu mới</label>
+              <input
+                id="account-confirm-password"
+                name="confirmPassword"
+                className="public-input"
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+              />
+            </div>
+            {passwordError ? (
+              <p className="public-field-error" role="alert">
+                {passwordError}
+              </p>
+            ) : null}
+            {passwordSuccess ? (
+              <p className="public-form-success" role="status">
+                {passwordSuccess}
+              </p>
+            ) : null}
+            <button
+              className="public-btn public-btn-secondary"
+              type="submit"
+              disabled={passwordSubmitting}
+            >
+              {passwordSubmitting
+                ? 'Đang lưu...'
+                : needsCurrentPassword
+                  ? 'Đổi mật khẩu'
+                  : 'Đặt mật khẩu'}
+            </button>
+          </form>
         </section>
         <section className="public-account-card public-danger-zone">
           <h2>Quản lý dữ liệu</h2>

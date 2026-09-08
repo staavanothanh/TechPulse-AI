@@ -134,6 +134,10 @@ export default function App() {
     },
     [navigate],
   )
+  const publicNavigateRef = useRef(handlePublicNavigate)
+  useLayoutEffect(() => {
+    publicNavigateRef.current = handlePublicNavigate
+  }, [handlePublicNavigate])
 
   const handleAdminNavigate = useCallback(
     (nextRoute) => {
@@ -172,8 +176,10 @@ export default function App() {
 
   const sessionEpochRef = useRef(0)
   const sessionIdentityRef = useRef(sessionIdentity(session))
+  const sessionCsrfRef = useRef(session.csrfToken)
   useLayoutEffect(() => {
     sessionIdentityRef.current = sessionIdentity(session)
+    sessionCsrfRef.current = session.csrfToken
   }, [session])
   const beginSessionTransition = useCallback(() => {
     sessionEpochRef.current += 1
@@ -225,9 +231,9 @@ export default function App() {
       error: null,
       notice: nextNotice,
     }))
-    if (!nextUser) handlePublicNavigate('feed')
+    if (!nextUser) publicNavigateRef.current('feed')
     return true
-  }, [handlePublicNavigate])
+  }, [])
 
   const expireSession = useCallback(
     (notice, expectedIdentity, expectedEpoch) => {
@@ -242,13 +248,13 @@ export default function App() {
     () =>
       createSessionActions({
         api,
-        getCsrfToken: () => session.csrfToken,
+        getCsrfToken: () => sessionCsrfRef.current,
         applySession,
         commitSession: (nextUser, nextCsrfToken, nextNotice, expectedTransition) => applySession(nextUser, nextCsrfToken, nextNotice, expectedTransition),
         beginSessionTransition,
         isSessionTransitionCurrent,
       }),
-    [applySession, beginSessionTransition, isSessionTransitionCurrent, session.csrfToken],
+    [applySession, beginSessionTransition, isSessionTransitionCurrent],
   )
   const adminApi = useMemo(
     () => withSessionRecovery(api, expireSession, {

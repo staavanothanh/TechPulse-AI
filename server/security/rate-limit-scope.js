@@ -5,6 +5,7 @@ const SCOPE_SUBJECTS = Object.freeze({
   'answer-daily': 'user',
   'admin-trigger': 'admin',
   'source-test': 'source',
+  'password-change': 'ip',
 })
 
 export const RATE_LIMITS = Object.freeze({
@@ -14,6 +15,7 @@ export const RATE_LIMITS = Object.freeze({
   'answer-daily': Object.freeze({ limit: 100, windowSeconds: 24 * 60 * 60 }),
   'admin-trigger': Object.freeze({ limit: 20, windowSeconds: 60 }),
   'source-test': Object.freeze({ limit: 10, windowSeconds: 60 }),
+  'password-change': Object.freeze({ limit: 5, windowSeconds: 15 * 60 }),
 })
 
 export function isScopeSubjectPairValid(scope, subjectType) {

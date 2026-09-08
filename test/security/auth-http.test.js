@@ -3,6 +3,7 @@ import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { createApp } from '../../server/app.js'
 import { loadOpenApi } from '../../scripts/contracts/openapi-utils.js'
+import { AuthError } from '../../server/application/auth/service.js'
 
 const openApi = loadOpenApi()
 const validator = new Ajv({ strict: false })
@@ -38,6 +39,12 @@ const authService = {
   logout: vi.fn(async () => undefined),
   updatePreferences: vi.fn(async () => ({
     id: 'user-1', email: 'new@example.com', role: 'user', status: 'active', topicPreferences: ['AI'], createdAt: '2026-08-09T00:00:00.000Z',
+  })),
+  changePassword: vi.fn(async () => ({
+    user: { id: 'user-1', email: 'new@example.com', role: 'user', status: 'active', topicPreferences: [], hasPassword: true, createdAt: '2026-08-09T00:00:00.000Z' },
+    csrfToken: 'c'.repeat(32),
+    sessionToken: 'rotated-session-token-1234',
+    maxAgeSeconds: 604800,
   })),
   listAdminUsers: vi.fn(async () => ({ users: [{ id: '507f1f77bcf86cd799439010', email: 'admin@example.com', role: 'admin', status: 'active', createdAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z' }], hasNext: false, nextCursor: null })),
 }
@@ -98,5 +105,43 @@ describe('Step 2 auth HTTP boundary', () => {
     const response = await fetch(`${origin}/api/v1/admin/users`, { headers: { Cookie: '__Host-techpulse_session=opaque-session-token-1234' } })
     expect(response.status).toBe(500)
     expect((await response.json()).error.code).toBe('internal_error')
+  })
+
+  it('re-issues a session cookie when the password change succeeds', async () => {
+    const response = await fetch(`${origin}/api/v1/me/password`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json', Cookie: '__Host-techpulse_session=opaque-session-token-1234', 'X-CSRF-Token': 'c'.repeat(32) },
+      body: JSON.stringify({ currentPassword: 'long-enough-password', newPassword: 'brand-new-password' }),
+    })
+    const payload = await response.json()
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toContain('__Host-techpulse_session=')
+    expect(response.headers.get('cache-control')).toBe('no-store, private')
+    expect(validateAuthResponse(payload)).toBe(true)
+    expect(authService.changePassword).toHaveBeenCalled()
+  })
+  it('preserves canonical password-change throttling and Retry-After responses', async () => {
+    authService.changePassword.mockRejectedValueOnce(new AuthError(429, 'rate_limit_exceeded', 'Too many attempts', { retryAfter: 17 }))
+    const response = await fetch(`${origin}/api/v1/me/password`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json', Cookie: '__Host-techpulse_session=opaque-session-token-1234', 'X-CSRF-Token': 'c'.repeat(32) },
+      body: JSON.stringify({ currentPassword: 'not-echoed', newPassword: 'not-echoed-too' }),
+    })
+    const payload = await response.json()
+    expect(response.status).toBe(429)
+    expect(response.headers.get('retry-after')).toBe('17')
+    expect(payload.error).toMatchObject({ code: 'rate_limit_exceeded', message: 'Too many attempts' })
+    expect(JSON.stringify(payload)).not.toContain('not-echoed')
+  })
+
+  it('rejects a password change without a session before calling the service', async () => {
+    authService.changePassword.mockClear()
+    const response = await fetch(`${origin}/api/v1/me/password`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json', 'X-CSRF-Token': 'c'.repeat(32) },
+      body: JSON.stringify({ newPassword: 'brand-new-password' }),
+    })
+    expect(response.status).toBe(401)
+    expect(authService.changePassword).not.toHaveBeenCalled()
   })
 })

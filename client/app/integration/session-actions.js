@@ -67,6 +67,37 @@ export function createSessionActions({
   createIdempotencyKey = () => `account-deletion-${Date.now()}`,
   redirect = redirectToGoogleAuth,
 }) {
+  let sessionMutationTail = null
+  let currentCsrfToken
+
+  function readCsrfToken() {
+    const externalCsrfToken = getCsrfToken()
+    if (sessionMutationTail === null || currentCsrfToken === undefined) currentCsrfToken = externalCsrfToken
+    return currentCsrfToken
+  }
+
+  function enqueueSessionMutation(operation) {
+    let next
+    if (sessionMutationTail === null) {
+      try { next = Promise.resolve(operation()) } catch (error) { next = Promise.reject(error) }
+    } else {
+      next = sessionMutationTail.then(operation, operation)
+    }
+    let completed
+    completed = next.then(
+      (value) => {
+        if (sessionMutationTail === completed) sessionMutationTail = null
+        return value
+      },
+      (error) => {
+        if (sessionMutationTail === completed) sessionMutationTail = null
+        throw error
+      },
+    )
+    sessionMutationTail = completed
+    return completed
+  }
+
   function startTransition() {
     return beginSessionTransition()
   }
@@ -75,16 +106,24 @@ export function createSessionActions({
     return transition === null || transition === undefined || isSessionTransitionCurrent(transition)
   }
 
+  function commitSessionState(nextUser, nextCsrfToken, nextNotice, transition) {
+    const result = commitSession(nextUser, nextCsrfToken, nextNotice, transition)
+    if (nextCsrfToken !== undefined) currentCsrfToken = nextCsrfToken
+    return result
+  }
+
   async function authenticate({ mode, email, password }) {
-    const transition = startTransition()
-    const operation = mode === 'register' ? api.registerUser : api.login
-    const response = await operation({
-      body: JSON.stringify({ email, password }),
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+    return enqueueSessionMutation(async () => {
+      const transition = startTransition()
+      const operation = mode === 'register' ? api.registerUser : api.login
+      const response = await operation({
+        body: JSON.stringify({ email, password }),
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (canCommit(transition)) commitSessionState(response.data.user, response.data.csrfToken, null, transition)
+      return response
     })
-    if (canCommit(transition)) commitSession(response.data.user, response.data.csrfToken, null, transition)
-    return response
   }
 
   async function authenticateWithGoogle() {
@@ -95,36 +134,61 @@ export function createSessionActions({
   }
 
   async function logout() {
-    const transition = startTransition()
-    const csrfToken = getCsrfToken()
-    await api.logout({ credentials: 'same-origin', headers: csrfHeaders(csrfToken) })
-    if (canCommit(transition)) commitSession(null, null, null, transition)
+    return enqueueSessionMutation(async () => {
+      const transition = startTransition()
+      const csrfToken = readCsrfToken()
+      await api.logout({ credentials: 'same-origin', headers: csrfHeaders(csrfToken) })
+      if (canCommit(transition)) commitSessionState(null, null, null, transition)
+    })
   }
 
   async function updatePreferences(topics) {
     const draft = validateTopicPreferences(topics)
     if (!draft.valid)
       throw Object.assign(new Error('Chủ đề quan tâm không hợp lệ.'), { status: 422 })
-    const transition = startTransition()
-    const csrfToken = getCsrfToken()
-    const response = await api.updatePreferences({
-      body: JSON.stringify({ topicPreferences: draft.topics }),
-      credentials: 'same-origin',
-      headers: csrfHeaders(csrfToken, { 'Content-Type': 'application/json' }),
+    return enqueueSessionMutation(async () => {
+      const transition = startTransition()
+      const csrfToken = readCsrfToken()
+      const response = await api.updatePreferences({
+        body: JSON.stringify({ topicPreferences: draft.topics }),
+        credentials: 'same-origin',
+        headers: csrfHeaders(csrfToken, { 'Content-Type': 'application/json' }),
+      })
+      if (canCommit(transition)) commitSessionState(response.data, csrfToken, null, transition)
+      return response
     })
-    if (canCommit(transition)) commitSession(response.data, csrfToken, null, transition)
-    return response
   }
 
   async function requestDeletion() {
-    const transition = startTransition()
-    const csrfToken = getCsrfToken()
-    const response = await api.requestAccountDeletion({
-      credentials: 'same-origin',
-      headers: csrfHeaders(csrfToken, { 'Idempotency-Key': createIdempotencyKey() }),
+    return enqueueSessionMutation(async () => {
+      const transition = startTransition()
+      const csrfToken = readCsrfToken()
+      const response = await api.requestAccountDeletion({
+        credentials: 'same-origin',
+        headers: csrfHeaders(csrfToken, { 'Idempotency-Key': createIdempotencyKey() }),
+      })
+      if (canCommit(transition)) commitSessionState(null, null, DELETION_NOTICE, transition)
+      return response
     })
-    if (canCommit(transition)) commitSession(null, null, DELETION_NOTICE, transition)
-    return response
+  }
+
+  // Đổi/đặt mật khẩu: server thu hồi mọi session cũ và cấp lại MỘT session mới,
+  // nên phải commit user + CSRF token MỚI (token cũ đã hết hiệu lực).
+  // currentPassword chỉ gửi khi tài khoản đã có mật khẩu thật (OAuth-only bỏ trống).
+  async function changePassword({ currentPassword, newPassword } = {}) {
+    return enqueueSessionMutation(async () => {
+      const transition = startTransition()
+      const csrfToken = readCsrfToken()
+      const body = newPassword === undefined ? {} : { newPassword }
+      if (currentPassword !== undefined && currentPassword !== null) body.currentPassword = currentPassword
+      const response = await api.changePassword({
+        body: JSON.stringify(body),
+        credentials: 'same-origin',
+        headers: csrfHeaders(csrfToken, { 'Content-Type': 'application/json' }),
+      })
+      if (canCommit(transition)) commitSessionState(response.data.user, response.data.csrfToken, null, transition)
+      return response
+    })
   }
 
   return Object.freeze({
@@ -133,5 +197,6 @@ export function createSessionActions({
     logout,
     requestDeletion,
     updatePreferences,
+    changePassword,
   })
 }

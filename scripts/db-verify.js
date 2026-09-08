@@ -49,8 +49,10 @@ import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from './migrations/summary-detail-v1
 import {
   TOPIC_TAXONOMY_ARTICLE_VALIDATOR,
   TOPIC_TAXONOMY_USERS_VALIDATOR,
+  TOPIC_TAXONOMY_USERS_COMPATIBILITY_VALIDATOR,
   TOPIC_TAXONOMY_ARTICLE_INDEXES,
 } from './migrations/topic-taxonomy-v1.js'
+import { PASSWORD_CHANGE_USERS_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR, PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR, PASSWORD_CHANGE_SESSIONS_VALIDATOR } from './migrations/password-change.js'
 import {
   actionsForCollection,
   probeAuditRoleCapabilities,
@@ -306,9 +308,9 @@ async function probeTopicTaxonomyRoleCapabilities({ client, db } = {}) {
     transaction: outcome.transactionStarted && outcome.sessionHealthy,
   }
 }
-if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'chat-sessions-source-name-v1', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation'].includes(target)) {
+if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 'indexing-jobs', 'indexing-drain-performance', 'provider-routing-v2', 'chat-sessions', 'chat-sessions-source-name-v1', 'qa-evidence-fence', 'summary-detail-v1', 'governance', 'google-oauth', 'topic-taxonomy-v1', 'source-policy-reconciliation', 'password-change'].includes(target)) {
   console.error(
-    'Supported verification targets: auth-core, sources, durable-jobs, cron-observability, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, chat-sessions-source-name-v1, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation',
+    'Supported verification targets: auth-core, sources, durable-jobs, cron-observability, articles, indexing-jobs, indexing-drain-performance, provider-routing-v2, chat-sessions, chat-sessions-source-name-v1, qa-evidence-fence, summary-detail-v1, governance, google-oauth, topic-taxonomy-v1, source-policy-reconciliation, password-change',
   )
   process.exitCode = 2
 } else {
@@ -368,6 +370,8 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
                   }
               : target === 'topic-taxonomy-v1'
                 ? { articles: { validator: TOPIC_TAXONOMY_ARTICLE_VALIDATOR }, users: { validator: TOPIC_TAXONOMY_USERS_VALIDATOR } }
+              : target === 'password-change'
+                ? { users: { validator: PASSWORD_CHANGE_USERS_VALIDATOR }, adminAuditLogs: { validator: PASSWORD_CHANGE_AUDIT_VALIDATOR }, rateLimitBuckets: { validator: PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR }, sessions: { validator: PASSWORD_CHANGE_SESSIONS_VALIDATOR } }
               : target === 'governance'
                 ? { ...GOVERNANCE_COLLECTIONS, takedownRequests: { ...GOVERNANCE_COLLECTIONS.takedownRequests, validator: GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } }
               : target === 'google-oauth'
@@ -431,6 +435,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
               ? [SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
             : target === 'source-policy-reconciliation' && name === 'sources'
               ? [SOURCE_COLLECTIONS.sources.validator, QA_EVIDENCE_FENCE_SOURCE_VALIDATOR]
+            : target === 'password-change' && name === 'users'
+              ? [PASSWORD_CHANGE_USERS_VALIDATOR]
+            : target === 'password-change' && name === 'adminAuditLogs'
+              ? [PASSWORD_CHANGE_AUDIT_VALIDATOR]
+            : target === 'password-change' && name === 'rateLimitBuckets'
+              ? [PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR]
+            : target === 'password-change' && name === 'sessions'
+              ? [PASSWORD_CHANGE_SESSIONS_VALIDATOR]
             : (target === 'auth-core' || target === 'google-oauth') && name === 'adminAuditLogs'
               ? [
                   AUTH_CORE_COLLECTIONS[name].validator,

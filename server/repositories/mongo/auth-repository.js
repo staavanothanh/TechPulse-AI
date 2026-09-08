@@ -77,6 +77,7 @@ export class MongoAuthRepository {
     if (input.suspendedAt) document.suspendedAt = input.suspendedAt
     if (input.suspensionReason) document.suspensionReason = input.suspensionReason
     if (input.googleSub !== undefined) document.googleSub = input.googleSub
+    if (input.passwordEnabled !== undefined) document.passwordEnabled = input.passwordEnabled
     await this.collection('users').insertOne(document, options)
     return document
   }
@@ -149,6 +150,16 @@ export class MongoAuthRepository {
     return result
   }
 
+  async updatePassword(userId, passwordHash, options = {}) {
+    const { expectedSessionVersion, ...mongoOptions } = options
+    const result = await this.collection('users').findOneAndUpdate(
+      { _id: idValue(userId), status: 'active', ...(expectedSessionVersion === undefined ? {} : { sessionVersion: expectedSessionVersion }) },
+      { $set: { passwordHash, passwordEnabled: true, updatedAt: new Date() }, $inc: { sessionVersion: 1 } },
+      { ...mongoOptions, returnDocument: 'after' },
+    )
+    return result
+  }
+
   async updateUserStatus(userId, status, reasonCode, options = {}) {
     const now = new Date()
     const expectedStatus = status === 'suspended' ? 'active' : 'suspended'
@@ -192,6 +203,7 @@ export class MongoAuthRepository {
     if (input.createdIpHmac) document.createdIpHmac = input.createdIpHmac
     if (input.ipHmacKeyVersion) document.ipHmacKeyVersion = input.ipHmacKeyVersion
     if (input.userAgentSummary) document.userAgentSummary = input.userAgentSummary
+    if (input.googleAuthenticatedAt) document.googleAuthenticatedAt = nowDate(input.googleAuthenticatedAt)
     if (expectedUserSessionVersion !== undefined) {
       const user = await this.collection('users').findOne({ _id: document.userId, status: expectedUserStatus, sessionVersion: expectedUserSessionVersion }, mongoOptions)
       if (!user) throw new Error('session user fence mismatch')

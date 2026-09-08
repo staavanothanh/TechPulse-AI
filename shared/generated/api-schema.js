@@ -506,6 +506,85 @@ export const openApiDocument = {
         }
       }
     },
+    "/api/v1/me/password": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "changePassword",
+        "x-persistence": "mongo",
+        "summary": "Change or set the current account password",
+        "description": "Authenticated password change. Accounts that already have a usable password must supply currentPassword; Google-only accounts (no usable password yet) may set a first password without it after a recent verified Google login on the current session. On success all prior sessions are revoked and a fresh session is issued in the response.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfTokenHeader"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/VaryCookie"
+              },
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
     "/api/v1/me/deletion-requests": {
       "post": {
         "tags": [
@@ -4442,7 +4521,8 @@ export const openApiDocument = {
               "user_logout",
               "preferences_updated",
               "google_oauth_registered",
-              "google_oauth_login"
+              "google_oauth_login",
+              "password_changed"
             ]
           }
         ],
@@ -4618,6 +4698,10 @@ export const openApiDocument = {
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "hasPassword": {
+            "type": "boolean",
+            "description": "True when the account has a usable password. Google-only accounts report false until a first password is set."
           }
         }
       },
@@ -4657,6 +4741,26 @@ export const openApiDocument = {
           "password": {
             "type": "string",
             "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "newPassword"
+        ],
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Required for accounts that already have a usable password. Ignored for Google-only accounts setting their first password."
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 10,
             "maxLength": 128
           }
         }
@@ -10340,6 +10444,7 @@ export const openApiDocument = {
           "validation_error",
           "unauthorized",
           "csrf_invalid",
+          "google_reauth_required",
           "forbidden",
           "oauth_state_invalid",
           "oauth_state_expired",

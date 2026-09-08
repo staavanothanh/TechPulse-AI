@@ -78,6 +78,18 @@ const operations = [
     "pathParams": []
   },
   {
+    "operationId": "changePassword",
+    "method": "POST",
+    "path": "/api/v1/me/password",
+    "requiredHeaders": [
+      "X-CSRF-Token"
+    ],
+    "browserManagedHeaders": [
+      "Origin"
+    ],
+    "pathParams": []
+  },
+  {
     "operationId": "requestAccountDeletion",
     "method": "POST",
     "path": "/api/v1/me/deletion-requests",
@@ -737,6 +749,7 @@ export function createApiClient(clientOptions = {}) {
     googleCallback: (init = {}) => requestOperation('googleCallback', init, clientOptions),
     getCurrentUser: (init = {}) => requestOperation('getCurrentUser', init, clientOptions),
     updatePreferences: (init = {}) => requestOperation('updatePreferences', init, clientOptions),
+    changePassword: (init = {}) => requestOperation('changePassword', init, clientOptions),
     requestAccountDeletion: (init = {}) => requestOperation('requestAccountDeletion', init, clientOptions),
     listSavedArticles: (init = {}) => requestOperation('listSavedArticles', init, clientOptions),
     clearSavedArticles: (init = {}) => requestOperation('clearSavedArticles', init, clientOptions),

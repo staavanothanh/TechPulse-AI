@@ -100,6 +100,15 @@ describe('MongoAuthRepository', () => {
     await expect(fixture.repository.findUserById(userId.toHexString())).resolves.toEqual(expect.objectContaining({ _id: userId }))
   })
 
+  it('persists passwordEnabled on creation for password and OAuth-only accounts and omits it when unset', async () => {
+    const passwordAccount = await createContext().repository.createUser({ emailNormalized: 'user@example.com', emailDisplay: 'User', passwordHash: 'hash', passwordEnabled: true })
+    expect(passwordAccount).toEqual(expect.objectContaining({ passwordEnabled: true }))
+    const oauthAccount = await createContext().repository.createUser({ emailNormalized: 'g@gmail.com', emailDisplay: 'g@gmail.com', passwordHash: 'hash', passwordEnabled: false, googleSub: 'sub-1' })
+    expect(oauthAccount).toEqual(expect.objectContaining({ passwordEnabled: false, googleSub: 'sub-1' }))
+    const legacyAccount = await createContext().repository.createUser({ emailNormalized: 'a@example.com', emailDisplay: 'A', passwordHash: 'hash' })
+    expect(legacyAccount).not.toHaveProperty('passwordEnabled')
+  })
+
   it('handles seed races and refuses an existing non-admin account', async () => {
     const duplicate = Object.assign(new Error('duplicate'), { code: 11000 })
     const fixture = createContext({ updateResults: { users: [duplicate] }, findOne: { users: [{ role: 'admin', status: 'active' }] } })
@@ -138,10 +147,23 @@ describe('MongoAuthRepository', () => {
     await expect(restore.repository.updateUserStatus(userId, 'active', 'user_restored')).resolves.toEqual({ status: 'active' })
   })
 
+  it('updates the password with a session-version fence, enables password and bumps the version', async () => {
+    const updated = { _id: userId, passwordHash: 'new-hash', passwordEnabled: true, sessionVersion: 3 }
+    const fixture = createContext({ findOneAndUpdateResults: { users: [updated] } })
+    await expect(fixture.repository.updatePassword(userId, 'new-hash', { expectedSessionVersion: 2, session: { tx: true } })).resolves.toEqual(expect.objectContaining({ passwordEnabled: true, sessionVersion: 3 }))
+    const [filter, update, options] = fixture.collections.get('users').findOneAndUpdate.mock.calls[0]
+    expect(filter).toEqual(expect.objectContaining({ _id: userId, status: 'active', sessionVersion: 2 }))
+    expect(update).toEqual(expect.objectContaining({ $set: expect.objectContaining({ passwordHash: 'new-hash', passwordEnabled: true }), $inc: { sessionVersion: 1 } }))
+    expect(options).toEqual(expect.objectContaining({ returnDocument: 'after', session: { tx: true } }))
+
+    const casFail = createContext({ findOneAndUpdateResults: { users: [null] } })
+    await expect(casFail.repository.updatePassword(userId, 'new-hash', { expectedSessionVersion: 9 })).resolves.toBeNull()
+  })
+
   it('creates, touches and revokes sessions with user lifecycle fences', async () => {
     const fixture = createContext({ findOne: { users: [{}], sessions: [{ _id: sessionId, status: 'active' }] }, findOneAndUpdateResults: { sessions: [{ _id: sessionId, status: 'active' }] } })
-    const session = await fixture.repository.createSession({ _id: sessionId, tokenHash: 'token', userId, userSessionVersion: 2, csrfSecretHash: 'csrf', createdIpHmac: 'ip', ipHmacKeyVersion: 1, userAgentSummary: 'browser', createdAt: now, absoluteExpiresAt: new Date(now.getTime() + 1000) }, { expectedUserSessionVersion: 2 })
-    expect(session).toEqual(expect.objectContaining({ _id: sessionId, status: 'active', userId }))
+    const session = await fixture.repository.createSession({ _id: sessionId, tokenHash: 'token', userId, userSessionVersion: 2, csrfSecretHash: 'csrf', createdIpHmac: 'ip', ipHmacKeyVersion: 1, userAgentSummary: 'browser', googleAuthenticatedAt: now, createdAt: now, absoluteExpiresAt: new Date(now.getTime() + 1000) }, { expectedUserSessionVersion: 2 })
+    expect(session).toEqual(expect.objectContaining({ _id: sessionId, status: 'active', userId, googleAuthenticatedAt: now }))
     await expect(fixture.repository.findSessionByTokenHash('token')).resolves.toEqual(expect.objectContaining({ status: 'active' }))
     await expect(fixture.repository.touchSession(sessionId, now, { userId, expectedSessionVersion: 2 })).resolves.toEqual(expect.objectContaining({ status: 'active' }))
     await expect(fixture.repository.revokeSession(sessionId)).resolves.toEqual(expect.objectContaining({ matchedCount: expect.anything() }))
