@@ -16,6 +16,7 @@ import {
   GOOGLE_OAUTH_INDEXES,
 } from '../../scripts/migrations/google-oauth.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } from '../../scripts/migrations/source-policy-reconciliation.js'
+import { PASSWORD_CHANGE_AUDIT_VALIDATOR, PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR, PASSWORD_CHANGE_SESSIONS_VALIDATOR, PASSWORD_CHANGE_USERS_VALIDATOR } from '../../scripts/migrations/password-change.js'
 import { TOPIC_TAXONOMY_USERS_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
 
@@ -35,10 +36,14 @@ export async function assertAuthCoreReady(context) {
   for (const name of Object.keys(AUTH_CORE_COLLECTIONS)) {
     const collection = collectionMap.get(name)
     const acceptedValidators = name === 'users'
-      ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR]
+      ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR, PASSWORD_CHANGE_USERS_VALIDATOR]
       : name === 'adminAuditLogs'
-        ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
-        : [AUTH_CORE_COLLECTIONS[name].validator]
+        ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR]
+        : name === 'rateLimitBuckets'
+          ? [AUTH_CORE_COLLECTIONS[name].validator, PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR]
+          : name === 'sessions'
+            ? [AUTH_CORE_COLLECTIONS[name].validator, PASSWORD_CHANGE_SESSIONS_VALIDATOR]
+            : [AUTH_CORE_COLLECTIONS[name].validator]
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || !acceptedValidators.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) {
       throw new Error('auth-core validator is not ready')
     }
@@ -56,7 +61,12 @@ export async function assertGoogleOAuthReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const [name, definition] of Object.entries(GOOGLE_OAUTH_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || ![definition.validator, ...(name === 'users' ? [TOPIC_TAXONOMY_USERS_VALIDATOR] : []), ...(name === 'adminAuditLogs' ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR] : [])].some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('google-oauth validator is not ready')
+    const acceptedValidators = [
+      definition.validator,
+      ...(name === 'users' ? [TOPIC_TAXONOMY_USERS_VALIDATOR, PASSWORD_CHANGE_USERS_VALIDATOR] : []),
+      ...(name === 'adminAuditLogs' ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR] : []),
+    ]
+    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !acceptedValidators.some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('google-oauth validator is not ready')
   }
   const usersIndexes = new Map((await context.db.collection('users').indexes()).map((index) => [index.name, index]))
   for (const expected of GOOGLE_OAUTH_INDEXES.users) if (!exactMongoIndex(usersIndexes.get(expected.name), expected)) throw new Error('google-oauth indexes are not ready')

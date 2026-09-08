@@ -106,9 +106,11 @@ export function createConfiguredRuntimeFactories({ environment = process.env } =
       import('./schema-readiness.js'),
     ])
     const verifyAuthSchema = createReleaseVerifiedSchemaVerifier('auth-core', environment)
+    const verifyPasswordChangeSchema = createReleaseVerifiedSchemaVerifier('password-change', environment)
     const verifyTaxonomySchema = createReleaseVerifiedSchemaVerifier('topic-taxonomy-v1', environment)
     const verifySchema = async (context) => {
       await verifyAuthSchema(context)
+      await verifyPasswordChangeSchema(context)
       await verifyTaxonomySchema(context)
     }
     // Do not evaluate the optional OAuth attestation until OAuth is enabled.

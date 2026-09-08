@@ -25,6 +25,11 @@ const ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000
 const IDLE_MS = 24 * 60 * 60 * 1000
 // A Google-only session must carry a recent server-verified Google login before it can enroll a local password.
 const GOOGLE_STEP_UP_MS = 10 * 60 * 1000
+const AUTH_MONGO_ERROR_CODES = Object.freeze([6, 7, 89, 91, 121, 189])
+const SAFE_CORRELATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const SAFE_ERROR_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+const GOOGLE_CALLBACK_TELEMETRY_STAGE = 'google-oauth.callback'
+
 
 /**
  * Password hash "mồi" dùng chung cho luồng đăng nhập sai email và cho user OAuth.
@@ -107,6 +112,51 @@ function validMongoId(value) {
   return typeof value === 'string' && /^[a-f0-9]{24}$/i.test(value)
 }
 
+function safeCorrelationId(value) {
+  return typeof value === 'string' && SAFE_CORRELATION_ID_PATTERN.test(value) ? value : undefined
+}
+
+function safeErrorName(value) {
+  return typeof value === 'string' && SAFE_ERROR_NAME_PATTERN.test(value) ? value : undefined
+}
+
+function requestHeader(request, name) {
+  try {
+    if (typeof request?.get === 'function') {
+      const value = request.get(name)
+      if (value !== undefined && value !== null) return value
+    }
+    if (typeof request?.headers?.get === 'function') {
+      const value = request.headers.get(name)
+      if (value !== undefined && value !== null) return value
+    }
+    return request?.headers?.[name] ?? request?.headers?.[name.toLowerCase()]
+  } catch {
+    return undefined
+  }
+}
+
+function isMongoLikeError(error) {
+  return Boolean(error?.name?.startsWith('Mongo') || AUTH_MONGO_ERROR_CODES.includes(error?.code))
+}
+
+function safeRepositoryTelemetry({ stage, operation, collection, request, error }) {
+  const requestId = safeCorrelationId(request?.requestId)
+  const serverRequestId = safeCorrelationId(request?.serverRequestId)
+  const vercelId = safeCorrelationId(requestHeader(request, 'x-vercel-id'))
+  const name = safeErrorName(error?.name)
+  return Object.freeze({
+    event: 'auth.mongo_repository_failure',
+    stage,
+    operation,
+    collection,
+    ...(requestId ? { requestId } : {}),
+    ...(serverRequestId ? { serverRequestId } : {}),
+    ...(vercelId ? { vercelId } : {}),
+    ...(name ? { name } : {}),
+    ...(Number.isSafeInteger(error?.code) ? { code: error.code } : {}),
+  })
+}
 /** Validate userId mà admin thao tác; lỗi 404 nếu không phải ObjectId hợp lệ. */
 function requireAdminTargetId(userId) {
   if (!validMongoId(userId)) throw new AuthError(404, 'not_found', 'User not found')
@@ -124,11 +174,37 @@ function requireAdminTargetId(userId) {
  * @param {object} [options.clientIpAdapter] Adapter lấy IP client (tránh phụ thuộc Express).
  * @param {object} [options.quotaKeyring]   HMAC keyring cho rate limit (dùng chung runtime).
  * @param {object} [options.rateLimitAdmission] Cổng admission thay thế cho admin actions.
+ * @param {object|Function} [options.logger=console] Structured error logger (injectable for tests).
  */
-export function createAuthService({ repository, runtime, environment = process.env, clock = () => new Date(), clientIpAdapter, quotaKeyring, rateLimitAdmission } = {}) {
+export function createAuthService({ repository, runtime, environment = process.env, clock = () => new Date(), clientIpAdapter, quotaKeyring, rateLimitAdmission, logger = console } = {}) {
   if (!repository) throw new Error('auth repository is required')
   // Dùng keyring được inject riêng nếu có, nếu không thì dựng từ runtime quotaKeyring.
   const keyring = quotaKeyring ?? (runtime?.quotaKeyring ? createHmacKeyring({ ...runtime.quotaKeyring }) : null)
+  const reportedMongoErrors = new WeakSet()
+
+  function reportRepositoryError({ request, stage, operation, collection, error }) {
+    if (!isMongoLikeError(error)) return
+    if (error && (typeof error === 'object' || typeof error === 'function')) {
+      if (reportedMongoErrors.has(error)) return
+      reportedMongoErrors.add(error)
+    }
+    const event = safeRepositoryTelemetry({ request, stage, operation, collection, error })
+    try {
+      const loggerResult = typeof logger === 'function' ? logger(event) : typeof logger?.error === 'function' ? logger.error(event) : undefined
+      if (loggerResult && typeof loggerResult.then === 'function') Promise.resolve(loggerResult).catch(() => {})
+    } catch {
+      // Telemetry must never alter the canonical auth failure path.
+    }
+  }
+
+  async function repositoryCall({ request, stage, operation, collection, call }) {
+    try {
+      return await call()
+    } catch (error) {
+      reportRepositoryError({ request, stage, operation, collection, error })
+      throw error
+    }
+  }
 
   /** Lấy keyring rate limit hoặc ném 503 nếu service chưa được cấu hình đầy đủ. */
   function requireKeyring() {
@@ -143,14 +219,17 @@ export function createAuthService({ repository, runtime, environment = process.e
    *   vẫn tính chung một quota trong lúc xoay vòng key.
    * - Khi hết quota: ném 429 kèm `retryAfter` để client biết thời điểm thử lại.
    */
-  async function reserve(scope, request) {
+  async function reserve(scope, request, telemetry) {
     const currentKeyring = requireKeyring()
     const subject = clientIp(request, clientIpAdapter)
     if (!subject) throw new AuthError(503, 'service_unavailable', 'Client identity is unavailable')
     const keyHash = currentKeyring.digest(subject)
     const rotationKeyHashes = []
     for (const version of currentKeyring.versions ?? []) if (version !== currentKeyring.currentVersion) rotationKeyHashes.push(currentKeyring.digest(subject, version))
-    const result = await repository.reserveRateLimit({ scope, subjectType: 'ip', keyHash, keyVersion: currentKeyring.currentVersion, keyring: currentKeyring, rotationKeyHashes, now: clock() })
+    const call = () => repository.reserveRateLimit({ scope, subjectType: 'ip', keyHash, keyVersion: currentKeyring.currentVersion, keyring: currentKeyring, rotationKeyHashes, now: clock() })
+    const result = telemetry
+      ? await repositoryCall({ request, ...telemetry, operation: 'reserveRateLimit', collection: 'rateLimitBuckets', call })
+      : await call()
     if (!result.allowed) throw new AuthError(429, 'rate_limit_exceeded', 'Too many attempts', { retryAfter: result.retryAfterSeconds })
   }
 
@@ -181,12 +260,12 @@ export function createAuthService({ repository, runtime, environment = process.e
    * - Repository dùng CAS (`expectedUserSessionVersion`) để từ chối tạo session
    *   nếu user vừa bị thu hồi session (sessionVersion đã tăng) giữa chừng.
    */
-  async function createSession(user, request, transactionSession, { googleAuthenticatedAt } = {}) {
+  async function createSession(user, request, transactionSession, { googleAuthenticatedAt, telemetry } = {}) {
     const clearToken = createSessionToken()
     const csrfToken = csrfTokenForSession(clearToken)
     const createdAt = clock()
     try {
-      await repository.createSession({
+      const call = () => repository.createSession({
         userId: user._id,
         userSessionVersion: user.sessionVersion,
         tokenHash: hashSessionToken(clearToken),
@@ -197,6 +276,8 @@ export function createAuthService({ repository, runtime, environment = process.e
         ...(googleAuthenticatedAt ? { googleAuthenticatedAt } : {}),
         userAgentSummary: request?.get?.('User-Agent')?.slice(0, 256),
       }, { session: transactionSession, expectedUserSessionVersion: user.sessionVersion, expectedUserStatus: 'active' })
+      if (telemetry) await repositoryCall({ request, ...telemetry, operation: 'createSession', collection: 'sessions', call })
+      else await call()
     } catch (error) {
       if (error?.message === 'session user fence mismatch') throw new AuthError(401, 'unauthorized', 'Session is no longer active')
       throw error
@@ -208,8 +289,11 @@ export function createAuthService({ repository, runtime, environment = process.e
    * Chạy một khối công việc trong transaction Mongo nếu repository hỗ trợ;
    * nếu không, chạy trực tiếp (test dùng repository in-memory).
    */
-  async function inTransaction(work) {
-    return typeof repository.withTransaction === 'function' ? repository.withTransaction(work) : work(undefined)
+  async function inTransaction(work, telemetry) {
+    const call = () => typeof repository.withTransaction === 'function' ? repository.withTransaction(work) : work(undefined)
+    return telemetry
+      ? repositoryCall({ ...telemetry, operation: 'withTransaction', collection: 'transaction', call })
+      : call()
   }
 
   /**
@@ -492,7 +576,7 @@ export function createAuthService({ repository, runtime, environment = process.e
    */
   function mapRepositoryError(error) {
     if (error instanceof AuthError) return error
-    if (error?.name?.startsWith('Mongo') || [6, 7, 89, 91, 189].includes(error?.code)) return new AuthError(503, 'service_unavailable', 'Authentication service is temporarily unavailable')
+    if (isMongoLikeError(error)) return new AuthError(503, 'service_unavailable', 'Authentication service is temporarily unavailable')
     return error
   }
 
@@ -559,10 +643,11 @@ export function createAuthService({ repository, runtime, environment = process.e
    */
   async function googleLogin({ code, state, stateCookie, request } = {}) {
     const googleOAuth = googleOAuthService()
+    const telemetry = { request, stage: GOOGLE_CALLBACK_TELEMETRY_STAGE }
     verifyGoogleState({ state, stateCookie })
     // Do not spend the shared login quota on cross-site callbacks that fail
     // the browser-bound state check before this point.
-    await reserve('login', request)
+    await reserve('login', request, telemetry)
     let googleUser
     try {
       googleUser = await googleOAuth.verifyGoogleUser(code)
@@ -573,7 +658,14 @@ export function createAuthService({ repository, runtime, environment = process.e
     }
     const emailNormalized = normalizeEmail(googleUser.email)
     // Định danh chính là `googleSub` — email chỉ là thông tin bổ trợ để liên kết.
-    const existingBySubject = repository.findUserByGoogleSub ? await repository.findUserByGoogleSub(googleUser.sub) : null
+    const existingBySubject = repository.findUserByGoogleSub
+      ? await repositoryCall({
+          ...telemetry,
+          operation: 'findUserByGoogleSub',
+          collection: 'users',
+          call: () => repository.findUserByGoogleSub(googleUser.sub),
+        })
+      : null
     if (existingBySubject && (existingBySubject.emailNormalized !== emailNormalized || existingBySubject.status !== 'active')) {
       // Tài khoản của sub này đang không active hoặc email đã đổi sang sub khác
       // (Google không cho đổi sub) -> từ chối rõ ràng thay vì tạo user trùng.
@@ -583,7 +675,12 @@ export function createAuthService({ repository, runtime, environment = process.e
     }
     let user = existingBySubject
     if (!user) {
-      const existingByEmail = await repository.findUserByEmail(emailNormalized)
+      const existingByEmail = await repositoryCall({
+        ...telemetry,
+        operation: 'findUserByEmail',
+        collection: 'users',
+        call: () => repository.findUserByEmail(emailNormalized),
+      })
       if (existingByEmail) {
         // Email đã có tài khoản password: chỉ cho phép nếu tài khoản đó đã được
         // liên kết Google (cùng sub) — không bao giờ tự ý chiếm email.
@@ -595,23 +692,38 @@ export function createAuthService({ repository, runtime, environment = process.e
       // User hoàn toàn mới: tạo kèm googleSub + password hash dummy.
       return inTransaction(async (session) => {
         try {
-          user = await repository.createUser({ emailNormalized, emailDisplay: googleUser.email, passwordHash: await hashPassword(`oauth-dummy:${randomBytes(32).toString('base64url')}`), passwordEnabled: false, role: 'user', status: 'active', topicPreferences: [], topicPreferenceIds: [], topicPreferenceTaxonomyVersion: TOPIC_TAXONOMY_VERSION, sessionVersion: 0, googleSub: googleUser.sub }, { session })
+          user = await repositoryCall({
+            ...telemetry,
+            operation: 'createUser',
+            collection: 'users',
+            call: async () => repository.createUser({ emailNormalized, emailDisplay: googleUser.email, passwordHash: await hashPassword(`oauth-dummy:${randomBytes(32).toString('base64url')}`), passwordEnabled: false, role: 'user', status: 'active', topicPreferences: [], topicPreferenceIds: [], topicPreferenceTaxonomyVersion: TOPIC_TAXONOMY_VERSION, sessionVersion: 0, googleSub: googleUser.sub }, { session }),
+          })
         } catch (error) {
           // Race: hai request OAuth đồng thời cùng tạo — một bên trúng unique index.
           if (error?.code === 11000) throw new AuthError(409, 'conflict', 'Account already exists')
           throw error
         }
-        const sessionData = await createSession(user, request, session, { googleAuthenticatedAt: clock() })
-        await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_registered', targetId: user._id, changedFields: ['status'], reasonCode: 'google_oauth_registered', request }), { session })
+        const sessionData = await createSession(user, request, session, { googleAuthenticatedAt: clock(), telemetry })
+        await repositoryCall({
+          ...telemetry,
+          operation: 'insertAudit',
+          collection: 'adminAuditLogs',
+          call: () => repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_registered', targetId: user._id, changedFields: ['status'], reasonCode: 'google_oauth_registered', request }), { session }),
+        })
         return { user: serializeUser(user), ...sessionData }
-      })
+      }, telemetry)
     }
     // User đã tồn tại (theo sub hoặc theo email đã liên kết): tạo session + audit.
     return inTransaction(async (session) => {
-      const sessionData = await createSession(user, request, session, { googleAuthenticatedAt: clock() })
-      await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_login', targetId: user._id, reasonCode: 'google_oauth_login', request }), { session })
+      const sessionData = await createSession(user, request, session, { googleAuthenticatedAt: clock(), telemetry })
+      await repositoryCall({
+        ...telemetry,
+        operation: 'insertAudit',
+        collection: 'adminAuditLogs',
+        call: () => repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_login', targetId: user._id, reasonCode: 'google_oauth_login', request }), { session }),
+      })
       return { user: serializeUser(user), ...sessionData }
-    })
+    }, telemetry)
   }
 
   /**

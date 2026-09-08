@@ -147,4 +147,108 @@ describe('Google OAuth auth service integration boundary', () => {
     const passwordHash = repo.createUser.mock.calls[0][0].passwordHash
     await expect(verifyPassword('techpulse-dummy-password-only-for-timing', passwordHash)).resolves.toBe(false)
   })
+  it('maps Mongo validation failures to 503 and emits only sanitized Google callback telemetry', async () => {
+    const sentinel = 'mongodb://oauth-user:oauth-secret@private.example.test/?token=oauth-token'
+    const repositoryError = Object.assign(new Error(sentinel), { name: 'MongoServerError', code: 121 })
+    const logger = { error: vi.fn() }
+    const repo = repository({ findUserByGoogleSub: vi.fn(async () => { throw repositoryError }) })
+    const service = createAuthService({
+      repository: repo,
+      runtime: RUNTIME,
+      environment: ENVIRONMENT,
+      quotaKeyring: quotaKeyring(),
+      clientIpAdapter: { getClientIp: (req) => req.testClientIp },
+      logger,
+    })
+    const { state } = service.generateGoogleAuthUrl()
+    vi.stubGlobal('fetch', googleFetch())
+    const callbackRequest = {
+      ...request(),
+      requestId: 'oauth-request-1',
+      serverRequestId: 'server-request-2',
+      get: vi.fn((header) => header.toLowerCase() === 'x-vercel-id' ? 'iad1::deployment-123' : undefined),
+    }
+
+    await expect(service.googleLogin({ code: 'google-code-secret', state, stateCookie: state, request: callbackRequest })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+
+    expect(logger.error).toHaveBeenCalledTimes(1)
+    const event = logger.error.mock.calls[0][0]
+    expect(event).toMatchObject({
+      stage: 'google-oauth.callback',
+      operation: 'findUserByGoogleSub',
+      collection: 'users',
+      requestId: 'oauth-request-1',
+      serverRequestId: 'server-request-2',
+      vercelId: 'iad1::deployment-123',
+      name: 'MongoServerError',
+      code: 121,
+    })
+    expect(event).not.toHaveProperty('message')
+    expect(event).not.toHaveProperty('stack')
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(sentinel)
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('google-code-secret')
+  })
+
+  it('omits unsafe request and Vercel identifiers from repository telemetry', async () => {
+    const repositoryError = Object.assign(new Error('private mongo diagnostic'), { name: 'MongoServerError', code: 121 })
+    const logger = { error: vi.fn() }
+    const repo = repository({ findUserByGoogleSub: vi.fn(async () => { throw repositoryError }) })
+    const service = createAuthService({
+      repository: repo,
+      runtime: RUNTIME,
+      environment: ENVIRONMENT,
+      quotaKeyring: quotaKeyring(),
+      clientIpAdapter: { getClientIp: (req) => req.testClientIp },
+      logger,
+    })
+    const { state } = service.generateGoogleAuthUrl()
+    vi.stubGlobal('fetch', googleFetch())
+    const callbackRequest = {
+      ...request(),
+      requestId: 'request id with secret',
+      serverRequestId: 'server/request/secret',
+      get: vi.fn(() => 'https://vercel.example/secret'),
+    }
+
+    await expect(service.googleLogin({ code: 'google-code', state, stateCookie: state, request: callbackRequest })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+
+    const event = logger.error.mock.calls[0][0]
+    expect(event).not.toHaveProperty('requestId')
+    expect(event).not.toHaveProperty('serverRequestId')
+    expect(event).not.toHaveProperty('vercelId')
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('secret')
+  })
+
+  it('preserves the canonical 503 when the injected telemetry logger throws', async () => {
+    const repositoryError = Object.assign(new Error('private mongo diagnostic'), { name: 'MongoServerError', code: 121 })
+    const logger = { error: vi.fn(() => { throw new Error('logger failed') }) }
+    const repo = repository({ findUserByGoogleSub: vi.fn(async () => { throw repositoryError }) })
+    const service = createAuthService({ repository: repo, runtime: RUNTIME, environment: ENVIRONMENT, quotaKeyring: quotaKeyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp }, logger })
+    const { state } = service.generateGoogleAuthUrl()
+    vi.stubGlobal('fetch', googleFetch())
+
+    await expect(service.googleLogin({ code: 'google-code', state, stateCookie: state, request: request() })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+  })
+
+  it('consumes a rejecting injected telemetry logger without replacing the canonical 503', async () => {
+    let thenCalls = 0
+    const loggerResult = {
+      then(_resolve, reject) {
+        thenCalls += 1
+        queueMicrotask(() => reject(new Error('logger rejected')))
+      },
+    }
+    const logger = { error: vi.fn(() => loggerResult) }
+    const repositoryError = Object.assign(new Error('private mongo diagnostic'), { name: 'MongoServerError', code: 121 })
+    const repo = repository({ findUserByGoogleSub: vi.fn(async () => { throw repositoryError }) })
+    const service = createAuthService({ repository: repo, runtime: RUNTIME, environment: ENVIRONMENT, quotaKeyring: quotaKeyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp }, logger })
+    const { state } = service.generateGoogleAuthUrl()
+    vi.stubGlobal('fetch', googleFetch())
+
+    await expect(service.googleLogin({ code: 'google-code', state, stateCookie: state, request: request() })).rejects.toMatchObject({ status: 503, code: 'service_unavailable' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(thenCalls).toBe(1)
+  })
+
 })

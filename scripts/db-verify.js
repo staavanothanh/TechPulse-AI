@@ -452,9 +452,14 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
                   GOVERNANCE_AUDIT_VALIDATOR,
                   GOOGLE_OAUTH_AUDIT_VALIDATOR,
                   SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR,
+                  PASSWORD_CHANGE_AUDIT_VALIDATOR,
                 ]
             : (target === 'auth-core' || target === 'google-oauth' || target === 'topic-taxonomy-v1') && name === 'users'
-              ? [AUTH_CORE_COLLECTIONS[name]?.validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR].filter(Boolean)
+              ? [AUTH_CORE_COLLECTIONS[name]?.validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR, PASSWORD_CHANGE_USERS_VALIDATOR].filter(Boolean)
+            : (target === 'auth-core' || target === 'google-oauth' || target === 'topic-taxonomy-v1') && name === 'rateLimitBuckets'
+              ? [AUTH_CORE_COLLECTIONS[name]?.validator, PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR].filter(Boolean)
+            : (target === 'auth-core' || target === 'google-oauth' || target === 'topic-taxonomy-v1') && name === 'sessions'
+              ? [AUTH_CORE_COLLECTIONS[name]?.validator, PASSWORD_CHANGE_SESSIONS_VALIDATOR].filter(Boolean)
             : target === 'articles' && name === 'articles'
                 ? [ARTICLE_COLLECTIONS.articles.validator, ARTICLE_GOVERNANCE_HARDENING_VALIDATOR, PROVIDER_ROUTING_V2_COLLECTIONS.articles.validator, QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR, SUMMARY_DETAIL_ARTICLE_VALIDATOR, TOPIC_TAXONOMY_ARTICLE_VALIDATOR]
               : (target === 'summary-detail-v1' || target === 'topic-taxonomy-v1') && name === 'articles'

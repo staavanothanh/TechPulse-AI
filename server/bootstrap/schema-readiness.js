@@ -18,6 +18,7 @@ export const RUNTIME_SCHEMA_GENERATIONS = Object.freeze({
   'summary-detail-v1': 'summary-detail-v1',
   governance: 'governance-provider-routing-v2-v1',
   'topic-taxonomy-v1': 'topic-taxonomy-v1',
+  'password-change': 'password-change-v1',
 })
 
 const PAYLOAD_KEYS = Object.freeze([
