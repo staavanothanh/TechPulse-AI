@@ -46,8 +46,8 @@ describe('public user-flow regressions', () => {
     expect(html).toContain('id="public-search-topic"')
     expect(html).toContain('<select')
     expect(html).toContain('Tất cả chủ đề')
-    expect(html).toContain('value="AI"')
-    expect(html).toContain('Cloud')
+    expect(html).toContain('value="ai-ml"')
+    expect(html).toContain('DevOps')
   })
 
   it('renders the source search filter as a select dropdown with human-readable source names', () => {
@@ -79,8 +79,7 @@ describe('public user-flow regressions', () => {
       results: [],
     })
 
-    expect(html).toContain('value="source-missing"')
-    expect(html).toContain('source-missing')
+    expect(html).toContain('<option value="source-missing" selected="">source-missing</option>')
   })
 
   it('normalizes topic aliases and leaf ids to selected stable topic options', () => {

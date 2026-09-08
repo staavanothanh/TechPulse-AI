@@ -8,7 +8,7 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
-import { TOPICS } from '../components/reader-format.js'
+import { TOPIC_OPTIONS, normalizeTopicFilter, topicLabel } from '../components/reader-format.js'
 
 function sourceOption(source) {
   if (typeof source === 'string') {
@@ -55,6 +55,45 @@ function collectSourceItems(sources, results) {
   )
 }
 
+function topicOption(topic) {
+  if (topic && typeof topic === 'object') {
+    const value = normalizeTopicFilter(topic.value ?? topic.id)
+    if (!value) return null
+    return {
+      value,
+      label: typeof topic.label === 'string' && topic.label.trim() ? topic.label.trim() : topicLabel(value) || value,
+    }
+  }
+  if (typeof topic !== 'string' || !topic.trim()) return null
+  const raw = topic.trim()
+  const value = normalizeTopicFilter(raw)
+  return { value, label: topicLabel(value) || raw }
+}
+
+function collectTopicItems(topics, selectedTopic) {
+  const candidates = Array.isArray(topics) ? topics : TOPIC_OPTIONS
+  const items = Array.from(
+    new Map(
+      candidates
+        .map(topicOption)
+        .filter(Boolean)
+        .map((topic) => [topic.value, topic]),
+    ).values(),
+  )
+  if (selectedTopic && !items.some((topic) => topic.value === selectedTopic)) {
+    items.push({ value: selectedTopic, label: topicLabel(selectedTopic) || selectedTopic })
+  }
+  return items
+}
+
+function sourceItemsWithActiveFilter(sources, results, activeSourceId) {
+  const items = collectSourceItems(sources, results)
+  if (activeSourceId && !items.some((source) => source.id === activeSourceId)) {
+    return [...items, { id: activeSourceId, name: activeSourceId }]
+  }
+  return items
+}
+
 export default function SearchView({
   state = 'initial',
   query = {},
@@ -67,7 +106,7 @@ export default function SearchView({
   savedOverrides = {},
   saveError = null,
   handlers = {},
-  topics = TOPICS,
+  topics = TOPIC_OPTIONS,
   sources = [],
 }) {
   const current = {
@@ -79,7 +118,9 @@ export default function SearchView({
     publishedBefore: '',
     ...query,
   }
-  const sourceItems = collectSourceItems(sources, results)
+  const selectedTopic = normalizeTopicFilter(current.topic)
+  const topicItems = collectTopicItems(topics, selectedTopic)
+  const sourceItems = sourceItemsWithActiveFilter(sources, results, current.sourceId)
   return (
     <section
       className="public-view public-search-view"
@@ -129,13 +170,13 @@ export default function SearchView({
           <select
             id="public-search-topic"
             className="public-input"
-            value={current.topic}
+            value={selectedTopic}
             onChange={(event) => handlers.onQueryChange?.('topic', event.target.value)}
           >
             <option value="">Tất cả chủ đề</option>
-            {topics.map((topic) => (
-              <option key={topic} value={topic}>
-                {topic}
+            {topicItems.map((topic) => (
+              <option key={topic.value} value={topic.value}>
+                {topic.label}
               </option>
             ))}
           </select>

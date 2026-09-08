@@ -1157,8 +1157,6 @@ export function useQa({ articleId: routeArticleId = null, contentApi, csrfToken,
           const { articleId: _removed, article: _removedArt, ...rest } = current
           return rest
         })
-          return rest
-        }),
     },
   }
 }

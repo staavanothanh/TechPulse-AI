@@ -1,9 +1,26 @@
 import {
+  TOPIC_CATALOG,
+  resolveTopic,
   topicLabel as catalogTopicLabel,
   topicOptions,
 } from '../../../../shared/topic-catalog.js'
 
 export const TOPICS = topicOptions({ kind: 'parent', status: 'active', locale: 'vi' })
+
+export const TOPIC_OPTIONS = Object.freeze(
+  TOPIC_CATALOG
+    .filter((item) => item.status === 'active')
+    .slice()
+    .sort((left, right) => left.displayOrder - right.displayOrder)
+    .map((item) => Object.freeze({ value: item.id, label: catalogTopicLabel(item.id, 'vi') })),
+)
+
+export function normalizeTopicFilter(value) {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  return resolveTopic(trimmed).canonicalId || trimmed
+}
 
 export function topicLabel(topic) {
   return catalogTopicLabel(topic, 'vi')

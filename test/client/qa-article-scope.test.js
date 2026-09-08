@@ -124,6 +124,22 @@ describe('Q&A article scope from article detail', () => {
     runner.current.handlers.onScopeArticleId('bbb222bbb222bbb222bbb222')
     expect(runner.current.scope.articleId).toBe('bbb222bbb222bbb222bbb222')
   })
+  it('stores rich article context while resetting the active Q&A session', () => {
+    const qaApi = { listSessions: vi.fn(async () => ({ data: [] })) }
+    const expire = vi.fn()
+    const runner = createHookRunner(useQa)
+    runner.render({ csrfToken: 'csrf-1', enabled: true, expire, qaApi, user: { topicPreferences: ['AI'] } })
+
+    runner.current.handlers.onScopeChange('sessionId', 'session-old')
+    const article = { id: '507f1f77bcf86cd799439011', titleOriginal: 'Bài viết test' }
+    runner.current.handlers.onScopeArticleId(article)
+
+    expect(runner.current.state).toBe('empty')
+    expect(runner.current.scope.sessionId).toBeUndefined()
+    expect(runner.current.scope.article).toEqual(article)
+    expect(runner.current.scope.articleId).toBe(article.id)
+  })
+
 
   it('onAskAboutArticle navigates to qa and presets the article id in Q&A scope', async () => {
     const onNavigate = vi.fn()
@@ -143,7 +159,8 @@ describe('Q&A article scope from article detail', () => {
 
     runner.current.article.onAskAboutArticle?.({ id: 'abc123def456abc123def456', titleOriginal: 'Bài test' })
     expect(onNavigate).toHaveBeenCalledWith('qa', expect.anything())
-    expect(runner.current.qa.scope.articleId).toBe('abc123def456abc123def456')
+    expect(runner.current.qa.scope.article).toEqual({ id: 'abc123def456abc123def456', titleOriginal: 'Bài test' })
+
   })
 
   it('onAskAboutArticle ignores missing article id', async () => {
@@ -178,5 +195,34 @@ describe('Q&A article scope from article detail', () => {
     runner.current.handlers.onClearArticleScope()
     expect(runner.current.scope.articleId).toBeUndefined()
     expect(runner.current.scope.topics).toEqual(['AI'])
+  })
+  it('keeps article metadata local while sending only the allowlisted Q&A scope', async () => {
+    const qaApi = {
+      listSessions: vi.fn(async () => ({ data: [] })),
+      createAnswer: vi.fn(async () => ({
+        data: {
+          id: 'answer-article-scope',
+          status: 'answered',
+          paragraphs: [{ text: 'Có căn cứ.', citationIds: ['citation-1'] }],
+          citations: [{ id: 'citation-1', articleId: '507f1f77bcf86cd799439011', sourceId: '507f1f77bcf86cd799439012' }],
+          refusalReason: null,
+          chatSessionId: 'session-article-scope',
+          createdAt: '2026-09-08T00:00:00.000Z',
+        },
+      })),
+    }
+    const runner = createHookRunner(useQa)
+    runner.render({ csrfToken: 'csrf-1', enabled: true, expire: vi.fn(), qaApi, user: { topicPreferences: [] } })
+    const article = { id: '507f1f77bcf86cd799439011', titleOriginal: 'Bài viết test' }
+    runner.current.handlers.onScopeArticleId(article)
+
+    await runner.current.onAsk({ question: 'Bài viết nói gì?', articleId: article.id, article, topics: ['AI'] })
+
+    expect(qaApi.createAnswer).toHaveBeenCalledTimes(1)
+    expect(qaApi.createAnswer.mock.calls[0][0]).toMatchObject({
+      scope: { articleId: article.id, topics: ['AI'] }
+    })
+    expect(qaApi.createAnswer.mock.calls[0][0].scope).not.toHaveProperty('article')
+    expect(runner.current.scope.article).toEqual(article)
   })
 })
