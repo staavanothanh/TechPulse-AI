@@ -172,6 +172,8 @@ export default function SearchView({
             className="public-input"
             value={selectedTopic}
             onChange={(event) => handlers.onQueryChange?.('topic', event.target.value)}
+            aria-invalid={Boolean(errors.topic)}
+            aria-describedby={errors.topic ? 'public-search-topic-error' : undefined}
           >
             <option value="">Tất cả chủ đề</option>
             {topicItems.map((topic) => (
@@ -180,6 +182,11 @@ export default function SearchView({
               </option>
             ))}
           </select>
+          {errors.topic ? (
+            <small id="public-search-topic-error" className="public-field-error" role="alert">
+              {errors.topic}
+            </small>
+          ) : null}
         </label>
         <label className="public-field" htmlFor="public-search-source">
           <span>Nguồn</span>
@@ -188,6 +195,8 @@ export default function SearchView({
             className="public-input"
             value={current.sourceId}
             onChange={(event) => handlers.onQueryChange?.('sourceId', event.target.value)}
+            aria-invalid={Boolean(errors.sourceId)}
+            aria-describedby={errors.sourceId ? 'public-search-source-error' : undefined}
           >
             <option value="">Tất cả nguồn</option>
             {sourceItems.map((source) => (
@@ -196,6 +205,11 @@ export default function SearchView({
               </option>
             ))}
           </select>
+          {errors.sourceId ? (
+            <small id="public-search-source-error" className="public-field-error" role="alert">
+              {errors.sourceId}
+            </small>
+          ) : null}
         </label>
         <FilterField
           id="public-search-after"

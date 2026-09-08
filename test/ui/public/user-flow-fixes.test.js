@@ -72,6 +72,18 @@ describe('public user-flow regressions', () => {
     expect(html).toContain('value="source-flow"')
     expect(html).toContain('Nguồn luồng người dùng')
   })
+  it('announces topic and source filter errors on the replacement selects', () => {
+    const html = render(SearchView, {
+      errors: { topic: 'Chủ đề quá dài.', sourceId: 'Source ID quá dài.' },
+    })
+
+    expect(html).toContain('aria-describedby="public-search-topic-error"')
+    expect(html).toContain('id="public-search-topic-error"')
+    expect(html).toContain('Chủ đề quá dài.')
+    expect(html).toContain('aria-describedby="public-search-source-error"')
+    expect(html).toContain('id="public-search-source-error"')
+    expect(html).toContain('Source ID quá dài.')
+  })
   it('retains an active source filter when the cold search catalog and results are empty', () => {
     const html = render(SearchView, {
       query: { sourceId: 'source-missing' },
