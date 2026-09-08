@@ -68,7 +68,6 @@ export function createSessionActions({
   redirect = redirectToGoogleAuth,
 }) {
   let sessionMutationTail = null
-  let sessionMutationActive = false
   let currentCsrfToken
 
   function readCsrfToken() {
@@ -80,7 +79,6 @@ export function createSessionActions({
   function enqueueSessionMutation(operation) {
     let next
     if (sessionMutationTail === null) {
-      sessionMutationActive = true
       try { next = Promise.resolve(operation()) } catch (error) { next = Promise.reject(error) }
     } else {
       next = sessionMutationTail.then(operation, operation)
@@ -88,17 +86,11 @@ export function createSessionActions({
     let completed
     completed = next.then(
       (value) => {
-        if (sessionMutationTail === completed) {
-          sessionMutationTail = null
-          sessionMutationActive = false
-        }
+        if (sessionMutationTail === completed) sessionMutationTail = null
         return value
       },
       (error) => {
-        if (sessionMutationTail === completed) {
-          sessionMutationTail = null
-          sessionMutationActive = false
-        }
+        if (sessionMutationTail === completed) sessionMutationTail = null
         throw error
       },
     )
