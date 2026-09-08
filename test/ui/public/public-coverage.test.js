@@ -352,6 +352,7 @@ describe('public coverage states', () => {
       error: { message: 'Account warning' },
       saving: true,
       deleting: true,
+      initialPasswordDialogOpen: true,
       onLogout: noop,
       onToggleTopic: noop,
       onSavePreferences: noop,
@@ -382,9 +383,23 @@ describe('public coverage states', () => {
     expect(articleFailedSummary).toContain('Tóm tắt chi tiết chưa khả dụng.')
     expect(articleProcessing).toContain('Mở video nguồn')
     expect(articleProcessing).toContain('Tóm tắt đang được tạo.')
+    const googleAccount = render(AccountView, {
+      user: { email: 'google@example.com', googleSub: 'google-123' },
+    })
+    const accountClosed = render(AccountView, {
+      user: { email: 'reader@example.com' },
+    })
+
     expect(account).toContain('Đang lưu...')
     expect(account).toContain('Đang gửi...')
     expect(account).toContain('Account warning')
+    expect(account).toContain('Đổi mật khẩu')
+    expect(account).toContain('Mật khẩu hiện tại')
+    expect(account).toContain('Mật khẩu mới')
+    expect(account).toContain('Cập nhật mật khẩu')
+    expect(accountClosed).toContain('Đổi mật khẩu')
+    expect(accountClosed).not.toContain('Mật khẩu hiện tại')
+    expect(googleAccount).toContain('Tài khoản này được đăng nhập bằng Google')
     expect(accountDefaults).toContain('Cài đặt tài khoản')
     expect(reader).toContain('Reader content')
     expect(reader).toContain('data-theme="dark"')

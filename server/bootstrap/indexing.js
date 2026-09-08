@@ -25,6 +25,7 @@ import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIAT
 import { assertProviderRoutingReady } from './provider-routing.js'
 import { assertSourcesReady } from './sources.js'
 import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
+import { PASSWORD_CHANGED_AUDIT_VALIDATOR } from './auth.js'
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
@@ -44,7 +45,7 @@ export async function assertIndexingJobsReady(context) {
     if (expectedIndexes.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('indexing-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGED_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
   const articleCollection = collectionMap.get('articles')
   const articleIndexes = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
   const expectedArticleIndexes = [

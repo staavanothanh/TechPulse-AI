@@ -39,6 +39,7 @@ const authService = {
   updatePreferences: vi.fn(async () => ({
     id: 'user-1', email: 'new@example.com', role: 'user', status: 'active', topicPreferences: ['AI'], createdAt: '2026-08-09T00:00:00.000Z',
   })),
+  changePassword: vi.fn(async () => ({ success: true })),
   listAdminUsers: vi.fn(async () => ({ users: [{ id: '507f1f77bcf86cd799439010', email: 'admin@example.com', role: 'admin', status: 'active', createdAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z' }], hasNext: false, nextCursor: null })),
 }
 
@@ -98,5 +99,23 @@ describe('Step 2 auth HTTP boundary', () => {
     const response = await fetch(`${origin}/api/v1/admin/users`, { headers: { Cookie: '__Host-techpulse_session=opaque-session-token-1234' } })
     expect(response.status).toBe(500)
     expect((await response.json()).error.code).toBe('internal_error')
+  })
+
+  it('clears session cookie and returns 200 on successful password change', async () => {
+    const response = await fetch(`${origin}/api/v1/me/password`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost:3000',
+        'Content-Type': 'application/json',
+        Cookie: '__Host-techpulse_session=opaque-session-token-1234',
+        'X-CSRF-Token': 'c'.repeat(32),
+      },
+      body: JSON.stringify({ currentPassword: 'old-password-123', newPassword: 'new-password-12345' }),
+    })
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload).toEqual({ data: { success: true } })
+    expect(response.headers.get('set-cookie')).toContain('__Host-techpulse_session=;')
+    expect(response.headers.get('cache-control')).toBe('no-store, private')
   })
 })

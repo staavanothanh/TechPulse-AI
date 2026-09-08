@@ -209,6 +209,56 @@ export function createAuthService({ repository, runtime, environment = process.e
     })
   }
 
+  async function changePassword({ auth, csrfToken, currentPassword, newPassword, request } = {}) {
+    await verifyCsrf({ auth, token: csrfToken })
+    await reserve('password-change', request)
+    if (typeof currentPassword !== 'string' || currentPassword.length < 1 || currentPassword.length > 128) {
+      throw new AuthError(422, 'validation_error', 'Current password is invalid')
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 10 || newPassword.length > 128) {
+      throw new AuthError(422, 'validation_error', 'New password must be between 10 and 128 characters')
+    }
+    if (currentPassword === newPassword) {
+      throw new AuthError(422, 'validation_error', 'New password must be different from current password')
+    }
+
+    const liveUser = await repository.findUserById(auth.user._id)
+    if (!liveUser || liveUser.status !== 'active' || liveUser.sessionVersion !== auth.session.userSessionVersion) {
+      throw new AuthError(401, 'unauthorized', 'Session is invalid or expired')
+    }
+
+    if (liveUser.googleSub && typeof liveUser.passwordHash === 'string' && liveUser.passwordHash.startsWith('oauth-dummy:')) {
+      throw new AuthError(403, 'forbidden', 'Google OAuth accounts cannot change password')
+    }
+
+    const matches = await verifyPassword(currentPassword, liveUser.passwordHash)
+    if (!matches) {
+      throw new AuthError(401, 'unauthorized', 'Current password is incorrect')
+    }
+
+    const newPasswordHash = await hashPassword(newPassword)
+    return inTransaction(async (session) => {
+      const updated = await repository.updatePassword(auth.user._id, newPasswordHash, {
+        session,
+        expectedSessionId: auth.session._id,
+        expectedSessionVersion: auth.session.userSessionVersion,
+      })
+      if (!updated) throw new AuthError(401, 'unauthorized', 'Session is no longer active')
+      await repository.insertAudit(
+        createAuditEvent({
+          actor: auth.user,
+          action: 'user_password_changed',
+          targetId: auth.user._id,
+          changedFields: ['passwordHash', 'sessionVersion'],
+          reasonCode: 'password_changed',
+          request: request ?? auth.request,
+        }),
+        { session },
+      )
+      return { success: true }
+    })
+  }
+
   function requireAdmin(auth) {
     if (auth?.user?.role !== 'admin') throw new AuthError(403, 'forbidden', 'Admin role is required')
   }
@@ -369,7 +419,7 @@ export function createAuthService({ repository, runtime, environment = process.e
   }
   return Object.freeze({
     register: expose(register), login: expose(login), authenticate: expose(authenticate), currentUser: expose(currentUser),
-    verifyCsrf: expose(verifyCsrf), logout: expose(logout), updatePreferences: expose(updatePreferences), listAdminUsers: expose(listAdminUsers),
+    verifyCsrf: expose(verifyCsrf), logout: expose(logout), updatePreferences: expose(updatePreferences), changePassword: expose(changePassword), listAdminUsers: expose(listAdminUsers),
     getAdminUser: expose(getAdminUser), updateUserStatus: expose(updateUserStatus), googleLogin: expose(googleLogin), verifyGoogleState: expose(verifyGoogleState), generateGoogleAuthUrl,
   })
 }

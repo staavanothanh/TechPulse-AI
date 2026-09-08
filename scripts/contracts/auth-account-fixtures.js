@@ -32,6 +32,10 @@ function fixtureService() {
     async logout() {},
     async currentUser({ token }) { return { user: authForToken(token).user.role === 'admin' ? { ...USER, role: 'admin', email: 'admin@example.com' } : USER, csrfToken: CSRF_TOKEN } },
     async updatePreferences({ auth, topicPreferences }) { return { id: String(auth.user._id), email: auth.user.emailDisplay ?? auth.user.email, role: auth.user.role, status: auth.user.status, topicPreferences, createdAt: NOW } },
+    async changePassword({ currentPassword }) {
+      if (currentPassword === 'wrong-password') throw new AuthError(401, 'unauthorized', 'Current password is incorrect')
+      return { success: true }
+    },
     async listAdminUsers({ auth }) {
       if (auth.user.role !== 'admin') throw new AuthError(403, 'forbidden', 'Admin role is required')
       return { users: [TARGET], hasNext: false, nextCursor: null }
@@ -107,6 +111,8 @@ export async function runAuthAccountContractFixtures({ document } = {}) {
     await request('getCurrentUser', '/api/v1/me', {}, 401)
     await request('updatePreferences', '/api/v1/me/preferences', { method: 'PATCH', headers: { ...jsonHeaders, Cookie: userCookie, 'X-CSRF-Token': CSRF_TOKEN }, body: JSON.stringify({ topicPreferences: ['AI', 'Robot'] }) }, 200)
     await request('updatePreferences', '/api/v1/me/preferences', { method: 'PATCH', headers: { ...jsonHeaders, Cookie: userCookie }, body: JSON.stringify({ topicPreferences: ['AI'] }) }, 403)
+    await request('changePassword', '/api/v1/me/password', { method: 'POST', headers: { ...jsonHeaders, Cookie: userCookie, 'X-CSRF-Token': CSRF_TOKEN }, body: JSON.stringify({ currentPassword: VALID_CREDENTIAL, newPassword: VALID_CREDENTIAL + '-next' }) }, 200)
+    await request('changePassword', '/api/v1/me/password', { method: 'POST', headers: { ...jsonHeaders, Cookie: userCookie }, body: JSON.stringify({ currentPassword: VALID_CREDENTIAL, newPassword: VALID_CREDENTIAL + '-next' }) }, 403)
     await request('listAdminUsers', '/api/v1/admin/users?limit=20', { headers: { Cookie: adminCookie } }, 200)
     await request('listAdminUsers', '/api/v1/admin/users?limit=20', { headers: { Cookie: userCookie } }, 403)
     await request('getAdminUser', '/api/v1/admin/users/507f1f77bcf86cd799439013', { headers: { Cookie: adminCookie } }, 200)

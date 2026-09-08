@@ -1,6 +1,7 @@
 const SCOPE_SUBJECTS = Object.freeze({
   login: 'ip',
   register: 'ip',
+  'password-change': 'ip',
   'answer-minute': 'user',
   'answer-daily': 'user',
   'admin-trigger': 'admin',
@@ -10,6 +11,7 @@ const SCOPE_SUBJECTS = Object.freeze({
 export const RATE_LIMITS = Object.freeze({
   login: Object.freeze({ limit: 10, windowSeconds: 15 * 60 }),
   register: Object.freeze({ limit: 5, windowSeconds: 60 * 60 }),
+  'password-change': Object.freeze({ limit: 5, windowSeconds: 15 * 60 }),
   'answer-minute': Object.freeze({ limit: 10, windowSeconds: 60 }),
   'answer-daily': Object.freeze({ limit: 100, windowSeconds: 24 * 60 * 60 }),
   'admin-trigger': Object.freeze({ limit: 20, windowSeconds: 60 }),

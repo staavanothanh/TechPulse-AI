@@ -206,20 +206,123 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 7. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 7. Tự Động Đặt Tên Phiên Hỏi Đáp (Chat Session Auto-Titling)
 
-1. **Kiểm tra xóa phiên hỏi đáp:**
+### 7.1. Bối cảnh & Vấn đề
+- Trước đây, khi người dùng mở phiên hỏi đáp mới và đặt câu hỏi, thanh bên (sidebar) danh sách phiên hỏi đáp luôn hiển thị tiêu đề mặc định là **"Phiên hỏi đáp"** cho tất cả các phiên, khiến người dùng khó phân biệt phiên nào thảo luận về chủ đề gì khi xem lại lịch sử.
+- Trường `title` trong collection MongoDB `chatSessions` và trong schema OpenAPI đã có sẵn từ trước nhưng luôn được khởi tạo và lưu là `null`.
+
+### 7.2. Giải pháp thực hiện
+1. **Hàm trích xuất tiêu đề thông minh (`deriveChatSessionTitle` trong `chat-repository.js`):**
+   - Chuẩn hóa khoảng trắng (`\s+` -> ` `).
+   - Nếu câu hỏi có độ dài $\le 45$ ký tự: Giữ nguyên câu hỏi làm tên phiên.
+   - Nếu câu hỏi dài $> 45$ ký tự: Cắt gọn tại ranh giới từ (word boundary) gần nhất trước ký tự 45, dọn dẹp các dấu câu thừa ở cuối (`?`, `!`, `.`, `,`, `;`, `:`) và thêm ký tự `…`.
+   - Với câu hỏi quá dài không có dấu cách: Cắt tại 45 ký tự và thêm `…`.
+   - Tương thích an toàn với câu hỏi rỗng hoặc không hợp lệ (trả về fallback `'Phiên hỏi đáp'`).
+2. **Lưu trữ tự động khi gửi câu hỏi (`appendAnswer`):**
+   - Khi tạo phiên mới hoặc gửi câu hỏi đầu tiên trong phiên (`document.title` đang trống/null), hệ thống tự động gán `title: deriveChatSessionTitle(question)` và lưu vào MongoDB.
+   - Các câu hỏi tiếp theo trong cùng phiên sẽ giữ nguyên tiêu đề đã đặt, không bị ghi đè.
+3. **Tương thích ngược dữ liệu cũ (`resolveChatSessionTitle`):**
+   - Khi trả về danh sách phiên (`listChatSessions`) hoặc chi tiết phiên (`serializeChatSession`):
+     - Nếu document đã có `title` đã lưu: Trả về `title`.
+     - Nếu phiên cũ trong DB có `title: null`: Tự động trích xuất tiêu đề từ tin nhắn đầu tiên của người dùng (`firstUserMessage.text`).
+     - Nếu phiên chưa có tin nhắn nào: Trả về `null` (giao diện tự hiển thị fallback `'Phiên hỏi đáp'`).
+4. **Kiểm thử tự động:**
+   - Bổ sung 3 test cases chi tiết trong `test/unit/repositories/chat-repository-coverage.test.js`:
+     - Test trích xuất và cắt gọn câu hỏi thông minh, dọn dẹp dấu câu.
+     - Test ưu tiên tiêu đề lưu sẵn và fallback câu hỏi đầu tiên.
+     - Test luồng lưu `title` trong `appendAnswer` và hiển thị qua `listChatSessions`.
+
+---
+
+## 8. Chức Năng Thay Đổi Mật Khẩu Cho Người Dùng (User Change Password Feature)
+
+### 8.1. Bối cảnh & Yêu cầu
+- Trước đây, người dùng chỉ có thể đăng nhập bằng email/mật khẩu hoặc tài khoản Google, chưa có tính năng tự đổi mật khẩu khi đã đăng nhập.
+- Yêu cầu đặt ra:
+  - Cho phép người dùng nhập mật khẩu hiện tại, mật khẩu mới (tối thiểu 10 ký tự, tối đa 128 ký tự) và xác nhận lại mật khẩu mới.
+  - Sau khi đổi mật khẩu thành công: vô hiệu hóa toàn bộ phiên đăng nhập hiện tại trên mọi thiết bị (tăng `sessionVersion` $+1$), thu hồi session, xóa cookie phiên đăng nhập và chuyển hướng người dùng ra màn hình đăng nhập kèm thông báo thành công để đăng nhập lại bằng mật khẩu mới.
+  - Tài khoản đăng nhập qua bên thứ ba (Google OAuth không có mật khẩu cục bộ): hiển thị thông báo giải thích rõ ràng và ẩn/vô hiệu hóa form đổi mật khẩu.
+  - Tuân thủ nguyên tắc Contract-First, bảo mật CSRF, Rate Limiting (10 lần / 15 phút), Audit Logging và Atomic DB Mutation.
+
+### 8.2. Chi tiết thay đổi mã nguồn
+1. **Đặc tả OpenAPI & Contract Generator:**
+   - `docs/contracts/openapi.json`: Thêm endpoint `POST /api/v1/me/password` với `operationId: changePassword`, body `ChangePasswordRequest` (`currentPassword`, `newPassword`), responses chuẩn RFC 9457 `ProblemDetails` (`200`, `400`, `401`, `403`, `413`, `415`, `422`, `429`, `500`, `503`).
+   - `scripts/contracts/openapi-utils.js`: Nâng tổng số operations kiểm tra từ 61 lên 62.
+   - `shared/generated/`: Tự động đồng bộ schema và client qua `npm run contract:generate`.
+   - `scripts/contracts/auth-account-fixtures.js`: Bổ sung fixture kiểm thử runtime contract cho `changePassword`.
+2. **Backend & Bảo mật:**
+   - `server/security/rate-limit-scope.js`: Bổ sung scope `'password-change'` với giới hạn 5 requests / 15 phút theo IP (chuẩn hóa đồng bộ tuyệt đối với MongoDB Atlas Collection Validator).
+   - `server/audit/writer.js`: Bổ sung audit rule `user_password_changed` (`reasonCode: 'password_changed'`, `changedFields: ['passwordHash', 'sessionVersion']`).
+   - `server/repositories/mongo/auth-repository.js`: Thêm hàm `updatePassword(userId, newPasswordHash, options)` thực hiện atomic mutation: cập nhật mật khẩu, tăng `sessionVersion` $+1$, và đánh dấu `revoked: true` toàn bộ phiên cũ.
+   - `server/application/auth/service.js`: Triển khai `changePassword({ auth, csrfToken, currentPassword, newPassword, request })`:
+     - Kiểm tra CSRF token và rate limit scope `'password-change'`.
+     - Kiểm tra trạng thái người dùng (không đổi được nếu bị `suspended` hoặc đã bị xóa).
+     - Kiểm tra tài khoản có mật khẩu cục bộ (`passwordHash`), không cho phép đổi mật khẩu trên tài khoản thuần Google.
+     - Xác thực mật khẩu cũ bằng `scryptVerifySecret`.
+     - Băm mật khẩu mới bằng `scryptDeriveSecret` với cost parameters bảo mật cao.
+     - Thực thi cập nhật DB và ghi audit event `user_password_changed`.
+   - `server/http/auth-router.js`: Đăng ký validator schema và route handler `POST /api/v1/me/password`, trả về header xóa cookie `serializeClearSessionCookie()`.
+   - `server/bootstrap/`: Cập nhật toàn bộ các assertion validator trong `auth.js`, `governance-readiness.js`, `sources.js`, `jobs.js`, `indexing.js` để hỗ trợ tương thích `PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR` và `PASSWORD_CHANGED_AUDIT_VALIDATOR`.
+3. **Frontend Integration & Giao diện:**
+   - `client/app/integration/session-actions.js`: Thêm hàm `changePassword({ currentPassword, newPassword })`.
+   - `client/app/integration/use-public-integration.js`: Cập nhật hook `useAccount`: bổ sung state `changingPassword`, handler `onChangePassword` với cờ `rethrow: true` để ném lỗi chuẩn xác về dialog khi server trả về mã lỗi, ngăn chặn hoàn toàn lỗi nuốt exception báo thành công ảo.
+   - `client/features/public/views/AccountView.jsx`:
+     - Thêm card **"Bảo mật tài khoản"** (`.public-account-card`) với nút bấm **"Đổi mật khẩu"**.
+     - Khi bấm vào nút, hiển thị **Modal Popup Dialog** chuyên nghiệp (`.public-dialog`) với 3 trường nhập: Mật khẩu hiện tại, Mật khẩu mới, Xác nhận mật khẩu mới.
+     - Validate trực tiếp tại client: mật khẩu mới $\ge 10$ ký tự, mật khẩu mới không trùng mật khẩu cũ, mật khẩu xác nhận phải khớp chính xác.
+     - Hỗ trợ phím Escape và focus trap qua `useDialogFocus`, có nút Hủy đóng modal.
+     - Hiển thị thông báo hướng dẫn đối với tài khoản liên kết Google OAuth thay vì nút đổi mật khẩu.
+     - Sau khi đổi thành công: tự động đóng modal, xóa session cục bộ, đưa về trang chủ mở modal đăng nhập và hiện thông báo: *"Đã đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới."*
+
+### 8.3. Kiểm thử tự động
+- `test/security/auth-service.test.js`: 18 tests passed (kiểm tra toàn bộ luồng đổi mật khẩu: sai mật khẩu cũ, trùng mật khẩu cũ, tài khoản không có mật khẩu, tăng sessionVersion).
+- `test/security/auth-http.test.js`: 6 tests passed (kiểm tra HTTP endpoint, CSRF, response headers và status codes).
+- `test/unit/repositories/auth-repository.test.js`: 10 tests passed (kiểm tra atomic DB mutation).
+- `test/client/session-actions.test.js`: 12 tests passed (kiểm tra client API call, hủy phiên khi thành công và không hủy phiên khi request bị reject).
+- `test/ui/public/public-coverage.test.js`: 5 tests passed (kiểm tra UI component render và submit form cả trạng thái đóng và mở dialog).
+- `npm run contract:validate`, `npm run contract:generate`, `npm run contract:test`: Pass 100%.
+
+---
+
+## 9. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+
+1. **Kiểm tra chức năng Đổi mật khẩu (dạng Button & Popup Modal):**
+   - Mở `http://localhost:3000` và đăng nhập bằng tài khoản email/mật khẩu.
+   - Nhấp vào avatar / tên người dùng ở góc trên bên phải để vào trang **Tài khoản** (`/account`).
+   - Cuộn xuống phần thẻ **"Bảo mật tài khoản"**:
+     - Thấy nút bấm **"Đổi mật khẩu"**.
+     - Bấm vào nút **"Đổi mật khẩu"**: Một cửa sổ pop-up (Modal Dialog) nổi lên với nền mờ làm mờ hậu cảnh.
+     - Thử bấm nút **"Hủy"** hoặc phím `Esc`: Popup đóng lại.
+     - Bấm mở lại popup:
+       - Thử nhập mật khẩu hiện tại sai -> Thông báo lỗi: *"Mật khẩu hiện tại không chính xác"*.
+       - Thử nhập mật khẩu mới dưới 10 ký tự -> Thông báo lỗi client: *"Mật khẩu mới phải có ít nhất 10 ký tự"*.
+       - Thử nhập mật khẩu mới trùng mật khẩu hiện tại -> Thông báo lỗi: *"Mật khẩu mới không được trùng với mật khẩu hiện tại"*.
+       - Thử nhập mật khẩu xác nhận không khớp -> Thông báo lỗi: *"Mật khẩu xác nhận không khớp"*.
+       - Nhập đầy đủ thông tin hợp lệ và bấm **"Cập nhật mật khẩu"**:
+         - Hệ thống gọi API, tăng `sessionVersion` $+1$, thu hồi phiên và xóa session cookie.
+         - Trình duyệt tự động chuyển về trang chủ, mở modal Đăng nhập kèm thông báo xanh: *"Đã đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới."*
+         - Đăng nhập lại bằng mật khẩu cũ: Thất bại.
+         - Đăng nhập lại bằng mật khẩu mới: Thành công!
+   - (Nếu đăng nhập bằng tài khoản Google): Phần thẻ Bảo mật tài khoản hiển thị thông báo: *"Tài khoản này được đăng nhập bằng Google nên không sử dụng mật khẩu riêng."* và không hiển thị nút đổi mật khẩu.
+2. **Kiểm tra tự động đặt tên phiên hỏi đáp:**
    - Mở `http://localhost:3000` và đăng nhập tài khoản.
+   - Vào tab **Hỏi đáp** (Q&A), tạo một phiên hỏi đáp mới.
+   - Nhập một câu hỏi bất kỳ, ví dụ: *"Xu hướng phát triển của AI Agent trong năm 2026 là gì?"*.
+   - Bấm **Hỏi với nguồn**: Sau khi câu trả lời hoàn tất, quan sát cột danh sách phiên bên trái:
+     - Tên phiên lập tức cập nhật thành: **"Xu hướng phát triển của AI Agent trong năm…"** (cắt gọn đẹp mắt, không còn hiển thị chữ *"Phiên hỏi đáp"* chung chung).
+   - Hỏi thêm một câu hỏi thứ 2 trong phiên đó: Tên phiên vẫn được giữ nguyên ổn định theo chủ đề câu hỏi đầu tiên.
+3. **Kiểm tra xóa phiên hỏi đáp:**
    - Vào tab **Hỏi đáp** (Q&A), tạo 2-3 phiên hỏi đáp khác nhau.
    - Rê chuột vào từng phiên ở cột bên trái: xuất hiện nút `×`. Bấm vào `×` để xóa riêng phiên đó; danh sách cập nhật ngay lập tức mà các phiên khác không bị mất.
-2. **Kiểm tra thanh lọc tìm kiếm mới:**
+4. **Kiểm tra thanh lọc tìm kiếm mới:**
    - Vào tab **Tìm kiếm** (Search).
    - Quan sát thanh lọc bên dưới ô từ khóa:
      - **Chủ đề:** Dropdown chọn danh mục chuẩn (`Tất cả chủ đề`, `AI`, `AI Agent`, `Robotics`...).
      - **Nguồn:** Dropdown chọn tên nguồn tin đọc được (`Tất cả nguồn`, `The Verge`, `Google AI Blog`, `arXiv`...).
      - Các ô lọc còn lại gồm: Chế độ (Hybrid/Văn bản), Từ ngày, Đến ngày.
    - Thử chọn một nguồn cụ thể (ví dụ: Google AI Blog) và tìm kiếm từ khóa -> Hệ thống lọc chính xác các bài viết thuộc nguồn đó.
-3. **Kiểm tra Hỏi đáp trực tiếp từ bài viết & Thẻ ngữ cảnh đầy đủ:**
+5. **Kiểm tra Hỏi đáp trực tiếp từ bài viết & Thẻ ngữ cảnh đầy đủ:**
    - Vào tab **Bảng tin** (Feed), **Tìm kiếm** (Search) hoặc **Bài đã lưu** (Saved).
    - Trên mỗi thẻ bài viết đều xuất hiện nút **"Hỏi đáp"** bên cạnh nút *"Lưu bài"* và *"Đọc chi tiết"*.
    - Bấm nút **"Hỏi đáp"** trên bất kỳ bài viết nào:
@@ -231,7 +334,7 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
        - Đoạn tóm tắt tiếng Việt của bài viết đó.
      - Nhập câu hỏi và bấm *"Hỏi với nguồn"* -> Câu trả lời tập trung chính xác vào nội dung bài viết đó.
      - Bấm nút **"Bỏ chọn"**: Thẻ ngữ cảnh bài viết biến mất, trở về trạng thái hỏi chung theo các chủ đề toàn hệ thống.
-4. **Kiểm tra câu hỏi mẫu và hướng dẫn khi thiếu bằng chứng:**
+6. **Kiểm tra câu hỏi mẫu và hướng dẫn khi thiếu bằng chứng:**
    - Mở tab **Hỏi đáp** (phiên mới): Màn hình xuất hiện các câu hỏi mẫu gợi ý (ví dụ: *"Google DeepMind có bài viết nào về Gemini 3.1 Flash TTS không?"*).
    - Bấm vào một câu hỏi mẫu: Nội dung tự động điền vào khung câu hỏi và chủ đề `AI` tự động được chọn.
    - Bấm nút **"Hỏi với nguồn"**: AI trả lời thành công kèm citation trích dẫn.

@@ -177,4 +177,72 @@ describe('Step 2 auth application service', () => {
     expect(repository.listUsers).toHaveBeenCalledWith({ limit: 3, status: 'active', emailNormalized: 'user@example.com', cursor: undefined })
     await expect(service.listAdminUsers({ auth: { user: admin, session: { _id: '507f1f77bcf86cd799439012', userSessionVersion: 0 } }, query: { limit: '1000' } })).rejects.toMatchObject({ status: 422 })
   })
+
+  it('rejects changePassword when CSRF token is missing or invalid', async () => {
+    const service = createAuthService({ repository: {} })
+    const auth = { user, session: { _id: 'session-1', userSessionVersion: 0, csrfSecretHash: hashCsrfToken('real-csrf-token-1234567890') } }
+    await expect(service.changePassword({ auth, csrfToken: 'wrong-token', currentPassword: 'old-password', newPassword: 'new-password-12345' })).rejects.toMatchObject({ status: 403 })
+  })
+
+  it('rejects changePassword when new password is too short or identical to current password', async () => {
+    const csrfToken = 'valid-csrf-token-1234567890'
+    const repository = { reserveRateLimit: vi.fn(async () => ({ allowed: true })) }
+    const service = createAuthService({ repository, quotaKeyring: keyring(), clientIpAdapter: { getClientIp: () => '127.0.0.1' } })
+    const auth = { user, session: { _id: 'session-1', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+
+    await expect(service.changePassword({ auth, csrfToken, currentPassword: 'old-password-123', newPassword: 'short', request: request() })).rejects.toMatchObject({ status: 422 })
+    await expect(service.changePassword({ auth, csrfToken, currentPassword: 'same-password-123', newPassword: 'same-password-123', request: request() })).rejects.toMatchObject({ status: 422 })
+  })
+
+  it('rejects changePassword when current password is incorrect', async () => {
+    const csrfToken = 'valid-csrf-token-1234567890'
+    const repository = {
+      reserveRateLimit: vi.fn(async () => ({ allowed: true })),
+      findUserById: vi.fn(async () => ({
+        ...user,
+        passwordHash: 'scrypt$16384$8$1$dummy:hash',
+      })),
+    }
+    const service = createAuthService({ repository, quotaKeyring: keyring(), clientIpAdapter: { getClientIp: () => '127.0.0.1' } })
+    const auth = { user, session: { _id: 'session-1', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+
+    await expect(service.changePassword({ auth, csrfToken, currentPassword: 'wrong-current-password', newPassword: 'new-secure-password-123', request: request() })).rejects.toMatchObject({ status: 401 })
+  })
+
+  it('rejects changePassword for Google OAuth accounts', async () => {
+    const csrfToken = 'valid-csrf-token-1234567890'
+    const repository = {
+      reserveRateLimit: vi.fn(async () => ({ allowed: true })),
+      findUserById: vi.fn(async () => ({
+        ...user,
+        googleSub: 'google-sub-123',
+        passwordHash: 'oauth-dummy:something',
+      })),
+    }
+    const service = createAuthService({ repository, quotaKeyring: keyring(), clientIpAdapter: { getClientIp: () => '127.0.0.1' } })
+    const auth = { user, session: { _id: 'session-1', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+
+    await expect(service.changePassword({ auth, csrfToken, currentPassword: 'any-current-password', newPassword: 'new-secure-password-123', request: request() })).rejects.toMatchObject({ status: 403 })
+  })
+
+  it('successfully changes password, updates repository, and writes audit event', async () => {
+    const csrfToken = 'valid-csrf-token-1234567890'
+    const currentPassword = 'current-strong-password'
+    const newPassword = 'brand-new-strong-password'
+    const passwordHash = await (await import('../../server/security/password.js')).hashPassword(currentPassword)
+    const repository = {
+      reserveRateLimit: vi.fn(async () => ({ allowed: true })),
+      findUserById: vi.fn(async () => ({ ...user, passwordHash })),
+      withTransaction: vi.fn(async (work) => work('mongo-session')),
+      updatePassword: vi.fn(async () => ({ ...user, sessionVersion: 1 })),
+      insertAudit: vi.fn(async () => undefined),
+    }
+    const service = createAuthService({ repository, quotaKeyring: keyring(), clientIpAdapter: { getClientIp: () => '127.0.0.1' } })
+    const auth = { user, session: { _id: 'session-1', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+
+    const result = await service.changePassword({ auth, csrfToken, currentPassword, newPassword, request: request() })
+    expect(result).toEqual({ success: true })
+    expect(repository.updatePassword).toHaveBeenCalledWith('user-1', expect.stringContaining('scrypt$'), expect.objectContaining({ session: 'mongo-session', expectedSessionId: 'session-1', expectedSessionVersion: 0 }))
+    expect(repository.insertAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'user_password_changed', reasonCode: 'password_changed', changedFields: ['passwordHash', 'sessionVersion'] }), { session: 'mongo-session' })
+  })
 })

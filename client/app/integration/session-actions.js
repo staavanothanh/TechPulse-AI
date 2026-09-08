@@ -127,9 +127,22 @@ export function createSessionActions({
     return response
   }
 
+  async function changePassword({ currentPassword, newPassword }) {
+    const transition = startTransition()
+    const csrfToken = getCsrfToken()
+    const response = await api.changePassword({
+      body: JSON.stringify({ currentPassword, newPassword }),
+      credentials: 'same-origin',
+      headers: csrfHeaders(csrfToken, { 'Content-Type': 'application/json' }),
+    })
+    if (canCommit(transition)) commitSession(null, null, 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.', transition)
+    return response
+  }
+
   return Object.freeze({
     authenticate,
     authenticateWithGoogle,
+    changePassword,
     logout,
     requestDeletion,
     updatePreferences,

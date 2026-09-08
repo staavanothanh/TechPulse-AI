@@ -1059,6 +1059,7 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
   const [draft, setDraft] = useState(() => (Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : []))
   const [busy, setBusy] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
   const [notice, setNotice] = useState(sessionNotice)
   const [error, setError] = useState(null)
 
@@ -1067,6 +1068,7 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
     setDraft(Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : [])
     setBusy(false)
     setDeleting(false)
+    setChangingPassword(false)
     setNotice(sessionNotice)
     setError(null)
     return undefined
@@ -1077,8 +1079,9 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
   const displayError = identityChanged ? null : error
   const displayBusy = identityChanged ? false : busy
   const displayDeleting = identityChanged ? false : deleting
+  const displayChangingPassword = identityChanged ? false : changingPassword
 
-  async function run(action, setPending, successNotice) {
+  async function run(action, setPending, successNotice, options = {}) {
     const requestIdentity = identityKey
     setPending(true)
     setError(null)
@@ -1089,8 +1092,9 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
       if (successNotice) setNotice(successNotice)
     } catch (requestError) {
       if (identityRef.current !== requestIdentity) return
-      if (requestError?.status === 401) expire(requestError, requestIdentity)
+      if (requestError?.status === 401 && !options.skipExpire) expire(requestError, requestIdentity)
       setError(requestError)
+      if (options.rethrow) throw requestError
     } finally {
       if (identityRef.current === requestIdentity) setPending(false)
     }
@@ -1100,11 +1104,13 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
     user: user ? { ...user, topicPreferences: displayDraft } : null,
     saving: displayBusy,
     deleting: displayDeleting,
+    changingPassword: displayChangingPassword,
     notice: displayNotice,
     error: displayError,
     onToggleTopic: (topic) => setDraft((current) => toggleTopicValue(current, topic)),
     onSavePreferences: () => run(() => accountActions.updatePreferences(displayDraft), setBusy, 'Đã lưu chủ đề quan tâm.'),
     onRequestDeletion: () => run(accountActions.requestDeletion, setDeleting),
+    onChangePassword: (payload) => run(() => accountActions.changePassword(payload), setChangingPassword, null, { skipExpire: true, rethrow: true }),
     onLogout: () => run(accountActions.logout, setBusy),
   }
 }

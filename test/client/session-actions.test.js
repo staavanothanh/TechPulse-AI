@@ -216,4 +216,47 @@ describe('application session actions', () => {
     expect(authErrorForRedirect(undefined)).toBeNull()
     expect(authErrorForRedirect('')).toBeNull()
   })
+
+  it('calls api.changePassword with csrf headers and commits null session with re-login notice', async () => {
+    const api = {
+      changePassword: vi.fn().mockResolvedValue({ data: { success: true } }),
+    }
+    const applySession = vi.fn()
+    const actions = createSessionActions({
+      api,
+      getCsrfToken: () => 'csrf-token-1234',
+      applySession,
+    })
+
+    await actions.changePassword({ currentPassword: 'old-password', newPassword: 'new-password-12345' })
+
+    expect(api.changePassword).toHaveBeenCalledWith({
+      body: JSON.stringify({ currentPassword: 'old-password', newPassword: 'new-password-12345' }),
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'csrf-token-1234' },
+    })
+    expect(applySession).toHaveBeenCalledWith(
+      null,
+      null,
+      'Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.',
+    )
+  })
+
+  it('does not commit null session if api.changePassword rejects', async () => {
+    const api = {
+      changePassword: vi.fn().mockRejectedValue(new Error('Authentication service is temporarily unavailable')),
+    }
+    const applySession = vi.fn()
+    const actions = createSessionActions({
+      api,
+      getCsrfToken: () => 'csrf-token-1234',
+      applySession,
+    })
+
+    await expect(
+      actions.changePassword({ currentPassword: 'old-password', newPassword: 'new-password-12345' }),
+    ).rejects.toThrow('Authentication service is temporarily unavailable')
+
+    expect(applySession).not.toHaveBeenCalled()
+  })
 })

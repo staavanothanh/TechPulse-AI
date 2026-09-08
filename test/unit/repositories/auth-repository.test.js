@@ -58,7 +58,7 @@ function createContext({
   return { repository: new MongoAuthRepository(context), context, collections, session: transactionSession }
 }
 
-const actor = { _id: userId, role: 'admin' }
+const _actor = { _id: userId, role: 'admin' }
 
 function audit(overrides = {}) {
   return {
@@ -136,6 +136,11 @@ describe('MongoAuthRepository', () => {
     await expect(suspend.repository.updateUserStatus(userId, 'suspended', 'user_suspended')).resolves.toEqual({ status: 'suspended' })
     const restore = createContext({ findOne: { users: [{ status: 'suspended' }] }, findOneAndUpdateResults: { users: [{ status: 'active' }] } })
     await expect(restore.repository.updateUserStatus(userId, 'active', 'user_restored')).resolves.toEqual({ status: 'active' })
+
+    const passFenced = createContext({ updateResults: { sessions: [{ matchedCount: 1 }], users: [{ matchedCount: 1 }] }, findOneAndUpdateResults: { users: [{ _id: userId, sessionVersion: 3 }] } })
+    await expect(passFenced.repository.updatePassword(userId, 'new-password-hash', { expectedSessionId: sessionId, expectedSessionVersion: 2, session: { tx: true } })).resolves.toEqual(expect.objectContaining({ _id: userId, sessionVersion: 3 }))
+    const passBlocked = createContext({ updateResults: { sessions: [{ matchedCount: 0 }] } })
+    await expect(passBlocked.repository.updatePassword(userId, 'new-password-hash', { expectedSessionId: sessionId, expectedSessionVersion: 2 })).resolves.toBeNull()
   })
 
   it('creates, touches and revokes sessions with user lifecycle fences', async () => {

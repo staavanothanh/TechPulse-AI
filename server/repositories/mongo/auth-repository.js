@@ -149,6 +149,24 @@ export class MongoAuthRepository {
     return result
   }
 
+  async updatePassword(userId, newPasswordHash, options = {}) {
+    const { expectedSessionId, expectedSessionVersion, ...mongoOptions } = options
+    if (expectedSessionId !== undefined && !(await this.assertActiveSessionForUser({ sessionId: expectedSessionId, userId, sessionVersion: expectedSessionVersion }, mongoOptions))) return null
+    const result = await this.collection('users').findOneAndUpdate(
+      { _id: idValue(userId), status: 'active', ...(expectedSessionVersion === undefined ? {} : { sessionVersion: expectedSessionVersion }) },
+      { $set: { passwordHash: newPasswordHash, updatedAt: new Date() }, $inc: { sessionVersion: 1 } },
+      { ...mongoOptions, returnDocument: 'after' },
+    )
+    if (result) {
+      await this.collection('sessions').updateMany(
+        { userId: idValue(userId), status: 'active' },
+        { $set: { status: 'revoked', revokedAt: new Date(), expiresAt: new Date() } },
+        mongoOptions,
+      )
+    }
+    return result
+  }
+
   async updateUserStatus(userId, status, reasonCode, options = {}) {
     const now = new Date()
     const expectedStatus = status === 'suspended' ? 'active' : 'suspended'
