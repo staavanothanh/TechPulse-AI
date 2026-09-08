@@ -23,6 +23,8 @@ const ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000
 // Thời gian hết hạn "idle": 24 giờ — session tự động đáo hạn nếu không hoạt động,
 // nhưng mỗi request hợp lệ (qua /me) sẽ đẩy mốc này về tương lai.
 const IDLE_MS = 24 * 60 * 60 * 1000
+// A Google-only session must carry a recent server-verified Google login before it can enroll a local password.
+const GOOGLE_STEP_UP_MS = 10 * 60 * 1000
 
 /**
  * Password hash "mồi" dùng chung cho luồng đăng nhập sai email và cho user OAuth.
@@ -179,7 +181,7 @@ export function createAuthService({ repository, runtime, environment = process.e
    * - Repository dùng CAS (`expectedUserSessionVersion`) để từ chối tạo session
    *   nếu user vừa bị thu hồi session (sessionVersion đã tăng) giữa chừng.
    */
-  async function createSession(user, request, transactionSession) {
+  async function createSession(user, request, transactionSession, { googleAuthenticatedAt } = {}) {
     const clearToken = createSessionToken()
     const csrfToken = csrfTokenForSession(clearToken)
     const createdAt = clock()
@@ -192,6 +194,7 @@ export function createAuthService({ repository, runtime, environment = process.e
         absoluteExpiresAt: new Date(createdAt.getTime() + ABSOLUTE_MS),
         expiresAt: new Date(createdAt.getTime() + IDLE_MS),
         createdAt,
+        ...(googleAuthenticatedAt ? { googleAuthenticatedAt } : {}),
         userAgentSummary: request?.get?.('User-Agent')?.slice(0, 256),
       }, { session: transactionSession, expectedUserSessionVersion: user.sessionVersion, expectedUserStatus: 'active' })
     } catch (error) {
@@ -302,6 +305,11 @@ export function createAuthService({ repository, runtime, environment = process.e
     if (!auth?.session || !verifyCsrfToken(token, auth.session.csrfSecretHash)) throw new AuthError(403, 'csrf_invalid', 'CSRF token is invalid')
     return true
   }
+  function requireRecentGoogleStepUp(auth) {
+    const authenticatedAt = new Date(auth?.session?.googleAuthenticatedAt)
+    const now = clock()
+    if (!Number.isFinite(authenticatedAt.getTime()) || !Number.isFinite(now?.getTime?.()) || authenticatedAt > now || now.getTime() - authenticatedAt.getTime() > GOOGLE_STEP_UP_MS) throw new AuthError(403, 'google_reauth_required', 'Recent Google authentication is required')
+  }
 
   /**
    * Đăng xuất: xoá session (revoke) + ghi audit trong một transaction.
@@ -354,13 +362,16 @@ export function createAuthService({ repository, runtime, environment = process.e
     await verifyCsrf({ auth, token: csrfToken })
     if (typeof newPassword !== 'string' || newPassword.length < 10 || newPassword.length > 128) throw new AuthError(422, 'validation_error', 'Password is invalid')
     const user = auth.user
-    // Chỉ kiểm tra mật khẩu hiện tại khi tài khoản đã có mật khẩu thật; OAuth-only được bỏ qua.
+    if (user.passwordEnabled === false) requireRecentGoogleStepUp(auth)
+    await reserve('password-change', request)
+    // Chỉ kiểm tra mật khẩu hiện tại khi tài khoản đã có mật khẩu thật; OAuth-only đã được step-up bằng Google.
     if (user.passwordEnabled !== false) {
       const matches = await verifyPassword(currentPassword, user.passwordHash)
       if (!matches) throw new AuthError(403, 'forbidden', 'Current password is incorrect')
     }
     const passwordHash = await hashPassword(newPassword)
     return inTransaction(async (session) => {
+      if (typeof repository.assertActiveSessionForUser !== 'function' || !(await repository.assertActiveSessionForUser({ sessionId: auth.session?._id, userId: user._id, sessionVersion: auth.session?.userSessionVersion }, { session }))) throw new AuthError(401, 'unauthorized', 'Session is no longer active')
       const updated = await repository.updatePassword(user._id, passwordHash, { session, expectedSessionVersion: user.sessionVersion })
       if (!updated) throw new AuthError(401, 'unauthorized', 'Session is invalid or expired')
       await repository.revokeSessionsByUserId(user._id, { session })
@@ -589,14 +600,14 @@ export function createAuthService({ repository, runtime, environment = process.e
           if (error?.code === 11000) throw new AuthError(409, 'conflict', 'Account already exists')
           throw error
         }
-        const sessionData = await createSession(user, request, session)
+        const sessionData = await createSession(user, request, session, { googleAuthenticatedAt: clock() })
         await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_registered', targetId: user._id, changedFields: ['status'], reasonCode: 'google_oauth_registered', request }), { session })
         return { user: serializeUser(user), ...sessionData }
       })
     }
     // User đã tồn tại (theo sub hoặc theo email đã liên kết): tạo session + audit.
     return inTransaction(async (session) => {
-      const sessionData = await createSession(user, request, session)
+      const sessionData = await createSession(user, request, session, { googleAuthenticatedAt: clock() })
       await repository.insertAudit(createAuditEvent({ actor: user, action: 'google_oauth_login', targetId: user._id, reasonCode: 'google_oauth_login', request }), { session })
       return { user: serializeUser(user), ...sessionData }
     })

@@ -203,6 +203,7 @@ export class MongoAuthRepository {
     if (input.createdIpHmac) document.createdIpHmac = input.createdIpHmac
     if (input.ipHmacKeyVersion) document.ipHmacKeyVersion = input.ipHmacKeyVersion
     if (input.userAgentSummary) document.userAgentSummary = input.userAgentSummary
+    if (input.googleAuthenticatedAt) document.googleAuthenticatedAt = nowDate(input.googleAuthenticatedAt)
     if (expectedUserSessionVersion !== undefined) {
       const user = await this.collection('users').findOne({ _id: document.userId, status: expectedUserStatus, sessionVersion: expectedUserSessionVersion }, mongoOptions)
       if (!user) throw new Error('session user fence mismatch')

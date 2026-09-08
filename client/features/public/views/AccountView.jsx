@@ -28,6 +28,8 @@ export default function AccountView({
   // mà không cần mật khẩu hiện tại.
   const needsCurrentPassword = user?.hasPassword !== false
   const describePasswordError = (requestError) => {
+    if (requestError?.code === 'csrf_invalid') return 'Phiên bảo mật đã thay đổi. Vui lòng tải lại trang rồi thử lại.'
+    if (requestError?.code === 'google_reauth_required') return 'Vui lòng đăng nhập lại bằng Google rồi thử đặt mật khẩu.'
     if (requestError?.status === 403) return 'Mật khẩu hiện tại không đúng.'
     if (requestError?.status === 422) return 'Mật khẩu mới không hợp lệ (10–128 ký tự).'
     if (requestError?.status === 401) return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.'

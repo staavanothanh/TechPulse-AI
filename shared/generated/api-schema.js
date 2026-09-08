@@ -514,7 +514,7 @@ export const openApiDocument = {
         "operationId": "changePassword",
         "x-persistence": "mongo",
         "summary": "Change or set the current account password",
-        "description": "Authenticated password change. Accounts that already have a usable password must supply currentPassword; Google-only accounts (no usable password yet) may set a first password without it. On success all prior sessions are revoked and a fresh session is issued in the response.",
+        "description": "Authenticated password change. Accounts that already have a usable password must supply currentPassword; Google-only accounts (no usable password yet) may set a first password without it after a recent verified Google login on the current session. On success all prior sessions are revoked and a fresh session is issued in the response.",
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfTokenHeader"
@@ -572,6 +572,9 @@ export const openApiDocument = {
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -10441,6 +10444,7 @@ export const openApiDocument = {
           "validation_error",
           "unauthorized",
           "csrf_invalid",
+          "google_reauth_required",
           "forbidden",
           "oauth_state_invalid",
           "oauth_state_expired",

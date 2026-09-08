@@ -9,6 +9,7 @@ const ERROR_STATUS = new Map([
   ['oauth_state_invalid', 403],
   ['oauth_state_expired', 403],
   ['csrf_invalid', 403],
+  ['google_reauth_required', 403],
   ['conflict', 409],
   ['oauth_state_replayed', 409],
   ['oauth_identity_conflict', 409],
