@@ -3,6 +3,7 @@ import { assertSourcesReady, createConfiguredSourceService } from '../../../serv
 import { SOURCE_AUDIT_VALIDATOR, SOURCE_COLLECTIONS, SOURCE_INDEXES } from '../../../scripts/migrations/sources.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/durable-jobs.js'
 import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../../scripts/migrations/indexing-jobs.js'
+import { PASSWORD_CHANGE_AUDIT_VALIDATOR } from '../../../scripts/migrations/password-change.js'
 import { QA_EVIDENCE_FENCE_SOURCE_VALIDATOR } from '../../../scripts/migrations/qa-evidence-fence.js'
 
 function readyContext({ sourceValidator = SOURCE_COLLECTIONS.sources.validator, auditValidator = SOURCE_AUDIT_VALIDATOR, indexes } = {}) {
@@ -34,6 +35,9 @@ describe('Source Registry bootstrap readiness', () => {
 
   it('accepts the exact forward-compatible indexing-job audit validator', async () => {
     await expect(assertSourcesReady(readyContext({ auditValidator: INDEXING_JOB_AUDIT_VALIDATOR }))).resolves.toBeUndefined()
+  })
+  it('accepts the final password-change audit validator', async () => {
+    await expect(assertSourcesReady(readyContext({ auditValidator: PASSWORD_CHANGE_AUDIT_VALIDATOR }))).resolves.toBeUndefined()
   })
 
   it('accepts the exact Q&A evidence-fence source validator', async () => {

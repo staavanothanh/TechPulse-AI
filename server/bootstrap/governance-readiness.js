@@ -7,6 +7,7 @@ import {
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
 import { GOOGLE_OAUTH_AUDIT_VALIDATOR } from '../../scripts/migrations/google-oauth.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } from '../../scripts/migrations/source-policy-reconciliation.js'
+import { PASSWORD_CHANGE_AUDIT_VALIDATOR } from '../../scripts/migrations/password-change.js'
 import { GOVERNANCE_HARDENING_INDEXES } from '../../scripts/migrations/governance-hardening.js'
 import { GOVERNANCE_RETENTION_TAKEDOWN_VALIDATOR } from '../../scripts/migrations/governance-retention-hardening.js'
 import { ARTICLE_GOVERNANCE_HARDENING_VALIDATOR } from '../../scripts/migrations/article-governance-hardening.js'
@@ -68,7 +69,7 @@ export async function assertGovernanceReady(context, { governanceDb } = {}) {
   }
   const auditCollections = await collectionMap(context.db)
   const audit = auditCollections.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) {
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) {
     throw new Error('governance audit validator is not ready')
   }
   if (typeof context.db.collection !== 'function') throw new Error('governance database is unavailable')

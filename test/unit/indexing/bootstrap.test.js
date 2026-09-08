@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { assertIndexingJobsReady, assertSourcePolicyReconciliationReady, checkSourcePolicyReconciliationReady, createConfiguredIndexingRuntime } from '../../../server/bootstrap/indexing.js'
 import { INDEXING_ARTICLE_INDEXES, INDEXING_JOB_AUDIT_VALIDATOR, INDEXING_JOB_COLLECTIONS, INDEXING_JOB_INDEXES } from '../../../scripts/migrations/indexing-jobs.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_INDEXES } from '../../../scripts/migrations/source-policy-reconciliation.js'
+import { PASSWORD_CHANGE_AUDIT_VALIDATOR } from '../../../scripts/migrations/password-change.js'
 import { SOURCE_COLLECTIONS, SOURCE_INDEXES } from '../../../scripts/migrations/sources.js'
 import { INDEXING_DRAIN_PERFORMANCE_INDEXES } from '../../../scripts/migrations/indexing-drain-performance.js'
 import { PROVIDER_ROUTING_V2_COLLECTIONS, PROVIDER_ROUTING_V2_INDEXES } from '../../../scripts/migrations/provider-routing-v2.js'
@@ -56,6 +57,11 @@ describe('Step 9 indexing bootstrap readiness', () => {
     await expect(assertIndexingJobsReady(readyContext({ auditValidator: {} }))).rejects.toThrow(/audit/i)
     await expect(assertIndexingJobsReady(readyContext({ indexOverride: { indexingJobs: [] } }))).rejects.toThrow(/indexes/i)
     await expect(assertIndexingJobsReady(readyContext({ indexOverride: { articles: [] } }))).rejects.toThrow(/article reconciliation index/i)
+  })
+  it('accepts the final password-change audit validator for indexing and reconciliation readiness', async () => {
+    const context = readyContext({ auditValidator: PASSWORD_CHANGE_AUDIT_VALIDATOR })
+    await expect(assertIndexingJobsReady(context)).resolves.toBeUndefined()
+    await expect(assertSourcePolicyReconciliationReady(context)).resolves.toBeUndefined()
   })
   it('requires the reconciliation audit validator and idempotency index', async () => {
     await expect(assertSourcePolicyReconciliationReady(readyContext())).resolves.toBeUndefined()

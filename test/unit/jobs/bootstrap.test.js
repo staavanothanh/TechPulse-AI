@@ -3,6 +3,7 @@ import { assertCronObservabilityReady, assertDurableJobsReady, createConfiguredJ
 import { createReconciliationRunner } from '../../../server/application/indexing/reconciliation.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
 import { CRON_OBSERVABILITY_COLLECTIONS, CRON_OBSERVABILITY_INDEXES } from '../../../scripts/migrations/cron-observability.js'
+import { PASSWORD_CHANGE_AUDIT_VALIDATOR } from '../../../scripts/migrations/password-change.js'
 import { GOVERNANCE_COLLECTIONS, GOVERNANCE_DATABASE_COLLECTIONS, GOVERNANCE_DATABASE_INDEXES, GOVERNANCE_INDEXES } from '../../../scripts/migrations/governance.js'
 import { GOVERNANCE_AUDIT_INDEXES, GOVERNANCE_AUDIT_VALIDATOR } from '../../../scripts/migrations/governance-audit.js'
 import { GOVERNANCE_HARDENING_INDEXES } from '../../../scripts/migrations/governance-hardening.js'
@@ -80,6 +81,9 @@ describe('durable-jobs bootstrap readiness', () => {
     expect(runtime.maintenanceRegistry.has('purge-account-deletion-workflows')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-audit-ip-hmac')).toBe(true)
     expect(runtime.maintenanceRegistry.has('purge-cron-lifecycle-events')).toBe(true)
+  })
+  it('accepts the final password-change audit validator', async () => {
+    await expect(assertDurableJobsReady(readyContext({ auditValidator: PASSWORD_CHANGE_AUDIT_VALIDATOR }))).resolves.toBeUndefined()
   })
   it('registers lifecycle retention in the bounded cron materialization phase', async () => {
     const context = readyContext({ auditValidator: GOVERNANCE_AUDIT_VALIDATOR })

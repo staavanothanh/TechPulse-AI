@@ -17,6 +17,7 @@ import { INDEXING_JOB_AUDIT_VALIDATOR } from '../../scripts/migrations/indexing-
 import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-audit.js'
 import { GOOGLE_OAUTH_AUDIT_VALIDATOR } from '../../scripts/migrations/google-oauth.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR } from '../../scripts/migrations/source-policy-reconciliation.js'
+import { PASSWORD_CHANGE_AUDIT_VALIDATOR } from '../../scripts/migrations/password-change.js'
 import { MongoTakedownRepository } from '../repositories/mongo/takedown-repository.js'
 import { MongoAccountDeletionRepository } from '../repositories/mongo/account-deletion-repository.js'
 import { MongoAdminRepository } from '../repositories/mongo/admin-repository.js'
@@ -46,7 +47,7 @@ export async function assertDurableJobsReady(context) {
     if (name === 'jobLeases' && [...actualByName.values()].some((index) => index.expireAfterSeconds !== undefined)) throw new Error('durable-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('durable-jobs audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('durable-jobs audit validator is not ready')
 }
 
 export async function assertCronObservabilityReady(context) {

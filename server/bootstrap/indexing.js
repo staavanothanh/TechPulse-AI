@@ -22,6 +22,7 @@ import { GOVERNANCE_AUDIT_VALIDATOR } from '../../scripts/migrations/governance-
 import { GOOGLE_OAUTH_AUDIT_VALIDATOR } from '../../scripts/migrations/google-oauth.js'
 import { PROVIDER_ADMISSION_STATE_VALIDATOR_V2, PROVIDER_ROUTING_INDEXING_JOB_VALIDATOR } from '../../scripts/migrations/provider-routing-v2.js'
 import { SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_INDEXES } from '../../scripts/migrations/source-policy-reconciliation.js'
+import { PASSWORD_CHANGE_AUDIT_VALIDATOR } from '../../scripts/migrations/password-change.js'
 import { assertProviderRoutingReady } from './provider-routing.js'
 import { assertSourcesReady } from './sources.js'
 import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
@@ -44,7 +45,7 @@ export async function assertIndexingJobsReady(context) {
     if (expectedIndexes.some((expected) => !exactMongoIndex(actualByName.get(expected.name), expected))) throw new Error('indexing-jobs indexes are not ready')
   }
   const audit = collectionMap.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw new Error('indexing-jobs audit validator is not ready')
   const articleCollection = collectionMap.get('articles')
   const articleIndexes = new Map((await context.db.collection('articles').indexes()).map((index) => [index.name, index]))
   const expectedArticleIndexes = [
@@ -61,7 +62,7 @@ export async function assertSourcePolicyReconciliationReady(context) {
   if (!context?.db) throw new Error('Mongo context is required')
   const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
   const audit = collections.find((collection) => collection.name === 'adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || stableJson(audit.options?.validator) !== stableJson(SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR)) throw sourcePolicyReconciliationNotReady('source-policy-reconciliation audit validator is not ready')
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) throw sourcePolicyReconciliationNotReady('source-policy-reconciliation audit validator is not ready')
   const indexes = new Map((await context.db.collection('adminAuditLogs').indexes()).map((index) => [index.name, index]))
   if (SOURCE_POLICY_RECONCILIATION_INDEXES.some((expected) => !exactMongoIndex(indexes.get(expected.name), expected))) throw sourcePolicyReconciliationNotReady('source-policy-reconciliation indexes are not ready')
 }

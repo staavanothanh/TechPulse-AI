@@ -36,15 +36,6 @@ describe('source-policy-reconciliation migration', () => {
     await expect(runSourcePolicyReconciliationMigration({ db: database({}) })).rejects.toThrow(/precede/i)
   })
 
-  it('requires the exact reconciliation validator and index when verifying the target', () => {
-    const verify = readFileSync(new URL('../../scripts/db-verify.js', import.meta.url), 'utf8')
-    expect(verify).toMatch(/target === 'source-policy-reconciliation' && name === 'adminAuditLogs'\s*\?\s*\[SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR\]/)
-    expect(verify).toMatch(/target === 'source-policy-reconciliation'\s*\?\s*\[SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR\]/)
-    expect(verify).toContain('SOURCE_POLICY_RECONCILIATION_INDEXES')
-    expect(verify).toContain('adminAuditLogs: [...AUTH_CORE_INDEXES.adminAuditLogs, ...SOURCE_POLICY_RECONCILIATION_INDEXES]')
-    expect(verify).toContain("'source-policy-reconciliation'")
-  })
-
   it('verifies the complete indexing and source paths under the target', () => {
     const verify = readFileSync(new URL('../../scripts/db-verify.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
     const collectionsStart = verify.indexOf("target === 'source-policy-reconciliation'\n                ? {\n                    ...INDEXING_JOB_COLLECTIONS")

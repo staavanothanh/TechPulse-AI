@@ -426,7 +426,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       else {
         const accepted =
           target === 'source-policy-reconciliation' && name === 'adminAuditLogs'
-            ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+            ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR]
             : target === 'source-policy-reconciliation' && name === 'providerAdmissionStates'
               ? [INDEXING_JOB_COLLECTIONS.providerAdmissionStates.validator, PROVIDER_ADMISSION_STATE_VALIDATOR_V2]
             : target === 'source-policy-reconciliation' && name === 'indexingJobs'
@@ -520,7 +520,7 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       if (governanceMetadataUnavailable) validatorProblems.push('techpulse_governance:metadata-unavailable')
       const auditCollection = collectionMap.get('adminAuditLogs')
       if (!auditCollection) missing.push('adminAuditLogs:collection')
-      else if (auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(auditCollection.options?.validator) === stableJson(validator))) validatorProblems.push('adminAuditLogs:validator-definition:governance')
+      else if (auditCollection.options?.validationLevel !== 'strict' || auditCollection.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR].some((validator) => stableJson(auditCollection.options?.validator) === stableJson(validator))) validatorProblems.push('adminAuditLogs:validator-definition:governance')
       for (const [name, definition] of governanceMetadataUnavailable ? [] : Object.entries(GOVERNANCE_DATABASE_COLLECTIONS)) {
         const collection = governanceMap.get(name)
         if (!collection) { missing.push(`techpulse_governance:${name}:collection`); continue }
@@ -579,12 +579,12 @@ if (!['auth-core', 'sources', 'durable-jobs', 'cron-observability', 'articles', 
       else {
         const acceptedAuditValidators =
           target === 'source-policy-reconciliation'
-            ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+            ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR]
             : target === 'indexing-jobs' || target === 'indexing-drain-performance' || target === 'chat-sessions' || target === 'chat-sessions-source-name-v1'
-              ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+              ? [INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR]
             : target === 'durable-jobs' || target === 'articles'
-              ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
-              : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
+              ? [DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR]
+              : [SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGE_AUDIT_VALIDATOR]
         if (
           auditCollection.options?.validationLevel !== 'strict' ||
           auditCollection.options?.validationAction !== 'error' ||
