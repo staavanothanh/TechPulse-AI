@@ -8,6 +8,52 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
+import { TOPICS } from '../components/reader-format.js'
+
+function sourceOption(source) {
+  if (typeof source === 'string') {
+    const id = source.trim()
+    return id ? { id, name: id } : null
+  }
+  if (!source || typeof source !== 'object') return null
+  const id = typeof source.id === 'string' && source.id.trim()
+    ? source.id.trim()
+    : typeof source.sourceId === 'string' && source.sourceId.trim()
+      ? source.sourceId.trim()
+      : ''
+  if (!id) return null
+  const name = typeof source.name === 'string' && source.name.trim()
+    ? source.name.trim()
+    : typeof source.sourceName === 'string' && source.sourceName.trim()
+      ? source.sourceName.trim()
+      : id
+  return { id, name }
+}
+
+function articleSource(item) {
+  const article = item?.article || item
+  if (!article || typeof article !== 'object') return null
+  if (article.source) return article.source
+  if (article.sourceId || article.sourceName) {
+    return { sourceId: article.sourceId, sourceName: article.sourceName }
+  }
+  return null
+}
+
+function collectSourceItems(sources, results) {
+  const candidates = [
+    ...(Array.isArray(sources) ? sources : []),
+    ...(Array.isArray(results) ? results.map(articleSource) : []),
+  ]
+  return Array.from(
+    new Map(
+      candidates
+        .map(sourceOption)
+        .filter(Boolean)
+        .map((source) => [source.id, source]),
+    ).values(),
+  )
+}
 
 export default function SearchView({
   state = 'initial',
@@ -21,6 +67,8 @@ export default function SearchView({
   savedOverrides = {},
   saveError = null,
   handlers = {},
+  topics = TOPICS,
+  sources = [],
 }) {
   const current = {
     q: '',
@@ -31,6 +79,7 @@ export default function SearchView({
     publishedBefore: '',
     ...query,
   }
+  const sourceItems = collectSourceItems(sources, results)
   return (
     <section
       className="public-view public-search-view"
@@ -75,22 +124,38 @@ export default function SearchView({
             <option value="text">Văn bản</option>
           </select>
         </label>
-        <FilterField
-          id="public-search-topic"
-          label="Chủ đề"
-          value={current.topic}
-          onChange={(value) => handlers.onQueryChange?.('topic', value)}
-          error={errors.topic}
-          maxLength={64}
-        />
-        <FilterField
-          id="public-search-source"
-          label="Nguồn"
-          value={current.sourceId}
-          onChange={(value) => handlers.onQueryChange?.('sourceId', value)}
-          error={errors.sourceId}
-          maxLength={128}
-        />
+        <label className="public-field" htmlFor="public-search-topic">
+          <span>Chủ đề</span>
+          <select
+            id="public-search-topic"
+            className="public-input"
+            value={current.topic}
+            onChange={(event) => handlers.onQueryChange?.('topic', event.target.value)}
+          >
+            <option value="">Tất cả chủ đề</option>
+            {topics.map((topic) => (
+              <option key={topic} value={topic}>
+                {topic}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="public-field" htmlFor="public-search-source">
+          <span>Nguồn</span>
+          <select
+            id="public-search-source"
+            className="public-input"
+            value={current.sourceId}
+            onChange={(event) => handlers.onQueryChange?.('sourceId', event.target.value)}
+          >
+            <option value="">Tất cả nguồn</option>
+            {sourceItems.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name || source.id}
+              </option>
+            ))}
+          </select>
+        </label>
         <FilterField
           id="public-search-after"
           label="Từ ngày"
@@ -157,6 +222,7 @@ export default function SearchView({
                   busy={pendingArticleId === value.id}
                   onSaveToggle={handlers.onSaveToggle}
                   onOpenArticle={handlers.onOpenArticle}
+                  onAskAboutArticle={handlers.onAskAboutArticle}
                 />
               )
             })

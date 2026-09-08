@@ -6,7 +6,7 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
-import { formatDate, TOPICS } from '../components/reader-format.js'
+import { articleTitle, formatDate, sourceName, TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
 import {
   hasQaScope,
@@ -39,6 +39,25 @@ function scopeConfirmationSummary(scope) {
   if (scope.publishedAfter && scope.publishedBefore) entries.push(`Thời gian: ${scope.publishedAfter} – ${scope.publishedBefore}`)
   return entries
 }
+
+const SUGGESTED_PROMPTS = [
+  {
+    topic: 'AI',
+    prompt: 'Google DeepMind có bài viết nào về Gemini 3.1 Flash TTS không?',
+  },
+  {
+    topic: 'AI',
+    prompt: 'Google DeepMind đã công bố mô hình speech AI nào dựa trên Gemini?',
+  },
+  {
+    topic: 'AI',
+    prompt: 'Mô hình OlmoEarth của Hugging Face phục vụ mục đích gì?',
+  },
+  {
+    topic: 'Bảo mật',
+    prompt: 'Các quy định thử nghiệm an toàn AI được đề cập như thế nào?',
+  },
+]
 
 export default function QaView({
   state = 'empty',
@@ -135,6 +154,13 @@ export default function QaView({
     onAsk?.({ ...validation.scope, question: value })
     setQuestion('')
   }
+  function handleSelectSuggestion(suggestion) {
+    setQuestion(suggestion.prompt)
+    if (questionError) setQuestionError('')
+    if (suggestion.topic && !isTopicSelected(suggestion.topic)) {
+      handlers.onToggleTopic?.(suggestion.topic)
+    }
+  }
   return (
     <section
       className="public-view public-qa-view"
@@ -203,11 +229,35 @@ export default function QaView({
             aria-busy={state === 'loading' || undefined}
           >
             {state === 'empty' ? (
-              <StateCard
-                eyebrow="Phiên trống"
-                title="Bắt đầu một câu hỏi"
-                copy="Đặt câu hỏi về công nghệ. Câu trả lời sẽ kèm citation tới nguồn đã truy xuất."
-              />
+              <div className="public-qa-empty-wrap">
+                <StateCard
+                  eyebrow="Phiên trống"
+                  title={safeScope.articleId ? 'Hỏi đáp về bài viết' : 'Bắt đầu một câu hỏi'}
+                  copy={
+                    safeScope.articleId
+                      ? 'Đặt câu hỏi xoay quanh nội dung bài viết đã chọn. Câu trả lời sẽ kèm citation tới nguồn đã truy xuất.'
+                      : 'Đặt câu hỏi về công nghệ. Câu trả lời sẽ kèm citation tới nguồn đã truy xuất.'
+                  }
+                />
+                {!safeScope.articleId ? (
+                  <div className="public-qa-suggestions">
+                    <p className="public-form-note">Gợi ý câu hỏi mẫu từ nguồn tin có trong hệ thống:</p>
+                    <div className="public-suggestion-chips">
+                      {SUGGESTED_PROMPTS.map((item, index) => (
+                        <button
+                          key={index}
+                          className="public-suggestion-chip"
+                          type="button"
+                          onClick={() => handleSelectSuggestion(item)}
+                        >
+                          <span className="public-suggestion-tag">{item.topic}</span>
+                          <span className="public-suggestion-text">{item.prompt}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             {state === 'loading' ? <Skeleton label="Đang truy xuất nguồn" /> : null}
             {state === 'error' ? (
@@ -246,7 +296,11 @@ export default function QaView({
                   onKeyDown={(event) => handleQaQuestionKeyDown(event, submit)}
                   minLength={3}
                   maxLength={1000}
-                  placeholder="Nhập câu hỏi về công nghệ"
+                  placeholder={
+                    safeScope.articleId
+                      ? 'Nhập câu hỏi về bài viết này'
+                      : 'Nhập câu hỏi về công nghệ'
+                  }
                 />
                 {questionError ? (
                   <small id="public-qa-question-error" className="public-field-error" role="alert">
@@ -274,23 +328,44 @@ export default function QaView({
           <h2 id="public-qa-scope-title">Phạm vi nguồn</h2>
           <p className="public-form-note">Giới hạn nguồn truy xuất cho câu trả lời.</p>
           {safeScope.articleId ? (
-            <div className="public-qa-article-selected">
-              <span>Đang hỏi về bài:</span>
-              <code>{safeScope.articleId}</code>
-              <button
-                className="public-text-action"
-                type="button"
-                onClick={() => handlers.onClearArticleScope?.()}
-              >
-                Bỏ chọn
-              </button>
+            <div className="public-qa-article-selected public-qa-article-context">
+              <div className="public-qa-article-context-head">
+                <span className="public-qa-article-context-badge">Đang hỏi về bài viết</span>
+                <button
+                  className="public-text-action"
+                  type="button"
+                  onClick={() => handlers.onClearArticleScope?.()}
+                >
+                  Bỏ chọn
+                </button>
+              </div>
+              <h3 className="public-qa-article-context-title">
+                {safeScope.article
+                  ? articleTitle(safeScope.article)
+                  : `Bài viết #${String(safeScope.articleId).slice(0, 8)}…`}
+              </h3>
+              {safeScope.article ? (
+                <div className="public-qa-article-context-meta">
+                  <span>{sourceName(safeScope.article)}</span>
+                  {safeScope.article.publishedAt ? (
+                    <time dateTime={safeScope.article.publishedAt}>
+                      {formatDate(safeScope.article.publishedAt)}
+                    </time>
+                  ) : null}
+                </div>
+              ) : (
+                <code className="public-qa-article-fallback-id">{safeScope.articleId}</code>
+              )}
+              {safeScope.article?.summaryVi ? (
+                <p className="public-qa-article-context-summary">{safeScope.article.summaryVi}</p>
+              ) : null}
             </div>
           ) : null}
           {!hasScope ? (
             <p id="public-qa-scope-hint" className="public-form-note">
               {naturalMode
                 ? 'Phạm vi sẽ được đề xuất từ câu hỏi và cần xác nhận trước khi tìm nguồn.'
-                : 'Chọn ít nhất một chủ đề, nhập ID bài viết hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.'}
+                : 'Chọn ít nhất một chủ đề hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.'}
             </p>
           ) : null}
           <div className="public-topic-row public-scope-topics">
@@ -306,14 +381,6 @@ export default function QaView({
               </button>
             ))}
           </div>
-          <FilterField
-            id="public-qa-article"
-            label="Giới hạn theo bài"
-            value={safeScope.articleId || ''}
-            onChange={(value) => handlers.onScopeChange?.('articleId', value)}
-            maxLength={128}
-            placeholder="ID bài tùy chọn"
-          />
           <FilterField
             id="public-qa-after"
             label="Từ ngày"
@@ -505,8 +572,22 @@ function MessageThread({ messages, onCitation }) {
             key={message.id || index}
           >
             {assistant && message.status === 'refused' ? (
-              <div className="public-message-bubble">
-                {refusalCopy[message.refusalReason] || 'Câu hỏi bị từ chối an toàn.'}
+              <div className="public-message-bubble public-refusal-bubble">
+                <p className="public-refusal-title">
+                  <strong>{refusalCopy[message.refusalReason] || 'Câu hỏi bị từ chối an toàn.'}</strong>
+                </p>
+                {message.refusalReason === 'insufficient-evidence' ? (
+                  <div className="public-refusal-guidance">
+                    <p className="public-muted">
+                      Hệ thống chưa tìm thấy bài viết hoặc dữ liệu liên quan trong các nguồn tin đã thu thập để trả lời câu hỏi này.
+                    </p>
+                    <ul className="public-refusal-tips">
+                      <li>Xem các bài viết mới nhất tại mục <strong>Bảng tin (Feed)</strong> hoặc <strong>Tìm kiếm</strong>.</li>
+                      <li>Thử chọn thêm chủ đề hoặc mở rộng phạm vi thời gian ở cột bên phải.</li>
+                      <li>Hỏi về các thông tin hoặc sự kiện công nghệ có trong nguồn tin đã thu thập.</li>
+                    </ul>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {!assistant || paragraphs.length === 0 ? (
