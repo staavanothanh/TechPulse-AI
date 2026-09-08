@@ -298,4 +298,18 @@ describe('application session actions', () => {
     resolvePreferences()
     await preferencesPending
   })
+  it('resynchronizes a stable controller after an external session rerender', async () => {
+    let csrfToken = 'csrf-t0'
+    const api = {
+      changePassword: vi.fn().mockResolvedValue(response({ id: 'user-opaque', hasPassword: true }, 'csrf-t1')),
+      logout: vi.fn().mockResolvedValue({ data: {} }),
+    }
+    const actions = createSessionActions({ api, getCsrfToken: () => csrfToken, applySession: vi.fn() })
+
+    await actions.changePassword({ newPassword: 'new-password-1' })
+    csrfToken = 'csrf-t2'
+    await actions.logout()
+
+    expect(api.logout).toHaveBeenCalledWith({ credentials: 'same-origin', headers: { 'X-CSRF-Token': 'csrf-t2' } })
+  })
 })

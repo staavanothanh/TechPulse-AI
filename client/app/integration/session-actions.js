@@ -68,25 +68,42 @@ export function createSessionActions({
   redirect = redirectToGoogleAuth,
 }) {
   let sessionMutationTail = null
+  let sessionMutationActive = false
   let currentCsrfToken
 
   function readCsrfToken() {
-    if (currentCsrfToken === undefined) currentCsrfToken = getCsrfToken()
+    const externalCsrfToken = getCsrfToken()
+    if (sessionMutationTail === null || currentCsrfToken === undefined) currentCsrfToken = externalCsrfToken
     return currentCsrfToken
   }
 
   function enqueueSessionMutation(operation) {
     let next
     if (sessionMutationTail === null) {
+      sessionMutationActive = true
       try { next = Promise.resolve(operation()) } catch (error) { next = Promise.reject(error) }
     } else {
       next = sessionMutationTail.then(operation, operation)
     }
-    sessionMutationTail = next
-    next.finally(() => {
-      if (sessionMutationTail === next) sessionMutationTail = null
-    }).catch(() => undefined)
-    return next
+    let completed
+    completed = next.then(
+      (value) => {
+        if (sessionMutationTail === completed) {
+          sessionMutationTail = null
+          sessionMutationActive = false
+        }
+        return value
+      },
+      (error) => {
+        if (sessionMutationTail === completed) {
+          sessionMutationTail = null
+          sessionMutationActive = false
+        }
+        throw error
+      },
+    )
+    sessionMutationTail = completed
+    return completed
   }
 
   function startTransition() {
