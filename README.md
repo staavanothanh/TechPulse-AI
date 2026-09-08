@@ -2,7 +2,6 @@
 
 > Ứng dụng web đọc tin công nghệ theo hướng Vietnamese-first: tóm tắt ngắn bằng tiếng Việt, tìm kiếm theo từ khóa/ngữ nghĩa và Q&A có citation để người đọc luôn mở được nguồn kiểm chứng.
 >
-> Cập nhật: 2026-09-08
 
 ## Tổng quan
 
