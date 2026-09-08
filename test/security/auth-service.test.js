@@ -188,12 +188,60 @@ describe('change password', () => {
   function repositoryFor(updatedUser) {
     return {
       withTransaction: vi.fn(async (work) => work('mongo-session')),
+      reserveRateLimit: vi.fn(async () => ({ allowed: true })),
+      assertActiveSessionForUser: vi.fn(async () => true),
       updatePassword: vi.fn(async () => updatedUser),
       revokeSessionsByUserId: vi.fn(async () => undefined),
       createSession: vi.fn(async () => undefined),
       insertAudit: vi.fn(async () => undefined),
     }
   }
+  function serviceFor(repository) {
+    return createAuthService({ repository, quotaKeyring: keyring(), clientIpAdapter: { getClientIp: (req) => req.testClientIp } })
+  }
+  it('rejects wrong-password attempts at the password-change quota before scrypt and without echoing secrets', async () => {
+    const repository = repositoryFor(null)
+    repository.reserveRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 17 })
+    const service = serviceFor(repository)
+    const currentSecret = 'current-secret-not-echoed'
+    const newSecret = 'new-secret-not-echoed'
+
+    await expect(service.changePassword({
+      auth: authFor('not-a-valid-password-hash', true),
+      csrfToken,
+      currentPassword: currentSecret,
+      newPassword: newSecret,
+      request: request(),
+    })).rejects.toSatisfy((error) => error.status === 429 && error.code === 'rate_limit_exceeded' && error.retryAfter === 17 && !error.message.includes(currentSecret) && !error.message.includes(newSecret))
+    expect(repository.reserveRateLimit).toHaveBeenCalledWith(expect.objectContaining({ scope: 'password-change', subjectType: 'ip' }))
+    expect(repository.updatePassword).not.toHaveBeenCalled()
+    expect(repository.assertActiveSessionForUser).not.toHaveBeenCalled()
+  })
+
+  it('rejects an in-flight password change when the initiating session was invalidated', async () => {
+    const passwordHash = await hashPassword(currentPassword)
+    const repository = repositoryFor({ ...user, passwordHash: await hashPassword(newPassword), passwordEnabled: true, sessionVersion: 1 })
+    repository.assertActiveSessionForUser.mockResolvedValue(false)
+    const service = serviceFor(repository)
+
+    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword, request: request() })).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    expect(repository.updatePassword).not.toHaveBeenCalled()
+    expect(repository.revokeSessionsByUserId).not.toHaveBeenCalled()
+    expect(repository.insertAudit).not.toHaveBeenCalled()
+  })
+
+  it('changes the password only after quota admission and an active-session fence', async () => {
+    const passwordHash = await hashPassword(currentPassword)
+    const updatedUser = { ...user, passwordHash: await hashPassword(newPassword), passwordEnabled: true, sessionVersion: 1 }
+    const repository = repositoryFor(updatedUser)
+    const service = serviceFor(repository)
+    const result = await service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword, request: request() })
+
+    expect(result.user.hasPassword).toBe(true)
+    expect(repository.reserveRateLimit).toHaveBeenCalledWith(expect.objectContaining({ scope: 'password-change', subjectType: 'ip' }))
+    expect(repository.assertActiveSessionForUser).toHaveBeenCalledWith({ sessionId: 'session-1', userId: user._id, sessionVersion: 0 }, { session: 'mongo-session' })
+    expect(repository.updatePassword).toHaveBeenCalledWith(user._id, expect.any(String), { session: 'mongo-session', expectedSessionVersion: 0 })
+  })
 
   function authFor(passwordHash, passwordEnabled) {
     return {
@@ -205,24 +253,24 @@ describe('change password', () => {
   it('rejects a wrong current password without touching the repository', async () => {
     const passwordHash = await hashPassword(currentPassword)
     const repository = repositoryFor(null)
-    const service = createAuthService({ repository })
-    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword: 'wrong-password', newPassword })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+    const service = serviceFor(repository)
+    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword: 'wrong-password', newPassword, request: request() })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
     expect(repository.updatePassword).not.toHaveBeenCalled()
   })
 
   it('rejects a too-short new password before any write', async () => {
     const passwordHash = await hashPassword(currentPassword)
     const repository = repositoryFor(null)
-    const service = createAuthService({ repository })
-    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword: 'short' })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
+    const service = serviceFor(repository)
+    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword: 'short', request: request() })).rejects.toMatchObject({ status: 422, code: 'validation_error' })
     expect(repository.updatePassword).not.toHaveBeenCalled()
   })
 
   it('rejects an invalid CSRF token before verifying the current password', async () => {
     const passwordHash = await hashPassword(currentPassword)
     const repository = repositoryFor(null)
-    const service = createAuthService({ repository })
-    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken: 'tampered-csrf-token-value-123456', currentPassword, newPassword })).rejects.toMatchObject({ status: 403, code: 'csrf_invalid' })
+    const service = serviceFor(repository)
+    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken: 'tampered-csrf-token-value-123456', currentPassword, newPassword, request: request() })).rejects.toMatchObject({ status: 403, code: 'csrf_invalid' })
     expect(repository.updatePassword).not.toHaveBeenCalled()
   })
 
@@ -230,8 +278,8 @@ describe('change password', () => {
     const passwordHash = await hashPassword(currentPassword)
     const updatedUser = { ...user, passwordHash: await hashPassword(newPassword), passwordEnabled: true, sessionVersion: 1 }
     const repository = repositoryFor(updatedUser)
-    const service = createAuthService({ repository })
-    const result = await service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword })
+    const service = serviceFor(repository)
+    const result = await service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword, request: request() })
     expect(result.user.hasPassword).toBe(true)
     expect(typeof result.sessionToken).toBe('string')
     expect(typeof result.csrfToken).toBe('string')
@@ -245,8 +293,8 @@ describe('change password', () => {
     const dummyHash = await hashPassword('oauth-dummy:irrelevant')
     const updatedUser = { ...user, passwordHash: await hashPassword(newPassword), passwordEnabled: true, sessionVersion: 1 }
     const repository = repositoryFor(updatedUser)
-    const service = createAuthService({ repository })
-    const result = await service.changePassword({ auth: authFor(dummyHash, false), csrfToken, newPassword })
+    const service = serviceFor(repository)
+    const result = await service.changePassword({ auth: authFor(dummyHash, false), csrfToken, newPassword, request: request() })
     expect(result.user.hasPassword).toBe(true)
     expect(repository.updatePassword).toHaveBeenCalledWith(user._id, expect.any(String), { session: 'mongo-session', expectedSessionVersion: 0 })
   })
@@ -254,8 +302,8 @@ describe('change password', () => {
   it('returns 401 when the session-version compare-and-set fails', async () => {
     const passwordHash = await hashPassword(currentPassword)
     const repository = repositoryFor(null)
-    const service = createAuthService({ repository })
-    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword })).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    const service = serviceFor(repository)
+    await expect(service.changePassword({ auth: authFor(passwordHash, true), csrfToken, currentPassword, newPassword, request: request() })).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
     expect(repository.revokeSessionsByUserId).not.toHaveBeenCalled()
     expect(repository.insertAudit).not.toHaveBeenCalled()
   })

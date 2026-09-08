@@ -3,6 +3,7 @@ import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 import { createApp } from '../../server/app.js'
 import { loadOpenApi } from '../../scripts/contracts/openapi-utils.js'
+import { AuthError } from '../../server/application/auth/service.js'
 
 const openApi = loadOpenApi()
 const validator = new Ajv({ strict: false })
@@ -118,6 +119,19 @@ describe('Step 2 auth HTTP boundary', () => {
     expect(response.headers.get('cache-control')).toBe('no-store, private')
     expect(validateAuthResponse(payload)).toBe(true)
     expect(authService.changePassword).toHaveBeenCalled()
+  })
+  it('preserves canonical password-change throttling and Retry-After responses', async () => {
+    authService.changePassword.mockRejectedValueOnce(new AuthError(429, 'rate_limit_exceeded', 'Too many attempts', { retryAfter: 17 }))
+    const response = await fetch(`${origin}/api/v1/me/password`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json', Cookie: '__Host-techpulse_session=opaque-session-token-1234', 'X-CSRF-Token': 'c'.repeat(32) },
+      body: JSON.stringify({ currentPassword: 'not-echoed', newPassword: 'not-echoed-too' }),
+    })
+    const payload = await response.json()
+    expect(response.status).toBe(429)
+    expect(response.headers.get('retry-after')).toBe('17')
+    expect(payload.error).toMatchObject({ code: 'rate_limit_exceeded', message: 'Too many attempts' })
+    expect(JSON.stringify(payload)).not.toContain('not-echoed')
   })
 
   it('rejects a password change without a session before calling the service', async () => {
