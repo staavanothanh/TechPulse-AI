@@ -8313,8 +8313,8 @@ export const openApiDocument = {
         "required": [
           "eventId",
           "version",
-          "eventType",
           "stage",
+          "eventType",
           "status",
           "occurredAt"
         ],
@@ -8398,6 +8398,76 @@ export const openApiDocument = {
             ],
             "minimum": 0
           },
+          "period": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "periodTimezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "UTC",
+              null
+            ]
+          },
+          "materializationReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "materialized",
+              "already_materialized",
+              "no_eligible_sources",
+              "deferred",
+              "failed",
+              null
+            ]
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "completed",
+              "deferred",
+              "failed",
+              null
+            ]
+          },
+          "alreadyMaterialized": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "eligibleSourceCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "invocationOrigin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
           "stage": {
             "type": "string"
           },
@@ -8478,6 +8548,84 @@ export const openApiDocument = {
           }
         }
       },
+      "MaterializationSummary": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": false,
+        "required": [
+          "period",
+          "periodTimezone",
+          "materializationReason",
+          "outcome",
+          "alreadyMaterialized",
+          "completedAt",
+          "eligibleSourceCount",
+          "inspected",
+          "created",
+          "updated"
+        ],
+        "properties": {
+          "period": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "periodTimezone": {
+            "type": "string",
+            "enum": [
+              "UTC"
+            ]
+          },
+          "materializationReason": {
+            "type": "string",
+            "enum": [
+              "materialized",
+              "already_materialized",
+              "no_eligible_sources",
+              "deferred",
+              "failed"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "deferred",
+              "failed"
+            ]
+          },
+          "alreadyMaterialized": {
+            "type": "boolean"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "eligibleSourceCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "inspected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "created": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "CronRun": {
         "type": "object",
         "additionalProperties": false,
@@ -8487,7 +8635,9 @@ export const openApiDocument = {
           "finishedAt",
           "recovery",
           "queues",
-          "nextAvailableAt"
+          "nextAvailableAt",
+          "invocationOrigin",
+          "materialization"
         ],
         "properties": {
           "runId": {
@@ -8513,6 +8663,16 @@ export const openApiDocument = {
               "null"
             ],
             "format": "date-time"
+          },
+          "invocationOrigin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "materialization": {
+            "$ref": "#/components/schemas/MaterializationSummary"
           }
         },
         "description": "Aggregate bounded-run result. Detailed jobs remain available through their admin queue endpoints."
