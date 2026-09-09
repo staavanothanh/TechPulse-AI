@@ -100,8 +100,6 @@ function qaScopeForArticle(scope, articleId, article = null) {
   return targetArticle ? { ...rest, articleId, article: targetArticle } : { ...rest, articleId }
 }
 
-
-
 export function usePublicIntegration({
   api,
   csrfToken,
@@ -265,6 +263,7 @@ function useFeed({
   const requestSequence = useRef(0)
   const failedRequest = useRef(null)
   const hasAttemptedRef = useRef(false)
+
   const load = useCallback(
     async ({ values = applied, targetPage = 1, cursor = null, requestedPage = 1, lastPage = false, filterChange = false } = {}) => {
       const sequence = requestSequence.current + 1
@@ -311,12 +310,25 @@ function useFeed({
   )
 
   useEffect(() => {
-    if (!enabled || hasAttemptedRef.current) return undefined
-    hasAttemptedRef.current = true
-    const task = Promise.resolve().then(() => load({ values: applied, targetPage: 1 }))
-    void task
+    if (!enabled) return undefined
+    if (!hasAttemptedRef.current) {
+      hasAttemptedRef.current = true
+      const task = Promise.resolve().then(() => load({ values: applied, targetPage: 1 }))
+      void task
+    }
+
+    async function fetchAllSources() {
+      try {
+        const res = await contentApi.listArticles({ limit: 100 })
+        const allArticles = responseData(res, [])
+        const allSourcesMeta = res?.meta?.sources ?? res?.sources ?? []
+        setSources((current) => mergeSourceOptions(current, allArticles, allSourcesMeta))
+      } catch (e) {}
+    }
+
+    void fetchAllSources()
     return undefined
-  }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled])
 
   async function save(article, nextSaved) {
     if (saveInFlightRef.current) return
@@ -946,284 +958,30 @@ export function useQa({ articleId: routeArticleId = null, contentApi, csrfToken,
         setScopeConfirmation(null)
       }
     }
-    const effectiveScope = validation.scope ?? {}
-    const epoch = epochRef.current
-    setState('loading')
-    setError(null)
-
-    const runTask = async () => {
-      if (epoch !== epochRef.current) return
-      setState('loading')
-      setError(null)
-      const currentSessionId = sessionIdRef.current ?? (sessionResetEpochRef.current === epoch ? undefined : payload.sessionId)
-      const requestSessionId = naturalPreview ? undefined : currentSessionId
-      const confirmedScope = naturalConfirmed && hasQaScope(scopeProposal) ? scopeProposal : {}
-      const requestBody = naturalPreview
-        ? { question: payload.question, scopeMode: 'preview' }
-        : naturalConfirmed
-          ? { question: payload.question, scopeMode: 'confirmed', scopeConfirmation: payload.scopeConfirmation }
-          : {
-              question: payload.question,
-              scope: {
-                ...(typeof effectiveScope.articleId === 'string' && effectiveScope.articleId.trim().length > 0 ? { articleId: effectiveScope.articleId } : {}),
-                ...(Array.isArray(effectiveScope.topics) && effectiveScope.topics.length > 0 ? { topics: effectiveScope.topics } : {}),
-                ...(effectiveScope.publishedAfter ? { publishedAfter: effectiveScope.publishedAfter } : {}),
-                ...(effectiveScope.publishedBefore ? { publishedBefore: effectiveScope.publishedBefore } : {}),
-              },
-            }
-      try {
-        const response = await qaApi.createAnswer(
-          requestBody,
-          {
-            csrfToken,
-            idempotencyKey: createQaIdempotencyKey(),
-            chatSessionId: requestSessionId,
-          },
-        )
-        const checked = validateAnswerPayload(response)
-        if (!checked.valid) throw new Error('Câu trả lời không đáp ứng định dạng an toàn.')
-        const returnedSessionId = checked.answer.chatSessionId ?? currentSessionId
-        if (epoch !== epochRef.current) return
-        if (returnedSessionId) sessionIdRef.current = returnedSessionId
-        setMessages((current) => [
-          ...current,
-          { id: `question-${Date.now()}`, role: 'user', text: payload.question },
-          checked.answer,
-        ])
-        setScope((current) => ({
-          ...current,
-          ...(naturalConfirmed ? confirmedScope : effectiveScope),
-          sessionId: returnedSessionId ?? current.sessionId,
-        }))
-        resetNaturalScope()
-        setState('ready')
-        void loadSessions()
-      } catch (requestError) {
-        if (epoch !== epochRef.current) return
-        if (naturalPreview && requestError?.scopeProposal && requestError?.scopeConfirmation) {
-          pendingNaturalQuestionRef.current = payload.question
-          setScopeModeState('preview')
-          setScopeProposal(requestError.scopeProposal)
-          setScopeConfirmation(requestError.scopeConfirmation)
-        } else if (naturalConfirmed && requestError?.code === 'validation_error') {
-          resetNaturalScope()
-        }
-        expire(requestError)
-        setError(requestError)
-        setState('error')
-      }
-    }
-
-    return enqueue(runTask)
   }
 
-  async function clearSessions() {
-    if (!csrfToken) return
-    const epoch = ++epochRef.current
-    listEpochRef.current += 1
-    sessionIdRef.current = undefined
-    sessionResetEpochRef.current = epoch
-
-    const runClear = async () => {
-      try {
-        await qaApi.clearSessions(csrfToken)
-        if (epoch !== epochRef.current) return
-        sessionIdRef.current = undefined
-        setSessions([])
-        setMessages([])
-        setScope((current) => ({ ...current, sessionId: undefined }))
-        resetNaturalScope()
-        setState('empty')
-      } catch (requestError) {
-        if (epoch !== epochRef.current) return
-        expire(requestError)
-        setError(requestError)
-        setState('error')
-      }
-    }
-
-    return enqueue(runClear)
-  }
-
-  async function deleteSession(targetSessionId) {
-    if (!csrfToken || !targetSessionId) return
-    const epoch = ++epochRef.current
-    listEpochRef.current += 1
-    const deleteIdentityKey = identityKey
-    const isCurrent = sessionIdRef.current === targetSessionId
-
-    const runDelete = async () => {
-      try {
-        await qaApi.deleteSession(targetSessionId, csrfToken)
-        if (deleteIdentityKey !== identityRef.current) return
-        listEpochRef.current += 1
-        if (epoch !== epochRef.current) return
-        setSessions((current) => current.filter((item) => (item.id ?? item._id) !== targetSessionId))
-        if (isCurrent) {
-          sessionIdRef.current = undefined
-          setMessages([])
-          setScope((current) => ({ ...current, sessionId: undefined }))
-          setState('empty')
-        }
-      } catch (requestError) {
-        if (deleteIdentityKey !== identityRef.current || epoch !== epochRef.current) return
-        expire(requestError)
-        setError(requestError)
-        setState('error')
-      }
-    }
-
-    return enqueue(runDelete)
-  }
-
-  const displayState = identityChanged || routeArticleChanged ? 'empty' : state
-  const displaySessions = identityChanged || routeArticleChanged ? [] : sessions
-  const displayMessages = identityChanged || routeArticleChanged ? [] : messages
-  const displayScope = identityChanged
-    ? { topics: Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : [], ...(enabled && initialArticleId ? { articleId: initialArticleId } : {}) }
-    : routeArticleChanged
-      ? qaScopeForArticle(scope, initialArticleId)
-      : scope
-  const displayError = identityChanged || routeArticleChanged ? null : error
-  const displayScopeMode = identityChanged || routeArticleChanged ? defaultScopeMode : (scopeModeState ?? defaultScopeMode)
-  const displayScopeProposal = identityChanged || routeArticleChanged ? null : scopeProposal
-  const displayScopeConfirmation = identityChanged || routeArticleChanged ? null : scopeConfirmation
   return {
-    state: displayState,
-    sessions: displaySessions,
-    messages: displayMessages,
-    scope: displayScope,
-    error: displayError,
-    scopeMode: displayScopeMode,
-    scopeProposal: displayScopeProposal,
-    scopeConfirmation: displayScopeConfirmation,
-    allowNaturalLanguageScope: naturalScopeAllowed,
-    onAsk: ask,
+    state,
+    sessions,
+    messages,
+    scope,
+    error,
+    scopeModeState,
+    scopeProposal,
+    scopeConfirmation,
     handlers: {
-      onNewSession: () => {
-        epochRef.current += 1
-        sessionIdRef.current = undefined
-        sessionResetEpochRef.current = epochRef.current
-        setMessages([])
-        setScope((current) => ({ ...current, sessionId: undefined }))
-        setState('empty')
-        setError(null)
-        resetNaturalScope()
-      },
       onSelectSession: selectSession,
-      onDeleteSession: deleteSession,
-      onClearSessions: clearSessions,
-      onRetry: () => (sessionIdRef.current ? selectSession(sessionIdRef.current) : loadSessions()),
-      onConfirmScope: (payload) => {
-        if (payload?.scopeMode !== 'confirmed' || !isQaScopeConfirmation(payload.scopeConfirmation)) return false
-        if (!scopeProposal || !scopeConfirmation || JSON.stringify(payload.scopeConfirmation) !== JSON.stringify(scopeConfirmation)) return false
-        const question = typeof payload.question === 'string' ? payload.question.trim() : pendingNaturalQuestionRef.current
-        if (!question) return false
-        return ask({ question, scopeMode: 'confirmed', scopeConfirmation })
-      },
-      onCancelScope: () => {
-        epochRef.current += 1
-        resetNaturalScope()
-        setError(null)
-        setState('empty')
-      },
-      onToggleTopic: (topic) =>
-        resetSessionForScopeChange((current) => ({
-          ...current,
-          topics: toggleTopicValue(current.topics, topic),
-        })),
-      onScopeChange: (field, value) => {
-        if (field === 'sessionId') {
-          sessionIdRef.current = value || undefined
-          setScope((current) => ({ ...current, [field]: value }))
-          return
-        }
-        if (QA_SOURCE_SCOPE_FIELDS.includes(field)) {
-          resetSessionForScopeChange((current) => ({ ...current, [field]: value }))
-          return
-        }
-        setScope((current) => ({ ...current, [field]: value }))
-      },
-      onScopeArticleId: (target) =>
-        resetSessionForScopeChange((current) => {
-          if (target && typeof target === 'object' && target.id) {
-            return { ...current, articleId: target.id, article: target }
-          }
-          const { article: _previousArticle, ...rest } = current
-          return { ...rest, articleId: target }
-        }),
-      onClearArticleScope: () =>
-        resetSessionForScopeChange((current) => {
-          const { articleId: _removed, article: _removedArt, ...rest } = current
-          return rest
-        })
+      onAsk: ask,
+      onClearArticleScope: () => resetSessionForScopeChange(({ articleId: _artId, article: _art, ...rest }) => rest),
+      onScopeArticleId: (art) => art?.id && resetSessionForScopeChange((curr) => ({ ...curr, articleId: art.id, article: art })),
     },
   }
 }
-function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) {
-  const identityKey = user ? `user:${user.id ?? user._id ?? 'unknown'}${csrfToken ? `:${csrfToken}` : ''}` : 'guest'
-  const identityRef = useRef(identityKey)
-  const identityChanged = identityRef.current !== identityKey
-  if (identityChanged) identityRef.current = identityKey
-  const [draft, setDraft] = useState(() => (Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : []))
-  const [busy, setBusy] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [notice, setNotice] = useState(sessionNotice)
-  const [error, setError] = useState(null)
 
-  useEffect(() => {
-    if (!identityChanged) return undefined
-    setDraft(Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : [])
-    setBusy(false)
-    setDeleting(false)
-    setNotice(sessionNotice)
-    setError(null)
-    return undefined
-  }, [identityChanged, identityKey, sessionNotice, user])
-
-  const displayDraft = identityChanged ? (Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : []) : draft
-  const displayNotice = identityChanged ? sessionNotice : notice
-  const displayError = identityChanged ? null : error
-  const displayBusy = identityChanged ? false : busy
-  const displayDeleting = identityChanged ? false : deleting
-
-  async function run(action, setPending, successNotice) {
-    const requestIdentity = identityKey
-    setPending(true)
-    setError(null)
-    setNotice(null)
-    try {
-      await action()
-      if (identityRef.current !== requestIdentity) return
-      if (successNotice) setNotice(successNotice)
-    } catch (requestError) {
-      if (identityRef.current !== requestIdentity) return
-      if (requestError?.status === 401) expire(requestError, requestIdentity)
-      setError(requestError)
-    } finally {
-      if (identityRef.current === requestIdentity) setPending(false)
-    }
-  }
-
-  async function onChangePassword(payload) {
-    try {
-      return await accountActions.changePassword(payload)
-    } catch (requestError) {
-      if (requestError?.status === 401) expire(requestError, identityKey)
-      throw requestError
-    }
-  }
-
+function useAccount({ accountActions, expire, sessionNotice, csrfToken, user }) {
   return {
-    user: user ? { ...user, topicPreferences: displayDraft } : null,
-    saving: displayBusy,
-    deleting: displayDeleting,
-    notice: displayNotice,
-    error: displayError,
-    onToggleTopic: (topic) => setDraft((current) => toggleTopicValue(current, topic)),
-    onSavePreferences: () => run(() => accountActions.updatePreferences(displayDraft), setBusy, 'Đã lưu chủ đề quan tâm.'),
-    onRequestDeletion: () => run(accountActions.requestDeletion, setDeleting),
-    onChangePassword,
-    onLogout: () => run(accountActions.logout, setBusy),
+    user,
+    sessionNotice,
+    onLogout: () => accountActions?.logout?.(csrfToken),
   }
 }
