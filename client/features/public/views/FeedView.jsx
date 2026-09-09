@@ -18,11 +18,8 @@ function sourceOption(source) {
     return id ? { id, name: id } : null
   }
   if (!source || typeof source !== 'object') return null
-  const id = typeof source.id === 'string' && source.id.trim()
-    ? source.id.trim()
-    : typeof source.sourceId === 'string' && source.sourceId.trim()
-      ? source.sourceId.trim()
-      : ''
+  const rawId = source.id ?? source._id ?? source.sourceId ?? source.sourceKey ?? source.key ?? source.slug
+  const id = typeof rawId === 'string' ? rawId.trim() : rawId ? String(rawId).trim() : ''
   if (!id) return null
   const name = typeof source.name === 'string' && source.name.trim()
     ? source.name.trim()
@@ -35,8 +32,11 @@ function sourceOption(source) {
 function articleSource(article) {
   if (!article || typeof article !== 'object') return null
   if (article.source) return article.source
-  if (article.sourceId || article.sourceName) {
-    return { sourceId: article.sourceId, sourceName: article.sourceName }
+  if (article.sourceId || article.sourceName || article.sourceType || article.sourceKey) {
+    return {
+      sourceId: article.sourceId ?? article.sourceType ?? article.sourceKey,
+      sourceName: article.sourceName,
+    }
   }
   return null
 }

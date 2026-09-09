@@ -29,16 +29,38 @@ export function isGoogleOAuthConfigured(runtime) {
   return Object.values(runtime?.googleOAuth ?? {}).some(Boolean)
 }
 
+const GOOGLE_OAUTH_SESSIONS_VALIDATOR = structuredClone(AUTH_CORE_COLLECTIONS.sessions.validator)
+GOOGLE_OAUTH_SESSIONS_VALIDATOR.$jsonSchema.properties.googleAuthenticatedAt = { bsonType: 'date' }
+
+const PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR = structuredClone(AUTH_CORE_COLLECTIONS.rateLimitBuckets.validator)
+PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR.$and[0].$or.push({ scope: 'password-change', subjectType: 'ip', limit: 5 })
+PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR.$and[1].$jsonSchema.properties.scope.enum.push('password-change')
+
+const TOPIC_TAXONOMY_PASSWORD_ENABLED_USERS_VALIDATOR = structuredClone(TOPIC_TAXONOMY_USERS_VALIDATOR)
+TOPIC_TAXONOMY_PASSWORD_ENABLED_USERS_VALIDATOR.$or[0].$jsonSchema.properties.passwordEnabled = { bsonType: 'bool' }
+
+export const PASSWORD_CHANGED_AUDIT_VALIDATOR = structuredClone(SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR)
+PASSWORD_CHANGED_AUDIT_VALIDATOR.$and[0].$or.push({
+  action: 'user_password_changed',
+  reasonCode: 'password_changed',
+  changedFields: ['passwordHash', 'sessionVersion'],
+  stateTransition: { $exists: false },
+})
+
 export async function assertAuthCoreReady(context) {
   const collections = await context.db.listCollections({}, { nameOnly: false }).toArray()
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const name of Object.keys(AUTH_CORE_COLLECTIONS)) {
     const collection = collectionMap.get(name)
     const acceptedValidators = name === 'users'
-      ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR]
-      : name === 'adminAuditLogs'
-        ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR]
-        : [AUTH_CORE_COLLECTIONS[name].validator]
+      ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_COLLECTIONS.users.validator, TOPIC_TAXONOMY_USERS_VALIDATOR, TOPIC_TAXONOMY_PASSWORD_ENABLED_USERS_VALIDATOR]
+      : name === 'sessions'
+        ? [AUTH_CORE_COLLECTIONS[name].validator, GOOGLE_OAUTH_SESSIONS_VALIDATOR]
+        : name === 'rateLimitBuckets'
+          ? [AUTH_CORE_COLLECTIONS[name].validator, PASSWORD_CHANGE_RATE_LIMIT_VALIDATOR]
+          : name === 'adminAuditLogs'
+            ? [AUTH_CORE_COLLECTIONS[name].validator, SOURCE_AUDIT_VALIDATOR, DURABLE_JOB_AUDIT_VALIDATOR, INDEXING_JOB_AUDIT_VALIDATOR, GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGED_AUDIT_VALIDATOR]
+            : [AUTH_CORE_COLLECTIONS[name].validator]
     if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || !collection.options?.validator || !acceptedValidators.some((validator) => stableJson(collection.options.validator) === stableJson(validator))) {
       throw new Error('auth-core validator is not ready')
     }
@@ -56,7 +78,7 @@ export async function assertGoogleOAuthReady(context) {
   const collectionMap = new Map(collections.map((collection) => [collection.name, collection]))
   for (const [name, definition] of Object.entries(GOOGLE_OAUTH_COLLECTIONS)) {
     const collection = collectionMap.get(name)
-    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || ![definition.validator, ...(name === 'users' ? [TOPIC_TAXONOMY_USERS_VALIDATOR] : []), ...(name === 'adminAuditLogs' ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR] : [])].some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('google-oauth validator is not ready')
+    if (!collection || collection.options?.validationLevel !== 'strict' || collection.options?.validationAction !== 'error' || ![definition.validator, ...(name === 'users' ? [TOPIC_TAXONOMY_USERS_VALIDATOR, TOPIC_TAXONOMY_PASSWORD_ENABLED_USERS_VALIDATOR] : []), ...(name === 'adminAuditLogs' ? [SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGED_AUDIT_VALIDATOR] : [])].some((validator) => stableJson(collection.options?.validator) === stableJson(validator))) throw new Error('google-oauth validator is not ready')
   }
   const usersIndexes = new Map((await context.db.collection('users').indexes()).map((index) => [index.name, index]))
   for (const expected of GOOGLE_OAUTH_INDEXES.users) if (!exactMongoIndex(usersIndexes.get(expected.name), expected)) throw new Error('google-oauth indexes are not ready')

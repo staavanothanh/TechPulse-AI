@@ -212,6 +212,32 @@ function publicMessage(message) {
   throw new Error('Chat assistant message status is invalid')
 }
 
+export function deriveChatSessionTitle(question, fallback = 'Phiên hỏi đáp') {
+  if (typeof question !== 'string') return fallback
+  const cleaned = question.trim().replace(/\s+/g, ' ')
+  if (!cleaned) return fallback
+  if (cleaned.length <= 60) return cleaned
+  const truncated = cleaned.slice(0, 60)
+  const lastSpace = truncated.lastIndexOf(' ')
+  const sliceIndex = lastSpace > 30 ? lastSpace : 60
+  const trimmed = truncated.slice(0, sliceIndex).replace(/[.,;:?!]+$/, '')
+  return `${trimmed}…`
+}
+
+export function resolveChatSessionTitle(document) {
+  if (typeof document?.title === 'string' && document.title.trim().length > 0) {
+    return document.title.trim()
+  }
+  const messages = Array.isArray(document?.messages) ? document.messages : []
+  const firstUserMessage = messages.find(
+    (m) => m?.role === 'user' && typeof m.text === 'string' && m.text.trim().length > 0,
+  )
+  if (firstUserMessage) {
+    return deriveChatSessionTitle(firstUserMessage.text)
+  }
+  return null
+}
+
 export function serializeChatSession(document, { now = new Date() } = {}) {
   if (!document) return null
   const updatedAt = dateValue(document.updatedAt)
@@ -219,7 +245,7 @@ export function serializeChatSession(document, { now = new Date() } = {}) {
   const messages = Array.isArray(document.messages) ? document.messages : []
   if (messages.length > 30 || document.messageCount !== messages.length) throw new Error('Chat session message count is invalid')
   return {
-    id: idString(document._id ?? document.id), title: document.title ?? null, scope: publicScope(document.scope),
+    id: idString(document._id ?? document.id), title: resolveChatSessionTitle(document), scope: publicScope(document.scope),
     messageCount: messages.length, messages: messages.map(publicMessage),
     createdAt: dateValue(document.createdAt).toISOString(), updatedAt: updatedAt.toISOString(),
   }
@@ -280,7 +306,7 @@ export class MongoChatRepository {
     const rows = await this.chatSessions().find(filter).sort({ updatedAt: -1, _id: -1 }).limit(limit + 1).toArray()
     const hasNext = rows.length > limit
     const page = hasNext ? rows.slice(0, limit) : rows
-    return { sessions: page.map((row) => ({ id: idString(row._id), title: row.title ?? null, messageCount: summaryMessageCount(row), updatedAt: dateValue(row.updatedAt).toISOString() })), hasNext, nextCursor: hasNext ? encodeCursor(page.at(-1)) : null }
+    return { sessions: page.map((row) => ({ id: idString(row._id), title: resolveChatSessionTitle(row), messageCount: summaryMessageCount(row), updatedAt: dateValue(row.updatedAt).toISOString() })), hasNext, nextCursor: hasNext ? encodeCursor(page.at(-1)) : null }
   }
 
   async getChatSession({ actor, userId, chatSessionId, now = this.clock() } = {}) {
@@ -454,17 +480,21 @@ export class MongoChatRepository {
       }
       let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
       let document = await this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, tx)
+      const sessionTitle = deriveChatSessionTitle(question)
       if (!document) {
         if (chatSessionId) { const error = new Error('Chat session is unavailable'); error.code = 'not_found'; error.status = 404; throw error }
-        document = { _id: sessionId, userId: values.userId, title: null, scope: { ...scope, ...(scope?.articleId ? { articleId: objectId(scope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+        document = { _id: sessionId, userId: values.userId, title: sessionTitle, scope: { ...scope, ...(scope?.articleId ? { articleId: objectId(scope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
         await this.chatSessions().insertOne(document, tx)
       }
       if (document.messageCount + 2 > 30) {
         sessionId = new ObjectId()
-        document = { _id: sessionId, userId: values.userId, title: null, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+        document = { _id: sessionId, userId: values.userId, title: sessionTitle, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
         await this.chatSessions().insertOne(document, tx)
       }
-      const result = await this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: { $each: [userMessage, assistant] } }, $inc: { messageCount: 2 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS) } }, { ...tx, returnDocument: 'after' })
+      const titleUpdate = (!document.title || typeof document.title !== 'string' || document.title.trim().length === 0)
+        ? { title: sessionTitle }
+        : {}
+      const result = await this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: { $each: [userMessage, assistant] } }, $inc: { messageCount: 2 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), ...titleUpdate } }, { ...tx, returnDocument: 'after' })
       const after = unwrap(result)
       if (!after) { const error = new Error('Chat session changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
       if (attempt?.id) {

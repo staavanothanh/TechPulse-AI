@@ -6,21 +6,27 @@ const SOURCE_DICTIONARY = new Map()
 export function registerSourceDictionary(sources = []) {
   if (!Array.isArray(sources)) return
   for (const source of sources) {
-    if (source && source.id) {
-      SOURCE_DICTIONARY.set(source.id, {
-        id: source.id,
-        name: source.name || source.title || source.id,
+    if (source && (source.id || source.sourceKey)) {
+      const entry = {
+        id: source.id || source.sourceKey,
+        sourceKey: source.sourceKey || source.id,
+        name: source.name || source.title || source.sourceKey || source.id,
         operationalStatus: source.operationalStatus || source.status || 'unknown',
-        connector: source.connector || source.type || 'rss',
+        connector: source.connectorType || source.connector || source.type || 'rss',
         policyVersion: source.policyVersion,
-      })
+      }
+      if (source.id) SOURCE_DICTIONARY.set(source.id, entry)
+      if (source.sourceKey) SOURCE_DICTIONARY.set(source.sourceKey, entry)
     }
   }
 }
 
 export function getSourceFromDictionary(sourceId) {
   if (!sourceId) return null
-  return SOURCE_DICTIONARY.get(sourceId) || null
+  const key = String(sourceId).trim()
+  return SOURCE_DICTIONARY.get(key)
+    || (key.startsWith('source:') ? SOURCE_DICTIONARY.get(key.slice(7)) : null)
+    || null
 }
 
 export function clearSourceDictionary() {

@@ -1,12 +1,14 @@
 import { ObjectId } from 'mongodb'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  deriveChatSessionTitle,
   historicalCitation,
   historicalCitationDocument,
   MongoChatRepository,
   publicAnswerCitation,
   publicMessage,
   redactHistoricalCitation,
+  resolveChatSessionTitle,
   serializeChatSession,
 } from '../../../server/repositories/mongo/chat-repository.js'
 
@@ -557,5 +559,104 @@ describe('chat repository coverage contracts', () => {
         now: NOW,
       }),
     ).rejects.toThrow('Question')
+  })
+
+  it('derives readable session titles from user questions with proper truncation and punctuation cleanup', () => {
+    expect(deriveChatSessionTitle(null)).toBe('Phiên hỏi đáp')
+    expect(deriveChatSessionTitle(undefined)).toBe('Phiên hỏi đáp')
+    expect(deriveChatSessionTitle('')).toBe('Phiên hỏi đáp')
+    expect(deriveChatSessionTitle('   ')).toBe('Phiên hỏi đáp')
+    expect(deriveChatSessionTitle('Hỏi về AI')).toBe('Hỏi về AI')
+    expect(deriveChatSessionTitle('  Hỏi   về\n\nAI\tvà  DeepSeek?  ')).toBe('Hỏi về AI và DeepSeek?')
+
+    // Length <= 60 chars preserved intact
+    expect(deriveChatSessionTitle('Trí tuệ nhân tạo thế hệ mới có những đột phá gì?')).toBe(
+      'Trí tuệ nhân tạo thế hệ mới có những đột phá gì?',
+    )
+
+    // Length > 60 chars cleanly cut at word boundary with trailing punctuation stripped
+    const longQuestion = 'Làm thế nào để xây dựng một ứng dụng web hiện đại với React và Express?'
+    const derived = deriveChatSessionTitle(longQuestion)
+    expect(derived.endsWith('…')).toBe(true)
+    expect(derived.length).toBeLessThanOrEqual(61)
+    expect(derived).toBe('Làm thế nào để xây dựng một ứng dụng web hiện đại với React…')
+
+    // Single long word without spaces truncates at 60 chars
+    const continuousWord = 'SupercalifragilisticexpialidociousSupercalifragilisticexpialidocious'
+    expect(deriveChatSessionTitle(continuousWord)).toBe(`${continuousWord.slice(0, 60)}…`)
+  })
+
+  it('resolves chat session titles with priority to stored title, falling back to first user question', () => {
+    // Explicit title takes precedence
+    expect(resolveChatSessionTitle({ title: 'Tên tùy chỉnh', messages: [] })).toBe('Tên tùy chỉnh')
+    expect(resolveChatSessionTitle({ title: '  Tiêu đề đã lưu  ', messages: [] })).toBe('Tiêu đề đã lưu')
+
+    // Fallback to first user question when title is null or empty
+    expect(
+      resolveChatSessionTitle({
+        title: null,
+        messages: [
+          { role: 'user', text: 'Tóm tắt bài viết về Gemini 3' },
+          { role: 'assistant', status: 'answered' },
+        ],
+      }),
+    ).toBe('Tóm tắt bài viết về Gemini 3')
+
+    // Returns null when no title and no user messages
+    expect(resolveChatSessionTitle({ title: null, messages: [] })).toBeNull()
+    expect(resolveChatSessionTitle({ title: '', messages: [{ role: 'assistant', status: 'answered' }] })).toBeNull()
+    expect(resolveChatSessionTitle(null)).toBeNull()
+  })
+
+  it('persists derived title on appendAnswer and returns derived title in listChatSessions', async () => {
+    const { repository, collections } = makeDatabase()
+    let savedDocument = null
+
+    collections.chatSessions.findOne.mockResolvedValue(null)
+    collections.chatSessions.insertOne.mockImplementation(async (doc) => {
+      savedDocument = { ...doc }
+    })
+    collections.chatSessions.findOneAndUpdate.mockImplementation(async (filter, update) => {
+      savedDocument = {
+        ...savedDocument,
+        _id: filter._id,
+        messages: update.$push.messages.$each,
+        messageCount: update.$inc.messageCount,
+        ...update.$set,
+      }
+      return { value: savedDocument }
+    })
+
+    const questionText = 'Trí tuệ nhân tạo thế hệ mới có những đột phá gì trong năm 2026?'
+    const result = await repository.appendAnswer({
+      actor: ACTOR,
+      question: questionText,
+      answer: {
+        id: 'answer-1',
+        status: 'answered',
+        paragraphs: [{ text: 'Đột phá lớn.', citationIds: [] }],
+      },
+      now: NOW,
+    })
+
+    expect(savedDocument.title).toBe(deriveChatSessionTitle(questionText))
+    expect(result.session.title).toBe(deriveChatSessionTitle(questionText))
+
+    // Test listChatSessions returns derived title for sessions without title but with user questions
+    const legacySessionRow = {
+      _id: CHAT_SESSION_ID,
+      userId: USER_ID,
+      title: null,
+      messageCount: 2,
+      messages: [
+        { id: 'u1', role: 'user', text: 'Câu hỏi phiên cũ' },
+        { id: 'a1', role: 'assistant', status: 'answered' },
+      ],
+      updatedAt: NOW,
+    }
+    collections.chatSessions.find.mockReturnValue(fluent([legacySessionRow]))
+
+    const listResult = await repository.listChatSessions({ actor: ACTOR, limit: 10, now: NOW })
+    expect(listResult.sessions[0].title).toBe('Câu hỏi phiên cũ')
   })
 })

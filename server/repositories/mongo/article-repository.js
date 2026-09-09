@@ -449,7 +449,13 @@ function topicQueryFilter(values) {
 function contentBaseFilter({ topic, sourceId, publishedAfter, publishedBefore, cursorPosition } = {}) {
   const filters = [{ status: 'published' }]
   if (topic) filters.push(topicQueryFilter([topic]))
-  if (sourceId) filters.push({ sourceId: contentObjectId(sourceId) })
+  if (sourceId) {
+    if (typeof sourceId === 'string' && ObjectId.isValid(sourceId) && new ObjectId(sourceId).toHexString() === sourceId.toLowerCase()) {
+      filters.push({ $or: [{ sourceId: new ObjectId(sourceId) }, { sourceType: sourceId }] })
+    } else {
+      filters.push({ sourceType: sourceId })
+    }
+  }
   if (publishedAfter || publishedBefore) filters.push({ publishedAt: { ...(publishedAfter ? { $gte: publishedAfter } : {}), ...(publishedBefore ? { $lte: publishedBefore } : {}) } })
   if (cursorPosition) {
     const publishedAt = new Date(cursorPosition.publishedAt)

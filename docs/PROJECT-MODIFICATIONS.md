@@ -206,20 +206,55 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 7. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 7. Tự Động Đặt Tên Phiên Hỏi Đáp (Chat Session Auto-Titling)
 
-1. **Kiểm tra xóa phiên hỏi đáp:**
+### 7.1. Bối cảnh & Vấn đề
+- Trước đây, khi người dùng mở phiên hỏi đáp mới và đặt câu hỏi, thanh bên (sidebar) danh sách phiên hỏi đáp luôn hiển thị tiêu đề mặc định là **"Phiên hỏi đáp"** cho tất cả các phiên, khiến người dùng khó phân biệt phiên nào thảo luận về chủ đề gì khi xem lại lịch sử.
+- Trường `title` trong collection MongoDB `chatSessions` và trong schema OpenAPI đã có sẵn từ trước nhưng luôn được khởi tạo và lưu là `null`.
+
+### 7.2. Giải pháp thực hiện
+1. **Hàm trích xuất tiêu đề thông minh (`deriveChatSessionTitle` trong `chat-repository.js`):**
+   - Chuẩn hóa khoảng trắng (`\s+` -> ` `).
+   - Nếu câu hỏi có độ dài $\le 45$ ký tự: Giữ nguyên câu hỏi làm tên phiên.
+   - Nếu câu hỏi dài $> 45$ ký tự: Cắt gọn tại ranh giới từ (word boundary) gần nhất trước ký tự 45, dọn dẹp các dấu câu thừa ở cuối (`?`, `!`, `.`, `,`, `;`, `:`) và thêm ký tự `…`.
+   - Với câu hỏi quá dài không có dấu cách: Cắt tại 45 ký tự và thêm `…`.
+   - Tương thích an toàn với câu hỏi rỗng hoặc không hợp lệ (trả về fallback `'Phiên hỏi đáp'`).
+2. **Lưu trữ tự động khi gửi câu hỏi (`appendAnswer`):**
+   - Khi tạo phiên mới hoặc gửi câu hỏi đầu tiên trong phiên (`document.title` đang trống/null), hệ thống tự động gán `title: deriveChatSessionTitle(question)` và lưu vào MongoDB.
+   - Các câu hỏi tiếp theo trong cùng phiên sẽ giữ nguyên tiêu đề đã đặt, không bị ghi đè.
+3. **Tương thích ngược dữ liệu cũ (`resolveChatSessionTitle`):**
+   - Khi trả về danh sách phiên (`listChatSessions`) hoặc chi tiết phiên (`serializeChatSession`):
+     - Nếu document đã có `title` đã lưu: Trả về `title`.
+     - Nếu phiên cũ trong DB có `title: null`: Tự động trích xuất tiêu đề từ tin nhắn đầu tiên của người dùng (`firstUserMessage.text`).
+     - Nếu phiên chưa có tin nhắn nào: Trả về `null` (giao diện tự hiển thị fallback `'Phiên hỏi đáp'`).
+4. **Kiểm thử tự động:**
+   - Bổ sung 3 test cases chi tiết trong `test/unit/repositories/chat-repository-coverage.test.js`:
+     - Test trích xuất và cắt gọn câu hỏi thông minh, dọn dẹp dấu câu.
+     - Test ưu tiên tiêu đề lưu sẵn và fallback câu hỏi đầu tiên.
+     - Test luồng lưu `title` trong `appendAnswer` và hiển thị qua `listChatSessions`.
+
+---
+
+## 8. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+
+1. **Kiểm tra tự động đặt tên phiên hỏi đáp:**
    - Mở `http://localhost:3000` và đăng nhập tài khoản.
+   - Vào tab **Hỏi đáp** (Q&A), tạo một phiên hỏi đáp mới.
+   - Nhập một câu hỏi bất kỳ, ví dụ: *"Xu hướng phát triển của AI Agent trong năm 2026 là gì?"*.
+   - Bấm **Hỏi với nguồn**: Sau khi câu trả lời hoàn tất, quan sát cột danh sách phiên bên trái:
+     - Tên phiên lập tức cập nhật thành: **"Xu hướng phát triển của AI Agent trong năm…"** (cắt gọn đẹp mắt, không còn hiển thị chữ *"Phiên hỏi đáp"* chung chung).
+   - Hỏi thêm một câu hỏi thứ 2 trong phiên đó: Tên phiên vẫn được giữ nguyên ổn định theo chủ đề câu hỏi đầu tiên.
+2. **Kiểm tra xóa phiên hỏi đáp:**
    - Vào tab **Hỏi đáp** (Q&A), tạo 2-3 phiên hỏi đáp khác nhau.
    - Rê chuột vào từng phiên ở cột bên trái: xuất hiện nút `×`. Bấm vào `×` để xóa riêng phiên đó; danh sách cập nhật ngay lập tức mà các phiên khác không bị mất.
-2. **Kiểm tra thanh lọc tìm kiếm mới:**
+3. **Kiểm tra thanh lọc tìm kiếm mới:**
    - Vào tab **Tìm kiếm** (Search).
    - Quan sát thanh lọc bên dưới ô từ khóa:
      - **Chủ đề:** Dropdown chọn danh mục chuẩn (`Tất cả chủ đề`, `AI`, `AI Agent`, `Robotics`...).
      - **Nguồn:** Dropdown chọn tên nguồn tin đọc được (`Tất cả nguồn`, `The Verge`, `Google AI Blog`, `arXiv`...).
      - Các ô lọc còn lại gồm: Chế độ (Hybrid/Văn bản), Từ ngày, Đến ngày.
    - Thử chọn một nguồn cụ thể (ví dụ: Google AI Blog) và tìm kiếm từ khóa -> Hệ thống lọc chính xác các bài viết thuộc nguồn đó.
-3. **Kiểm tra Hỏi đáp trực tiếp từ bài viết & Thẻ ngữ cảnh đầy đủ:**
+4. **Kiểm tra Hỏi đáp trực tiếp từ bài viết & Thẻ ngữ cảnh đầy đủ:**
    - Vào tab **Bảng tin** (Feed), **Tìm kiếm** (Search) hoặc **Bài đã lưu** (Saved).
    - Trên mỗi thẻ bài viết đều xuất hiện nút **"Hỏi đáp"** bên cạnh nút *"Lưu bài"* và *"Đọc chi tiết"*.
    - Bấm nút **"Hỏi đáp"** trên bất kỳ bài viết nào:
@@ -231,7 +266,7 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
        - Đoạn tóm tắt tiếng Việt của bài viết đó.
      - Nhập câu hỏi và bấm *"Hỏi với nguồn"* -> Câu trả lời tập trung chính xác vào nội dung bài viết đó.
      - Bấm nút **"Bỏ chọn"**: Thẻ ngữ cảnh bài viết biến mất, trở về trạng thái hỏi chung theo các chủ đề toàn hệ thống.
-4. **Kiểm tra câu hỏi mẫu và hướng dẫn khi thiếu bằng chứng:**
+5. **Kiểm tra câu hỏi mẫu và hướng dẫn khi thiếu bằng chứng:**
    - Mở tab **Hỏi đáp** (phiên mới): Màn hình xuất hiện các câu hỏi mẫu gợi ý (ví dụ: *"Google DeepMind có bài viết nào về Gemini 3.1 Flash TTS không?"*).
    - Bấm vào một câu hỏi mẫu: Nội dung tự động điền vào khung câu hỏi và chủ đề `AI` tự động được chọn.
    - Bấm nút **"Hỏi với nguồn"**: AI trả lời thành công kèm citation trích dẫn.

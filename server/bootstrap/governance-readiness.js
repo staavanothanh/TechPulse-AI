@@ -15,6 +15,7 @@ import { QA_EVIDENCE_FENCE_ARTICLE_VALIDATOR } from '../../scripts/migrations/qa
 import { SUMMARY_DETAIL_ARTICLE_VALIDATOR } from '../../scripts/migrations/summary-detail-v1.js'
 import { TOPIC_TAXONOMY_ARTICLE_INDEXES, TOPIC_TAXONOMY_ARTICLE_VALIDATOR } from '../../scripts/migrations/topic-taxonomy-v1.js'
 import { exactMongoIndex } from '../repositories/mongo/index-contract.js'
+import { PASSWORD_CHANGED_AUDIT_VALIDATOR } from './auth.js'
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
@@ -68,7 +69,7 @@ export async function assertGovernanceReady(context, { governanceDb } = {}) {
   }
   const auditCollections = await collectionMap(context.db)
   const audit = auditCollections.get('adminAuditLogs')
-  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) {
+  if (!audit || audit.options?.validationLevel !== 'strict' || audit.options?.validationAction !== 'error' || ![GOVERNANCE_AUDIT_VALIDATOR, GOOGLE_OAUTH_AUDIT_VALIDATOR, SOURCE_POLICY_RECONCILIATION_AUDIT_VALIDATOR, PASSWORD_CHANGED_AUDIT_VALIDATOR].some((validator) => stableJson(audit.options?.validator) === stableJson(validator))) {
     throw new Error('governance audit validator is not ready')
   }
   if (typeof context.db.collection !== 'function') throw new Error('governance database is unavailable')

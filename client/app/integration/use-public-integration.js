@@ -45,36 +45,81 @@ function responseData(response, fallback) {
 function responseMeta(response) {
   return response?.meta ?? { hasNext: false, nextCursor: null }
 }
+const CANONICAL_SOURCES = Object.freeze([
+  { id: 'demo:rss-the-verge', objectId: '407bf4b737898beeb84f4026', name: 'The Verge Technology (live demo)', connectorType: 'rss' },
+  { id: 'demo:arxiv-cs-ai', objectId: '3c15995de36ca3f9d7354c29', name: 'arXiv Computer Science AI (live demo)', connectorType: 'arxiv' },
+  { id: 'demo:hn-topstories', objectId: '6e22f866d3712afcaa2d2a7e', name: 'Hacker News Top Stories (live demo)', connectorType: 'hacker-news' },
+  { id: 'rss:the-verge', objectId: 'c0a5a4bc55919ea3955375b1', name: 'The Verge Technology', connectorType: 'rss' },
+  { id: 'rss:ars-technica', objectId: '57654fbdfd53bf89dcc92ff3', name: 'Ars Technica', connectorType: 'rss' },
+  { id: 'rss:deepmind-blog', objectId: 'af7ab17090f87e47197f48b5', name: 'Google DeepMind Blog', connectorType: 'rss' },
+  { id: 'rss:openai-news', objectId: 'd05b6d8be6b254b899fbefae', name: 'OpenAI News', connectorType: 'rss' },
+  { id: 'rss:huggingface-blog', objectId: '2dc0f5cf717a0e77e3eee6ff', name: 'Hugging Face Blog', connectorType: 'rss' },
+  { id: 'arxiv:cs-ai', objectId: '4ca3339c26a215647d04ccfb', name: 'arXiv Computer Science AI', connectorType: 'arxiv' },
+  { id: 'hn:topstories', objectId: 'b2b739bcb672bde81990c1a2', name: 'Hacker News Top Stories', connectorType: 'hacker-news' },
+])
+
 function sourceOptionFromSource(source) {
-  const rawId = source?.id ?? source?._id
+  if (typeof source === 'string') {
+    const id = source.trim()
+    return id ? { id, name: id } : null
+  }
+  if (!source || typeof source !== 'object') return null
+  const rawId = source.id ?? source._id ?? source.sourceId ?? source.sourceKey ?? source.key ?? source.slug
   const id = rawId?.toHexString?.() ?? rawId
   if (id === undefined || id === null || String(id).trim() === '') return null
   const normalizedId = String(id).trim()
-  const name = typeof source?.name === 'string' && source.name.trim() ? source.name.trim() : normalizedId
+  const name = typeof source.name === 'string' && source.name.trim()
+    ? source.name.trim()
+    : typeof source.sourceName === 'string' && source.sourceName.trim()
+      ? source.sourceName.trim()
+      : normalizedId
   return { id: normalizedId, name }
 }
 
 function sourceOptionFromArticle(article) {
   const option = sourceOptionFromSource(article?.source)
   if (option) return option
-  const rawId = article?.sourceId
+  const rawId = article?.sourceId ?? article?.sourceKey ?? article?.sourceType
   if (rawId === undefined || rawId === null || String(rawId).trim() === '') return null
   const id = String(rawId).trim()
   const name = typeof article?.sourceName === 'string' && article.sourceName.trim() ? article.sourceName.trim() : id
   return { id, name }
 }
 
-function mergeSourceOptions(current, articles, metadataSources = []) {
-  const byId = new Map(current.map((source) => [source.id, source]))
-  for (const option of metadataSources.map(sourceOptionFromSource).filter(Boolean)) {
-    const previous = byId.get(option.id)
-    if (!previous || previous.name === previous.id) byId.set(option.id, option)
+function mergeSourceOptions(current = [], articles = [], metadataSources = []) {
+  const byId = new Map()
+  const byName = new Map()
+
+  function addOption(option) {
+    if (!option || !option.id) return
+    const existing = byId.get(option.id) || (option.name ? byName.get(option.name) : null)
+    if (!existing) {
+      byId.set(option.id, option)
+      if (option.name) byName.set(option.name, option)
+    } else if (existing.name === existing.id && option.name !== option.id) {
+      existing.name = option.name
+      byName.set(option.name, existing)
+    }
   }
-  for (const option of articles.map(sourceOptionFromArticle).filter(Boolean)) {
-    const previous = byId.get(option.id)
-    if (!previous || previous.name === previous.id) byId.set(option.id, option)
+
+  for (const source of CANONICAL_SOURCES) {
+    addOption({ id: source.id, name: source.name })
+    if (source.objectId) {
+      addOption({ id: source.objectId, name: source.name })
+    }
   }
-  return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+  for (const option of current) addOption(option)
+  for (const option of metadataSources.map(sourceOptionFromSource).filter(Boolean)) addOption(option)
+  for (const option of articles.map(sourceOptionFromArticle).filter(Boolean)) addOption(option)
+
+  const distinct = new Map()
+  for (const option of byId.values()) {
+    const key = option.name || option.id
+    if (!distinct.has(key)) {
+      distinct.set(key, option)
+    }
+  }
+  return [...distinct.values()].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
 }
 const QA_ARTICLE_ID_PATTERN = /^[0-9a-fA-F]{24}$/
 
@@ -235,7 +280,7 @@ function useFeed({
 }) {
   const [state, setState] = useState('loading')
   const [articles, setArticles] = useState([])
-  const [sources, setSources] = useState([])
+  const [sources, setSources] = useState(() => mergeSourceOptions())
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [applied, setApplied] = useState(EMPTY_FILTERS)
   const [errors, setErrors] = useState({})
