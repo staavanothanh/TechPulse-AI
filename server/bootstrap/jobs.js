@@ -251,8 +251,8 @@ function materializationSummary(input = {}, fallback = {}) {
   const period = typeof value.period === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.period)
     ? value.period
     : (typeof fallback.period === 'string' ? fallback.period : null)
-  const reason = MATERIALIZATION_REASONS.has(value.materializationReason) ? value.materializationReason : (fallback.materializationReason ?? 'deferred')
-  const outcome = MATERIALIZATION_OUTCOMES.has(value.outcome) ? value.outcome : (fallback.outcome ?? 'deferred')
+  const reason = MATERIALIZATION_REASONS.has(value.materializationReason) ? value.materializationReason : (fallback.materializationReason ?? 'materialized')
+  const outcome = MATERIALIZATION_OUTCOMES.has(value.outcome) ? value.outcome : (fallback.outcome ?? 'completed')
   const alreadyMaterialized = typeof value.alreadyMaterialized === 'boolean' ? value.alreadyMaterialized : Boolean(fallback.alreadyMaterialized)
   const completedAt = value.completedAt instanceof Date
     ? value.completedAt.toISOString()
