@@ -47,6 +47,8 @@ function serializeDueWorkRun(result) {
       accountDeletion: counters(result.queues?.accountDeletion),
     },
     nextAvailableAt: result.nextAvailableAt ? iso(result.nextAvailableAt) : null,
+    invocationOrigin: null,
+    materialization: null,
   }
 }
 

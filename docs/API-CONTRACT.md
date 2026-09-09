@@ -51,9 +51,8 @@ Project owner phê duyệt breaking contract change. Frontend và backend đều
 
 - gọi đúng một protected operation hằng ngày;
 - dùng HTTP GET theo Vercel Cron; không dùng cookie/CSRF hoặc admin POST trust boundary;
-- gửi bearer cron secret;
 - gọi `/api/internal/cron/due-work`, chạy bounded expired-work recovery trước due selection;
-- nhận aggregate recovery và counters cho `ingestion|indexing|account-deletion`; job detail đọc qua admin endpoint tương ứng.
+- nhận aggregate recovery, counters cho `ingestion|indexing|account-deletion`, `invocationOrigin=vercel-cron` và stable daily materialization summary; job detail đọc qua admin endpoint tương ứng.
 - gọi `/api/internal/maintenance/{taskName}` bằng cùng machine-only bearer cho một task name đóng; caller không gửi collection/filter/cutoff/cursor/batch size và không dùng browser/admin session.
 
 ## 4. Contract conventions

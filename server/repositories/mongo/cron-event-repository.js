@@ -104,6 +104,14 @@ function serializeEvent(doc) {
     leaseGeneration: doc.leaseGeneration ?? null,
     remainingClaims: doc.remainingClaims ?? null,
     profileMaxJobs: doc.profileMaxJobs ?? null,
+    period: doc.period ?? null,
+    periodTimezone: doc.periodTimezone ?? null,
+    materializationReason: doc.materializationReason ?? null,
+    outcome: doc.outcome ?? null,
+    alreadyMaterialized: typeof doc.alreadyMaterialized === 'boolean' ? doc.alreadyMaterialized : null,
+    completedAt: doc.completedAt instanceof Date ? doc.completedAt.toISOString() : (doc.completedAt ?? null),
+    eligibleSourceCount: doc.eligibleSourceCount ?? null,
+    invocationOrigin: doc.invocationOrigin ?? null,
     stage: doc.stage,
     eventType: doc.eventType ?? 'phase',
     status: doc.status,
@@ -173,6 +181,7 @@ export class MongoCronEventRepository {
       .project({
         _id: 1, eventId: 1, version: 1, runId: 1, queueName: 1, task: 1, jobId: 1, articleId: 1,
         sourceId: 1, sourceKey: 1, sequence: 1, leaseGeneration: 1, remainingClaims: 1, profileMaxJobs: 1,
+        period: 1, periodTimezone: 1, materializationReason: 1, outcome: 1, alreadyMaterialized: 1, completedAt: 1, eligibleSourceCount: 1, invocationOrigin: 1,
         stage: 1, eventType: 1, status: 1, elapsedMs: 1, occurredAt: 1, counters: 1, error: 1,
       })
       .limit(limit + 1)

@@ -356,7 +356,22 @@ export class MongoJobRepository {
             progress = { _id: new ObjectId(), period, createdAt: materializedAt, updatedAt: materializedAt }
             await this.scheduleProgress().insertOne(progress, { session, ...sessionOptions })
           }
-          if (progress.completedAt) return { inspected: 0, created: 0, hasMore: false, period }
+          const eligibleSourceCount = await this.sources().countDocuments(eligibleSources, { session, ...sessionOptions })
+          if (progress.completedAt) {
+            return Object.freeze({
+              period,
+              periodTimezone: 'UTC',
+              materializationReason: 'already_materialized',
+              outcome: 'completed',
+              alreadyMaterialized: true,
+              completedAt: dateValue(progress.completedAt, 'Scheduled materialization completion').toISOString(),
+              eligibleSourceCount,
+              inspected: 0,
+              created: 0,
+              updated: 0,
+              hasMore: false,
+            })
+          }
           const filter = progress.cursorSourceId ? { ...eligibleSources, _id: { $gt: progress.cursorSourceId } } : eligibleSources
           const candidates = await this.sources().find(filter, { session, ...sessionOptions }).sort({ _id: 1 }).limit(limit + 1).toArray()
           const selected = candidates.slice(0, limit)
@@ -395,7 +410,19 @@ export class MongoJobRepository {
             conflict.code = 'materialization_conflict'
             throw conflict
           }
-          return { inspected: selected.length, created, hasMore, period }
+          return Object.freeze({
+            period,
+            periodTimezone: 'UTC',
+            materializationReason: eligibleSourceCount === 0 ? 'no_eligible_sources' : 'materialized',
+            outcome: 'completed',
+            alreadyMaterialized: false,
+            completedAt: selected.length === 0 || !hasMore ? materializedAt.toISOString() : null,
+            eligibleSourceCount,
+            inspected: selected.length,
+            created,
+            updated: 1,
+            hasMore,
+          })
         }, options.maxTimeMS ? { maxCommitTimeMS: options.maxTimeMS } : {}, { signal, deadline, clock: this.clock })
       } catch (error) {
         if (error?.code !== 11000 && error?.code !== 'materialization_conflict') throw error

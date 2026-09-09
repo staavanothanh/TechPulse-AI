@@ -238,6 +238,62 @@ function materializationTraceCounters(result = {}, additional = {}) {
   if (result.hasMore === true) counters.deferred = Math.max(1, Number(counters.deferred ?? 0))
   return counters
 }
+const MATERIALIZATION_REASONS = new Set(['materialized', 'already_materialized', 'no_eligible_sources', 'deferred', 'failed'])
+const MATERIALIZATION_OUTCOMES = new Set(['completed', 'deferred', 'failed'])
+
+function materializationPeriod(value) {
+  const date = value instanceof Date ? new Date(value) : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
+}
+
+function materializationSummary(input = {}, fallback = {}) {
+  const value = input && typeof input === 'object' ? input : {}
+  const period = typeof value.period === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.period)
+    ? value.period
+    : (typeof fallback.period === 'string' ? fallback.period : null)
+  const reason = MATERIALIZATION_REASONS.has(value.materializationReason) ? value.materializationReason : (fallback.materializationReason ?? 'deferred')
+  const outcome = MATERIALIZATION_OUTCOMES.has(value.outcome) ? value.outcome : (fallback.outcome ?? 'deferred')
+  const alreadyMaterialized = typeof value.alreadyMaterialized === 'boolean' ? value.alreadyMaterialized : Boolean(fallback.alreadyMaterialized)
+  const completedAt = value.completedAt instanceof Date
+    ? value.completedAt.toISOString()
+    : (typeof value.completedAt === 'string' ? value.completedAt : (value.completedAt === null ? null : (fallback.completedAt ?? null)))
+  const eligibleSourceCount = Number.isSafeInteger(value.eligibleSourceCount) && value.eligibleSourceCount >= 0
+    ? value.eligibleSourceCount
+    : (Number.isSafeInteger(fallback.eligibleSourceCount) && fallback.eligibleSourceCount >= 0 ? fallback.eligibleSourceCount : null)
+  const counter = (key) => Number.isSafeInteger(value[key]) && value[key] >= 0 ? value[key] : (Number.isSafeInteger(fallback[key]) && fallback[key] >= 0 ? fallback[key] : 0)
+  return Object.freeze({
+    period,
+    periodTimezone: 'UTC',
+    materializationReason: alreadyMaterialized ? 'already_materialized' : reason,
+    outcome,
+    alreadyMaterialized,
+    completedAt,
+    eligibleSourceCount,
+    inspected: counter('inspected'),
+    created: counter('created'),
+    updated: counter('updated'),
+  })
+}
+
+function deferredMaterializationSummary(period, counters = {}) {
+  return materializationSummary({ period, materializationReason: 'deferred', outcome: 'deferred', alreadyMaterialized: false, completedAt: null, eligibleSourceCount: null, ...counters })
+}
+
+function failedMaterializationSummary(period, counters = {}) {
+  return materializationSummary({ period, materializationReason: 'failed', outcome: 'failed', alreadyMaterialized: false, completedAt: null, eligibleSourceCount: null, ...counters })
+}
+
+function materializationTraceDetails(summary) {
+  return summary ? {
+    period: summary.period,
+    periodTimezone: summary.periodTimezone,
+    materializationReason: summary.materializationReason,
+    outcome: summary.outcome,
+    alreadyMaterialized: summary.alreadyMaterialized,
+    completedAt: summary.completedAt,
+    eligibleSourceCount: summary.eligibleSourceCount,
+  } : {}
+}
 
 function addMaterializationTraceCounters(target, result = {}) {
   for (const key of ['inspected', 'created']) {
@@ -264,8 +320,10 @@ async function runTracedMaterializerOperation({ trace, stage, now, context, exec
 }
 
 async function runDailyMaterializationOperation({ trace, now, context, execute, signal, deadline, settlementDeadline, pageLimit, maxPages } = {}) {
-  const phase = startRuntimePhase({ trace, stage: MATERIALIZER_PHASE_STAGES[0], now, context })
+  const period = materializationPeriod(now())
+  const phase = startRuntimePhase({ trace, stage: MATERIALIZER_PHASE_STAGES[0], now, context: { ...context, ...(period ? { period, periodTimezone: 'UTC' } : {}) } })
   const totals = {}
+  let summary = null
   let pages = 0
   let hasMore = true
   try {
@@ -276,19 +334,24 @@ async function runDailyMaterializationOperation({ trace, now, context, execute, 
       const result = await execute({ pageNow, pageLimit, deadline, settlementDeadline, signal })
       signal?.throwIfAborted?.()
       addMaterializationTraceCounters(totals, result)
+      totals.updated = Number(totals.updated ?? 0) + (Number.isSafeInteger(result?.updated) && result.updated >= 0 ? result.updated : 1)
       pages += 1
+      const pageSummary = result && typeof result === 'object' && !Array.isArray(result) ? result : {}
+      summary = materializationSummary({ ...pageSummary, inspected: totals.inspected, created: totals.created, updated: totals.updated }, { period: materializationPeriod(result?.period) ?? period, ...totals })
       hasMore = result?.hasMore === true
-      if (now().getTime() >= deadline.getTime()) break
     }
-    phase.succeed({ counters: materializationTraceCounters(totals, { updated: pages }) })
-    return { pages, completed: true }
+    const completedSummary = materializationSummary(summary, { period, ...totals })
+    phase.succeed({ counters: materializationTraceCounters(completedSummary, { updated: completedSummary.updated }), ...materializationTraceDetails(completedSummary) })
+    return { pages, completed: true, materialization: completedSummary }
   } catch (error) {
     const control = isCronControlError(error, signal)
-    phase[control ? 'timeout' : 'fail'](error, { counters: materializationTraceCounters(totals, { [control ? 'deferred' : 'failed']: 1, updated: pages }) })
+    const terminalSummary = control
+      ? deferredMaterializationSummary(period, totals)
+      : failedMaterializationSummary(period, totals)
+    phase[control ? 'timeout' : 'fail'](error, { counters: materializationTraceCounters(totals, { [control ? 'deferred' : 'failed']: 1, updated: Number(totals.updated ?? 0) }), ...materializationTraceDetails(terminalSummary) })
     throw error
   }
 }
-
 
 async function runCronMaterializationPhase({
   trace,
@@ -305,6 +368,7 @@ async function runCronMaterializationPhase({
 }) {
   const phase = startRuntimePhase({ trace, stage: 'cron.materialization', now, context })
   let pages = 0
+  let materialization
   try {
     const daily = await runDailyMaterializationOperation({
       trace,
@@ -324,6 +388,7 @@ async function runCronMaterializationPhase({
       }),
     })
     pages = daily.pages
+    materialization = daily.materialization
     for (const materializer of materializers) {
       signal?.throwIfAborted?.()
       if (now().getTime() >= overallDeadline.getTime()) break
@@ -343,14 +408,17 @@ async function runCronMaterializationPhase({
         }),
       })
     }
-    phase.succeed({ counters: { updated: pages } })
-    return { pages, completed: true }
+    phase.succeed({ counters: { updated: pages }, ...materializationTraceDetails(materialization) })
+    return { pages, completed: true, materialization }
   } catch (error) {
+    const terminalSummary = materialization ?? (isCronControlError(error, signal)
+      ? deferredMaterializationSummary(materializationPeriod(now()))
+      : failedMaterializationSummary(materializationPeriod(now())))
     if (isCronControlError(error, signal)) {
-      phase.timeout(error, { counters: { deferred: 1 } })
-      return { pages, completed: false }
+      phase.timeout(error, { counters: { deferred: 1 }, ...materializationTraceDetails(terminalSummary) })
+      return { pages, completed: false, materialization: terminalSummary }
     }
-    phase.fail(error)
+    phase.fail(error, materializationTraceDetails(terminalSummary))
     throw error
   }
 }
@@ -495,7 +563,7 @@ export function createCronDueWorkRunner({
   if (!Array.isArray(materializers)) throw new Error('Cron materializers are invalid')
   materializers.forEach(normalizeMaterializerDescriptor)
   if (typeof trace !== 'function' || typeof runIdFactory !== 'function') throw new Error('Cron trace dependencies are invalid')
-  return async ({ signal, deadline: requestedDeadline, settlementDeadline: requestedSettlementDeadline } = {}) => {
+  return async ({ signal, deadline: requestedDeadline, settlementDeadline: requestedSettlementDeadline, invocationOrigin: requestedInvocationOrigin } = {}) => {
     const startedAt = now()
     const normalizedMaterializers = materializers.map(normalizeMaterializerDescriptor)
     if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) throw new Error('Cron clock is invalid')
@@ -507,23 +575,31 @@ export function createCronDueWorkRunner({
     if (Number.isNaN(settlementDeadline.getTime())) throw new Error('Cron settlement deadline is invalid')
     const materializationDeadline = new Date(Math.min(startedAt.getTime() + materializationBudgetMs, globalDeadline.getTime()))
     const runId = runIdFactory()
+    const invocationOrigin = typeof requestedInvocationOrigin === 'string' ? requestedInvocationOrigin : null
+    const period = materializationPeriod(startedAt)
+    let materializationSummaryValue = deferredMaterializationSummary(period)
     const emitTrace = (event) => {
-      try { trace(safeEvent(event, now)) } catch { /* telemetry cannot change cron outcomes */ }
+      try {
+        trace(safeEvent({ ...event, ...(invocationOrigin ? { invocationOrigin } : {}) }, now))
+      } catch { /* telemetry cannot change cron outcomes */ }
     }
-    const cronPhase = startRuntimePhase({ trace: emitTrace, stage: 'cron', now, context: { runId, deadlineAt: globalDeadline } })
-    const deferredResult = () => ({
+    const traceContext = { runId, deadlineAt: globalDeadline, ...(invocationOrigin ? { invocationOrigin } : {}) }
+    const cronPhase = startRuntimePhase({ trace: emitTrace, stage: 'cron', now, context: traceContext })
+    const deferredResult = (materialization = materializationSummaryValue) => ({
       runId,
       startedAt,
       finishedAt: now(),
       recovery: { inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 },
       queues: Object.fromEntries(QUEUE_ORDER.map((name) => [QUEUE_RESPONSE_KEY[name], { ...EMPTY_QUEUE_COUNTERS }])),
       nextAvailableAt: null,
+      invocationOrigin,
+      materialization,
     })
     try {
       const materialization = await runCronMaterializationPhase({
         trace: emitTrace,
         now,
-        context: { runId, deadlineAt: globalDeadline },
+        context: traceContext,
         overallDeadline: globalDeadline,
         deadline: materializationDeadline,
         settlementDeadline,
@@ -533,15 +609,16 @@ export function createCronDueWorkRunner({
         pageLimit: materializationPageLimit,
         maxPages: maxMaterializationPages,
       })
+      materializationSummaryValue = materialization.materialization ?? materializationSummaryValue
       if (!materialization.completed) {
-        const result = deferredResult()
-        cronPhase.timeout(undefined, { counters: { deferred: 1 } })
+        const result = deferredResult(materializationSummaryValue)
+        cronPhase.timeout(undefined, { counters: { deferred: 1 }, ...materializationTraceDetails(materializationSummaryValue) })
         return result
       }
       const remainingBudgetMs = globalDeadline.getTime() - now().getTime()
       if (remainingBudgetMs < 1000) {
-        const result = deferredResult()
-        cronPhase.timeout(undefined, { counters: { deferred: 1 } })
+        const result = deferredResult(materializationSummaryValue)
+        cronPhase.timeout(undefined, { counters: { deferred: 1 }, ...materializationTraceDetails(materializationSummaryValue) })
         return result
       }
       const coordinated = await runTracedPhase({
@@ -549,12 +626,13 @@ export function createCronDueWorkRunner({
         trace: emitTrace,
         stage: 'cron.coordinator',
         now,
-        context: { runId, deadlineAt: globalDeadline },
+        context: traceContext,
         execute: () => runCronOperation({
           operation: ({ signal: operationSignal, deadline, settlementDeadline: operationSettlementDeadline }) => coordinatorRunner({
             maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
             budgetMs: remainingBudgetMs,
             runId,
+            ...(invocationOrigin ? { invocationOrigin } : {}),
             signal: operationSignal,
             deadline,
             settlementDeadline: operationSettlementDeadline,
@@ -567,22 +645,23 @@ export function createCronDueWorkRunner({
         successDetails: (result) => ({ counters: { claimed: queueAttempts(result?.queues) } }),
       })
       if (coordinated?.[CONTROL_PHASE_RESULT]) {
-        const result = deferredResult()
-        cronPhase.timeout(coordinated.error, { counters: { deferred: 1 } })
+        const result = deferredResult(materializationSummaryValue)
+        cronPhase.timeout(coordinated.error, { counters: { deferred: 1 }, ...materializationTraceDetails(materializationSummaryValue) })
         return result
       }
       if (now().getTime() >= globalDeadline.getTime() || typeof indexingDrainRunner !== 'function') {
-        cronPhase.succeed({ counters: coordinated?.queues?.indexing })
-        return coordinated
+        const result = { ...coordinated, invocationOrigin, materialization: materializationSummaryValue }
+        cronPhase.succeed({ counters: coordinated?.queues?.indexing, ...materializationTraceDetails(materializationSummaryValue) })
+        return result
       }
       const result = await runTracedPhase({
         signal,
         trace: emitTrace,
         stage: 'cron.indexing',
         now,
-        context: { runId, deadlineAt: globalDeadline },
+        context: traceContext,
         execute: () => runCronOperation({
-          operation: ({ signal: operationSignal, deadline, settlementDeadline: operationSettlementDeadline }) => indexingDrainRunner(coordinated, { deadline, startedAt, runId, signal: operationSignal, settlementDeadline: operationSettlementDeadline }),
+          operation: ({ signal: operationSignal, deadline, settlementDeadline: operationSettlementDeadline }) => indexingDrainRunner(coordinated, { deadline, startedAt, runId, ...(invocationOrigin ? { invocationOrigin } : {}), signal: operationSignal, settlementDeadline: operationSettlementDeadline }),
           deadline: globalDeadline,
           settlementDeadline,
           now,
@@ -591,18 +670,20 @@ export function createCronDueWorkRunner({
         successDetails: (value) => ({ counters: value?.queues?.indexing }),
       })
       if (result?.[CONTROL_PHASE_RESULT]) {
-        const deferred = deferredResult()
-        cronPhase.timeout(result.error, { counters: { deferred: 1 } })
+        const deferred = deferredResult(materializationSummaryValue)
+        cronPhase.timeout(result.error, { counters: { deferred: 1 }, ...materializationTraceDetails(materializationSummaryValue) })
         return deferred
       }
-      cronPhase.succeed({ counters: result?.queues?.indexing })
-      return result
+      const completed = { ...result, invocationOrigin, materialization: materializationSummaryValue }
+      cronPhase.succeed({ counters: result?.queues?.indexing, ...materializationTraceDetails(materializationSummaryValue) })
+      return completed
     } catch (error) {
       if (isCronControlError(error, signal)) {
-        cronPhase.timeout(error, { counters: { deferred: 1 } })
-        return deferredResult()
+        const deferred = deferredResult(materializationSummaryValue)
+        cronPhase.timeout(error, { counters: { deferred: 1 }, ...materializationTraceDetails(materializationSummaryValue) })
+        return deferred
       }
-      cronPhase.fail(error)
+      cronPhase.fail(error, materializationTraceDetails(failedMaterializationSummary(period)))
       throw error
     } finally {
       await flushRuntimeTrace(trace, { deadline: globalDeadline, maxWaitMs: 1_000 })

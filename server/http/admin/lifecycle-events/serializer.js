@@ -18,6 +18,12 @@ function safeError(error) {
       : {}),
   }
 }
+const MATERIALIZATION_REASONS = new Set(['materialized', 'already_materialized', 'no_eligible_sources', 'deferred', 'failed'])
+const MATERIALIZATION_OUTCOMES = new Set(['completed', 'deferred', 'failed'])
+const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+
+function safePeriod(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null }
+function safeOrigin(value) { return typeof value === 'string' && SAFE_TOKEN.test(value) ? value : null }
 
 export function serializeLifecycleEventResponse(event) {
   return {
@@ -34,6 +40,14 @@ export function serializeLifecycleEventResponse(event) {
     leaseGeneration: event.leaseGeneration ?? null,
     remainingClaims: event.remainingClaims ?? null,
     profileMaxJobs: event.profileMaxJobs ?? null,
+    period: safePeriod(event.period),
+    periodTimezone: event.periodTimezone === 'UTC' ? 'UTC' : null,
+    materializationReason: MATERIALIZATION_REASONS.has(event.materializationReason) ? event.materializationReason : null,
+    outcome: MATERIALIZATION_OUTCOMES.has(event.outcome) ? event.outcome : null,
+    alreadyMaterialized: typeof event.alreadyMaterialized === 'boolean' ? event.alreadyMaterialized : null,
+    completedAt: iso(event.completedAt),
+    eligibleSourceCount: Number.isSafeInteger(event.eligibleSourceCount) && event.eligibleSourceCount >= 0 ? event.eligibleSourceCount : null,
+    invocationOrigin: safeOrigin(event.invocationOrigin),
     stage: event.stage,
     eventType: event.eventType ?? 'phase',
     status: event.status,

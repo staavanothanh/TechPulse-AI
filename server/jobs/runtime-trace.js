@@ -19,6 +19,8 @@ export const MATERIALIZER_PHASE_STAGES = Object.freeze([
   'cron.materialization.reconciliation',
   'cron.materialization.retention',
 ])
+const MATERIALIZATION_REASONS = new Set(['materialized', 'already_materialized', 'no_eligible_sources', 'deferred', 'failed'])
+const MATERIALIZATION_OUTCOMES = new Set(['completed', 'deferred', 'failed'])
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function integer(value) {
@@ -70,6 +72,16 @@ function safeError(error) {
   }
 }
 
+function safePeriod(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+}
+
+function safeCompletedAt(value) {
+  if (value === null) return null
+  if (value === undefined) return undefined
+  try { return date(value, 'Materialization completion').toISOString() } catch { return undefined }
+}
+
 export function canonicalObservabilityEventId({
   runId = '',
   queueName = '',
@@ -106,6 +118,19 @@ function safeEvent(event = {}, now = () => new Date()) {
   const stage = token(input.stage)
   const status = token(input.status)
   const eventSequence = sequence(input.sequence)
+  const period = safePeriod(input.period)
+  const periodTimezone = input.periodTimezone === 'UTC' ? 'UTC' : undefined
+  const rawMaterializationReason = MATERIALIZATION_REASONS.has(input.materializationReason) ? input.materializationReason : undefined
+  const alreadyMaterialized = typeof input.alreadyMaterialized === 'boolean' ? input.alreadyMaterialized : undefined
+  const materializationReason = rawMaterializationReason === 'already_materialized'
+    ? (alreadyMaterialized === true ? rawMaterializationReason : undefined)
+    : rawMaterializationReason
+  const outcome = MATERIALIZATION_OUTCOMES.has(input.outcome) && (rawMaterializationReason === undefined || materializationReason !== undefined)
+    ? input.outcome
+    : undefined
+  const completedAt = safeCompletedAt(input.completedAt)
+  const eligibleSourceCount = input.eligibleSourceCount === null ? null : integer(input.eligibleSourceCount)
+  const invocationOrigin = token(input.invocationOrigin)
   const inputError = input.error ?? (input.errorCode !== undefined
     ? { code: input.errorCode, retryable: input.retryable, upstreamStatus: input.upstreamStatus }
     : undefined)
@@ -139,6 +164,14 @@ function safeEvent(event = {}, now = () => new Date()) {
     ...(jobId ? { jobId } : {}),
     ...(articleId ? { articleId } : {}),
     ...(sourceId ? { sourceId } : {}),
+    ...(period ? { period } : {}),
+    ...(periodTimezone ? { periodTimezone } : {}),
+    ...(materializationReason ? { materializationReason } : {}),
+    ...(outcome ? { outcome } : {}),
+    ...(alreadyMaterialized !== undefined ? { alreadyMaterialized } : {}),
+    ...(completedAt !== undefined ? { completedAt } : {}),
+    ...(eligibleSourceCount !== undefined ? { eligibleSourceCount } : {}),
+    ...(invocationOrigin ? { invocationOrigin } : {}),
     ...(eventSequence !== undefined ? { sequence: eventSequence } : {}),
     ...(sourceKey ? { sourceKey } : {}),
     ...(leaseGeneration !== undefined ? { leaseGeneration } : {}),
@@ -179,9 +212,10 @@ export function createLifecycleEventDocument(eventInput = {}, now = () => new Da
     purgeAfter,
     createdAt: occurredAt,
   }
-  for (const key of ['runId', 'queueName', 'task', 'jobId', 'articleId', 'sourceId', 'sourceKey', 'sequence', 'leaseGeneration', 'remainingClaims', 'profileMaxJobs', 'elapsedMs']) {
+  for (const key of ['runId', 'queueName', 'task', 'jobId', 'articleId', 'sourceId', 'sourceKey', 'sequence', 'leaseGeneration', 'remainingClaims', 'profileMaxJobs', 'elapsedMs', 'period', 'periodTimezone', 'materializationReason', 'outcome', 'alreadyMaterialized', 'eligibleSourceCount', 'invocationOrigin']) {
     if (normalized[key] !== undefined) doc[key] = normalized[key]
   }
+  if (normalized.completedAt !== undefined) doc.completedAt = normalized.completedAt === null ? null : new Date(normalized.completedAt)
   if (normalized.counters) doc.counters = normalized.counters
   if (errorObj) doc.error = errorObj
   return doc

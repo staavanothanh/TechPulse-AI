@@ -243,7 +243,7 @@ describe('MongoJobRepository', () => {
 
     const completed = createContext({ findOne: { ingestionScheduleProgress: [{ _id: sourceId, completedAt: now }] }, countDocumentsResults: { sources: [2] } })
     await expect(completed.repository.materializeDailyIngestion({ now, limit: 10 })).resolves.toEqual(expect.objectContaining({ inspected: 0, created: 0, hasMore: false, period: '2026-08-20', periodTimezone: 'UTC', materializationReason: 'already_materialized', outcome: 'completed', alreadyMaterialized: true, completedAt: now.toISOString(), eligibleSourceCount: 2, updated: 0 }))
-    expect(completed.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
+    expect(completed.repository.jobs().updateOne).not.toHaveBeenCalled()
     await expect(completed.repository.materializeDailyIngestion({ now, limit: 0 })).rejects.toThrow(/limit/i)
     await expect(completed.repository.materializeDailyIngestion({ now: 'bad' })).rejects.toThrow(/materialization time/i)
   })
@@ -269,7 +269,7 @@ describe('MongoJobRepository', () => {
 
     const result = await fixture.repository.materializeDailyIngestion({ now, limit: 10 })
     expect(result).toEqual(expect.objectContaining({ materializationReason: 'no_eligible_sources', outcome: 'completed', alreadyMaterialized: false, completedAt: now.toISOString(), eligibleSourceCount: 0, inspected: 0, created: 0, updated: 1 }))
-    expect(fixture.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
+    expect(fixture.repository.jobs().updateOne).not.toHaveBeenCalled()
   })
   it('does not start daily materialization after the repository clock deadline', async () => {
     const fixture = createContext({ nowValue: now })
