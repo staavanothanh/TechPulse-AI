@@ -40,4 +40,3 @@ describe('cron-observability migration definition', () => {
     expect(plan.every((op) => ['createCollection', 'collMod', 'createIndex'].includes(op.type))).toBe(true)
   })
 })
-
