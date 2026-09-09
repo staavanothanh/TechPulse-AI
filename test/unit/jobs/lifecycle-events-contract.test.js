@@ -149,4 +149,42 @@ describe('canonical observability event contract and persistence', () => {
     expect(doc.counters.recovered).not.toBeNull()
     expect(doc.counters.retriesCreated).not.toBeNull()
   })
+  it('redacts and persists the stable materialization summary fields', () => {
+    const at = new Date('2026-09-08T21:00:00.000Z')
+    const completedAt = new Date('2026-09-08T21:01:00.000Z')
+    const event = safeEvent({
+      runId: 'cron-run-safe',
+      stage: 'cron.materialization.daily',
+      status: 'succeeded',
+      period: '2026-09-08',
+      periodTimezone: 'UTC',
+      materializationReason: 'materialized',
+      outcome: 'completed',
+      alreadyMaterialized: false,
+      completedAt,
+      eligibleSourceCount: 3,
+      invocationOrigin: 'vercel-cron',
+      at,
+    })
+    expect(event).toEqual(expect.objectContaining({
+      period: '2026-09-08', periodTimezone: 'UTC', materializationReason: 'materialized', outcome: 'completed', alreadyMaterialized: false,
+      completedAt: completedAt.toISOString(), eligibleSourceCount: 3, invocationOrigin: 'vercel-cron',
+    }))
+    const doc = createLifecycleEventDocument(event)
+    expect(doc).toEqual(expect.objectContaining({ period: '2026-09-08', periodTimezone: 'UTC', materializationReason: 'materialized', outcome: 'completed', alreadyMaterialized: false, completedAt, eligibleSourceCount: 3, invocationOrigin: 'vercel-cron' }))
+
+    const unsafe = safeEvent({
+      stage: 'cron.materialization.daily', status: 'failed', period: 'not-a-period', periodTimezone: 'PST', materializationReason: 'already_materialized', outcome: 'completed',
+      alreadyMaterialized: 'true', completedAt: 'mongodb://secret', eligibleSourceCount: -1, invocationOrigin: 'mongodb://secret', at,
+    })
+    expect(unsafe).not.toHaveProperty('period')
+    expect(unsafe).not.toHaveProperty('periodTimezone')
+    expect(unsafe).not.toHaveProperty('materializationReason')
+    expect(unsafe).not.toHaveProperty('outcome')
+    expect(unsafe).not.toHaveProperty('alreadyMaterialized')
+    expect(unsafe).not.toHaveProperty('completedAt')
+    expect(unsafe).not.toHaveProperty('eligibleSourceCount')
+    expect(unsafe).not.toHaveProperty('invocationOrigin')
+    expect(JSON.stringify(unsafe)).not.toContain('mongodb://secret')
+  })
 })

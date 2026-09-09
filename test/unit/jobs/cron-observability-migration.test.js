@@ -21,6 +21,18 @@ describe('cron-observability migration definition', () => {
     ]))
     expect(CRON_OBSERVABILITY_COLLECTIONS.cronLifecycleEvents.validator.$jsonSchema.properties.sequence).toEqual({ bsonType: 'int', minimum: 0, maximum: 2147483647 })
   })
+  it('adds optional stable materialization fields for backward-compatible event documents', () => {
+    const properties = CRON_OBSERVABILITY_COLLECTIONS.cronLifecycleEvents.validator.$jsonSchema.properties
+    expect(properties.period).toEqual({ bsonType: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' })
+    expect(properties.periodTimezone).toEqual({ enum: ['UTC'] })
+    expect(properties.materializationReason).toEqual({ enum: ['materialized', 'already_materialized', 'no_eligible_sources', 'deferred', 'failed'] })
+    expect(properties.outcome).toEqual({ enum: ['completed', 'deferred', 'failed'] })
+    expect(properties.alreadyMaterialized).toEqual({ bsonType: 'bool' })
+    expect(properties.completedAt).toEqual({ bsonType: ['date', 'null'] })
+    expect(properties.eligibleSourceCount).toEqual({ bsonType: ['int', 'null'], minimum: 0 })
+    expect(properties.invocationOrigin).toEqual({ bsonType: 'string', minLength: 1, maxLength: 128 })
+    expect(CRON_OBSERVABILITY_COLLECTIONS.cronLifecycleEvents.validator.$jsonSchema.required).not.toContain('period')
+  })
 
   it('generates non-destructive idempotent migration plan', () => {
     const plan = buildCronObservabilityMigration({ dryRun: true })
@@ -28,3 +40,4 @@ describe('cron-observability migration definition', () => {
     expect(plan.every((op) => ['createCollection', 'collMod', 'createIndex'].includes(op.type))).toBe(true)
   })
 })
+

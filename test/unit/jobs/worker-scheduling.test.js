@@ -151,9 +151,14 @@ describe('worker scheduling', () => {
     expect(second.nextAvailableAt).toBeNull()
   })
 
-  it('keeps internal per-task counters out of the fixed cron HTTP contract', async () => {
+  it('serializes materialization and invocation origin while excluding internal diagnostics', async () => {
     const dueWorkRunner = vi.fn(async () => ({
       ...baseResult(),
+      invocationOrigin: 'vercel-cron',
+      materialization: {
+        period: '2026-09-08', periodTimezone: 'UTC', materializationReason: 'materialized', outcome: 'completed', alreadyMaterialized: false,
+        completedAt: '2026-09-08T00:00:00.000Z', eligibleSourceCount: 1, inspected: 1, created: 1, updated: 1,
+      },
       taskCounters: { summary: { ...EMPTY_COUNTERS, claimed: 1, succeeded: 1 } },
       privateDiagnostic: 'must-not-leak',
     }))
@@ -169,10 +174,48 @@ describe('worker scheduling', () => {
       expect(response.status).toBe(202)
       expect(payload.data).not.toHaveProperty('taskCounters')
       expect(payload.data).not.toHaveProperty('privateDiagnostic')
-      expect(Object.keys(payload.data)).toEqual(['runId', 'startedAt', 'finishedAt', 'recovery', 'queues', 'nextAvailableAt'])
+      expect(payload.data).toEqual(expect.objectContaining({ invocationOrigin: 'vercel-cron', materialization: expect.objectContaining({ period: '2026-09-08', periodTimezone: 'UTC', materializationReason: 'materialized', outcome: 'completed', alreadyMaterialized: false, completedAt: '2026-09-08T00:00:00.000Z', eligibleSourceCount: 1, inspected: 1, created: 1, updated: 1 }) }))
+      expect(Object.keys(payload.data)).toEqual(['runId', 'startedAt', 'finishedAt', 'recovery', 'queues', 'nextAvailableAt', 'invocationOrigin', 'materialization'])
     } finally {
       await new Promise((resolve) => server.close(resolve))
     }
+  })
+
+  it('returns a deferred materialization summary and never replays on deadline control', async () => {
+    const trace = vi.fn()
+    const coordinatorRunner = vi.fn()
+    const runner = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn(async () => { throw Object.assign(new Error('deadline'), { code: 'runtime_deadline_exceeded' }) }) },
+      coordinatorRunner,
+      trace,
+      runIdFactory: () => 'deferred-run',
+      now: () => STARTED_AT,
+    })
+
+    const result = await runner()
+    expect(result.materialization).toEqual(expect.objectContaining({ period: '2026-08-26', periodTimezone: 'UTC', materializationReason: 'deferred', outcome: 'deferred', alreadyMaterialized: false, completedAt: null, eligibleSourceCount: null, inspected: 0, created: 0, updated: 0 }))
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+    expect(trace.mock.calls.map(([event]) => event)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: 'deferred-run', stage: 'cron.materialization.daily', materializationReason: 'deferred', outcome: 'deferred', alreadyMaterialized: false }),
+    ]))
+    expect(trace.mock.calls.map(([event]) => event).every((event) => event.materializationReason !== 'already_materialized')).toBe(true)
+  })
+
+  it('traces ordinary materialization failures as failed without changing rejection semantics', async () => {
+    const trace = vi.fn()
+    const failure = new Error('materialization database failure')
+    const runner = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn(async () => { throw failure }) },
+      coordinatorRunner: vi.fn(),
+      trace,
+      now: () => STARTED_AT,
+    })
+
+    await expect(runner()).rejects.toBe(failure)
+    expect(trace.mock.calls.map(([event]) => event)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'cron.materialization.daily', status: 'failed', materializationReason: 'failed', outcome: 'failed', alreadyMaterialized: false }),
+    ]))
+    expect(trace.mock.calls.map(([event]) => event).every((event) => event.materializationReason !== 'already_materialized')).toBe(true)
   })
 
   it('configures cron due-work runner to invoke coordinator with CRON_DUE_WORK_PROFILE budget and claims', async () => {

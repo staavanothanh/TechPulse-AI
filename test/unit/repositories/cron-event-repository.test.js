@@ -45,6 +45,31 @@ describe('MongoCronEventRepository', () => {
     expect(recorded).toBe(false)
   })
 
+  it('lists safe materialization summary fields without leaking raw event payloads', async () => {
+    const docs = [{
+      _id: '507f1f77bcf86cd799439011', eventId: 'c'.repeat(64), runId: 'run-1', stage: 'cron.materialization.daily', status: 'succeeded',
+      period: '2026-09-08', periodTimezone: 'UTC', materializationReason: 'materialized', outcome: 'completed', alreadyMaterialized: false,
+      completedAt: new Date('2026-09-08T00:00:00.000Z'), eligibleSourceCount: 2, invocationOrigin: 'vercel-cron', occurredAt: new Date('2026-09-08T10:00:00.000Z'),
+      rawError: 'mongodb://secret',
+    }]
+    const toArray = vi.fn().mockResolvedValue(docs)
+    const limit = vi.fn(() => ({ toArray }))
+    const project = vi.fn(() => ({ limit }))
+    const sort = vi.fn(() => ({ project }))
+    const find = vi.fn(() => ({ sort }))
+    const collection = vi.fn(() => ({ find }))
+    const repo = new MongoCronEventRepository({ db: { collection } })
+
+    const result = await repo.listLifecycleEvents({ limit: 20 })
+    expect(result.events[0]).toEqual(expect.objectContaining({
+      period: '2026-09-08', periodTimezone: 'UTC', materializationReason: 'materialized', outcome: 'completed', alreadyMaterialized: false,
+      completedAt: '2026-09-08T00:00:00.000Z', eligibleSourceCount: 2, invocationOrigin: 'vercel-cron',
+    }))
+    expect(result.events[0]).not.toHaveProperty('rawError')
+    expect(JSON.stringify(result)).not.toContain('mongodb://secret')
+    expect(project).toHaveBeenCalledWith(expect.objectContaining({ period: 1, completedAt: 1, invocationOrigin: 1 }))
+  })
+
   it('lists events with filter, cursor pagination, and ordering', async () => {
     const docs = [
       {

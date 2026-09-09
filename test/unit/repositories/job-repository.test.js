@@ -84,6 +84,7 @@ function createContext({
   findOneAndUpdateResults = {},
   insertResults = {},
   deleteResults = {},
+  countDocumentsResults = {},
   nowValue = now,
   sourceRows = [],
 } = {}) {
@@ -98,8 +99,9 @@ function createContext({
     const handle = {
       findOne: vi.fn(async (..._args) => queues(findOne, name).shift() ?? null),
       findOneAndUpdate: vi.fn(async (..._args) => queues(findOneAndUpdateResults, name).shift() ?? null),
-      updateOne: vi.fn(async (..._args) => queues(updateResults, name).shift() ?? { matchedCount: 1, upsertedCount: 0 }),
+      updateOne: vi.fn(async (...args) => queues(updateResults, name).shift() ?? { matchedCount: 1, upsertedCount: 0, modifiedCount: args[1]?.$set ? 1 : 0 }),
       insertOne: vi.fn(async (...args) => queues(insertResults, name).shift() ?? { insertedId: args[0]?._id }),
+      countDocuments: vi.fn(async (..._args) => queues(countDocumentsResults, name).shift() ?? (name === 'sources' ? sourceRows.length : 0)),
       deleteMany: vi.fn(async (..._args) => queues(deleteResults, name).shift() ?? { deletedCount: 1 }),
       find: vi.fn((..._args) => {
         const values = queues(findResults, name).shift()
@@ -231,16 +233,43 @@ describe('MongoJobRepository', () => {
     const fixture = createContext({
       findOne: { ingestionScheduleProgress: [null] },
       findResults: { sources: [[source, { ...source, _id: sessionId }]] },
+      countDocumentsResults: { sources: [2] },
       updateResults: { ingestionJobs: [{ upsertedCount: 1 }], ingestionScheduleProgress: [{ matchedCount: 1 }] },
     })
     const result = await fixture.repository.materializeDailyIngestion({ now, limit: 1 })
-    expect(result).toEqual({ inspected: 1, created: 1, hasMore: true, period: '2026-08-20' })
+    expect(result).toEqual(expect.objectContaining({ inspected: 1, created: 1, hasMore: true, period: '2026-08-20', periodTimezone: 'UTC', materializationReason: 'materialized', outcome: 'completed', alreadyMaterialized: false, completedAt: null, eligibleSourceCount: 2, updated: 1 }))
+    expect(fixture.collections.get('sources').countDocuments).toHaveBeenCalledWith(expect.objectContaining({ operationalStatus: 'active' }), expect.objectContaining({ session: fixture.session }))
     expect(fixture.collections.get('ingestionJobs').updateOne).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: `daily:2026-08-20:${sourceId.toHexString()}` }), expect.any(Object), expect.objectContaining({ upsert: true, session: fixture.session }))
 
-    const completed = createContext({ findOne: { ingestionScheduleProgress: [{ _id: sourceId, completedAt: now }] } })
-    await expect(completed.repository.materializeDailyIngestion({ now, limit: 10 })).resolves.toEqual({ inspected: 0, created: 0, hasMore: false, period: '2026-08-20' })
+    const completed = createContext({ findOne: { ingestionScheduleProgress: [{ _id: sourceId, completedAt: now }] }, countDocumentsResults: { sources: [2] } })
+    await expect(completed.repository.materializeDailyIngestion({ now, limit: 10 })).resolves.toEqual(expect.objectContaining({ inspected: 0, created: 0, hasMore: false, period: '2026-08-20', periodTimezone: 'UTC', materializationReason: 'already_materialized', outcome: 'completed', alreadyMaterialized: true, completedAt: now.toISOString(), eligibleSourceCount: 2, updated: 0 }))
+    expect(completed.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
     await expect(completed.repository.materializeDailyIngestion({ now, limit: 0 })).rejects.toThrow(/limit/i)
     await expect(completed.repository.materializeDailyIngestion({ now: 'bad' })).rejects.toThrow(/materialization time/i)
+  })
+
+  it('derives the daily period from UTC ISO date at the 04:00 ICT boundary', async () => {
+    const ictBoundary = new Date('2026-09-08T21:00:00.000Z')
+    const fixture = createContext({
+      nowValue: ictBoundary,
+      findOne: { ingestionScheduleProgress: [null] },
+      countDocumentsResults: { sources: [0] },
+      updateResults: { ingestionScheduleProgress: [{ matchedCount: 1 }] },
+    })
+
+    await expect(fixture.repository.materializeDailyIngestion({ now: ictBoundary, limit: 1 })).resolves.toEqual(expect.objectContaining({ period: '2026-09-08', periodTimezone: 'UTC', materializationReason: 'no_eligible_sources', outcome: 'completed', eligibleSourceCount: 0, completedAt: ictBoundary.toISOString() }))
+  })
+
+  it('reports a distinct no-eligible-sources outcome without enqueuing jobs', async () => {
+    const fixture = createContext({
+      findOne: { ingestionScheduleProgress: [null] },
+      countDocumentsResults: { sources: [0] },
+      updateResults: { ingestionScheduleProgress: [{ matchedCount: 1 }] },
+    })
+
+    const result = await fixture.repository.materializeDailyIngestion({ now, limit: 10 })
+    expect(result).toEqual(expect.objectContaining({ materializationReason: 'no_eligible_sources', outcome: 'completed', alreadyMaterialized: false, completedAt: now.toISOString(), eligibleSourceCount: 0, inspected: 0, created: 0, updated: 1 }))
+    expect(fixture.collections.get('ingestionJobs').updateOne).not.toHaveBeenCalled()
   })
   it('does not start daily materialization after the repository clock deadline', async () => {
     const fixture = createContext({ nowValue: now })
