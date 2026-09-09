@@ -242,7 +242,7 @@ const MATERIALIZATION_REASONS = new Set(['materialized', 'already_materialized',
 const MATERIALIZATION_OUTCOMES = new Set(['completed', 'deferred', 'failed'])
 
 function materializationPeriod(value) {
-  const date = value instanceof Date ? new Date(value) : new Date(value)
+  const date = new Date(value)
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
 }
 
