@@ -5,7 +5,6 @@ import {
   PrivacyAdmissionError,
 } from '../../../server/domain/qa/privacy.js'
 import {
-  admittedEvidenceText,
   buildGroundedPrompt,
   filterQnaEvidence,
   EvidenceSelectionError,
