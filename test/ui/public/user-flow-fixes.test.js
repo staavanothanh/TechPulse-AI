@@ -240,4 +240,29 @@ describe('public user-flow regressions', () => {
     })
     expect(savedHtml).toContain('>Hỏi đáp</button>')
   })
+
+  it('renders all standard catalog sources grouped by connectors in SearchView', () => {
+    const html = render(SearchView, {})
+
+    expect(html).toContain('label="RSS Feeds"')
+    expect(html).toContain('label="arXiv"')
+    expect(html).toContain('label="Hacker News"')
+    expect(html).toContain('OpenAI News')
+    expect(html).toContain('Google DeepMind Blog')
+    expect(html).toContain('The Verge Technology')
+    expect(html).toContain('Ars Technica')
+    expect(html).toContain('Hugging Face Blog')
+    expect(html).toContain('arXiv Computer Science AI')
+    expect(html).toContain('Hacker News Top Stories')
+  })
+
+  it('renders sources grouped by connectors in FeedView', () => {
+    const html = render(FeedView, { state: 'ready', articles: [] })
+
+    expect(html).toContain('label="RSS Feeds"')
+    expect(html).toContain('label="arXiv"')
+    expect(html).toContain('label="Hacker News"')
+    expect(html).toContain('OpenAI News')
+    expect(html).toContain('Google DeepMind Blog')
+  })
 })

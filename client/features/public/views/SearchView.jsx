@@ -8,7 +8,13 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
-import { TOPIC_OPTIONS, normalizeTopicFilter, topicLabel } from '../components/reader-format.js'
+import {
+  SOURCE_CATALOG,
+  TOPIC_OPTIONS,
+  groupSourcesByConnector,
+  normalizeTopicFilter,
+  topicLabel,
+} from '../components/reader-format.js'
 
 function sourceOption(source) {
   if (typeof source === 'string') {
@@ -27,21 +33,32 @@ function sourceOption(source) {
     : typeof source.sourceName === 'string' && source.sourceName.trim()
       ? source.sourceName.trim()
       : id
-  return { id, name }
+  const connectorType = source.connectorType || source.connector
+  return { id, name, ...(connectorType ? { connectorType } : {}) }
 }
 
 function articleSource(item) {
   const article = item?.article || item
   if (!article || typeof article !== 'object') return null
-  if (article.source) return article.source
+  if (article.source) {
+    return {
+      ...article.source,
+      ...(article.connectorType ? { connectorType: article.connectorType } : {}),
+    }
+  }
   if (article.sourceId || article.sourceName) {
-    return { sourceId: article.sourceId, sourceName: article.sourceName }
+    return {
+      sourceId: article.sourceId,
+      sourceName: article.sourceName,
+      ...(article.connectorType ? { connectorType: article.connectorType } : {}),
+    }
   }
   return null
 }
 
 function collectSourceItems(sources, results) {
   const candidates = [
+    ...SOURCE_CATALOG,
     ...(Array.isArray(sources) ? sources : []),
     ...(Array.isArray(results) ? results.map(articleSource) : []),
   ]
@@ -121,6 +138,7 @@ export default function SearchView({
   const selectedTopic = normalizeTopicFilter(current.topic)
   const topicItems = collectTopicItems(topics, selectedTopic)
   const sourceItems = sourceItemsWithActiveFilter(sources, results, current.sourceId)
+  const sourceGroups = groupSourcesByConnector(sourceItems)
   return (
     <section
       className="public-view public-search-view"
@@ -199,10 +217,14 @@ export default function SearchView({
             aria-describedby={errors.sourceId ? 'public-search-source-error' : undefined}
           >
             <option value="">Tất cả nguồn</option>
-            {sourceItems.map((source) => (
-              <option key={source.id} value={source.id}>
-                {source.name || source.id}
-              </option>
+            {sourceGroups.map((group) => (
+              <optgroup key={group.key} label={group.label}>
+                {group.items.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name || source.id}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
           {errors.sourceId ? (

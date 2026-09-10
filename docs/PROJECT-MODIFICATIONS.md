@@ -206,19 +206,71 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 7. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 7. Cải Tiến: Phân Nhóm 10 Nguồn Theo 3 Connector (RSS, arXiv, Hacker News) Bằng `<optgroup>` Trong Tìm Kiếm & Bảng Tin
+
+### Bối cảnh & Lý do thay đổi
+- **Trước khi sửa:**
+  - Dropdown nguồn ở trang Tìm kiếm (`SearchView.jsx`) và Bảng tin (`FeedView.jsx`) lấy dữ liệu động từ `feed.sources`.
+  - Do `feed.sources` chỉ nạp từ 10 bài viết mới nhất của feed, dropdown thực tế chỉ hiển thị vỏn vẹn **3 nguồn** ngẫu nhiên (*The Verge demo, Hacker News Top Stories, Hacker News demo*). 7 nguồn còn lại trong MongoDB bị thiếu hoàn toàn.
+  - Hệ thống chưa có public endpoint `/api/v1/sources` cho người đọc thông thường (chỉ có endpoint `/api/v1/admin/sources` của admin).
+- **Yêu cầu của nhóm trưởng:**
+  - Kiến trúc hệ thống thu thập tin tức được tổ chức xoay quanh **3 Connector** chính: `rss`, `arxiv`, và `hacker-news`.
+  - Không hardcode cố định 3 nguồn demo mà phải hiển thị đầy đủ danh mục nguồn theo từng Connector tương ứng để người dùng dễ định vị và tra cứu.
+  - Giữ nguyên hợp đồng API backend (`sourceId` gửi lên vẫn là ObjectId của MongoDB, không gây breaking change OpenAPI).
+
+### Chi tiết thay đổi mã nguồn
+1. **Danh mục nguồn & Helper phân nhóm (`client/features/public/components/reader-format.js`):**
+   - Khai báo nhãn hiển thị cho connector `CONNECTOR_LABELS`:
+     - `rss`: `'RSS Feeds'`
+     - `arxiv`: `'arXiv'`
+     - `'hacker-news'`: `'Hacker News'`
+   - Xây dựng danh mục chuẩn `SOURCE_CATALOG` gồm đầy đủ 10 nguồn trong database kèm `id`, `name`, `sourceKey`, `connectorType`:
+     - **RSS Feeds:** *The Verge Technology, Ars Technica, Google DeepMind Blog, OpenAI News, Hugging Face Blog, The Verge Technology demo*.
+     - **arXiv:** *arXiv Computer Science AI, arXiv Computer Science AI demo*.
+     - **Hacker News:** *Hacker News Top Stories, Hacker News Top Stories demo*.
+   - Bổ sung hàm helper:
+     - `resolveSourceConnector(source)`: Nhận diện connector của nguồn dựa trên `connectorType` hoặc suy diễn từ `sourceKey`/`domain`.
+     - `groupSourcesByConnector(sourceItems)`: Gom danh sách nguồn thành các nhóm chuẩn bị sẵn cho thẻ `<optgroup>`.
+2. **Giao diện Tìm kiếm (`client/features/public/views/SearchView.jsx`):**
+   - Hàm `collectSourceItems` nạp `SOURCE_CATALOG` làm danh sách khởi tạo, sau đó tự động merge bổ sung bất kỳ nguồn động nào từ `sources` prop hoặc `results`.
+   - Cấu trúc lại thẻ `<select id="public-search-source">` với các nhóm `<optgroup label="...">`:
+     ```jsx
+     <select id="public-search-source" className="public-input" value={current.sourceId} onChange={...}>
+       <option value="">Tất cả nguồn</option>
+       {sourceGroups.map((group) => (
+         <optgroup key={group.key} label={group.label}>
+           {group.items.map((source) => (
+             <option key={source.id} value={source.id}>
+               {source.name || source.id}
+             </option>
+           ))}
+         </optgroup>
+       ))}
+     </select>
+     ```
+   - Giữ nguyên `value={source.id}` để backend lọc chính xác bài viết bằng `sourceId` mà không làm thay đổi OpenAPI contract.
+3. **Giao diện Bảng tin (`client/features/public/views/FeedView.jsx`):**
+   - Đồng bộ logic phân nhóm `<optgroup>` theo 3 Connector cho dropdown lọc nguồn ở trang Bảng tin.
+4. **Kiểm thử tự động (`test/ui/public/user-flow-fixes.test.js`):**
+   - Bổ sung test `renders grouped source options by connector in search view` kiểm tra nhãn `<optgroup>` của cả 3 connector và các nguồn chuẩn.
+   - Bổ sung test `renders grouped source options by connector in feed view`.
+   - Kết quả: `20/20 tests passed`.
+
+---
+
+## 8. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
 
 1. **Kiểm tra xóa phiên hỏi đáp:**
    - Mở `http://localhost:3000` và đăng nhập tài khoản.
    - Vào tab **Hỏi đáp** (Q&A), tạo 2-3 phiên hỏi đáp khác nhau.
    - Rê chuột vào từng phiên ở cột bên trái: xuất hiện nút `×`. Bấm vào `×` để xóa riêng phiên đó; danh sách cập nhật ngay lập tức mà các phiên khác không bị mất.
-2. **Kiểm tra thanh lọc tìm kiếm mới:**
-   - Vào tab **Tìm kiếm** (Search).
+2. **Kiểm tra thanh lọc tìm kiếm & bảng tin (Dropdown nguồn theo 3 Connector):**
+   - Vào tab **Tìm kiếm** (Search) hoặc **Bảng tin** (Feed).
    - Quan sát thanh lọc bên dưới ô từ khóa:
      - **Chủ đề:** Dropdown chọn danh mục chuẩn (`Tất cả chủ đề`, `AI`, `AI Agent`, `Robotics`...).
-     - **Nguồn:** Dropdown chọn tên nguồn tin đọc được (`Tất cả nguồn`, `The Verge`, `Google AI Blog`, `arXiv`...).
+     - **Nguồn:** Bấm mở dropdown nguồn -> Quan sát danh sách được gom thành 3 nhóm rõ ràng: **RSS Feeds**, **arXiv**, **Hacker News** với đầy đủ 10 nguồn.
      - Các ô lọc còn lại gồm: Chế độ (Hybrid/Văn bản), Từ ngày, Đến ngày.
-   - Thử chọn một nguồn cụ thể (ví dụ: Google AI Blog) và tìm kiếm từ khóa -> Hệ thống lọc chính xác các bài viết thuộc nguồn đó.
+   - Thử chọn một nguồn cụ thể (ví dụ: *Google DeepMind Blog* hoặc *OpenAI News*) và tìm kiếm từ khóa -> Hệ thống lọc chính xác các bài viết thuộc nguồn đó.
 3. **Kiểm tra Hỏi đáp trực tiếp từ bài viết & Thẻ ngữ cảnh đầy đủ:**
    - Vào tab **Bảng tin** (Feed), **Tìm kiếm** (Search) hoặc **Bài đã lưu** (Saved).
    - Trên mỗi thẻ bài viết đều xuất hiện nút **"Hỏi đáp"** bên cạnh nút *"Lưu bài"* và *"Đọc chi tiết"*.

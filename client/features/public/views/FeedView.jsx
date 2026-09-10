@@ -8,7 +8,11 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
-import { EMPTY_FILTERS } from '../components/reader-format.js'
+import {
+  EMPTY_FILTERS,
+  SOURCE_CATALOG,
+  groupSourcesByConnector,
+} from '../components/reader-format.js'
 
 const MAX_DIRECT_PAGE = 10_000
 
@@ -29,20 +33,31 @@ function sourceOption(source) {
     : typeof source.sourceName === 'string' && source.sourceName.trim()
       ? source.sourceName.trim()
       : id
-  return { id, name }
+  const connectorType = source.connectorType || source.connector
+  return { id, name, ...(connectorType ? { connectorType } : {}) }
 }
 
 function articleSource(article) {
   if (!article || typeof article !== 'object') return null
-  if (article.source) return article.source
+  if (article.source) {
+    return {
+      ...article.source,
+      ...(article.connectorType ? { connectorType: article.connectorType } : {}),
+    }
+  }
   if (article.sourceId || article.sourceName) {
-    return { sourceId: article.sourceId, sourceName: article.sourceName }
+    return {
+      sourceId: article.sourceId,
+      sourceName: article.sourceName,
+      ...(article.connectorType ? { connectorType: article.connectorType } : {}),
+    }
   }
   return null
 }
 
 function collectSourceItems(sources, articles) {
   const candidates = [
+    ...SOURCE_CATALOG,
     ...(Array.isArray(sources) ? sources : []),
     ...(Array.isArray(articles) ? articles.map(articleSource) : []),
   ]
@@ -74,6 +89,7 @@ export default function FeedView({
   const nextFilters = { ...EMPTY_FILTERS, ...filters }
   const hasFilters = Object.values(nextFilters).some(Boolean)
   const sourceItems = collectSourceItems(sources, articles)
+  const sourceGroups = groupSourcesByConnector(sourceItems)
   const totalItems = Number(meta.totalItems)
   const totalPages = Number.isFinite(totalItems) && totalItems > 0 ? Math.ceil(totalItems / 10) : undefined
   return (
@@ -201,10 +217,14 @@ export default function FeedView({
                   onChange={(event) => handlers.onFilterChange?.('sourceId', event.target.value)}
                 >
                   <option value="">Tất cả nguồn</option>
-                  {sourceItems.map((source) => (
-                    <option key={source.id} value={source.id}>
-                      {source.name || source.id}
-                    </option>
+                  {sourceGroups.map((group) => (
+                    <optgroup key={group.key} label={group.label}>
+                      {group.items.map((source) => (
+                        <option key={source.id} value={source.id}>
+                          {source.name || source.id}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </label>
