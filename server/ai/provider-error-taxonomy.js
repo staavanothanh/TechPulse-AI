@@ -5,6 +5,7 @@ export const PROVIDER_FAILURE_CLASSES = Object.freeze([
   'privacy',
   'sensitive-input',
   'config',
+  'model-mismatch',
   'schema',
   'support',
   'ambiguous',
@@ -17,6 +18,11 @@ const DEFINITIONS = Object.freeze({
   privacy: Object.freeze({ code: 'privacy_blocked', retryable: false }),
   'sensitive-input': Object.freeze({ code: 'sensitive_input', retryable: false }),
   config: Object.freeze({ code: 'provider_config_invalid', retryable: false }),
+  // Upstream answered successfully but echoed a model id that is neither the
+  // configured route model nor an explicitly accepted alias. This is a
+  // provider-side identity drift that only a config update or provider fix can
+  // resolve, so it is non-retryable but distinct from local config defects.
+  'model-mismatch': Object.freeze({ code: 'provider_model_mismatch', retryable: false }),
   schema: Object.freeze({ code: 'provider_schema_invalid', retryable: false }),
   support: Object.freeze({ code: 'provider_support_invalid', retryable: false }),
   ambiguous: Object.freeze({ code: 'ambiguous_provider_outcome', retryable: false }),

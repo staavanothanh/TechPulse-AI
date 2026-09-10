@@ -157,6 +157,25 @@ describe('ADR-0013 provider configuration graph', () => {
     nonEmbedding.routes = replaceById(nonEmbedding.routes, 'routeId', 'summary-primary', (item) => ({ ...item, embeddingDimensions: 1024, embeddingVersion: 1 }))
     expect(() => validateProviderConfiguration(nonEmbedding, { now: NOW })).toThrow(/embedding|unsupported field/i)
   })
+  it('validates accepted model alias allowlists on routes', () => {
+    const valid = graph()
+    valid.routes = replaceById(valid.routes, 'routeId', 'summary-primary', (item) => ({ ...item, acceptedModelIds: ['model-a-alias', 'model-a-v2'] }))
+    expect(validateProviderConfiguration(valid, { now: NOW }).routes[0].acceptedModelIds).toEqual(['model-a-alias', 'model-a-v2'])
+
+    const aliases = [
+      ['duplicate', ['alias', 'alias']],
+      ['empty', ['']],
+      ['route-model', ['model-a']],
+      ['not-array', 'alias'],
+      ['oversized', ['x'.repeat(201)]],
+    ]
+    for (const [label, value] of aliases) {
+      const invalid = graph()
+      invalid.routes = replaceById(invalid.routes, 'routeId', 'summary-primary', (item) => ({ ...item, acceptedModelIds: value }))
+      expect(() => validateProviderConfiguration(invalid, { now: NOW }), label).toThrow(/acceptedModelIds/i)
+    }
+  })
+
   it('accepts only a single no-fallback qa-intent planner attempt', () => {
     const value = graph()
     value.workloadPolicies.push({ workloadId: 'qa-intent', operation: 'summary', requiredCapability: 'nonconfidential', maxExternalAttempts: 1, primaryRouteId: 'summary-primary', modelFallbackRouteIds: [], providerFallbackRouteIds: [] })
