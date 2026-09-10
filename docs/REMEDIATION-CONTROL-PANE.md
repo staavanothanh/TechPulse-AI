@@ -50,7 +50,7 @@ Initial board created before specialist dispatch. Owners, heartbeats, evidence, 
 |---|---|---|---|
 | R-006 | `FeatFixRemediation.Implementer` + `FeatFixRemediation.Integrator` | integrated | Hai remediation blocker đã sửa; test regression RED rồi GREEN; chỉ giữ phạm vi đã review. |
 | R-007 | `FeatFixRemediation.FocusedVerifier` | PASS | Focused remediation, contract, syntax và diff checks đều PASS; không chỉnh sửa source. |
-| R-008 | `FeatFixRemediation.CodeReview` + `FeatFixRemediation.SecurityReview` | PASS | Code review ban đầu BLOCK bởi đúng 2 finding bên dưới; sau khi xử lý, focused assertions và exact-base diff xác nhận không còn CRITICAL/HIGH. Security review PASS, 0 CRITICAL/HIGH. |
+| R-008 | `FeatFixRemediation.CodeReview` + `FeatFixRemediation.SecurityReview` | PASS | Re-review PASS/APPROVE: cả 2 blocker đã đóng, không còn CRITICAL/HIGH/MEDIUM. Security review PASS, 0 CRITICAL/HIGH. |
 
 ### Hai finding đã được đóng
 
@@ -73,6 +73,7 @@ Base và merge-base giữ nguyên `9562b8b45a2432c9917c3f32d15b55a2afa0772b`. Tr
 
 ### Verdict
 
-**READY TO MERGE** sau khi commit SHA được ghi ở mục này. Branch cô lập, exact base không đổi, không có blocker CRITICAL/HIGH, và không push/deploy/production mutation.
+**READY TO MERGE**. Branch cô lập, exact base không đổi, không có blocker CRITICAL/HIGH, và không push/deploy/production mutation.
 
-- Final commit SHA: `PENDING_COMMIT_SHA`
+- Code integration commit SHA: `be14582c2f5443c1fc64056b0ee918fe62efcbc3`
+- Handoff docs commit SHA: recorded in the final integration report after this docs-only commit.
