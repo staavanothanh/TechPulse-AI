@@ -271,12 +271,21 @@ export async function runEnvSync({
   return sync({ environment, target, value, dryRun })
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   let target
   let dryRun = false
   for (const arg of argv) {
-    if (arg === '--dry-run') dryRun = true
-    else if (arg.startsWith('--target=')) target = arg.slice('--target='.length)
+    if (arg === '--dry-run') {
+      dryRun = true
+      continue
+    }
+    if (arg.startsWith('--target=')) {
+      const candidate = arg.slice('--target='.length)
+      assertTarget(candidate)
+      target = candidate
+      continue
+    }
+    throw new Error(`Unknown env-sync argument: ${arg}`)
   }
   return { target, dryRun }
 }

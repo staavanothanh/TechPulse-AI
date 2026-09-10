@@ -5,8 +5,6 @@ input="$(mktemp)"
 trap 'rm -f "$input"' EXIT
 cat > "$input"
 
-if [ "${PREPUSH_ENV_SYNC:-}" = "true" ]; then
-  node --env-file-if-exists=.env scripts/sync-vercel-env.js < "$input"
-fi
+node --env-file-if-exists=.env scripts/sync-vercel-env.js < "$input"
 
 node --env-file-if-exists=.env scripts/pre-push-attestation.js < "$input"

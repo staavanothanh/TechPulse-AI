@@ -2,15 +2,13 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
   SYNC_ENV_KEY,
-  assertProviderConfigValid,
   createEnvSyncPayload,
   envSyncEnabled,
-  parseProviderConfig,
+  parseArgs,
   runEnvSync,
   serializeProviderConfig,
   syncVercelEnvironmentVariable,
 } from '../../scripts/sync-vercel-env.js'
-
 const VALID_GRAPH = JSON.stringify({
   providerFailureDomains: [],
   providers: [],
@@ -63,13 +61,32 @@ describe('Vercel provider env sync', () => {
     ).toMatchObject({ key: SYNC_ENV_KEY, type: 'encrypted', target: ['production'] })
   })
 
-  it('rejects an invalid target in the payload and the sync entrypoint', () => {
+  it('rejects an invalid target in the payload and sync entrypoint', async () => {
+    const fetchImpl = vi.fn()
+    const state = isolatedState()
     expect(() =>
       createEnvSyncPayload({ key: SYNC_ENV_KEY, value: '{}', target: 'staging' }),
     ).toThrow(/target is invalid/)
-    expect(() =>
-      serializeProviderConfig,
-    ).toBeTypeOf('function')
+    await expect(
+      syncVercelEnvironmentVariable({
+        environment: envWithGraph(),
+        target: 'staging',
+        value: VALID_GRAPH,
+        fetchImpl,
+        readStateImpl: state.readStateImpl,
+        writeStateImpl: state.writeStateImpl,
+      }),
+    ).rejects.toThrow(/target is invalid/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('rejects unknown or empty CLI arguments instead of silently skipping', () => {
+    expect(() => parseArgs(['--targt=production'])).toThrow(/Unknown env-sync argument/)
+    expect(() => parseArgs(['--target='])).toThrow(/target is invalid/)
+    expect(parseArgs(['--target=production', '--dry-run'])).toEqual({
+      target: 'production',
+      dryRun: true,
+    })
   })
 
   it('aborts without writing when the value is invalid JSON', async () => {
