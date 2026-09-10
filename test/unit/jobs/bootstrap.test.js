@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { assertCronObservabilityReady, assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner, DAILY_MATERIALIZATION_BUDGET_MS } from '../../../server/bootstrap/jobs.js'
+import { assertCronObservabilityReady, assertDurableJobsReady, createConfiguredJobRuntime, createConfiguredJobService, createCronDueWorkRunner, createProfiledIndexingDrainRunner, DAILY_MATERIALIZATION_BUDGET_MS, CRON_DUE_WORK_PROFILE, CRON_INDEXING_DRAIN_RESERVE_MS, CRON_RECOVERY_LIMIT } from '../../../server/bootstrap/jobs.js'
 import { createReconciliationRunner } from '../../../server/application/indexing/reconciliation.js'
 import { DURABLE_JOB_AUDIT_VALIDATOR, DURABLE_JOB_COLLECTIONS, DURABLE_JOB_INDEXES } from '../../../scripts/migrations/durable-jobs.js'
 import { CRON_OBSERVABILITY_COLLECTIONS, CRON_OBSERVABILITY_INDEXES } from '../../../scripts/migrations/cron-observability.js'
@@ -605,6 +605,47 @@ describe('durable-jobs bootstrap readiness', () => {
       vi.useRealTimers()
     }
   })
+  it('bounds a non-cooperative timed-out coordinator so the run cannot stall past deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const startedAt = new Date('2026-09-03T10:00:00.000Z')
+      const controller = new AbortController()
+      let coordinatorResolve
+      const coordinatorRunner = vi.fn(() => new Promise((resolve) => { coordinatorResolve = resolve }))
+      const indexingDrainRunner = vi.fn(async (res) => res)
+      const trace = vi.fn()
+      const cron = createCronDueWorkRunner({
+        jobRepository: { materializeDailyIngestion: async () => ({ hasMore: false }) },
+        coordinatorRunner,
+        indexingDrainRunner,
+        trace,
+        now: () => new Date(),
+        materializationBudgetMs: 4_000,
+      })
+
+      const pending = cron({ signal: controller.signal })
+      const outcome = pending.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }))
+
+      // Advance far past the cron budget so the coordinator hits its deadline
+      // and aborts; the non-cooperative promise never resolves.
+      await vi.advanceTimersByTimeAsync(CRON_DUE_WORK_PROFILE.budgetMs + 10_000)
+
+      // The bounded late-settlement await (1s) lets the runner resolve even
+      // though the coordinator promise ignores its abort signal.
+      await vi.advanceTimersByTimeAsync(1_100)
+      const result = await outcome
+      expect(result.ok).toBe(true)
+      expect(result.value.nextAvailableAt).toBeNull()
+      expect(indexingDrainRunner).not.toHaveBeenCalled()
+
+      // Clean up the never-settling promise.
+      coordinatorResolve({ runId: 'late', startedAt, finishedAt: startedAt, queues: {} })
+      await Promise.resolve()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('fails the cron invocation and phase when materializer encounters a non-deadline error', async () => {
     const startedAt = new Date('2026-09-03T10:00:00.000Z')
     const nonDeadlineError = new Error('Database connection lost during materialization')

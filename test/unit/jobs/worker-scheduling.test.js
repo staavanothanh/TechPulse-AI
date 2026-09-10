@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ADMIN_DUE_WORK_PROFILE,
   CRON_DUE_WORK_PROFILE,
+  CRON_INDEXING_DRAIN_RESERVE_MS,
+  CRON_RECOVERY_LIMIT,
   createCronDueWorkRunner,
   createProfiledIndexingDrainRunner,
 } from '../../../server/bootstrap/jobs.js'
@@ -234,11 +236,40 @@ describe('worker scheduling', () => {
     expect(coordinatorRunner).toHaveBeenCalledWith(
       expect.objectContaining({
         maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
-        budgetMs: CRON_DUE_WORK_PROFILE.budgetMs,
+        budgetMs: CRON_DUE_WORK_PROFILE.budgetMs - CRON_INDEXING_DRAIN_RESERVE_MS,
+        maxRecoveries: CRON_RECOVERY_LIMIT,
       }),
     )
     expect(result.coordinatorOptions.maxJobs).toBe(200)
-    expect(result.coordinatorOptions.budgetMs).toBe(240_000)
+    expect(result.coordinatorOptions.budgetMs).toBe(CRON_DUE_WORK_PROFILE.budgetMs - CRON_INDEXING_DRAIN_RESERVE_MS)
+  })
+
+  it('still drains indexing after ingestion consumes its whole coordinator slice', async () => {
+    let currentMs = STARTED_AT.getTime()
+    const now = () => new Date(currentMs)
+
+    const jobRepository = {
+      // Materialization plus a slow coordinator (ingestion) consume the entire
+      // non-reserved budget; the drain must still run with the reserved slice.
+      materializeDailyIngestion: vi.fn(async () => { currentMs += 3_000; return { hasMore: false } }),
+    }
+    const coordinatorRunner = vi.fn(async (options) => {
+      // Simulate ingestion eating its full reserved slice.
+      currentMs += options.budgetMs
+      return { ...baseResult(), startedAt: new Date(STARTED_AT.getTime() + 3_000), coordinatorOptions: options }
+    })
+    const indexingDrainRunner = vi.fn(async (res) => res)
+    const runner = createCronDueWorkRunner({
+      jobRepository,
+      coordinatorRunner,
+      indexingDrainRunner,
+      now,
+    })
+
+    const result = await runner()
+    expect(coordinatorRunner).toHaveBeenCalledTimes(1)
+    expect(indexingDrainRunner).toHaveBeenCalledTimes(1)
+    expect(result.nextAvailableAt).toBeNull()
   })
 
   it('clamps task drain deadline to the global profile deadline', async () => {
@@ -309,7 +340,7 @@ describe('worker scheduling', () => {
     expect(coordinatorRunner).toHaveBeenCalledWith(
       expect.objectContaining({
         maxJobs: 200,
-        budgetMs: 237_000,
+        budgetMs: 237_000 - CRON_INDEXING_DRAIN_RESERVE_MS,
       }),
     )
 

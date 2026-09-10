@@ -147,7 +147,10 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
   const exhaustedQueues = new Set()
 
   const getSelectOptions = (queueName) => {
-    const common = { now: startedAt, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) }
+    // Use a live selection clock so jobs created during this run (e.g. indexing
+    // jobs committed mid-ingestion with availableAt = commit time) become
+    // selectable in the same run. The claim fence still uses claimNow below.
+    const common = { now: now(), deadline: new Date(workDeadline), ...(signal ? { signal } : {}) }
     if (queueName === 'ingestion') return { ...common, excludeSourceIds: [...blockedSourceIds] }
     if (queueName === 'indexing') return { ...common, excludeArticleIds: [...blockedArticleIds] }
     return common

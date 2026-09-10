@@ -23,7 +23,7 @@ import { MongoAccountDeletionRepository } from '../repositories/mongo/account-de
 import { MongoAdminRepository } from '../repositories/mongo/admin-repository.js'
 import { MongoCronEventRepository } from '../repositories/mongo/cron-event-repository.js'
 import { assertGovernanceReady } from './governance-readiness.js'
-import { runtimeFailure, settleBeforeDeadline } from '../jobs/runtime-bounds.js'
+import { runtimeFailure, settleBeforeDeadline, settleWithinGrace } from '../jobs/runtime-bounds.js'
 import { flushRuntimeTrace, MATERIALIZER_PHASE_STAGES, safeEvent, startRuntimePhase } from '../jobs/runtime-trace.js'
 
 const EMPTY_QUEUE_COUNTERS = Object.freeze({ claimed: 0, succeeded: 0, partial: 0, failed: 0, deferred: 0 })
@@ -113,8 +113,24 @@ const CRON_TASK_PROFILES = Object.freeze([
 ])
 export const ADMIN_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 24, budgetMs: 150_000, taskProfiles: ADMIN_TASK_PROFILES })
 export const CRON_DUE_WORK_PROFILE = Object.freeze({ maxJobs: 200, budgetMs: 240_000, taskProfiles: CRON_TASK_PROFILES })
+// Minimum budget the coordinator reserves for the indexing drain inside a cron run,
+// so a run whose budget is consumed by ingestion cannot starve summary/embedding.
+export const CRON_INDEXING_DRAIN_RESERVE_MS = 70_000
+// Recovery allowance for a once-daily cron invocation. The previous default of 3
+// left kill-after-claim leases healing at most three jobs/day across all queues,
+// which is far below a daily backlog; the coordinator drains the recoverable set
+// inside its reserved slice regardless of this cap.
+export const CRON_RECOVERY_LIMIT = 200
+// Floor on the coordinator's work budget when the reserve is deducted. The
+// coordinator never receives less than 1,000 ms, so a tight remaining budget
+// still reserves the rest for the indexing drain instead of starving it.
+const COORDINATOR_MIN_BUDGET_MS = 1_000
 export const INGESTION_EXECUTION_TIMEOUT_MS = 60_000
 export const INGESTION_FINALIZATION_GRACE_MS = 5_000
+// Upper bound on how long a cron phase waits for a timed-out operation to settle
+// after its abort signal has fired, so a non-cooperative operation cannot stall
+// the run past its absolute deadline.
+const CRON_LATE_SETTLEMENT_GRACE_MS = 1_000
 
 function queueAttempts(queues = {}) {
   return Object.values(queues).reduce((total, counters = {}) => total
@@ -186,14 +202,17 @@ async function runCronOperation({ operation, deadline, settlementDeadline, now, 
   )
   try {
     if (settled.kind === 'deadline') {
-      try { await operationPromise } catch { /* parent remains fail-closed after late settlement */ }
+      // Bound the late-settlement wait: a non-cooperative operation that ignores
+      // the abort signal must not stall the cron run past its deadline. The
+      // parent stays fail-closed regardless of how the operation settles.
+      await settleWithinGrace(operationPromise, CRON_LATE_SETTLEMENT_GRACE_MS)
       throw settled.error
     }
     if (!settled.settled) throw settled.error
     return settled.value
   } finally {
     removeParentAbort?.()
-}
+  }
 }
 function isCronControlError(error, signal) {
   const code = typeof error?.code === 'string' ? error.code : ''
@@ -621,6 +640,14 @@ export function createCronDueWorkRunner({
         cronPhase.timeout(undefined, { counters: { deferred: 1 }, ...materializationTraceDetails(materializationSummaryValue) })
         return result
       }
+      const hasIndexingDrain = typeof indexingDrainRunner === 'function'
+      // Cap the coordinator's work budget so ingestion cannot consume the whole
+      // run and starve the indexing drain. The coordinator self-limits its
+      // workDeadline to min(startedAt + budgetMs, deadline); the outer deadline
+      // stays globalDeadline so the drain keeps the full remaining wall-clock.
+      const coordinatorBudgetMs = hasIndexingDrain
+        ? Math.max(COORDINATOR_MIN_BUDGET_MS, remainingBudgetMs - CRON_INDEXING_DRAIN_RESERVE_MS)
+        : remainingBudgetMs
       const coordinated = await runTracedPhase({
         signal,
         trace: emitTrace,
@@ -630,7 +657,8 @@ export function createCronDueWorkRunner({
         execute: () => runCronOperation({
           operation: ({ signal: operationSignal, deadline, settlementDeadline: operationSettlementDeadline }) => coordinatorRunner({
             maxJobs: CRON_DUE_WORK_PROFILE.maxJobs,
-            budgetMs: remainingBudgetMs,
+            maxRecoveries: CRON_RECOVERY_LIMIT,
+            budgetMs: coordinatorBudgetMs,
             runId,
             ...(invocationOrigin ? { invocationOrigin } : {}),
             signal: operationSignal,
@@ -649,7 +677,7 @@ export function createCronDueWorkRunner({
         cronPhase.timeout(coordinated.error, { counters: { deferred: 1 }, ...materializationTraceDetails(materializationSummaryValue) })
         return result
       }
-      if (now().getTime() >= globalDeadline.getTime() || typeof indexingDrainRunner !== 'function') {
+      if (!hasIndexingDrain || now().getTime() >= globalDeadline.getTime()) {
         const result = { ...coordinated, invocationOrigin, materialization: materializationSummaryValue }
         cronPhase.succeed({ counters: coordinated?.queues?.indexing, ...materializationTraceDetails(materializationSummaryValue) })
         return result
