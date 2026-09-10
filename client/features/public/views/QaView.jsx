@@ -679,6 +679,7 @@ function isHistoricalCitation(citation) {
 }
 
 function citationChipTitle(citation, articlesMap) {
+  if (citation?.status === 'unavailable') return 'Nguồn lịch sử'
   const article = citation?.articleId && articlesMap ? articlesMap.get(String(citation.articleId)) : null
   return (
     citation?.titleVi ||
@@ -686,24 +687,31 @@ function citationChipTitle(citation, articlesMap) {
     citation?.titleOriginal ||
     article?.titleOriginal ||
     citation?.title ||
-    (citation?.status === 'unavailable' ? 'Nguồn lịch sử' : citation?.sourceName || 'Bài viết nguồn')
+    citation?.sourceName ||
+    'Bài viết nguồn'
   )
 }
 
 function citationChipLabel(citation, articlesMap) {
+  if (citation?.status === 'unavailable') return 'Citation lịch sử · Nguồn lịch sử'
   const title = citationChipTitle(citation, articlesMap)
   const source = citation?.sourceName && citation.sourceName !== title ? ` · ${citation.sourceName}` : ''
   const base = `${title}${source}`
   return isHistoricalCitation(citation) ? `Citation lịch sử · ${base}` : base
 }
+
 function CitationDrawer({ citation, onClose, articlesMap }) {
   const dialogRef = useDialogFocus(Boolean(citation), onClose)
   if (!citation) return null
-  const url = citation.status === 'unavailable' ? null : safeExternalUrl(citation.originalUrl)
+  const unavailable = citation.status === 'unavailable'
+  const url = unavailable ? null : safeExternalUrl(citation.originalUrl)
   const historical = isHistoricalCitation(citation)
-  const article = citation?.articleId && articlesMap ? articlesMap.get(String(citation.articleId)) : null
-  const displayTitle = citation.titleVi || article?.titleVi || citation.titleOriginal || article?.titleOriginal || 'Bài viết nguồn'
-  const sourceLabel = citation.sourceName || (citation.status === 'unavailable' ? 'Nguồn lịch sử' : displayTitle || 'Nguồn kiểm chứng')
+  const article = !unavailable && citation.articleId && articlesMap ? articlesMap.get(String(citation.articleId)) : null
+  const displayTitle = unavailable
+    ? 'Nguồn lịch sử'
+    : citation.titleVi || article?.titleVi || citation.titleOriginal || article?.titleOriginal || 'Bài viết nguồn'
+  const sourceLabel = unavailable ? 'Nguồn lịch sử' : citation.sourceName || displayTitle || 'Nguồn kiểm chứng'
+
 
   return (
     <div
@@ -860,7 +868,7 @@ function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading =
                         const citation = citationById.get(citationId)
                         const citationNumber = citationNumberMap.get(citationId) || (citationIndex + 1)
                         const feedTitle = citationChipTitle(citation, articlesMap)
-                        const hasDistinctSource = Boolean(citation?.sourceName && citation.sourceName !== feedTitle)
+                        const hasDistinctSource = citation?.status !== 'unavailable' && Boolean(citation?.sourceName && citation.sourceName !== feedTitle)
                         return citation ? (
                           <button
                             className="public-citation-chip"

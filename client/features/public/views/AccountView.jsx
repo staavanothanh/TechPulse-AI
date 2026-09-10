@@ -27,6 +27,11 @@ export default function AccountView({
   const COUNTDOWN_SECONDS = 5
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS)
   const countdownIntervalRef = useRef(null)
+  useEffect(() => {
+    if (isGoogleUser || !initialPasswordSuccessOpen) return
+    setCountdown(COUNTDOWN_SECONDS)
+    setPasswordSuccessOpen(true)
+  }, [COUNTDOWN_SECONDS, initialPasswordSuccessOpen, isGoogleUser])
 
   const DELETION_COUNTDOWN_SECONDS = 5
   const [deletionConfirmationOpen, setDeletionConfirmationOpen] = useState(!isGoogleUser && initialDeletionOpen)

@@ -16,6 +16,118 @@ import PublicApp, {
 
 const render = (Component, props = {}) =>
   renderToStaticMarkup(React.createElement(Component, props))
+function createMountedRunner(component) {
+  let hookIndex = 0
+  const hooks = []
+  const effectCleanups = []
+  let currentProps
+  let latestResult
+  let pendingEffects = []
+  let rendering = false
+  let rerenderPending = false
+  let disposed = false
+
+  const depsChanged = (previous, next) => (
+    !previous || !next || !previous.deps || previous.deps.length !== next.length
+      || previous.deps.some((value, index) => !Object.is(value, next[index]))
+  )
+  const dispatcher = {
+    useState(initial) {
+      const index = hookIndex++
+      if (hooks[index] === undefined) hooks[index] = typeof initial === 'function' ? initial() : initial
+      const setState = (next) => {
+        const value = typeof next === 'function' ? next(hooks[index]) : next
+        if (Object.is(value, hooks[index])) return
+        hooks[index] = value
+        rerenderPending = true
+        if (!rendering) render()
+      }
+      return [hooks[index], setState]
+    },
+    useRef(initial) {
+      const index = hookIndex++
+      if (hooks[index] === undefined) hooks[index] = { current: initial }
+      return hooks[index]
+    },
+    useCallback(fn, deps) {
+      const index = hookIndex++
+      const previous = hooks[index]
+      if (previous && !depsChanged(previous, deps)) return previous.fn
+      hooks[index] = { fn, deps }
+      return fn
+    },
+    useMemo(fn, deps) {
+      const index = hookIndex++
+      const previous = hooks[index]
+      if (previous && !depsChanged(previous, deps)) return previous.value
+      const value = fn()
+      hooks[index] = { value, deps }
+      return value
+    },
+    useEffect(effect, deps) {
+      const index = hookIndex++
+      const previous = hooks[index]
+      hooks[index] = { effect, deps }
+      if (depsChanged(previous, deps)) pendingEffects.push({ index, effect })
+    },
+  }
+
+  function render(props = currentProps) {
+    if (disposed) return latestResult
+    currentProps = props
+    if (rendering) {
+      rerenderPending = true
+      return latestResult
+    }
+    rendering = true
+    try {
+      do {
+        rerenderPending = false
+        hookIndex = 0
+        pendingEffects = []
+        const internals = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE
+        const previousDispatcher = internals.H
+        internals.H = dispatcher
+        try {
+          latestResult = component(currentProps)
+        } finally {
+          internals.H = previousDispatcher
+        }
+        for (const { index, effect } of pendingEffects) {
+          if (typeof effectCleanups[index] === 'function') effectCleanups[index]()
+          const cleanup = effect()
+          effectCleanups[index] = typeof cleanup === 'function' ? cleanup : undefined
+        }
+      } while (rerenderPending)
+    } finally {
+      rendering = false
+    }
+    return latestResult
+  }
+
+  function unmount() {
+    if (disposed) return
+    disposed = true
+    for (const cleanup of effectCleanups) {
+      if (typeof cleanup === 'function') cleanup()
+    }
+  }
+
+  return { render, unmount, get current() { return latestResult } }
+}
+
+function findElement(node, predicate) {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const match = findElement(child, predicate)
+      if (match) return match
+    }
+    return null
+  }
+  if (!node || typeof node !== 'object') return null
+  if (predicate(node)) return node
+  return findElement(node.props?.children, predicate)
+}
 
 const article = {
   id: 'article-1',
@@ -42,6 +154,56 @@ const handlers = Object.freeze({
 })
 
 describe('public feature presentation contract', () => {
+  it('opens the password-success dialog when its mounted signal transitions true and keeps logout semantics intact', () => {
+    const previousDocument = globalThis.document
+    const previousSetInterval = globalThis.setInterval
+    const previousClearInterval = globalThis.clearInterval
+    const fakeDocument = {
+      activeElement: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    const onLogout = vi.fn()
+    const baseProps = {
+      user: { id: 'u-password', email: 'reader@example.test', role: 'user', topicPreferences: [], hasPassword: true },
+      onChangePassword: vi.fn(),
+      onLogout,
+      initialPasswordSuccessOpen: false,
+    }
+    const runner = createMountedRunner(AccountView)
+    globalThis.document = fakeDocument
+    globalThis.setInterval = vi.fn(() => 1)
+    globalThis.clearInterval = vi.fn()
+    try {
+      runner.render(baseProps)
+      expect(findElement(runner.current, (element) => element.props?.role === 'dialog')).toBeNull()
+
+      runner.render({ ...baseProps, initialPasswordSuccessOpen: true })
+      const dialog = findElement(
+        runner.current,
+        (element) => element.props?.role === 'dialog' && element.props?.['aria-labelledby'] === 'public-password-success-title',
+      )
+      expect(dialog).not.toBeNull()
+      const logoutButton = findElement(dialog, (element) => element.type === 'button' && element.props?.className === 'public-btn public-btn-primary')
+      expect(logoutButton).not.toBeNull()
+
+      logoutButton.props.onClick()
+
+      expect(onLogout).toHaveBeenCalledTimes(1)
+      expect(onLogout).toHaveBeenCalledWith('Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.')
+      expect(findElement(runner.current, (element) => element.props?.role === 'dialog')).toBeNull()
+
+      runner.render({ ...baseProps, initialPasswordSuccessOpen: true })
+      expect(findElement(runner.current, (element) => element.props?.role === 'dialog')).toBeNull()
+    } finally {
+      runner.unmount()
+      if (previousDocument === undefined) delete globalThis.document
+      else globalThis.document = previousDocument
+      globalThis.setInterval = previousSetInterval
+      globalThis.clearInterval = previousClearInterval
+    }
+  })
+
   it('renders the landing/auth presentation with the guarded guest affordance', () => {
     const html = render(LandingPage, { auth: { mode: 'login', onSubmit: handlers.onSubmit } })
     expect(html).toContain('Nắm nhanh công nghệ.')

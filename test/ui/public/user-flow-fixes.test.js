@@ -152,6 +152,39 @@ describe('public user-flow regressions', () => {
     expect(html).toContain('Citation lịch sử')
     expect(html).toContain('Nguồn còn khả dụng')
   })
+  it('keeps unavailable citation chips and drawer headings redacted despite matching article data', () => {
+    const redactedTitle = 'redacted-unavailable-citation-fixture'
+    const citation = {
+      id: 'citation-unavailable',
+      status: 'unavailable',
+      articleId: article.id,
+      sourceName: redactedTitle,
+      titleVi: redactedTitle,
+      titleOriginal: redactedTitle,
+      title: redactedTitle,
+    }
+    const chipHtml = render(QaView, {
+      state: 'ready',
+      articles: [{ ...article, titleVi: redactedTitle, titleOriginal: redactedTitle }],
+      messages: [{
+        id: 'message-unavailable',
+        role: 'assistant',
+        paragraphs: [{ text: 'Câu trả lời kiểm thử.', citationIds: [citation.id] }],
+        citations: [citation],
+      }],
+    })
+    const drawerHtml = render(CitationDrawer, {
+      citation,
+      articlesMap: new Map([[article.id, { titleVi: redactedTitle, titleOriginal: redactedTitle }]]),
+      onClose: noop,
+    })
+
+    expect(chipHtml).toContain('Citation lịch sử · Nguồn lịch sử')
+    expect(chipHtml).not.toContain(redactedTitle)
+    expect(drawerHtml).toContain('Nguồn lịch sử')
+    expect(drawerHtml).toContain('Nguồn lịch sử không còn khả dụng.')
+    expect(drawerHtml).not.toContain(redactedTitle)
+  })
 
   it('renders suggested prompt chips in the Q&A empty state', () => {
     const html = render(QaView, { state: 'empty' })
