@@ -89,7 +89,7 @@ describe('Step 2 auth application service', () => {
     const repository = {
       withTransaction: vi.fn(async (work) => work('mongo-session')),
       assertActiveSessionForUser: vi.fn(async () => true),
-      revokeSession: vi.fn(async () => undefined),
+      revokeSession: vi.fn(async () => ({ matchedCount: 1 })),
       insertAudit: vi.fn(async () => undefined),
     }
     const service = createAuthService({ repository })
@@ -99,6 +99,22 @@ describe('Step 2 auth application service', () => {
     await service.logout({ auth, csrfToken })
 
     expect(repository.assertActiveSessionForUser).toHaveBeenCalledWith({ sessionId: auth.session._id, userId: auth.user._id, sessionVersion: 0 }, { session: 'mongo-session' })
+    expect(repository.insertAudit).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a logout when the session revocation matches nothing and skips the audit', async () => {
+    const repository = {
+      withTransaction: vi.fn(async (work) => work('mongo-session')),
+      assertActiveSessionForUser: vi.fn(async () => true),
+      revokeSession: vi.fn(async () => ({ matchedCount: 0 })),
+      insertAudit: vi.fn(async () => undefined),
+    }
+    const service = createAuthService({ repository })
+    const csrfToken = 'csrf-token-for-user-1234567890'
+    const auth = { user: { ...user, _id: '507f1f77bcf86cd799439010' }, session: { _id: '507f1f77bcf86cd799439012', userSessionVersion: 0, csrfSecretHash: hashCsrfToken(csrfToken) } }
+
+    await expect(service.logout({ auth, csrfToken })).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    expect(repository.insertAudit).not.toHaveBeenCalled()
   })
 
   it('rejects an admin user mutation when transactional admission is denied', async () => {

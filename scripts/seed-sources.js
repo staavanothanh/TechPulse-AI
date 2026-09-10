@@ -16,7 +16,7 @@ export const SOURCE_SEEDS = Object.freeze([
 ])
 
 function deterministicId(sourceKey) {
-  return new ObjectId(createHash('sha256').update(`techpulse-source-seed\u0000${sourceKey}`).digest().subarray(0, 12)).toHexString()
+  return new ObjectId(createHash('sha256').update(`techpulse-real-source-seed\u0000${sourceKey}`).digest().subarray(0, 12)).toHexString()
 }
 
 export function buildSeedDrafts({ now = new Date() } = {}) {

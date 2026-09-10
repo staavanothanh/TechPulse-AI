@@ -277,7 +277,7 @@ describe('chat repository coverage contracts', () => {
     const rows = [
       {
         _id: CHAT_SESSION_ID,
-        title: 'One',
+        title: `${'A'.repeat(45)}...`,
         messageCount: 0,
         messages: [],
         updatedAt: NOW,
@@ -304,7 +304,7 @@ describe('chat repository coverage contracts', () => {
 
     expect(result).toMatchObject({
       hasNext: true,
-      sessions: [{ id: CHAT_SESSION_ID.toHexString(), title: 'One' }, { title: null }],
+      sessions: [{ id: CHAT_SESSION_ID.toHexString(), title: `${'A'.repeat(39)}…` }, { title: null }],
     })
     expect(result.nextCursor).toEqual(expect.any(String))
     expect(collections.chatSessions.find).toHaveBeenCalledWith(
@@ -656,13 +656,14 @@ describe('chat repository coverage contracts', () => {
     expect(collections.chatSessions.insertOne).not.toHaveBeenCalled()
   })
 
-  it('generates session title from first question and preserves existing title', async () => {
+  it('generates <=40-character titles from the first question and preserves or replaces titles by policy', async () => {
     expect(createSessionTitle(null)).toBeNull()
     expect(createSessionTitle('   ')).toBeNull()
     expect(createSessionTitle('Tin tuc ve tri tue nhan tao')).toBe('Tin tuc ve tri tue nhan tao')
-    expect(createSessionTitle('Mo hinh ngon ngu lon moi nhat cua Google hoat dong nhu the nao trong thuc te?', 45))
-      .toBe('Mo hinh ngon ngu lon moi nhat cua Google...')
-    expect(createSessionTitle('A'.repeat(60), 45)).toBe(`${'A'.repeat(45)}...`)
+    const wordBoundaryTitle = createSessionTitle('Mo hinh ngon ngu lon moi nhat cua Google hoat dong nhu the nao trong thuc te?')
+    expect(wordBoundaryTitle).toBe('Mo hinh ngon ngu lon moi nhat cua…')
+    expect(wordBoundaryTitle.length).toBeLessThanOrEqual(40)
+    expect(createSessionTitle('A'.repeat(60))).toBe(`${'A'.repeat(39)}…`)
 
     const { repository, collections } = makeDatabase()
     const insertedDocs = []
@@ -695,7 +696,7 @@ describe('chat repository coverage contracts', () => {
     expect(insertedDocs[0].title).toBe(createSessionTitle(longQuestion))
     expect(result.session.title).toBe(createSessionTitle(longQuestion))
 
-    // Second question into existing session with title: title should not be overwritten
+    // A second question must not overwrite an existing custom title.
     collections.chatSessions.findOne.mockResolvedValue(insertedDocs[0])
     let updatedFields = null
     collections.chatSessions.findOneAndUpdate.mockImplementation(async (filter, update) => {
@@ -721,5 +722,16 @@ describe('chat repository coverage contracts', () => {
     })
 
     expect(updatedFields?.title).toBeUndefined()
+
+    // The exact default placeholder is replaceable by the first question title.
+    insertedDocs[0].title = 'Phiên hỏi đáp'
+    await repository.appendAnswer({
+      actor: ACTOR,
+      chatSessionId: insertedDocs[0]._id.toHexString(),
+      question: 'Cau hoi dau tien sau placeholder',
+      answer: { id: 'ans-3', status: 'answered', paragraphs: [{ text: 'Tra loi moi', citationIds: [] }] },
+      now: NOW,
+    })
+    expect(updatedFields?.title).toBe(createSessionTitle('Cau hoi dau tien sau placeholder'))
   })
 })

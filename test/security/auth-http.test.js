@@ -91,6 +91,17 @@ describe('Step 2 auth HTTP boundary', () => {
     expect(response.headers.get('set-cookie')).toContain('__Host-techpulse_session=;')
     expect(response.headers.get('cache-control')).toBe('no-store, private')
   })
+  it('rejects logout without a session cookie before invoking the service', async () => {
+    authService.logout.mockClear()
+    const response = await fetch(`${origin}/api/v1/auth/logout`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:3000', 'X-CSRF-Token': 'c'.repeat(32) },
+    })
+
+    expect(response.status).toBe(401)
+    expect(authService.logout).not.toHaveBeenCalled()
+  })
+
 
   it('serializes unauthenticated current-user errors with the OpenAPI envelope', async () => {
     const response = await fetch(`${origin}/api/v1/me`)

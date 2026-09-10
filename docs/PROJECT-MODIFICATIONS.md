@@ -262,13 +262,13 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ### Bối cảnh & Lý do thay đổi
 - **Trước khi sửa:** Mọi phiên hỏi đáp mới tạo đều có tiêu đề mặc định là `"Phiên hỏi đáp"`. Khi người dùng có nhiều phiên trò chuyện trong lịch sử, danh sách hiển thị hàng loạt mục trùng tên nhau, rất khó phân biệt nội dung của từng phiên.
-- **Giải pháp:** Tự động lấy câu hỏi đầu tiên của người dùng trong phiên, cắt ngắn gọn gàng (tối đa 40 ký tự) để làm tiêu đề hiển thị cho phiên.
+- **Giải pháp:** Tự động lấy câu hỏi đầu tiên của người dùng trong phiên, cắt tại ranh giới từ để tiêu đề trả về có tối đa 40 ký tự (đã tính cả dấu ba chấm `…` nếu có).
 
 ### Chi tiết thay đổi mã nguồn
 1. **Backend Repository (`server/repositories/mongo/chat-repository.js`):**
    - Trong hàm `appendMessage(sessionId, message, options)`: Khi tin nhắn đầu tiên (`role === 'user'`) được thêm vào phiên chat:
      - Kiểm tra nếu phiên hiện tại chưa có tiêu đề riêng hoặc vẫn mang tiêu đề mặc định `"Phiên hỏi đáp"`.
-     - Trích xuất nội dung câu hỏi đầu tiên: lấy tối đa 40 ký tự, nếu câu hỏi dài hơn thì cắt tại ranh giới từ và thêm dấu ba chấm `…`.
+     - Trích xuất nội dung câu hỏi đầu tiên: khi vượt quá giới hạn, dành một ký tự cho dấu ba chấm `…`, cắt phần còn lại tại ranh giới từ và không vượt quá tổng cộng 40 ký tự.
      - Cập nhật trường `title` của phiên trong MongoDB cùng lúc với việc append message, không phát sinh thêm round-trip database.
    - Khi truy vấn `listSessions(userId)`: Trả về trường `title` đã lưu.
 

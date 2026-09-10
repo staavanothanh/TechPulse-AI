@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createSessionActions,
+  recoverPendingLogout,
   withSessionRecovery,
 } from '../../client/app/integration/session-actions.js'
 import {
@@ -139,6 +140,81 @@ describe('application session actions', () => {
     })
     expect(applySession).toHaveBeenCalledWith(null, null, null)
   })
+  it.each([
+    ['503', Object.assign(new Error('service unavailable'), { status: 503 })],
+    ['403', Object.assign(new Error('csrf rejected'), { status: 403 })],
+    ['network', new Error('network unavailable')],
+  ])('preserves local session and CSRF after a %s logout failure', async (_label, failure) => {
+    const api = {
+      logout: vi.fn()
+        .mockRejectedValueOnce(failure)
+        .mockResolvedValueOnce({ data: {} }),
+    }
+    const applySession = vi.fn()
+    const actions = createSessionActions({ api, getCsrfToken: () => 'csrf-retry', applySession })
+
+    await expect(actions.logout()).rejects.toBe(failure)
+    expect(applySession).not.toHaveBeenCalled()
+
+    await actions.logout()
+    expect(api.logout).toHaveBeenNthCalledWith(2, {
+      credentials: 'same-origin',
+      headers: { 'X-CSRF-Token': 'csrf-retry' },
+    })
+    expect(applySession).toHaveBeenCalledWith(null, null, null)
+  })
+
+  it('bootstraps CSRF before pending logout and clears markers only after success', async () => {
+    const calls = []
+    const storage = { removeItem: vi.fn() }
+    const api = {
+      getCurrentUser: vi.fn(async (options) => {
+        calls.push(['me', options])
+        return response({ id: 'user-after-reload' }, 'csrf-bootstrapped')
+      }),
+      logout: vi.fn(async (options) => {
+        calls.push(['logout', options])
+        return { data: {} }
+      }),
+    }
+
+    await expect(recoverPendingLogout({ api, storage, pendingNotice: 'Đăng xuất sau đổi mật khẩu.' })).resolves.toEqual({
+      status: 'cleared',
+      notice: 'Đăng xuất sau đổi mật khẩu.',
+    })
+    expect(calls).toEqual([
+      ['me', { credentials: 'same-origin' }],
+      ['logout', { credentials: 'same-origin', headers: { 'X-CSRF-Token': 'csrf-bootstrapped' } }],
+    ])
+    expect(storage.removeItem).toHaveBeenCalledWith('techpulse_pending_logout')
+  })
+
+  it('keeps the pending logout marker on transient recovery failure', async () => {
+    const storage = { removeItem: vi.fn() }
+    const api = {
+      getCurrentUser: vi.fn().mockRejectedValue(Object.assign(new Error('temporary outage'), { status: 503 })),
+      logout: vi.fn(),
+    }
+
+    await expect(recoverPendingLogout({ api, storage, pendingNotice: 'Đăng xuất sau đổi mật khẩu.' })).resolves.toMatchObject({
+      status: 'retry',
+      notice: 'Đăng xuất sau đổi mật khẩu.',
+      error: { status: 503 },
+    })
+    expect(api.logout).not.toHaveBeenCalled()
+    expect(storage.removeItem).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['bootstrap', { getCurrentUser: vi.fn().mockRejectedValue(Object.assign(new Error('expired'), { status: 401 })) }],
+    ['logout', { getCurrentUser: vi.fn().mockResolvedValue(response()), logout: vi.fn().mockRejectedValue(Object.assign(new Error('expired'), { status: 401 })) }],
+  ])('clears the pending marker when the server reports an invalid session during %s', async (_stage, api) => {
+    const storage = { removeItem: vi.fn() }
+
+    await expect(recoverPendingLogout({ api, storage, pendingNotice: 'Đăng xuất sau đổi mật khẩu.' })).resolves.toMatchObject({ status: 'cleared' })
+    expect(storage.removeItem).toHaveBeenCalledWith('techpulse_pending_logout')
+  })
+
   it('sends the current CSRF token for account deletion before clearing the session', async () => {
     const api = { requestAccountDeletion: vi.fn().mockResolvedValue({ data: {} }) }
     const applySession = vi.fn()
@@ -223,11 +299,12 @@ describe('application session actions', () => {
     expect(authErrorForRedirect('')).toBeNull()
   })
 
-  it('commits the rotated session after a password change and omits currentPassword for first-time setup', async () => {
+  it('commits the rotated session before marking password logout pending', async () => {
     const rotatedUser = { id: 'user-opaque', role: 'user', hasPassword: true }
     const api = { changePassword: vi.fn().mockResolvedValue(response(rotatedUser, 'csrf-rotated')) }
-    const applySession = vi.fn()
-    const onPasswordChangeSuccess = vi.fn()
+    const events = []
+    const applySession = vi.fn(() => events.push('commit'))
+    const onPasswordChangeSuccess = vi.fn(() => events.push('pending-marker'))
     const actions = createSessionActions({
       api,
       getCsrfToken: () => 'csrf-in-memory',
@@ -245,6 +322,7 @@ describe('application session actions', () => {
     )
     expect(applySession).toHaveBeenLastCalledWith(rotatedUser, 'csrf-rotated', null)
     expect(onPasswordChangeSuccess).toHaveBeenLastCalledWith('Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.')
+    expect(events).toEqual(['commit', 'pending-marker'])
 
     await actions.changePassword({ newPassword: 'first-password-1' })
     expect(api.changePassword).toHaveBeenLastCalledWith(
@@ -260,10 +338,12 @@ describe('application session actions', () => {
       changePassword: vi.fn(() => new Promise((resolve) => { resolveChange = resolve })),
     }
     const applySession = vi.fn()
+    const onPasswordChangeSuccess = vi.fn()
     const actions = createSessionActions({
       api,
       getCsrfToken: () => 'csrf-current',
       applySession,
+      onPasswordChangeSuccess,
       beginSessionTransition: () => { epoch += 1; return epoch },
       isSessionTransitionCurrent: (value) => value === epoch,
     })
@@ -274,7 +354,9 @@ describe('application session actions', () => {
     await pending
 
     expect(applySession).not.toHaveBeenCalled()
+    expect(onPasswordChangeSuccess).not.toHaveBeenCalled()
   })
+
   it('serializes password rotation ahead of concurrent preference saves and uses the rotated CSRF token', async () => {
     let resolvePassword
     let resolvePreferences
@@ -302,6 +384,7 @@ describe('application session actions', () => {
     resolvePreferences()
     await preferencesPending
   })
+
   it('resynchronizes a stable controller after an external session rerender', async () => {
     let csrfToken = 'csrf-t0'
     const api = {

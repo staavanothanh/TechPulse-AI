@@ -8,6 +8,7 @@ import { useTheme } from './theme/use-theme.js'
 import {
   createSessionActions,
   recoverBootstrapSession,
+  recoverPendingLogout,
   withSessionRecovery,
 } from './app/integration/session-actions.js'
 import {
@@ -32,6 +33,7 @@ const EMPTY_SESSION = Object.freeze({
   error: null,
   notice: null,
 })
+const PENDING_LOGOUT_RECOVERY_ERROR = 'Không thể hoàn tất đăng xuất sau khi đổi mật khẩu. Phiên vẫn được giữ để thử lại.'
 
 function sessionIdentity(session) {
   if (session?.status !== 'ready' || !session?.user) return 'guest'
@@ -224,19 +226,27 @@ export default function App() {
     const requestEpoch = sessionEpochRef.current
     if (typeof window !== 'undefined' && window.sessionStorage) {
       try {
-        const pendingNotice = window.sessionStorage.getItem('techpulse_pending_logout')
+        const storage = window.sessionStorage
+        const pendingNotice = storage.getItem('techpulse_pending_logout')
         if (pendingNotice) {
-          window.sessionStorage.removeItem('techpulse_pending_logout')
-          window.sessionStorage.removeItem('techpulse_password_success')
-          window.sessionStorage.removeItem('techpulse_logout_deadline')
-          void api.logout({ credentials: 'same-origin' }).catch(() => {})
-          if (isActive() && requestEpoch === sessionEpochRef.current) {
-            applySession(null, null, pendingNotice)
-          }
+          void recoverPendingLogout({ api, storage, pendingNotice }).then((result) => {
+            if (!isActive() || requestEpoch !== sessionEpochRef.current) return
+            if (result.status === 'cleared') {
+              applySession(null, null, pendingNotice)
+              return
+            }
+            setSession({
+              status: 'error',
+              user: null,
+              csrfToken: null,
+              error: PENDING_LOGOUT_RECOVERY_ERROR,
+              notice: pendingNotice,
+            })
+          })
           return
         }
       } catch {
-        // ignore
+        // ignore storage access failures and continue with the normal bootstrap.
       }
     }
 

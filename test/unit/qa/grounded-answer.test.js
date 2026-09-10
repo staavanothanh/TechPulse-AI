@@ -169,18 +169,18 @@ describe('Step 10 paragraph citation and support boundary', () => {
     ])
   })
 
-  it('serializes unavailable historical citation without URL/title/date', () => {
-    expect(serializeHistoricalCitation({ id: 'C1', articleId: 'a', sourceId: 's', status: 'takedown' })).toEqual({
+  it('serializes unavailable historical citation without URL/title/date or titleVi', () => {
+    expect(serializeHistoricalCitation({ id: 'C1', articleId: 'a', sourceId: 's', status: 'takedown', titleVi: 'Không được tiết lộ' })).toEqual({
       id: 'C1', status: 'unavailable', articleId: 'a', sourceId: 's', unavailableReason: 'takedown',
     })
   })
 
-  it('projects a live citation to the strict historical union without public-only fields', () => {
+  it('round-trips titleVi through the available historical citation shape', () => {
     const historical = serializeHistoricalCitation({
       id: 'C1', status: 'available', articleId: 'article-1', sourceId: 'source-1', originalUrl: 'https://example.com/articles/1',
-      titleOriginal: 'Bài viết về mô hình ngôn ngữ', publishedAt: '2026-08-10T00:00:00.000Z', sourceName: 'Không được persist', author: 'Không được persist', sourceLanguage: 'vi',
+      titleOriginal: 'Bài viết về mô hình ngôn ngữ', titleVi: 'Bài viết về mô hình ngôn ngữ bằng tiếng Việt', publishedAt: '2026-08-10T00:00:00.000Z', sourceName: 'Không được persist', author: 'Không được persist', sourceLanguage: 'vi',
     })
-    expect(historical).toEqual({ id: 'C1', status: 'available', articleId: 'article-1', sourceId: 'source-1', originalUrl: 'https://example.com/articles/1', titleOriginal: 'Bài viết về mô hình ngôn ngữ', publishedAt: '2026-08-10T00:00:00.000Z' })
+    expect(historical).toEqual({ id: 'C1', status: 'available', articleId: 'article-1', sourceId: 'source-1', originalUrl: 'https://example.com/articles/1', titleOriginal: 'Bài viết về mô hình ngôn ngữ', titleVi: 'Bài viết về mô hình ngôn ngữ bằng tiếng Việt', publishedAt: '2026-08-10T00:00:00.000Z' })
   })
 
   it('persists only supported provider verdict and deterministically refuses uncertainty', () => {

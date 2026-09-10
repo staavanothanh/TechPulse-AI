@@ -32,6 +32,14 @@ function createHookRunner(component) {
       hooks[index] = { fn, deps }
       return fn
     },
+    useMemo(fn, deps) {
+      const index = hookIndex++
+      const previous = hooks[index]
+      if (previous && deps && previous.deps?.length === deps.length && previous.deps.every((value, offset) => Object.is(value, deps[offset]))) return previous.value
+      const value = fn()
+      hooks[index] = { value, deps }
+      return value
+    },
     useEffect(effect, deps) {
       const index = hookIndex++
       const previous = hooks[index]

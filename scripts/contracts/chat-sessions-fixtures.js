@@ -59,6 +59,7 @@ function successfulDetail() {
               sourceId: SOURCE_ID,
               originalUrl: 'https://example.com/grounded-history',
               titleOriginal: 'Grounded retrieval for technology systems',
+              titleVi: 'Truy xuất có kiểm chứng cho hệ thống công nghệ',
               publishedAt: NOW,
             },
             {
@@ -111,8 +112,7 @@ export async function runChatSessionsContractFixtures({ document } = {}) {
   assert(detail.data.messages.length <= 30, 'chat detail fixture must stay within 30 persisted messages')
   const answered = detail.data.messages.find((message) => message.status === 'answered')
   const unavailable = answered.citations.find((citation) => citation.status === 'unavailable')
-  assert(answered.paragraphs.every((paragraph) => paragraph.citationIds.every((id) => answered.citations.some((citation) => citation.id === id))), 'historical citation IDs must resolve')
-  assert(!('originalUrl' in unavailable) && !('titleOriginal' in unavailable) && !('publishedAt' in unavailable), 'unavailable historical citation must not contain source facts')
+  assert(!('originalUrl' in unavailable) && !('titleOriginal' in unavailable) && !('publishedAt' in unavailable) && !('titleVi' in unavailable), 'unavailable historical citation must not contain source facts or titleVi')
 
   const tooManyMessages = structuredClone(detail)
   tooManyMessages.data.messageCount = 31

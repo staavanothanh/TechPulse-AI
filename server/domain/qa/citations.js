@@ -21,6 +21,14 @@ function dateValue(value) {
   if (Number.isNaN(date.getTime())) throw new QaCitationIntegrityError('Citation date is invalid')
   return date.toISOString()
 }
+function historicalTitleVi(value) {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (typeof value !== 'string') throw new Error('Historical citation titleVi is invalid')
+  const normalized = value.trim()
+  return normalized || null
+}
+
 
 export function citationEvidenceMetadata(evidence) {
   const article = evidence?.article
@@ -77,6 +85,7 @@ export function serializeHistoricalCitation(value) {
   if (value.status === 'available') {
     const parsedUrl = new URL(value.originalUrl)
     if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password) throw new Error('Historical citation URL is invalid')
+    const titleVi = historicalTitleVi(value.titleVi)
     return {
       id: value.id,
       status: 'available',
@@ -84,6 +93,7 @@ export function serializeHistoricalCitation(value) {
       sourceId: idValue(value.sourceId),
       originalUrl: parsedUrl.toString(),
       titleOriginal: value.titleOriginal,
+      ...(titleVi !== undefined ? { titleVi } : {}),
       publishedAt: dateValue(value.publishedAt),
     }
   }

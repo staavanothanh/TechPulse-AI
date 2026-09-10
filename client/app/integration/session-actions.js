@@ -30,6 +30,45 @@ function csrfHeaders(csrfToken, extra = {}) {
     throw Object.assign(new Error('Phiên đăng nhập không còn hợp lệ.'), { status: 401 })
   return { ...extra, 'X-CSRF-Token': csrfToken }
 }
+const PENDING_LOGOUT_STORAGE_KEYS = Object.freeze([
+  'techpulse_pending_logout',
+  'techpulse_password_success',
+  'techpulse_logout_deadline',
+])
+
+function clearPendingLogoutMarkers(storage) {
+  if (!storage || typeof storage.removeItem !== 'function') return
+  for (const key of PENDING_LOGOUT_STORAGE_KEYS) {
+    try {
+      storage.removeItem(key)
+    } catch {
+      // A storage write failure must not change the server logout result.
+    }
+  }
+}
+
+export async function recoverPendingLogout({ api, storage, pendingNotice } = {}) {
+  try {
+    const response = await api.getCurrentUser({ credentials: 'same-origin' })
+    const csrfToken = response?.data?.csrfToken
+    if (typeof csrfToken !== 'string' || csrfToken.length === 0) {
+      const error = new Error('Không thể khôi phục CSRF để hoàn tất đăng xuất.')
+      error.code = 'csrf_bootstrap_invalid'
+      error.retryable = true
+      throw error
+    }
+    await api.logout({ credentials: 'same-origin', headers: { 'X-CSRF-Token': csrfToken } })
+    clearPendingLogoutMarkers(storage)
+    return { status: 'cleared', notice: pendingNotice }
+  } catch (error) {
+    if (error?.status === 401) {
+      clearPendingLogoutMarkers(storage)
+      return { status: 'cleared', notice: pendingNotice, sessionInvalid: true }
+    }
+    return { status: 'retry', notice: pendingNotice, error }
+  }
+}
+
 
 export function recoverBootstrapSession(error) {
   return bootstrapSessionFailure(error)
@@ -141,8 +180,9 @@ export function createSessionActions({
       const headers = csrfHeaders(csrfToken)
       try {
         await api.logout({ credentials: 'same-origin', headers })
-      } catch {
-        // Đảm bảo client luôn thu hồi phiên cục bộ ngay cả khi gọi API logout gặp lỗi mạng/phiên
+      } catch (error) {
+        if (error?.status === 401) currentCsrfToken = null
+        throw error
       }
       currentCsrfToken = null
       const nextNotice = typeof notice === 'string' ? notice : null
@@ -194,15 +234,13 @@ export function createSessionActions({
         credentials: 'same-origin',
         headers: csrfHeaders(csrfToken, { 'Content-Type': 'application/json' }),
       })
-      currentCsrfToken = response.data.csrfToken
-      if (typeof onPasswordChangeSuccess === 'function') {
-        onPasswordChangeSuccess(
-          body.currentPassword !== undefined
-            ? 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.'
-            : 'Đặt mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.'
-        )
+      const nextNotice = body.currentPassword !== undefined
+        ? 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.'
+        : 'Đặt mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.'
+      if (canCommit(transition)) {
+        commitSessionState(response.data.user, response.data.csrfToken, null, transition)
+        if (typeof onPasswordChangeSuccess === 'function') onPasswordChangeSuccess(nextNotice)
       }
-      if (canCommit(transition)) commitSessionState(response.data.user, response.data.csrfToken, null, transition)
       return response
     })
   }

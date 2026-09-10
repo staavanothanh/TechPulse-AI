@@ -5,11 +5,73 @@ import { historicalCitationDocument, MongoChatRepository, redactHistoricalCitati
 describe('Step 10 historical citation persistence and read redaction', () => {
   const articleId = new ObjectId('507f1f77bcf86cd799439011')
   const sourceId = new ObjectId('507f1f77bcf86cd799439012')
-  const available = { id: 'C1', articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), sourceName: 'Nguồn public-only', author: 'Tác giả public-only', sourceLanguage: 'vi', titleOriginal: 'Bài hợp lệ', originalUrl: 'https://example.test/article', publishedAt: '2026-08-12T00:00:00.000Z' }
+  const available = { id: 'C1', articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), sourceName: 'Nguồn public-only', author: 'Tác giả public-only', sourceLanguage: 'vi', titleOriginal: 'Bài hợp lệ', titleVi: 'Bài hợp lệ bằng tiếng Việt', originalUrl: 'https://example.test/article', publishedAt: '2026-08-12T00:00:00.000Z' }
 
-  it('persists only the strict available historical union from a public answer citation', () => {
-    expect(historicalCitationDocument(available)).toEqual({ id: 'C1', status: 'available', articleId, sourceId, titleOriginal: 'Bài hợp lệ', originalUrl: 'https://example.test/article', publishedAt: new Date('2026-08-12T00:00:00.000Z'), sourceName: 'Nguồn public-only' })
+  it('persists titleVi in the strict available historical union', () => {
+    expect(historicalCitationDocument(available)).toEqual({ id: 'C1', status: 'available', articleId, sourceId, titleOriginal: 'Bài hợp lệ', titleVi: 'Bài hợp lệ bằng tiếng Việt', originalUrl: 'https://example.test/article', publishedAt: new Date('2026-08-12T00:00:00.000Z'), sourceName: 'Nguồn public-only' })
   })
+  it('hydrates titleVi from a visible article for legacy citations without the field', () => {
+    const legacy = { ...available }
+    delete legacy.titleVi
+    const result = redactHistoricalCitation(historicalCitationDocument(legacy), {
+      article: {
+        _id: articleId,
+        sourceId,
+        status: 'published',
+        evidenceEligible: true,
+        titleVi: 'Tiêu đề khôi phục từ bài viết',
+        titleOriginal: 'Bài hợp lệ',
+        originalUrl: available.originalUrl,
+        publishedAt: available.publishedAt,
+        rightsSnapshot: { sourcePolicyVersion: 1, licenseStatus: 'permitted', llmInputScope: 'excerpt' },
+      },
+      source: {
+        _id: sourceId,
+        name: 'Nguồn public-only',
+        authorityTier: 'editorial',
+        operationalStatus: 'active',
+        licenseStatus: 'permitted',
+        policyVersion: 1,
+        llmInputScope: 'excerpt',
+        storageScope: { metadata: true, excerpt: true, summary: true, embedding: true },
+        mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false, evidenceNote: null },
+        technicalCheck: { status: 'passed' },
+      },
+    })
+
+    expect(result).toMatchObject({ status: 'available', titleVi: 'Tiêu đề khôi phục từ bài viết' })
+  })
+  it('preserves an explicit null historical title instead of hydrating current article metadata', () => {
+    const stored = historicalCitationDocument({ ...available, titleVi: null })
+    const result = redactHistoricalCitation(stored, {
+      article: {
+        _id: articleId,
+        sourceId,
+        status: 'published',
+        evidenceEligible: true,
+        titleVi: 'Tiêu đề hiện tại không được ghi đè lịch sử',
+        titleOriginal: 'Bài hợp lệ',
+        originalUrl: available.originalUrl,
+        publishedAt: available.publishedAt,
+        rightsSnapshot: { sourcePolicyVersion: 1, licenseStatus: 'permitted', llmInputScope: 'excerpt' },
+      },
+      source: {
+        _id: sourceId,
+        name: 'Nguồn public-only',
+        authorityTier: 'editorial',
+        operationalStatus: 'active',
+        licenseStatus: 'permitted',
+        policyVersion: 1,
+        llmInputScope: 'excerpt',
+        storageScope: { metadata: true, excerpt: true, summary: true, embedding: true },
+        mediaPolicy: { imageMode: 'none', videoMode: 'none', allowedHosts: [], attributionRequired: false, evidenceNote: null },
+        technicalCheck: { status: 'passed' },
+      },
+    })
+
+    expect(result).toMatchObject({ status: 'available', titleVi: null })
+  })
+
 
   it('bounds a persisted historical title even when the public citation title is longer', () => {
     expect(historicalCitationDocument({ ...available, titleOriginal: 'x'.repeat(501) }).titleOriginal).toHaveLength(500)

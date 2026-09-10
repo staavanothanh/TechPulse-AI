@@ -174,17 +174,35 @@ function publicScope(scope = {}) {
   return result
 }
 
-const MAX_SESSION_TITLE_LENGTH = 45
+const MAX_SESSION_TITLE_LENGTH = 40
+const SESSION_TITLE_ELLIPSIS = '…'
+const DEFAULT_SESSION_TITLE = 'Phiên hỏi đáp'
 
 export function createSessionTitle(question, maxLength = MAX_SESSION_TITLE_LENGTH) {
   if (typeof question !== 'string') return null
   const clean = question.trim().replace(/\s+/g, ' ')
   if (!clean) return null
-  if (clean.length <= maxLength) return clean
-  const truncated = clean.slice(0, maxLength)
+  const limit = Number.isInteger(maxLength) && maxLength > 0 ? maxLength : MAX_SESSION_TITLE_LENGTH
+  if (clean.length <= limit) return clean
+  const contentLimit = Math.max(0, limit - SESSION_TITLE_ELLIPSIS.length)
+  const truncated = clean.slice(0, contentLimit)
   const lastSpace = truncated.lastIndexOf(' ')
-  const cutIndex = lastSpace > 20 ? lastSpace : maxLength
-  return `${clean.slice(0, cutIndex).trimEnd()}...`
+  const cutIndex = lastSpace > 0 ? lastSpace : contentLimit
+  return `${clean.slice(0, cutIndex).trimEnd()}${SESSION_TITLE_ELLIPSIS}`.slice(0, limit)
+}
+
+function sessionTitleValue(value) {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string') throw new Error('Chat session title is invalid')
+  return value.length <= MAX_SESSION_TITLE_LENGTH ? value : createSessionTitle(value)
+}
+
+function historicalTitleVi(value) {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (typeof value !== 'string') throw new Error('Historical citation titleVi is invalid')
+  const normalized = value.trim()
+  return normalized || null
 }
 
 const MAX_HISTORICAL_SOURCE_NAME_LENGTH = 120
@@ -208,6 +226,7 @@ function historicalCitation(citation) {
   const parsedUrl = new URL(citation.originalUrl)
   if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password) throw new Error('Historical citation URL is invalid')
   const sourceName = historicalSourceName(citation)
+  const titleVi = historicalTitleVi(citation.titleVi)
   return {
     id: citation.id,
     status: 'available',
@@ -217,15 +236,16 @@ function historicalCitation(citation) {
     titleOriginal: String(citation.titleOriginal),
     publishedAt: dateValue(citation.publishedAt).toISOString(),
     ...(sourceName ? { sourceName } : {}),
+    ...(titleVi !== undefined ? { titleVi } : {}),
   }
 }
-
 
 function historicalCitationDocument(citation) {
   if (!citation || typeof citation.id !== 'string') throw new Error('Historical citation is invalid')
   const parsedUrl = new URL(citation.originalUrl)
   if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password || !citation.articleId || !citation.sourceId || typeof citation.titleOriginal !== 'string' || !citation.titleOriginal) throw new Error('Historical citation is invalid')
   const sourceName = historicalSourceName(citation)
+  const titleVi = historicalTitleVi(citation.titleVi)
   return {
     id: citation.id,
     status: 'available',
@@ -235,6 +255,7 @@ function historicalCitationDocument(citation) {
     titleOriginal: citation.titleOriginal.slice(0, 500),
     publishedAt: dateValue(citation.publishedAt),
     ...(sourceName ? { sourceName } : {}),
+    ...(titleVi !== undefined ? { titleVi } : {}),
   }
 }
 
@@ -242,7 +263,14 @@ function redactHistoricalCitation(citation, { article, source } = {}) {
   if (citation?.status !== 'available') return historicalCitation(citation)
   if (canUseQnaEvidence(article, source)) {
     const sourceName = historicalSourceName(citation) ?? historicalSourceName({ sourceName: source?.name })
-    return historicalCitation(sourceName ? { ...citation, sourceName } : citation)
+    const articleTitleVi = historicalTitleVi(article?.titleVi)
+    const titleVi = Object.hasOwn(citation, 'titleVi') ? historicalTitleVi(citation.titleVi) : articleTitleVi
+    const enriched = {
+      ...citation,
+      ...(sourceName ? { sourceName } : {}),
+      ...(titleVi !== undefined ? { titleVi } : {}),
+    }
+    return historicalCitation(enriched)
   }
   const reason = article?.status === 'hidden' || article?.status === 'removed' ? 'takedown' : source ? 'source-policy' : 'article-removed'
   return { id: citation.id, status: 'unavailable', articleId: citation.articleId, sourceId: citation.sourceId, unavailableReason: reason }
@@ -294,7 +322,7 @@ export function serializeChatSession(document, { now = new Date() } = {}) {
   const messages = Array.isArray(document.messages) ? document.messages : []
   if (messages.length > 30 || document.messageCount !== messages.length) throw new Error('Chat session message count is invalid')
   return {
-    id: idString(document._id ?? document.id), title: document.title ?? null, scope: publicScope(document.scope),
+    id: idString(document._id ?? document.id), title: sessionTitleValue(document.title), scope: publicScope(document.scope),
     messageCount: messages.length, messages: messages.map(publicMessage),
     createdAt: dateValue(document.createdAt).toISOString(), updatedAt: updatedAt.toISOString(),
   }
@@ -355,7 +383,7 @@ export class MongoChatRepository {
     const rows = await this.chatSessions().find(filter).sort({ updatedAt: -1, _id: -1 }).limit(limit + 1).toArray()
     const hasNext = rows.length > limit
     const page = hasNext ? rows.slice(0, limit) : rows
-    return { sessions: page.map((row) => ({ id: idString(row._id), title: row.title ?? null, messageCount: summaryMessageCount(row), updatedAt: dateValue(row.updatedAt).toISOString() })), hasNext, nextCursor: hasNext ? encodeCursor(page.at(-1)) : null }
+    return { sessions: page.map((row) => ({ id: idString(row._id), title: sessionTitleValue(row.title), messageCount: summaryMessageCount(row), updatedAt: dateValue(row.updatedAt).toISOString() })), hasNext, nextCursor: hasNext ? encodeCursor(page.at(-1)) : null }
   }
 
   async getChatSession({ actor, userId, chatSessionId, now = this.clock() } = {}) {
@@ -547,7 +575,9 @@ export class MongoChatRepository {
           document = { _id: sessionId, userId: values.userId, title: sessionTitle, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
           await execute((options) => this.chatSessions().insertOne(document, options))
         }
-        const sessionTitleUpdate = document.title ? {} : (sessionTitle ? { title: sessionTitle } : {})
+        const existingTitle = typeof document.title === 'string' ? document.title.trim() : ''
+        const canReplaceTitle = !existingTitle || existingTitle === DEFAULT_SESSION_TITLE
+        const sessionTitleUpdate = canReplaceTitle && sessionTitle ? { title: sessionTitle } : {}
         const chatResult = await execute((options) => this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: { $each: [userMessage, assistant] } }, $inc: { messageCount: 2 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), ...sessionTitleUpdate } }, { ...options, returnDocument: 'after' }))
         const after = unwrap(chatResult)
         if (!after) { const error = new Error('Chat session changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }

@@ -404,7 +404,8 @@ export function createAuthService({ repository, runtime, environment = process.e
     await verifyCsrf({ auth, token: csrfToken })
     await inTransaction(async (session) => {
       if (repository.assertActiveSessionForUser && !(await repository.assertActiveSessionForUser({ sessionId: auth.session._id, userId: auth.user._id, sessionVersion: auth.session.userSessionVersion }, { session }))) throw new AuthError(401, 'unauthorized', 'Session is no longer active')
-      await repository.revokeSession(auth.session._id, { session })
+      const revoked = await repository.revokeSession(auth.session._id, { session })
+      if (revoked?.matchedCount !== 1) throw new AuthError(401, 'unauthorized', 'Session is no longer active')
       await repository.insertAudit(createAuditEvent({ actor: auth.user, action: 'user_logged_out', targetId: auth.user._id, reasonCode: 'user_logout', request: request ?? auth.request }), { session })
     })
   }

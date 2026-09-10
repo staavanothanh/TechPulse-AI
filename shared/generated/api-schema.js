@@ -6168,7 +6168,8 @@ export const openApiDocument = {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 40
           },
           "messageCount": {
             "type": "integer",
@@ -6232,7 +6233,8 @@ export const openApiDocument = {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 40
           },
           "scope": {
             "$ref": "#/components/schemas/AnswerScope"
@@ -9431,6 +9433,12 @@ export const openApiDocument = {
             "type": "string",
             "minLength": 1,
             "maxLength": 500
+          },
+          "titleVi": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "publishedAt": {
             "type": "string",
