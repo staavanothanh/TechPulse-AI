@@ -1,4 +1,10 @@
 #!/bin/sh
 set -eu
 
-exec node --env-file-if-exists=.env scripts/pre-push-attestation.js "$@"
+input="$(mktemp)"
+trap 'rm -f "$input"' EXIT
+cat > "$input"
+
+node --env-file-if-exists=.env scripts/sync-vercel-env.js < "$input"
+
+node --env-file-if-exists=.env scripts/pre-push-attestation.js < "$input"
