@@ -315,4 +315,43 @@ describe('public user-flow regressions', () => {
     expect(seOnlyHtml).toContain('<span>Software Engineering</span>')
     expect(seOnlyHtml).not.toContain('<span>JavaScript</span>')
   })
+
+  it('renders citation chips with consecutive numbers [1], [2], [3] and displays feed titles instead of only source names', () => {
+    const html = render(QaView, {
+      state: 'ready',
+      messages: [
+        { id: 'q1', role: 'user', text: 'Tình hình phát triển AI gần đây thế nào?' },
+        {
+          id: 'a1',
+          role: 'assistant',
+          status: 'answered',
+          paragraphs: [
+            { text: 'Mô hình DeepSeek mới đạt hiệu năng cao.', citationIds: ['c1'] },
+            { text: 'Apple cũng vừa cập nhật hệ thống AI mới.', citationIds: ['c2'] },
+            { text: 'Các nghiên cứu về AI Agent đang bùng nổ.', citationIds: ['c3'] },
+          ],
+          citations: [
+            { id: 'c1', titleOriginal: 'DeepSeek-V3 Technical Report', sourceName: 'arXiv' },
+            { id: 'c2', titleOriginal: 'Apple Intelligence Overview', sourceName: 'The Verge' },
+            { id: 'c3', titleVi: 'Bước tiến mới trong AI Agent', titleOriginal: 'New AI Agent Milestone', sourceName: 'Google AI Blog' },
+          ],
+        },
+      ],
+    })
+
+    // Kiểm tra các con số tuần tự [1], [2], [3] phía trước các bài feed
+    expect(html).toContain('>[1]<')
+    expect(html).toContain('>[2]<')
+    expect(html).toContain('>[3]<')
+
+    // Kiểm tra tiêu đề của bài feed được hiển thị nổi bật
+    expect(html).toContain('DeepSeek-V3 Technical Report')
+    expect(html).toContain('Apple Intelligence Overview')
+    expect(html).toContain('Bước tiến mới trong AI Agent')
+
+    // Kiểm tra thông tin nguồn kèm theo
+    expect(html).toContain('arXiv')
+    expect(html).toContain('The Verge')
+    expect(html).toContain('Google AI Blog')
+  })
 })

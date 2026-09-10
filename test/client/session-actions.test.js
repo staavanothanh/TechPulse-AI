@@ -227,10 +227,12 @@ describe('application session actions', () => {
     const rotatedUser = { id: 'user-opaque', role: 'user', hasPassword: true }
     const api = { changePassword: vi.fn().mockResolvedValue(response(rotatedUser, 'csrf-rotated')) }
     const applySession = vi.fn()
+    const onPasswordChangeSuccess = vi.fn()
     const actions = createSessionActions({
       api,
       getCsrfToken: () => 'csrf-in-memory',
       applySession,
+      onPasswordChangeSuccess,
     })
 
     await actions.changePassword({ currentPassword: 'old-password-1', newPassword: 'new-password-1' })
@@ -242,11 +244,13 @@ describe('application session actions', () => {
       }),
     )
     expect(applySession).toHaveBeenLastCalledWith(rotatedUser, 'csrf-rotated', null)
+    expect(onPasswordChangeSuccess).toHaveBeenLastCalledWith('Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.')
 
     await actions.changePassword({ newPassword: 'first-password-1' })
     expect(api.changePassword).toHaveBeenLastCalledWith(
       expect.objectContaining({ body: JSON.stringify({ newPassword: 'first-password-1' }) }),
     )
+    expect(onPasswordChangeSuccess).toHaveBeenLastCalledWith('Đặt mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.')
   })
 
   it('ignores a stale password change completion after a newer session transition starts', async () => {
@@ -311,5 +315,19 @@ describe('application session actions', () => {
     await actions.logout()
 
     expect(api.logout).toHaveBeenCalledWith({ credentials: 'same-origin', headers: { 'X-CSRF-Token': 'csrf-t2' } })
+  })
+  it('forwards an optional notice when logging out', async () => {
+    const api = { logout: vi.fn().mockResolvedValue({ data: {} }) }
+    const applySession = vi.fn()
+    const actions = createSessionActions({ api, getCsrfToken: () => 'csrf-t3', applySession })
+
+    await actions.logout('Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.')
+
+    expect(api.logout).toHaveBeenCalledWith({ credentials: 'same-origin', headers: { 'X-CSRF-Token': 'csrf-t3' } })
+    expect(applySession).toHaveBeenCalledWith(
+      null,
+      null,
+      'Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.',
+    )
   })
 })

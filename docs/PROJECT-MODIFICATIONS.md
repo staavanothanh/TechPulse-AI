@@ -348,7 +348,157 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 12. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 12. Cải Tiến: Đầy Đủ 22 Chủ Đề Phân Nhóm 8 Lĩnh Vực & Tìm Kiếm Nhanh Trong Cài Đặt Tài Khoản (Account Preferences)
+
+### Bối cảnh & Vấn đề tồn tại
+- **Trước khi sửa:**
+  - Trong trang **Cài đặt tài khoản** (`AccountView.jsx`), mục *"Chủ đề quan tâm"* chỉ mặc định import danh sách `TOPICS` từ `reader-format.js` (chỉ lọc `kind: 'parent'`).
+  - Hệ thống **chỉ hiển thị 8 chủ đề cha** (`AI`, `AI Agent`, `Robotics`, `Software Engineering`, `DevOps`, `Bảo mật`, `Dữ liệu`, `Blockchain`), hoàn toàn thiếu 14 chủ đề con đã có trong cơ sở dữ liệu MongoDB và taxonomy chuẩn của dự án (`machine-learning`, `deep-learning`, `agentic-systems`, `robot-control`, `web-development`, `system-architecture`, `cloud-infrastructure`, `containers-orchestration`, `appsec`, `cryptography`, `databases`, `data-engineering`, `blockchain-web3`, `quantum-computing`).
+  - Người dùng không có cách nào lựa chọn các chuyên ngành cụ thể (ví dụ: *Học máy*, *Học sâu & LLM*, *Container & Kubernetes*, *Cơ sở dữ liệu*...) để Feed ưu tiên.
+  - Thiếu ô tìm kiếm nhanh và thiếu bộ đếm số lượng chủ đề đã chọn so với giới hạn 20 chủ đề của hệ thống.
+
+### Giải pháp kỹ thuật đã triển khai
+1. **Hiển thị đầy đủ 22 chủ đề chuẩn hóa theo 8 lĩnh vực công nghệ:**
+   - Cập nhật `AccountView.jsx` mặc định sử dụng `ALL_TOPICS` và `GROUPED_TOPICS` từ `reader-format.js`.
+   - Gom nhóm khoa học theo 8 lĩnh vực công nghệ:
+     1. **AI & Machine Learning:** *AI* (Chính), *Học máy*, *Học sâu & LLM*
+     2. **AI Agent & Hệ thống tự hành:** *AI Agent* (Chính), *Hệ thống Agentic*
+     3. **Robotics & Tự động hóa:** *Robotics* (Chính), *Điều khiển Robot*
+     4. **Kỹ thuật phần mềm & Lập trình:** *Software Engineering* (Chính), *JavaScript*, *Kiến trúc hệ thống*
+     5. **DevOps & Điện toán đám mây:** *DevOps* (Chính), *Hạ tầng Cloud & SRE*, *Container & Kubernetes*
+     6. **An ninh mạng & Bảo mật:** *Bảo mật* (Chính), *Bảo mật ứng dụng*, *Mật mã học & Quyền riêng tư*
+     7. **Khoa học máy tính & Dữ liệu:** *Dữ liệu* (Chính), *Cơ sở dữ liệu*, *Kỹ nghệ dữ liệu*
+     8. **Công nghệ mới nổi & Web3:** *Blockchain* (Chính), *Blockchain & Web3*, *Điện toán lượng tử*
+   - Chủ đề chính (parent topic) có badge tag `Chính` để phân biệt rõ ràng với các chủ đề con (leaf topics).
+   - Giữ lại nhóm *"Chủ đề khác"* cho các chủ đề tùy chỉnh hoặc alias cũ của tài khoản (`unknownSelected` như `CustomTopic`), đảm bảo không mất dữ liệu lịch sử.
+
+2. **Bộ đếm trực quan & Ô tìm kiếm nhanh:**
+   - Thêm thanh công cụ `.public-preference-toolbar` với bộ đếm: `Đã chọn: X/20 chủ đề` (tương ứng giới hạn 20 chủ đề trong OpenAPI schema và MongoDB validator).
+   - Nút *"Bỏ chọn hết"* xuất hiện khi có ít nhất 1 chủ đề đang chọn.
+   - Ô tìm kiếm nhanh: Lọc tức thì các nhóm và chủ đề khớp từ khóa (không phân biệt hoa thường, hỗ trợ tiếng Việt có dấu).
+
+3. **Tương thích ngược tuyệt đối:**
+   - Nếu prop `topics` được truyền vào dưới dạng danh sách tùy chỉnh (ví dụ trong các bài test `topics: ['AI', 'Cloud']`), component tự động chuyển sang hiển thị danh sách phẳng tương thích hoàn toàn.
+   - Thuật toán `isTopicSelected` và `toggleTopicValue` phân biệt rõ ràng giữa chủ đề cha và con: chọn `Học máy` chỉ kích hoạt `Học máy`, không làm `AI` bị kích hoạt nhầm.
+
+4. **Kiểm thử xác minh:**
+   - Thêm test case `renders all 22 active topics across 8 product domains, search input and selection counter in AccountView` trong `test/ui/public/public-components.test.js`.
+   - Toàn bộ test suite liên quan đều pass 100%.
+
+---
+
+## 13. Cải Tiến: Đóng Gói Form Đổi Mật Khẩu, Modal Popup Đếm Ngược 5 Giây & Xử Lý F5 Reload Tự Động Đăng Xuất (Account Password Management)
+
+### Bối cảnh & Yêu cầu cải tiến
+- **Trước khi sửa:**
+  - Trong trang Cài đặt tài khoản (`AccountView.jsx`), mục *"Đổi mật khẩu"* (hoặc *"Đặt mật khẩu"*) luôn hiển thị sẵn toàn bộ các trường nhập liệu ngay trong thẻ, làm giao diện bị rối.
+  - Sau khi đổi mật khẩu thành công, thông báo hiển thị inline hoặc biến mất nhanh, phiên đăng nhập vẫn ở trạng thái cũ khiến người dùng không rõ đã đổi thành công chưa.
+  - Người dùng mong muốn có popup thông báo thành công trực quan với bộ đếm ngược rõ ràng (5 giây), cho phép bấm đăng xuất ngay bất cứ lúc nào, và nếu người dùng không bấm đăng xuất mà tải lại trang (F5) thì hệ thống vẫn tự động đăng xuất ngay lập tức.
+
+### Giải pháp kỹ thuật đã triển khai
+1. **Đóng gói form vào nút kích hoạt (Toggle Activation Button):**
+   - Mặc định, thẻ Bảo mật chỉ hiển thị tiêu đề, mô tả và một nút bấm duy nhất: **"Đổi mật khẩu"** (hoặc **"Đặt mật khẩu"** đối với tài khoản Google-only chưa có mật khẩu).
+   - Khi người dùng bấm vào nút, form nhập liệu mới mở ra với các trường tương ứng.
+   - Bổ sung nhóm nút thao tác `.public-password-actions` gồm:
+     - Nút **"Xác nhận"**: Thực hiện kiểm tra tính hợp lệ và gọi API đổi mật khẩu.
+     - Nút **"Hủy"**: Đóng form và xóa sạch dữ liệu vừa nhập, khôi phục lại trạng thái gọn gàng ban đầu.
+
+2. **Modal Dialog Thông Báo Thành Công, Bộ Đếm Ngược 5 Giây & Xử Lý F5 Reload Tự Động Đăng Xuất:**
+   - **Modal Dialog chuẩn trợ năng (`role="dialog"`, `aria-modal="true"`):**
+     - Khi đổi/đặt mật khẩu thành công, thay vì thông báo inline nhỏ dễ bị trôi, một Modal Dialog nổi bật hiện ra giữa màn hình với phông nền mờ (`.public-dialog-backdrop`).
+     - Quản lý tiêu điểm an toàn với hook `useDialogFocus`, hỗ trợ phím `Escape` để kích hoạt đăng xuất ngay.
+   - **Bộ đếm ngược trực quan 5 giây (5s -> 0s):**
+     - Trong nội dung dialog hiển thị số giây đếm ngược nổi bật: `Hệ thống sẽ tự động đăng xuất sau {countdown} giây để bạn đăng nhập lại bằng mật khẩu mới.`.
+     - Nút hành động chính hiển thị trực tiếp số giây đếm lùi: `Đăng xuất ngay ({countdown}s)`.
+     - Người dùng có thể chủ động bấm `Đăng xuất ngay ({countdown}s)` bất kỳ lúc nào để chuyển hướng ngay lập tức mà không phải chờ hết 5 giây.
+     - Sau khi hết 5 giây, hệ thống tự động kích hoạt đăng xuất.
+   - **Xử lý Reload trang (F5) tự động đăng xuất an toàn:**
+     - Nếu trong thời gian 5 giây đếm ngược, người dùng không bấm đăng xuất mà tải lại trang (F5):
+       - Ở tầng `client/App.jsx`, callback `handlePasswordChangeSuccess` lưu cờ tạm `techpulse_pending_logout` vào `sessionStorage`.
+       - Khi trang reload lại, hàm `loadSession` trong `App.jsx` phát hiện cờ `techpulse_pending_logout`.
+       - Hệ thống tự động xóa cờ, gọi `api.logout({ credentials: 'same-origin' })` để thu hồi cookie phiên trên server và cập nhật `applySession(null, null, notice)` đưa người dùng về trạng thái khách (`guest`).
+       - Người dùng lập tức được đăng xuất về trang chủ kèm banner thông báo màu xanh *"Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới."*, triệt để ngăn chặn tình trạng bị kẹt lại phiên đăng nhập cũ.
+   - **Tuân thủ quy tắc phân tầng kiến trúc (`app-integration.test.js`):**
+     - Các thư mục presentation (`client/features/public`, `client/features/admin/ui`, `client/app/integration`) hoàn toàn không chứa từ khóa `sessionStorage`. Toàn bộ việc lưu và xóa cờ reload được đóng gói tập trung duy nhất tại Root component `client/App.jsx`.
+
+3. **Kiểm thử xác minh:**
+   - Cập nhật test case `renders the change-password form with a current-password field for accounts that already have a password` và `switches to first-time password setup without a current-password field for Google-only accounts` sử dụng `initialPasswordOpen: true`.
+   - Bổ sung test case `hides the change-password form behind an activate button by default in AccountView` trong `test/ui/public/public-components.test.js`.
+   - Bổ sung test case `renders a success pop-up modal dialog with auto-logout countdown when password change succeeds` kiểm tra modal dialog với bộ đếm 5 giây và nút `Đăng xuất ngay (5s)` trong `test/ui/public/public-components.test.js`.
+   - Bổ sung test case `commits the rotated session after a password change and omits currentPassword for first-time setup` xác minh `onPasswordChangeSuccess` được gọi với thông báo tương ứng trong `test/client/session-actions.test.js`.
+   - Toàn bộ các bộ test (`public-components.test.js`, `session-actions.test.js`, `app-integration.test.js`, `public-integration-coverage.test.js`) đều pass 100%.
+
+---
+
+## 14. Cải Tiến: Xác Thực Tài Khoản Đa Tầng Trước Khi Xóa Vĩnh Viễn (Email Verification, Risk Confirmation & Safety Countdown Delay)
+
+### Bối cảnh & Yêu cầu cải tiến
+- **Trước khi sửa:**
+  - Trong trang Cài đặt tài khoản (`AccountView.jsx`), phần *"Quản lý dữ liệu"* có nút *"Yêu cầu xóa tài khoản"*. Khi bấm vào, chỉ có một hộp thoại xác nhận đơn giản với hai nút *"Quay lại"* và *"Xác nhận xóa"*.
+  - Người dùng có thể vô tình bấm nhầm và tài khoản bị xóa vĩnh viễn ngay lập tức mà không có cơ chế xác thực danh tính chủ tài khoản hay thời gian chờ an toàn.
+- **Giải pháp được thống nhất:**
+  - Kết hợp **Ý tưởng 1 (Xác thực Email & Checkbox cam kết)** và **Ý tưởng 3 (Thời gian chờ an toàn 5 giây - Safety Countdown Delay)** tạo ra cơ chế phòng ngừa đa tầng theo tiêu chuẩn bảo mật nghiêm ngặt nhất (tương tự GitHub, AWS, Google Cloud):
+    1. **Hộp cảnh báo nguy hiểm (`.public-deletion-warning-box`):** Nổi bật màu đỏ viền đậm thông báo toàn bộ dữ liệu, lịch sử và tùy chọn cá nhân sẽ bị hủy vĩnh viễn và không thể khôi phục.
+    2. **Xác thực Email chủ sở hữu (`#account-deletion-email`):** Bắt buộc người dùng phải gõ chính xác địa chỉ email của tài khoản đang đăng nhập (`user.email`). Nếu gõ sai hoặc chưa gõ đủ thì nút xóa bị khóa.
+    3. **Checkbox cam kết rủi ro (`#account-deletion-risk-confirm`):** Người dùng phải chủ động tích chọn: *"Tôi hiểu và đồng ý xóa vĩnh viễn tài khoản này cùng toàn bộ dữ liệu liên quan."*.
+    4. **Bộ đếm an toàn 5 giây (`Safety Countdown Delay`):** Ngay khi mở modal dialog, kích hoạt bộ đếm thời gian 5 giây an toàn (5s -> 4s -> 3s -> 2s -> 1s -> 0s). Trong 5 giây này, nút bấm hiển thị trạng thái `Xác nhận xóa ({countdown}s)` và bị khóa hoàn toàn (`disabled`), buộc người dùng phải có khoảng thời gian suy nghĩ và đọc kỹ cảnh báo trước khi hành động.
+    5. **Điều kiện mở khóa nút xóa:** Nút *"Xác nhận xóa"* chỉ được kích hoạt (enabled) khi thỏa mãn đồng thời cả 3 điều kiện:
+       - Đã hết 5 giây đếm an toàn (`deletionSafetyCountdown === 0`).
+       - Email người dùng nhập khớp chính xác với `user.email` (chuẩn hóa không phân biệt hoa thường).
+       - Checkbox cam kết rủi ro đã được tích chọn (`deletionRiskConfirmed === true`).
+
+### Chi tiết thay đổi mã nguồn
+1. **Giao diện & Logic người dùng (`client/features/public/views/AccountView.jsx`):**
+   - Khai báo các state:
+     - `deletionVerifyEmail`: Chuỗi email do người dùng nhập để xác nhận.
+     - `deletionRiskConfirmed`: Trạng thái boolean của checkbox cam kết.
+     - `deletionSafetyCountdown`: Bộ đếm an toàn lùi từ 5 về 0 giây.
+     - `deletionCountdownIntervalRef`: Ref lưu trữ ID interval timer để dọn dẹp an toàn khi component unmount hoặc đóng dialog.
+   - Thêm hàm `handleOpenDeletion`: Reset toàn bộ các trường nhập và bộ đếm về 5 giây khi người dùng bấm mở dialog.
+   - Cập nhật hàm `closeDeletionConfirmation`: Dọn dẹp timer `globalThis.clearInterval` và reset sạch các trường dữ liệu khi đóng dialog hoặc nhấn phím `Escape`.
+   - Cập nhật logic `canConfirmDeletion`: Kiểm tra đồng thời cả 3 điều kiện trước khi cho phép bấm nút.
+2. **Giao diện & Kiểu dáng CSS (`client/features/public/public-components.css`):**
+   - Thêm class `.public-deletion-dialog` mở rộng chiều rộng modal tối đa 520px cho trải nghiệm đọc thoáng đãng.
+   - Thêm class `.public-deletion-warning-box` sử dụng token màu `--public-danger` và `--public-danger-soft` với đường viền nổi bật.
+   - Thêm class `.public-checkbox-label` với con trỏ pointer và kiểu dáng checkbox màu đỏ nguy hiểm (`accent-color: var(--public-danger)`).
+3. **Kiểm thử tự động:**
+   - `test/ui/public/public-components.test.js`: Thêm test case `renders account deletion modal with email verification, risk agreement checkbox, and safety countdown` xác minh sự hiện diện của hộp cảnh báo, ô nhập email, checkbox cam kết, và nút xác nhận có nhãn `Xác nhận xóa (5s)` với thuộc tính `disabled`.
+
+---
+
+
+## 15. Cải Tiến: Đánh Số Thứ Tự Liên Tục (1, 2, 3...) & Hiển Thị Tiêu Đề Bài Feed Cho Citations Trong Hỏi Đáp (Q&A Citation Chips)
+
+### Bối cảnh & Lý do thay đổi
+- **Trước khi sửa:**
+  - Trong khung trò chuyện Hỏi đáp (`QaView.jsx`), khi AI trả lời kèm nguồn trích dẫn (`citations`), nhãn chip trích dẫn (`citationChipLabel`) ưu tiên hiển thị `sourceName` (ví dụ: *"The Verge"*, *"Google AI Blog"*, *"Hacker News"*) thay vì tiêu đề của bài viết/feed được trích dẫn. Người đọc không biết bài viết đó nói về chủ đề gì nếu chưa bấm mở modal.
+  - Cách đánh số chỉ số trích dẫn trước đây dựa trên index của mảng `paragraph.citationIds` trong từng đoạn (`citationIndex + 1`). Nếu câu trả lời có 3 đoạn, mỗi đoạn trích dẫn 1 bài feed khác nhau thì cả 3 chip ở 3 đoạn đều hiển thị số **`[1]`** (`[1] The Verge`, `[1] Google AI Blog`, `[1] Hacker News`), gây nhầm lẫn là chỉ có 1 bài hoặc bị lỗi lặp số.
+- **Giải pháp:**
+  1. **Đánh số thứ tự liên tục 1, 2, 3... (`citationNumberMap`):**
+     - Xây dựng bảng ánh xạ số thứ tự tăng dần duy nhất (`1, 2, 3...`) theo thứ tự các bài feed lần đầu xuất hiện trong các đoạn văn của câu trả lời.
+     - Nếu câu trả lời dẫn 3 bài feed thì các con số hiển thị lần lượt là **`[1]`**, **`[2]`**, **`[3]`**. Nếu một bài feed được trích dẫn lại ở các đoạn sau, nó vẫn giữ nguyên số thứ tự ban đầu chuẩn theo quy ước học thuật.
+  2. **Hiển thị tiêu đề bài feed làm nội dung chính (`citationChipTitle`):**
+     - Chip trích dẫn ưu tiên hiển thị tiêu đề bài feed (`citation.titleVi || citation.titleOriginal || citation.title`).
+     - Tên nguồn tin (`citation.sourceName`) được hiển thị phụ trợ phía sau dạng ` · Nguồn` với màu sắc dịu nhẹ.
+     - Thiết lập thuộc tính `title` với đầy đủ tiêu đề và nguồn giúp người dùng hover chuột vào là đọc được toàn văn.
+     - Cắt gọn tự động (`text-overflow: ellipsis`) nếu tiêu đề bài feed quá dài, bảo đảm không làm vỡ layout chat trên mọi kích thước màn hình.
+
+### Chi tiết thay đổi mã nguồn
+1. **Giao diện & Logic (`client/features/public/views/QaView.jsx`):**
+   - Thêm hàm `citationChipTitle(citation)`: Lấy `titleVi` hoặc `titleOriginal` của bài feed.
+   - Cập nhật hàm `citationChipLabel(citation)`: Kết hợp tiêu đề feed và nguồn `${title} · ${source}`.
+   - Cập nhật `CitationDrawer`: Tiêu đề bài viết ưu tiên `titleVi || titleOriginal`.
+   - Sửa thứ tự gọi hooks trong `MessageThread`: Đưa `useRef` và `useEffect` lên đầu component trước lệnh điều kiện return để tuân thủ triệt để React Rules of Hooks.
+   - Thêm logic `citationNumberMap` trong `MessageThread` để gán số thứ tự liên tục 1, 2, 3... cho các bài feed xuất hiện trong câu trả lời.
+2. **Định kiểu giao diện CSS (`client/features/public/public-components.css`):**
+   - Cập nhật `.public-citation-chip` dạng inline-flex với hiệu ứng hover mượt mà.
+   - Bổ sung các class con: `.public-citation-chip-num` (số thứ tự in đậm màu accent), `.public-citation-chip-title` (tiêu đề bài feed in đậm vừa phải, tự động ellipsis nếu dài quá 320px), `.public-citation-chip-source` (tên nguồn tin màu muted dịu nhẹ).
+3. **Kiểm thử tự động:**
+   - `test/ui/public/user-flow-fixes.test.js`: Bổ sung test case `renders citation chips with consecutive numbers [1], [2], [3] and displays feed titles instead of only source names` kiểm tra đầy đủ số thứ tự 1, 2, 3, tiêu đề các bài feed và tên nguồn tương ứng.
+
+---
+
+## 16. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
 
 1. **Kiểm tra độc lập giữa chủ đề AI và Học máy, Software Engineering và JavaScript:**
    - Mở `http://localhost:3000` và chuyển sang tab **Hỏi đáp** (Q&A).
@@ -412,3 +562,58 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
      - Phía dưới xuất hiện bong bóng suy nghĩ của AI với badge ✨ `Đang truy xuất nguồn và suy nghĩ...`, 3 chấm nhảy nhịp nhàng (`pulsing dots`) và dải sóng ánh sáng shimmer lướt qua êm ái.
      - Khung chat tự động cuộn mượt xuống cuối để người dùng theo dõi.
      - Khi AI hoàn tất trả lời: Bong bóng suy nghĩ chuyển tiếp mượt mà sang câu trả lời kèm các trích dẫn nguồn (citations).
+9. **Kiểm tra Chủ đề quan tâm trong Cài đặt tài khoản (Account Preferences):**
+   - Đăng nhập tài khoản người dùng và chuyển sang tab **Tài khoản** (`route = 'account'`).
+   - Quan sát thẻ **Chủ đề quan tâm**:
+     - Xuất hiện thanh công cụ với bộ đếm: `Đã chọn: X/20 chủ đề`.
+     - Xuất hiện ô tìm kiếm `Tìm trong 22 chủ đề...`.
+     - 22 chủ đề được phân tách gọn gàng thành 8 nhóm lĩnh vực công nghệ, mỗi nhóm có tiêu đề in hoa rõ nét.
+     - Các chủ đề cha có nhãn phụ `Chính`.
+   - Thử bấm vào một chủ đề con (ví dụ: *Học máy*): Nút chuyển sang trạng thái active màu nổi bật, số lượng trên bộ đếm tăng thêm 1; chủ đề cha *AI* vẫn ở trạng thái chưa chọn độc lập.
+   - Thử nhập từ khóa vào ô tìm kiếm (ví dụ: *"an ninh"* hoặc *"cloud"*): Các nhóm và chủ đề lọc tức thì theo từ khóa.
+   - Bấm nút **"Lưu chủ đề"**: Hiển thị thông báo thành công `Đã lưu chủ đề quan tâm.` và các chủ đề được lưu bền vững vào database MongoDB.
+   - Bấm nút **"Bỏ chọn hết"**: Toàn bộ chủ đề được bỏ chọn nhanh chóng.
+10. **Kiểm tra Đóng gói form Đổi mật khẩu, Modal Popup Đếm ngược 5 Giây & Xử lý F5 Reload:**
+    - Đăng nhập tài khoản và vào tab **Tài khoản** (`route = 'account'`).
+    - Quan sát thẻ **Đổi mật khẩu**:
+      - Ban đầu các trường nhập liệu không xuất hiện; chỉ có mô tả và nút **"Đổi mật khẩu"**.
+      - Bấm nút **"Đổi mật khẩu"**: Form mở ra với 3 trường nhập (Mật khẩu hiện tại, Mật khẩu mới, Xác nhận mật khẩu) cùng 2 nút **"Xác nhận"** và **"Hủy"**.
+      - Bấm nút **"Hủy"**: Form đóng lại và xóa sạch nội dung đã nhập.
+      - Bấm lại nút **"Đổi mật khẩu"**, nhập mật khẩu hiện tại và mật khẩu mới hợp lệ (từ 10 ký tự trở lên), bấm **"Xác nhận"**.
+    - **Kiểm tra kịch bản 1 - Bộ đếm ngược 5 giây & Tự động đăng xuất:**
+      - Khi đổi mật khẩu thành công: Modal Popup nổi bật hiện ra giữa màn hình với phông nền mờ.
+      - Tiêu đề: *"Đổi mật khẩu thành công!"*.
+      - Nội dung: *"Mật khẩu của bạn đã được cập nhật thành công. Hệ thống sẽ tự động đăng xuất sau 5 giây để bạn đăng nhập lại bằng mật khẩu mới."* với số giây được tô sáng.
+      - Nút hành động đếm ngược: `Đăng xuất ngay (5s)` -> `4s` -> `3s` -> `2s` -> `1s` -> `0s`.
+      - Khi đếm về 0: Hệ thống tự động kích hoạt đăng xuất và chuyển về trang chủ (`LandingPage`).
+      - Bảng đăng nhập xuất hiện thông báo màu xanh: *"Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới."*.
+    - **Kiểm tra kịch bản 2 - Bấm "Đăng xuất ngay":**
+      - Đổi mật khẩu lại, khi popup hiện ra, bấm ngay nút **"Đăng xuất ngay"** trong lúc đang đếm: Hệ thống lập tức chuyển hướng đăng xuất về trang chủ kèm thông báo thành công mà không phải chờ hết 5 giây.
+    - **Kiểm tra kịch bản 3 - F5 / Reload trang trong lúc đang đếm:**
+      - Đổi mật khẩu, khi popup hiện ra, nhấn **F5** (hoặc Reload trang trên trình duyệt).
+      - Ngay khi trang tải lại, hệ thống lập tức phát hiện cờ chờ đăng xuất, tự động gọi API logout thu hồi phiên và chuyển về trang chủ ở trạng thái đã đăng xuất, hiển thị thông báo thành công màu xanh tại form đăng nhập, không bị kẹt lại phiên đăng nhập cũ.
+11. **Kiểm tra Xác thực Tài khoản Đa tầng Trước Khi Xóa Vĩnh Viễn:**
+    - Đăng nhập vào tài khoản người dùng và chuyển sang tab **Tài khoản** (`route = 'account'`).
+    - Cuộn xuống thẻ **Quản lý dữ liệu** ở cuối trang và bấm nút **"Yêu cầu xóa tài khoản"**.
+    - Quan sát Modal Dialog hiện lên giữa màn hình:
+      - Hộp cảnh báo màu đỏ viền đậm: *"Cảnh báo quan trọng: Thao tác này sẽ xóa vĩnh viễn tài khoản của bạn..."*.
+      - Dòng hướng dẫn: *"Để xác nhận, vui lòng nhập chính xác địa chỉ email của bạn: your-email@example.com"*.
+      - Ô nhập email xác nhận: `#account-deletion-email`.
+      - Checkbox cam kết rủi ro: *"Tôi hiểu và đồng ý xóa vĩnh viễn tài khoản này cùng toàn bộ dữ liệu liên quan."*.
+      - Nút **"Xác nhận xóa (5s)"**: Đang đếm ngược an toàn lùi dần `5s` -> `4s` -> `3s` -> `2s` -> `1s` -> `0s` và **bị khóa (disabled)** hoàn toàn.
+    - **Kiểm tra điều kiện khóa an toàn:**
+      - Thử bấm nút khi đang đếm: Nút bị vô hiệu hóa, không thể click.
+      - Khi đếm về `0s`: Nút đổi nhãn thành **"Xác nhận xóa"** nhưng **vẫn bị disabled**.
+      - Thử tích checkbox nhưng chưa gõ email (hoặc gõ sai email): Nút **vẫn bị disabled**.
+      - Gõ đúng email nhưng bỏ tích checkbox: Nút **vẫn bị disabled**.
+      - Chỉ khi **gõ chính xác email** VÀ **đã tích checkbox** VÀ **đã hết 5 giây an toàn**: Nút **"Xác nhận xóa"** mới sáng lên (enabled) cho phép người dùng click.
+    - Bấm nút **"Quay lại"** hoặc nhấn phím **Escape**: Modal đóng lại, toàn bộ timer và dữ liệu nhập trước đó được dọn dẹp sạch sẽ.
+12. **Kiểm tra Đánh số thứ tự 1, 2, 3... và Tiêu đề bài Feed cho Citations trong Hỏi đáp:**
+    - Mở `http://localhost:3000` và chuyển sang tab **Hỏi đáp** (Q&A).
+    - Đặt câu hỏi công nghệ để AI trả lời (hoặc xem một phiên hỏi đáp có trích dẫn từ 2-3 bài viết khác nhau).
+    - Quan sát các chip trích dẫn (citation chips) xuất hiện ở cuối các đoạn văn trả lời của AI:
+      - Con số ở phía trước được đánh số tuần tự: **`[1]`**, **`[2]`**, **`[3]`** tương ứng với các bài feed khác nhau (không còn bị lặp lại toàn số `[1]`).
+      - Nội dung hiển thị chính là **Tiêu đề của bài feed** (rõ ràng, dễ hiểu).
+      - Tên nguồn tin hiển thị phụ phía sau (ví dụ: ` · The Verge`, ` · arXiv`).
+      - Rê chuột vào chip trích dẫn: Tooltip hiển thị đầy đủ tiêu đề bài feed và nguồn tin.
+      - Bấm vào chip trích dẫn: Hộp thoại chi tiết trích dẫn (Citation Drawer) mở ra hiển thị đầy đủ thông tin bài feed gốc cùng nút *"Mở nguồn gốc"*.

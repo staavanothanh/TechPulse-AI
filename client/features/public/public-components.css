@@ -1383,18 +1383,49 @@
   gap: 7px;
 }
 .public-citation-chip {
-  padding: 5px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: min(100%, 540px);
+  padding: 5px 11px;
   border: 1px solid var(--public-border);
   border-radius: 999px;
-  background: transparent;
+  background: color-mix(in oklch, var(--public-surface) 90%, transparent);
   color: var(--public-muted);
   font-size: 12px;
+  line-height: 1.4;
   text-align: left;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 .public-citation-chip:hover {
   color: var(--public-fg);
   border-color: var(--public-accent);
+  background: color-mix(in oklch, var(--public-accent) 8%, var(--public-surface));
 }
+.public-citation-chip-num {
+  font-weight: 700;
+  color: var(--public-accent);
+  flex-shrink: 0;
+}
+.public-citation-chip-title {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--public-fg);
+}
+.public-citation-chip:hover .public-citation-chip-title {
+  color: var(--public-accent);
+}
+.public-citation-chip-source {
+  color: var(--public-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 11.5px;
+}
+
 
 .public-account-grid {
   display: grid;
@@ -1433,11 +1464,74 @@
   color: var(--public-muted);
   font-size: 13px;
 }
+.public-preference-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 16px;
+  padding: 10px 14px;
+  border-radius: var(--public-radius);
+  background: color-mix(in oklch, var(--public-bg) 65%, transparent);
+  border: 1px solid var(--public-border);
+}
+.public-preference-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.public-preference-count {
+  font-size: 13px;
+  color: var(--public-fg);
+}
+.public-preference-count strong {
+  color: var(--public-accent);
+}
+.public-preference-search {
+  max-width: 260px;
+  flex: 1;
+}
+.public-preference-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.public-preference-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.public-preference-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.public-preference-group-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--public-muted);
+}
 .public-preference-grid {
-  margin: 6px 0 12px;
+  margin: 4px 0 8px;
 }
 .public-preference-grid button {
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+.public-preference-grid button:hover {
+  border-color: var(--public-accent);
+  transform: translateY(-1px);
+}
+.public-preference-grid button.active .public-topic-parent-tag {
+  background: color-mix(in oklch, var(--public-surface) 25%, transparent);
+  color: var(--public-surface);
 }
 .public-danger-zone {
   border-color: color-mix(in oklch, var(--public-danger) 35%, var(--public-border));
@@ -1591,4 +1685,92 @@
 
 .donate-thanks p {
   margin: 0;
+}
+
+.public-password-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.public-password-success-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px 16px;
+  border-radius: var(--public-radius);
+  background: color-mix(in oklch, var(--public-success) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--public-success) 30%, transparent);
+}
+
+.public-password-success-banner p {
+  margin: 0;
+  font-weight: 500;
+  color: var(--public-success);
+}
+
+.public-countdown-highlight {
+  color: var(--public-accent);
+  font-weight: 700;
+}
+
+.public-deletion-dialog {
+  width: min(520px, 100%);
+}
+
+.public-deletion-warning-box {
+  margin-top: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: var(--public-radius);
+  background: color-mix(in oklch, var(--public-danger) 10%, transparent);
+  border: 1px solid color-mix(in oklch, var(--public-danger) 28%, transparent);
+  color: var(--public-danger);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.public-deletion-warning-box strong {
+  font-weight: 600;
+}
+
+.public-deletion-prompt {
+  font-size: 14px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.public-deletion-email-target {
+  color: var(--public-accent);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.public-deletion-checkbox-wrap {
+  margin-top: 14px;
+  margin-bottom: 8px;
+}
+
+.public-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--public-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.public-checkbox-label input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--public-danger);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }

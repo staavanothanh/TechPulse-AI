@@ -66,6 +66,7 @@ export function createSessionActions({
   isSessionTransitionCurrent = () => true,
   createIdempotencyKey = () => `account-deletion-${Date.now()}`,
   redirect = redirectToGoogleAuth,
+  onPasswordChangeSuccess,
 }) {
   let sessionMutationTail = null
   let currentCsrfToken
@@ -133,12 +134,19 @@ export function createSessionActions({
     return response
   }
 
-  async function logout() {
+  async function logout(notice = null) {
     return enqueueSessionMutation(async () => {
       const transition = startTransition()
       const csrfToken = readCsrfToken()
-      await api.logout({ credentials: 'same-origin', headers: csrfHeaders(csrfToken) })
-      if (canCommit(transition)) commitSessionState(null, null, null, transition)
+      const headers = csrfHeaders(csrfToken)
+      try {
+        await api.logout({ credentials: 'same-origin', headers })
+      } catch {
+        // Đảm bảo client luôn thu hồi phiên cục bộ ngay cả khi gọi API logout gặp lỗi mạng/phiên
+      }
+      currentCsrfToken = null
+      const nextNotice = typeof notice === 'string' ? notice : null
+      if (canCommit(transition)) commitSessionState(null, null, nextNotice, transition)
     })
   }
 
@@ -186,6 +194,14 @@ export function createSessionActions({
         credentials: 'same-origin',
         headers: csrfHeaders(csrfToken, { 'Content-Type': 'application/json' }),
       })
+      currentCsrfToken = response.data.csrfToken
+      if (typeof onPasswordChangeSuccess === 'function') {
+        onPasswordChangeSuccess(
+          body.currentPassword !== undefined
+            ? 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.'
+            : 'Đặt mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.'
+        )
+      }
       if (canCommit(transition)) commitSessionState(response.data.user, response.data.csrfToken, null, transition)
       return response
     })

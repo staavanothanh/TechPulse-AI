@@ -57,6 +57,7 @@ function PublicSurface({
   auth,
   accountActions,
   sessionNotice,
+  initialPasswordSuccessOpen,
 }) {
   const integration = usePublicIntegration({
     api,
@@ -69,6 +70,7 @@ function PublicSurface({
     onSessionExpired,
     accountActions,
     sessionNotice,
+    initialPasswordSuccessOpen,
   })
   const renderedSession =
     publicSession?.user && integration.account.user
@@ -154,6 +156,7 @@ export default function App() {
     error: null,
     notice: null,
   })
+  const [passwordSuccessPending, setPasswordSuccessPending] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -187,36 +190,17 @@ export default function App() {
   }, [])
   const isSessionTransitionCurrent = useCallback((epoch) => epoch === sessionEpochRef.current, [])
 
-  const loadSession = useCallback((isActive = () => true) => {
-    const requestEpoch = sessionEpochRef.current
-    void api
-      .getCurrentUser({ credentials: 'same-origin' })
-      .then((response) => {
-        if (isActive() && requestEpoch === sessionEpochRef.current)
-          setSession({
-            status: 'ready',
-            user: response.data.user,
-            csrfToken: response.data.csrfToken,
-            error: null,
-            notice: null,
-          })
-      })
-      .catch((error) => {
-        if (isActive() && requestEpoch === sessionEpochRef.current) setSession(recoverBootstrapSession(error))
-      })
-  }, [])
-
-  useEffect(() => {
-    let active = true
-    loadSession(() => active)
-    return () => {
-      active = false
-    }
-  }, [loadSession])
-
   const applySession = useCallback((nextUser, nextCsrfToken, nextNotice = null, expectedTransition) => {
     if (expectedTransition !== undefined && expectedTransition !== sessionEpochRef.current) return false
     sessionEpochRef.current += 1
+    if (!nextUser) setPasswordSuccessPending(false)
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        window.sessionStorage.removeItem('techpulse_pending_logout')
+      } catch {
+        // ignore
+      }
+    }
     setSession({
       status: 'ready',
       user: nextUser ?? null,
@@ -235,6 +219,51 @@ export default function App() {
     return true
   }, [])
 
+  const loadSession = useCallback((isActive = () => true) => {
+    const requestEpoch = sessionEpochRef.current
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const pendingNotice = window.sessionStorage.getItem('techpulse_pending_logout')
+        if (pendingNotice) {
+          window.sessionStorage.removeItem('techpulse_pending_logout')
+          window.sessionStorage.removeItem('techpulse_password_success')
+          window.sessionStorage.removeItem('techpulse_logout_deadline')
+          void api.logout({ credentials: 'same-origin' }).catch(() => {})
+          if (isActive() && requestEpoch === sessionEpochRef.current) {
+            applySession(null, null, pendingNotice)
+          }
+          return
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    void api
+      .getCurrentUser({ credentials: 'same-origin' })
+      .then((response) => {
+        if (isActive() && requestEpoch === sessionEpochRef.current)
+          setSession({
+            status: 'ready',
+            user: response.data.user,
+            csrfToken: response.data.csrfToken,
+            error: null,
+            notice: null,
+          })
+      })
+      .catch((error) => {
+        if (isActive() && requestEpoch === sessionEpochRef.current) setSession(recoverBootstrapSession(error))
+      })
+  }, [applySession])
+
+  useEffect(() => {
+    let active = true
+    loadSession(() => active)
+    return () => {
+      active = false
+    }
+  }, [loadSession])
+
   const expireSession = useCallback(
     (notice, expectedIdentity, expectedEpoch) => {
       if (expectedIdentity !== undefined && expectedIdentity !== sessionIdentityRef.current) return false
@@ -243,6 +272,17 @@ export default function App() {
     },
     [applySession],
   )
+
+  const handlePasswordChangeSuccess = useCallback((notice) => {
+    setPasswordSuccessPending(true)
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        window.sessionStorage.setItem('techpulse_pending_logout', notice)
+      } catch {
+        // ignore
+      }
+    }
+  }, [])
 
   const accountActions = useMemo(
     () =>
@@ -253,8 +293,9 @@ export default function App() {
         commitSession: (nextUser, nextCsrfToken, nextNotice, expectedTransition) => applySession(nextUser, nextCsrfToken, nextNotice, expectedTransition),
         beginSessionTransition,
         isSessionTransitionCurrent,
+        onPasswordChangeSuccess: handlePasswordChangeSuccess,
       }),
-    [applySession, beginSessionTransition, isSessionTransitionCurrent],
+    [applySession, beginSessionTransition, handlePasswordChangeSuccess, isSessionTransitionCurrent],
   )
   const adminApi = useMemo(
     () => withSessionRecovery(api, expireSession, {
@@ -380,6 +421,7 @@ export default function App() {
         auth={auth}
         accountActions={accountActions}
         sessionNotice={session.notice}
+        initialPasswordSuccessOpen={passwordSuccessPending}
       />
     </>
   )

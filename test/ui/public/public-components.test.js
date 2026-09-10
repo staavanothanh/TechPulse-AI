@@ -294,10 +294,64 @@ describe('public feature presentation contract', () => {
     expect(account).toMatch(/aria-pressed="true"[^>]*>Bảo mật/)
     expect(account).toMatch(/aria-pressed="true"[^>]*>AI/)
   })
+  it('renders all 22 active topics across 8 product domains, search input and selection counter in AccountView', () => {
+    const account = render(AccountView, {
+      user: { id: 'u-1', email: 'reader@example.com', role: 'user', topicPreferences: ['Học máy', 'Container & Kubernetes'] },
+      onSavePreferences: handlers.onSubmit,
+    })
+
+    // Tất cả 8 nhóm lĩnh vực hiển thị
+    expect(account).toContain('AI &amp; Machine Learning')
+    expect(account).toContain('AI Agent &amp; Hệ thống tự hành')
+    expect(account).toContain('Robotics &amp; Tự động hóa')
+    expect(account).toContain('Kỹ thuật phần mềm &amp; Lập trình')
+    expect(account).toContain('DevOps &amp; Điện toán đám mây')
+    expect(account).toContain('An ninh mạng &amp; Bảo mật')
+    expect(account).toContain('Khoa học máy tính &amp; Dữ liệu')
+    expect(account).toContain('Công nghệ mới nổi &amp; Web3')
+
+    // Tất cả 14 chủ đề con (leaf topics) đều có mặt
+    expect(account).toContain('Học máy')
+    expect(account).toContain('Học sâu &amp; LLM')
+    expect(account).toContain('Hệ thống Agentic')
+    expect(account).toContain('Điều khiển Robot')
+    expect(account).toContain('JavaScript')
+    expect(account).toContain('Kiến trúc hệ thống')
+    expect(account).toContain('Hạ tầng Cloud &amp; SRE')
+    expect(account).toContain('Container &amp; Kubernetes')
+    expect(account).toContain('Bảo mật ứng dụng')
+    expect(account).toContain('Mật mã học &amp; Quyền riêng tư')
+    expect(account).toContain('Cơ sở dữ liệu')
+    expect(account).toContain('Kỹ nghệ dữ liệu')
+    expect(account).toContain('Blockchain &amp; Web3')
+    expect(account).toContain('Điện toán lượng tử')
+
+    // Chủ đề con được kích hoạt độc lập, không kích hoạt chủ đề cha
+    expect(account).toMatch(/aria-pressed="true"[^>]*>Học máy/)
+    expect(account).toMatch(/aria-pressed="true"[^>]*>Container &amp; Kubernetes/)
+    expect(account).toMatch(/aria-pressed="false"[^>]*>AI<span/)
+    expect(account).toMatch(/aria-pressed="false"[^>]*>DevOps<span/)
+
+    // Thanh công cụ, bộ đếm và ô tìm kiếm
+    expect(account).toContain('Đã chọn:')
+    expect(account).toContain('Tìm trong 22 chủ đề...')
+    expect(account).toContain('Bỏ chọn hết')
+  })
+  it('hides the change-password form behind an activate button by default in AccountView', () => {
+    const account = render(AccountView, {
+      user: { id: 'u-1', email: 'reader@example.com', role: 'user', topicPreferences: [], hasPassword: true },
+      onChangePassword: handlers.onSubmit,
+    })
+    expect(account).toContain('Đổi mật khẩu')
+    expect(account).not.toContain('id="account-current-password"')
+    expect(account).not.toContain('id="account-new-password"')
+    expect(account).not.toContain('id="account-confirm-password"')
+  })
   it('renders the change-password form with a current-password field for accounts that already have a password', () => {
     const account = render(AccountView, {
       user: { id: 'u-1', email: 'reader@example.com', role: 'user', topicPreferences: [], hasPassword: true },
       onChangePassword: handlers.onSubmit,
+      initialPasswordOpen: true,
     })
     expect(account).toContain('Đổi mật khẩu')
     expect(account).toContain('id="account-current-password"')
@@ -305,12 +359,15 @@ describe('public feature presentation contract', () => {
     expect(account).toContain('id="account-confirm-password"')
     expect(account).toContain('autoComplete="current-password"')
     expect(account).toContain('class="public-input"')
+    expect(account).toContain('Xác nhận')
+    expect(account).toContain('Hủy')
     expect(account).not.toContain('đăng nhập bằng Google')
 
     // Dữ liệu cũ không có hasPassword → mặc định an toàn vẫn yêu cầu mật khẩu hiện tại
     const legacy = render(AccountView, {
       user: { id: 'u-2', email: 'legacy@example.com', role: 'user', topicPreferences: [] },
       onChangePassword: handlers.onSubmit,
+      initialPasswordOpen: true,
     })
     expect(legacy).toContain('id="account-current-password"')
   })
@@ -318,6 +375,7 @@ describe('public feature presentation contract', () => {
     const account = render(AccountView, {
       user: { id: 'u-3', email: 'google@example.com', role: 'user', topicPreferences: [], hasPassword: false },
       onChangePassword: handlers.onSubmit,
+      initialPasswordOpen: true,
     })
     expect(account).toContain('Đặt mật khẩu')
     expect(account).not.toContain('Đổi mật khẩu')
@@ -325,6 +383,37 @@ describe('public feature presentation contract', () => {
     expect(account).not.toContain('id="account-current-password"')
     expect(account).toContain('id="account-new-password"')
     expect(account).toContain('autoComplete="new-password"')
+    expect(account).toContain('Xác nhận')
+    expect(account).toContain('Hủy')
+  })
+  it('renders a success pop-up modal dialog with auto-logout countdown when password change succeeds', () => {
+    const account = render(AccountView, {
+      user: { id: 'u-1', email: 'reader@example.com', role: 'user', topicPreferences: [], hasPassword: true },
+      onChangePassword: handlers.onSubmit,
+      initialPasswordSuccessOpen: true,
+    })
+    expect(account).toContain('role="dialog"')
+    expect(account).toContain('Đổi mật khẩu thành công!')
+    expect(account).toContain('Hệ thống sẽ tự động đăng xuất sau')
+    expect(account).toContain('5 giây')
+    expect(account).toContain('Đăng xuất ngay (5s)')
+  })
+  it('renders account deletion modal with email verification, risk agreement checkbox, and safety countdown', () => {
+    const account = render(AccountView, {
+      user: { id: 'u-1', email: 'reader@example.com', role: 'user', topicPreferences: [], hasPassword: true },
+      onRequestDeletion: handlers.onSubmit,
+      initialDeletionOpen: true,
+    })
+    expect(account).toContain('role="dialog"')
+    expect(account).toContain('Yêu cầu xóa tài khoản?')
+    expect(account).toContain('public-deletion-warning-box')
+    expect(account).toContain('Cảnh báo quan trọng:')
+    expect(account).toContain('reader@example.com')
+    expect(account).toContain('id="account-deletion-email"')
+    expect(account).toContain('id="account-deletion-risk-confirm"')
+    expect(account).toContain('Tôi hiểu và đồng ý xóa vĩnh viễn tài khoản này')
+    expect(account).toContain('Xác nhận xóa (5s)')
+    expect(account).toMatch(/disabled=""[^>]*>Xác nhận xóa \(5s\)/)
   })
   it('marks Q&A topic buttons active when scope uses legacy aliases', () => {
     const html = render(QaView, {

@@ -115,6 +115,7 @@ export function usePublicIntegration({
   sessionNotice,
   allowNaturalLanguageScope = false,
   scopeMode = null,
+  initialPasswordSuccessOpen = false,
 }) {
   const contentApi = useMemo(() => createContentApi(api), [api])
   const qaApi = useMemo(() => createQaApi(api), [api])
@@ -233,7 +234,7 @@ export function usePublicIntegration({
     ...articleState,
     onAskAboutArticle: articleAskHandler,
   }
-  const account = useAccount({ accountActions, expire, sessionNotice, csrfToken, user })
+  const account = useAccount({ accountActions, expire, sessionNotice, csrfToken, user, initialPasswordSuccessOpen })
   return { feed, search, saved, article, qa, account, onLogout: account.onLogout }
 }
 
@@ -1160,7 +1161,7 @@ export function useQa({ articleId: routeArticleId = null, contentApi, csrfToken,
     },
   }
 }
-function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) {
+function useAccount({ accountActions, csrfToken, expire, sessionNotice, user, initialPasswordSuccessOpen = false }) {
   const identityKey = user ? `user:${user.id ?? user._id ?? 'unknown'}${csrfToken ? `:${csrfToken}` : ''}` : 'guest'
   const identityRef = useRef(identityKey)
   const identityChanged = identityRef.current !== identityKey
@@ -1221,9 +1222,11 @@ function useAccount({ accountActions, csrfToken, expire, sessionNotice, user }) 
     notice: displayNotice,
     error: displayError,
     onToggleTopic: (topic) => setDraft((current) => toggleTopicValue(current, topic)),
+    onClearTopics: () => setDraft([]),
     onSavePreferences: () => run(() => accountActions.updatePreferences(displayDraft), setBusy, 'Đã lưu chủ đề quan tâm.'),
     onRequestDeletion: () => run(accountActions.requestDeletion, setDeleting),
     onChangePassword,
-    onLogout: () => run(accountActions.logout, setBusy),
+    onLogout: (notice) => run(() => accountActions.logout(notice), setBusy),
+    initialPasswordSuccessOpen,
   }
 }

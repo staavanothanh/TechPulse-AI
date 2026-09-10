@@ -665,16 +665,27 @@ function isHistoricalCitation(citation) {
   return citation?.status === 'available' || citation?.status === 'unavailable'
 }
 
+function citationChipTitle(citation) {
+  return (
+    citation?.titleVi ||
+    citation?.titleOriginal ||
+    citation?.title ||
+    (citation?.status === 'unavailable' ? 'Nguồn lịch sử' : citation?.sourceName || 'Bài viết nguồn')
+  )
+}
+
 function citationChipLabel(citation) {
-  const sourceLabel = citation?.sourceName || citation?.titleOriginal || (citation?.status === 'unavailable' ? 'Nguồn lịch sử' : 'Nguồn')
-  return isHistoricalCitation(citation) ? `Citation lịch sử · ${sourceLabel}` : sourceLabel
+  const title = citationChipTitle(citation)
+  const source = citation?.sourceName && citation.sourceName !== title ? ` · ${citation.sourceName}` : ''
+  const base = `${title}${source}`
+  return isHistoricalCitation(citation) ? `Citation lịch sử · ${base}` : base
 }
 function CitationDrawer({ citation, onClose }) {
   const dialogRef = useDialogFocus(Boolean(citation), onClose)
   if (!citation) return null
   const url = citation.status === 'unavailable' ? null : safeExternalUrl(citation.originalUrl)
   const historical = isHistoricalCitation(citation)
-  const sourceLabel = citation.sourceName || (citation.status === 'unavailable' ? 'Nguồn lịch sử' : citation.titleOriginal || 'Nguồn kiểm chứng')
+  const sourceLabel = citation.sourceName || (citation.status === 'unavailable' ? 'Nguồn lịch sử' : citation.titleVi || citation.titleOriginal || 'Nguồn kiểm chứng')
 
   return (
     <div
@@ -708,7 +719,7 @@ function CitationDrawer({ citation, onClose }) {
             {citation.status === 'available' ? (
               <p id="public-citation-status" className="public-form-note">Nguồn còn khả dụng</p>
             ) : null}
-            <h3>{citation.titleOriginal || 'Bài viết nguồn'}</h3>
+            <h3>{citation.titleVi || citation.titleOriginal || 'Bài viết nguồn'}</h3>
             <dl className="public-fact-list">
               {citation.publishedAt ? (
                 <div>
@@ -748,15 +759,15 @@ function CitationDrawer({ citation, onClose }) {
 
 function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading = false }) {
   const safeMessages = Array.isArray(messages) ? messages : []
-  if (safeMessages.length === 0 && !pendingQuestion && !isLoading)
-    return <StateCard title="Chưa có tin nhắn" copy="Đặt câu hỏi để tạo câu trả lời có nguồn." />
-
   const threadEndRef = useRef(null)
   useEffect(() => {
     if (isLoading || pendingQuestion || safeMessages.length > 0) {
       threadEndRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
     }
   }, [safeMessages.length, pendingQuestion, isLoading])
+
+  if (safeMessages.length === 0 && !pendingQuestion && !isLoading)
+    return <StateCard title="Chưa có tin nhắn" copy="Đặt câu hỏi để tạo câu trả lời có nguồn." />
 
   const lastUserMsg = [...safeMessages].reverse().find((m) => m.role === 'user')
   const showPendingBubble = Boolean(pendingQuestion) && (!lastUserMsg || (lastUserMsg.text !== pendingQuestion && lastUserMsg.content !== pendingQuestion))
@@ -767,6 +778,23 @@ function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading =
         const paragraphs = Array.isArray(message.paragraphs) ? message.paragraphs : []
         const citations = Array.isArray(message.citations) ? message.citations : []
         const citationById = new Map(citations.map((citation) => [citation.id, citation]))
+
+        // Đánh số thứ tự 1, 2, 3... liên tục theo thứ tự các bài feed xuất hiện trong câu trả lời
+        const citationNumberMap = new Map()
+        let nextCitationNumber = 1
+        for (const p of paragraphs) {
+          for (const id of p.citationIds || []) {
+            if (!citationNumberMap.has(id)) {
+              citationNumberMap.set(id, nextCitationNumber++)
+            }
+          }
+        }
+        for (const c of citations) {
+          if (c?.id && !citationNumberMap.has(c.id)) {
+            citationNumberMap.set(c.id, nextCitationNumber++)
+          }
+        }
+
         const refusalCopy = {
           'insufficient-evidence': 'Chưa đủ bằng chứng để trả lời câu hỏi này.',
           'policy-blocked': 'Câu hỏi này nằm ngoài phạm vi hỗ trợ.',
@@ -812,15 +840,22 @@ function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading =
                     <div className="public-citation-row">
                       {(paragraph.citationIds || []).map((citationId, citationIndex) => {
                         const citation = citationById.get(citationId)
+                        const citationNumber = citationNumberMap.get(citationId) || (citationIndex + 1)
+                        const feedTitle = citationChipTitle(citation)
+                        const hasDistinctSource = Boolean(citation?.sourceName && citation.sourceName !== feedTitle)
                         return citation ? (
                           <button
                             className="public-citation-chip"
                             type="button"
                             key={citationId}
                             onClick={() => onCitation?.(citation)}
+                            title={citationChipLabel(citation)}
                           >
-                            [{citationIndex + 1}]{' '}
-                            {citationChipLabel(citation)}
+                            <span className="public-citation-chip-num">[{citationNumber}]</span>{' '}
+                            <span className="public-citation-chip-title">{feedTitle}</span>
+                            {hasDistinctSource ? (
+                              <span className="public-citation-chip-source"> · {citation.sourceName}</span>
+                            ) : null}
                           </button>
                         ) : null
                       })}
