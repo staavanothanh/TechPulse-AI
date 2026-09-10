@@ -210,6 +210,7 @@ export default function App() {
     })
     setAuth((current) => ({
       ...current,
+      mode: 'login',
       busy: false,
       googleBusy: false,
       error: null,
@@ -364,6 +365,7 @@ export default function App() {
   const guestBrowseNotice = useCallback(() => {
     setAuth((current) => ({
       ...current,
+      mode: 'login',
       error: null,
       notice: 'Feed chỉ mở sau khi đăng nhập để giữ phiên và dữ liệu theo đúng contract.',
     }))

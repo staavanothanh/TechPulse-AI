@@ -565,7 +565,40 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 18. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 18. Sửa Lỗi: Tự Động Chuyển Về Form Đăng Nhập (Thay Vì Đăng Ký) Sau Khi Xóa Tài Khoản Hoặc Đăng Xuất
+
+### Bối cảnh & Nguyên nhân lỗi
+- **Hiện tượng:** Khi người dùng bấm tạo tài khoản mới (form đăng ký), đăng nhập thành công vào hệ thống, sau đó vào trang Cài đặt tài khoản (`/account`) thực hiện quy trình **"Yêu cầu xóa tài khoản"**, hệ thống thu hồi phiên và chuyển hướng về trang chủ (`LandingPage`). Tuy nhiên, thay vì hiển thị form **Đăng nhập** (`mode = 'login'`), giao diện lại hiển thị form **Đăng ký** (`mode = 'register'`).
+- **Nguyên nhân kỹ thuật:**
+  1. Trong `client/App.jsx`, state `auth` lưu trữ `{ mode: 'login' | 'register', ... }`. Khi người dùng chuyển sang tab Đăng ký để tạo tài khoản, `auth.mode` được cập nhật thành `'register'`.
+  2. Khi người dùng xóa tài khoản (hoặc đăng xuất), hàm `applySession` được kích hoạt để đưa `user` về `null`. Trong `applySession`, lệnh cập nhật `setAuth((current) => ({ ...current, ... }))` sao chép lại toàn bộ `current` mà không reset `mode` về `'login'`. Do đó, `auth.mode` vẫn giữ nguyên giá trị `'register'` từ bước tạo tài khoản trước đó.
+  3. Trong component `client/features/public/components/AuthPanel.jsx`, state `mode` bên trong component chỉ được khởi tạo một lần duy nhất qua `useState(() => normalizeAuthMode(initialMode))` mà không có cơ chế đồng bộ lại khi prop `mode` từ parent thay đổi.
+
+### Giải pháp kỹ thuật đã triển khai
+1. **Reset `mode: 'login'` tập trung trong `client/App.jsx`:**
+   - Cập nhật hàm `applySession`: Bổ sung `mode: 'login'` vào `setAuth` để mọi luồng đăng xuất, thu hồi phiên do xóa tài khoản, phiên hết hạn hoặc đổi mật khẩu thành công đều tự động đưa trạng thái xác thực về form **Đăng nhập**.
+   - Cập nhật `guestBrowseNotice`: Đảm bảo khi khách bấm duyệt tin cũng đưa form về trạng thái **Đăng nhập**.
+2. **Đồng bộ trạng thái theo mẫu chuẩn React trong `client/features/public/components/AuthPanel.jsx`:**
+   - Bổ sung pattern chuẩn *"Adjusting state when a prop changes during render"* (theo khuyến nghị chính thức của React, tránh kích hoạt render trùng lặp hoặc vi phạm `react-hooks/set-state-in-effect`):
+     ```javascript
+     const [prevMode, setPrevMode] = useState(initialMode)
+     const [mode, setMode] = useState(() => normalizeAuthMode(initialMode))
+     const [errors, setErrors] = useState({})
+
+     if (prevMode !== initialMode) {
+       setPrevMode(initialMode)
+       setMode(normalizeAuthMode(initialMode))
+       setErrors({})
+     }
+     ```
+   - Khi `initialMode` từ parent thay đổi về `'login'`, `AuthPanel` tự động cập nhật ngay lập tức `mode` về `'login'` và xóa sạch các lỗi validate cũ.
+3. **Kiểm thử tự động:**
+   - `test/ui/public/public-components.test.js`: Thêm test case `renders login form by default in AuthPanel and provides login action` xác minh form đăng nhập hiển thị mặc định và cung cấp đầy đủ các trường nhập cho login.
+   - Toàn bộ test suite client và public components tiếp tục pass 100%.
+
+---
+
+## 19. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
 
 1. **Kiểm tra độc lập giữa chủ đề AI và Học máy, Software Engineering và JavaScript:**
    - Mở `http://localhost:3000` và chuyển sang tab **Hỏi đáp** (Q&A).
@@ -697,3 +730,10 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
     - Đăng nhập bằng tài khoản Google OAuth:
       - Vào tab **Tài khoản** (`route = 'account'`).
       - Quan sát giao diện: Thẻ **Chủ đề quan tâm** mở rộng toàn chiều ngang trang. Thẻ **Đổi mật khẩu** và thẻ **Quản lý dữ liệu (Xóa tài khoản)** hoàn toàn không xuất hiện.
+15. **Kiểm tra Chuyển về Form Đăng nhập Sau Khi Xóa Tài Khoản:**
+    - Từ trang chủ, bấm chuyển sang form **Tạo tài khoản mới** (`mode = 'register'`).
+    - Nhập thông tin đăng ký và tạo tài khoản thành công.
+    - Vào tab **Tài khoản** (`route = 'account'`), mở modal và thực hiện **"Yêu cầu xóa tài khoản"**.
+    - Sau khi xóa thành công và chuyển hướng về trang chủ:
+      - Form xác thực hiển thị tiêu đề **Đăng nhập** (kèm nút bấm *"Đăng nhập"* và ô nhập mật khẩu có `autoComplete="current-password"`), hoàn toàn không bị kẹt lại form Đăng ký.
+      - Phía trên form hiển thị thông báo thành công màu xanh: *"Yêu cầu xóa tài khoản đã được chấp nhận. Phiên của bạn đã bị thu hồi."*.

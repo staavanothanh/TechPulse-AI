@@ -26,12 +26,19 @@ export default function AuthPanel({
   onModeChange,
   onGuestBrowse,
 }) {
+  const [prevMode, setPrevMode] = useState(initialMode)
   const [mode, setMode] = useState(() => normalizeAuthMode(initialMode))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [errors, setErrors] = useState({})
   const emailId = 'public-auth-email'
   const passwordId = 'public-auth-password'
+
+  if (prevMode !== initialMode) {
+    setPrevMode(initialMode)
+    setMode(normalizeAuthMode(initialMode))
+    setErrors({})
+  }
 
   function switchMode() {
     const next = mode === 'login' ? 'register' : 'login'

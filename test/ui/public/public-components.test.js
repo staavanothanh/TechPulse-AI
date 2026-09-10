@@ -80,6 +80,13 @@ describe('public feature presentation contract', () => {
     expect(html).not.toContain('Tiếp tục như khách')
   })
 
+  it('renders login form by default in AuthPanel and provides login action', () => {
+    const html = render(AuthPanel, { onSubmit: handlers.onSubmit })
+    expect(html).toContain('Đăng nhập')
+    expect(html).not.toContain('Tạo tài khoản mới')
+    expect(html).toContain('autoComplete="current-password"')
+  })
+
   it('renders authenticated reader shell navigation with route callback and mobile labels', () => {
     const html = render(ReaderShell, {
       route: 'feed',
