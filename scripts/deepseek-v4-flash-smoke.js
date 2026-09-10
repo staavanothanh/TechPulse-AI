@@ -42,6 +42,7 @@ function route({ routeId, operation }) {
     enabled: true,
     routeFailureThreshold: 3,
     routeCooldownSeconds: 60,
+    acceptedModelIds: ['deepseek-flash'],
   }
 }
 

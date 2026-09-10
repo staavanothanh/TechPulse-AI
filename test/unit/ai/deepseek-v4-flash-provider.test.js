@@ -170,7 +170,45 @@ describe('DeepSeek V4 Flash provider smoke', () => {
     }))
 
     await expect(runDeepSeekV4FlashSmoke({ mode: 'summary', environment: environment(), fetchImpl, now: () => NOW }))
-      .rejects.toMatchObject({ code: 'provider_config_invalid', smokeStage: 'summary' })
+      .rejects.toMatchObject({ code: 'provider_model_mismatch', smokeStage: 'summary' })
+  })
+
+  it('accepts a successful response echoing a configured accepted model alias', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      model: 'deepseek-flash',
+      choices: [{ message: { content: JSON.stringify(responseFor('summary')) } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(runDeepSeekV4FlashSmoke({ mode: 'summary', environment: environment(), fetchImpl, now: () => NOW }))
+      .resolves.toMatchObject({ ok: true, summary: { providerId: 'deepseek', model: MODEL } })
+  })
+
+  it('rejects an echoed model outside the configured alias list as model-mismatch', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      model: 'deepseek-unknown',
+      choices: [{ message: { content: JSON.stringify(responseFor('summary')) } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(runDeepSeekV4FlashSmoke({ mode: 'summary', environment: environment(), fetchImpl, now: () => NOW }))
+      .rejects.toMatchObject({ code: 'provider_model_mismatch', smokeStage: 'summary' })
+  })
+
+  it('rejects a successful response with a missing upstream model as model-mismatch', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(responseFor('summary')) } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(runDeepSeekV4FlashSmoke({ mode: 'summary', environment: environment(), fetchImpl, now: () => NOW }))
+      .rejects.toMatchObject({ code: 'provider_model_mismatch', smokeStage: 'summary' })
   })
 
   it('uses the configured adapter directly for a structured summary request', async () => {

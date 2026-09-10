@@ -167,7 +167,7 @@ export function validateProviderConfiguration(input, {
   const rawRoutes = uniqueMap(input.routes, 'routeId', 'route')
   const routes = []
   for (const route of rawRoutes.values()) {
-    exactObject(route, ['routeId', 'providerId', 'admissionDomainId', 'model', 'operations', 'capability', 'evidenceUrl', 'reviewedAt', 'evidenceExpiresAt', 'artifactCompatibilityId', 'embeddingDimensions', 'embeddingVersion', 'enabled', 'routeFailureThreshold', 'routeCooldownSeconds'], 'route')
+    exactObject(route, ['routeId', 'providerId', 'admissionDomainId', 'model', 'operations', 'capability', 'evidenceUrl', 'reviewedAt', 'evidenceExpiresAt', 'artifactCompatibilityId', 'embeddingDimensions', 'embeddingVersion', 'enabled', 'routeFailureThreshold', 'routeCooldownSeconds', 'acceptedModelIds'], 'route')
     const provider = rawProviders.get(safeId(route.providerId, 'route provider reference'))
     const admission = rawAdmissionDomains.get(safeId(route.admissionDomainId, 'route admission domain reference'))
     if (!provider || !admission) fail('route has a dangling provider or admission domain reference')
@@ -185,6 +185,8 @@ export function validateProviderConfiguration(input, {
     if (typeof route.enabled !== 'boolean') fail('route enabled flag is required')
     if (route.routeFailureThreshold !== 3) fail('route failure threshold must be three')
     if (route.routeCooldownSeconds !== 60) fail('route cooldown must be sixty seconds')
+    const acceptedModelIds = route.acceptedModelIds === undefined ? undefined : (Array.isArray(route.acceptedModelIds) ? route.acceptedModelIds.map((model) => (typeof model === 'string' ? model.trim() : model)) : null)
+    if (acceptedModelIds === null || (acceptedModelIds !== undefined && (acceptedModelIds.length > 8 || new Set(acceptedModelIds).size !== acceptedModelIds.length || acceptedModelIds.some((model) => typeof model !== 'string' || model === '' || model.length > 200 || model === route.model.trim())))) fail('route acceptedModelIds is invalid')
     if (route.artifactCompatibilityId !== null && route.artifactCompatibilityId !== undefined && !ID.test(route.artifactCompatibilityId)) fail('route artifactCompatibilityId is invalid')
     if (route.operations.includes('embedding')) {
       if (!route.artifactCompatibilityId) fail('embedding route artifactCompatibilityId is required')
@@ -194,6 +196,7 @@ export function validateProviderConfiguration(input, {
     routes.push({
       ...route,
       model: route.model.trim(),
+      ...(acceptedModelIds !== undefined ? { acceptedModelIds: Object.freeze(acceptedModelIds) } : {}),
       providerFailureDomainId: provider.providerFailureDomainId,
       adapterId: provider.adapterId,
       trustedEndpointProfileId: provider.trustedEndpointProfileId,

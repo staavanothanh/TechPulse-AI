@@ -184,6 +184,61 @@ describe('bounded cross-queue fairness', () => {
     expect(result.queues.ingestion.claimed).toBe(1)
   })
 
+  it('selects indexing jobs created after run start using a live selection clock', async () => {
+    const registry = createQueueRegistry()
+    const startedAt = new Date('2026-08-10T00:00:00.000Z')
+    let currentMs = startedAt.getTime()
+
+    // Indexing job becomes available only AFTER the coordinator starts (the
+    // commit-time clock), mimicking mid-ingestion downstream creation.
+    const indexingCandidate = { id: 'mid-run-indexing', articleId: 'article-mid', availableAt: new Date(currentMs + 500) }
+    let indexingRemaining = 1
+    const indexing = {
+      queueName: 'indexing',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async ({ now }) => {
+        // Reveal the candidate once the live clock passes its availableAt.
+        if (indexingRemaining === 0 || now.getTime() < indexingCandidate.availableAt.getTime()) return null
+        indexingRemaining -= 1
+        return indexingCandidate
+      }),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => {
+        // First ingestion claim advances the clock past the indexing candidate's
+        // availableAt, then has no more ingestion work.
+        if (currentMs === startedAt.getTime()) {
+          currentMs += 1_000
+          return { id: 'ingestion-1', sourceId: 'src-1', availableAt: startedAt }
+        }
+        return null
+      }),
+      claimAndExecute: vi.fn(async () => ({ status: 'succeeded', claimed: true, sourceId: 'src-1' })),
+      nextAvailableAt: vi.fn(async () => null),
+    }
+
+    registry.register(indexing)
+    registry.register(ingestion)
+
+    const result = await runDueWork({
+      registry,
+      maxJobs: 3,
+      maxRecoveries: 0,
+      budgetMs: 5_000,
+      now: () => new Date(currentMs),
+    })
+
+    expect(indexing.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(indexing.claimAndExecute).toHaveBeenCalledWith(expect.objectContaining({ candidate: indexingCandidate }))
+    expect(result.queues.indexing.claimed).toBe(1)
+  })
+
   it('re-checks indexing queue in spill loop after ingestion creates downstream work', async () => {
     const registry = createQueueRegistry()
     let indexingCreated = false

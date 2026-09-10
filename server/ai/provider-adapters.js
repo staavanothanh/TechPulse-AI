@@ -152,7 +152,10 @@ export const DEEPSEEK_OPENAI_COMPATIBLE_PROTOCOL_ADAPTER = Object.freeze({
     return { ...OPENAI_COMPATIBLE_PROTOCOL_ADAPTER.buildPayload(input), thinking: { type: 'disabled' } }
   },
   parsePayload(input) {
-    if (input?.payload?.model !== input?.route?.model) throw new ProviderAdapterError('config')
+    const echoed = input?.payload?.model
+    const configured = input?.route?.model
+    const accepted = Array.isArray(input?.route?.acceptedModelIds) ? input.route.acceptedModelIds : []
+    if (typeof echoed !== 'string' || (echoed !== configured && !accepted.includes(echoed))) throw new ProviderAdapterError('model-mismatch')
     return OPENAI_COMPATIBLE_PROTOCOL_ADAPTER.parsePayload(input)
   },
 })
