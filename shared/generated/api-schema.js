@@ -6008,6 +6008,12 @@ export const openApiDocument = {
           "titleOriginal": {
             "type": "string"
           },
+          "titleVi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "originalUrl": {
             "$ref": "#/components/schemas/HttpsUrl"
           },

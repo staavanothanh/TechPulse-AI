@@ -39,6 +39,7 @@ export function citationEvidenceMetadata(evidence) {
     sourceId,
     sourceName: typeof source?.name === 'string' ? source.name : '',
     titleOriginal: article.titleOriginal,
+    titleVi: typeof article?.titleVi === 'string' && article.titleVi.trim() ? article.titleVi.trim() : null,
     originalUrl,
     author: typeof article.author === 'string' ? article.author : null,
     publishedAt: dateValue(article.publishedAt),

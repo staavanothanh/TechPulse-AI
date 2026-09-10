@@ -162,6 +162,13 @@ describe('Step 10 paragraph citation and support boundary', () => {
     expect(() => validateParagraphCitations({ paragraphs: [{ text: 'Thiếu block', citationIds: ['C1'] }], citationIds: ['C1'], evidenceBlocks: built.blocks })).toThrow(/citation/i)
   })
 
+  it('hydrates citation with titleVi when available on article', () => {
+    const evidence = [{ article: article({ titleVi: 'Tiêu đề tiếng Việt từ AI' }), source: source() }]
+    expect(hydrateAnswerCitations({ citationIds: ['C1'], evidence })).toEqual([
+      expect.objectContaining({ id: 'C1', titleVi: 'Tiêu đề tiếng Việt từ AI' }),
+    ])
+  })
+
   it('serializes unavailable historical citation without URL/title/date', () => {
     expect(serializeHistoricalCitation({ id: 'C1', articleId: 'a', sourceId: 's', status: 'takedown' })).toEqual({
       id: 'C1', status: 'unavailable', articleId: 'a', sourceId: 's', unavailableReason: 'takedown',

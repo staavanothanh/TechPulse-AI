@@ -65,6 +65,7 @@ export default function QaView({
   messages = [],
   scope = {},
   topics,
+  articles = [],
   error,
   onAsk,
   handlers = {},
@@ -123,6 +124,17 @@ export default function QaView({
   const customTopics = Array.isArray(topics) && topics.length > 0 ? topics : null
   const availableTopicSet = customTopics ? new Set(customTopics.map((t) => typeof t === 'string' ? t.toLowerCase() : '')) : null
   const normalizedSearch = topicSearchTerm.trim().toLowerCase()
+
+  const articlesMap = useMemo(() => {
+    const map = new Map()
+    if (Array.isArray(articles)) {
+      for (const item of articles) {
+        const id = item?.id ?? item?._id
+        if (id) map.set(String(id), item)
+      }
+    }
+    return map
+  }, [articles])
 
   const filteredTopicGroups = GROUPED_TOPICS.map((group) => {
     const items = group.items.filter((item) => {
@@ -324,6 +336,7 @@ export default function QaView({
                 pendingQuestion={submittedQuestion}
                 isLoading={state === 'loading'}
                 onCitation={setSelectedCitation}
+                articlesMap={articlesMap}
               />
             ) : null}
           </div>
@@ -593,7 +606,7 @@ export default function QaView({
           />
         </aside>
       </div>
-      <CitationDrawer citation={selectedCitation} onClose={closeCitation} />
+      <CitationDrawer citation={selectedCitation} onClose={closeCitation} articlesMap={articlesMap} />
       {clearConfirmationOpen ? (
         <div className="public-dialog-backdrop" role="presentation">
           <section
@@ -665,27 +678,32 @@ function isHistoricalCitation(citation) {
   return citation?.status === 'available' || citation?.status === 'unavailable'
 }
 
-function citationChipTitle(citation) {
+function citationChipTitle(citation, articlesMap) {
+  const article = citation?.articleId && articlesMap ? articlesMap.get(String(citation.articleId)) : null
   return (
     citation?.titleVi ||
+    article?.titleVi ||
     citation?.titleOriginal ||
+    article?.titleOriginal ||
     citation?.title ||
     (citation?.status === 'unavailable' ? 'Nguồn lịch sử' : citation?.sourceName || 'Bài viết nguồn')
   )
 }
 
-function citationChipLabel(citation) {
-  const title = citationChipTitle(citation)
+function citationChipLabel(citation, articlesMap) {
+  const title = citationChipTitle(citation, articlesMap)
   const source = citation?.sourceName && citation.sourceName !== title ? ` · ${citation.sourceName}` : ''
   const base = `${title}${source}`
   return isHistoricalCitation(citation) ? `Citation lịch sử · ${base}` : base
 }
-function CitationDrawer({ citation, onClose }) {
+function CitationDrawer({ citation, onClose, articlesMap }) {
   const dialogRef = useDialogFocus(Boolean(citation), onClose)
   if (!citation) return null
   const url = citation.status === 'unavailable' ? null : safeExternalUrl(citation.originalUrl)
   const historical = isHistoricalCitation(citation)
-  const sourceLabel = citation.sourceName || (citation.status === 'unavailable' ? 'Nguồn lịch sử' : citation.titleVi || citation.titleOriginal || 'Nguồn kiểm chứng')
+  const article = citation?.articleId && articlesMap ? articlesMap.get(String(citation.articleId)) : null
+  const displayTitle = citation.titleVi || article?.titleVi || citation.titleOriginal || article?.titleOriginal || 'Bài viết nguồn'
+  const sourceLabel = citation.sourceName || (citation.status === 'unavailable' ? 'Nguồn lịch sử' : displayTitle || 'Nguồn kiểm chứng')
 
   return (
     <div
@@ -719,7 +737,7 @@ function CitationDrawer({ citation, onClose }) {
             {citation.status === 'available' ? (
               <p id="public-citation-status" className="public-form-note">Nguồn còn khả dụng</p>
             ) : null}
-            <h3>{citation.titleVi || citation.titleOriginal || 'Bài viết nguồn'}</h3>
+            <h3>{displayTitle}</h3>
             <dl className="public-fact-list">
               {citation.publishedAt ? (
                 <div>
@@ -757,7 +775,7 @@ function CitationDrawer({ citation, onClose }) {
   )
 }
 
-function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading = false }) {
+function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading = false, articlesMap }) {
   const safeMessages = Array.isArray(messages) ? messages : []
   const threadEndRef = useRef(null)
   useEffect(() => {
@@ -841,7 +859,7 @@ function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading =
                       {(paragraph.citationIds || []).map((citationId, citationIndex) => {
                         const citation = citationById.get(citationId)
                         const citationNumber = citationNumberMap.get(citationId) || (citationIndex + 1)
-                        const feedTitle = citationChipTitle(citation)
+                        const feedTitle = citationChipTitle(citation, articlesMap)
                         const hasDistinctSource = Boolean(citation?.sourceName && citation.sourceName !== feedTitle)
                         return citation ? (
                           <button
@@ -849,7 +867,7 @@ function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading =
                             type="button"
                             key={citationId}
                             onClick={() => onCitation?.(citation)}
-                            title={citationChipLabel(citation)}
+                            title={citationChipLabel(citation, articlesMap)}
                           >
                             <span className="public-citation-chip-num">[{citationNumber}]</span>{' '}
                             <span className="public-citation-chip-title">{feedTitle}</span>

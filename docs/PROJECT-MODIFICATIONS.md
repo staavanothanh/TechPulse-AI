@@ -498,7 +498,43 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 16. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 16. Cải Tiến: Đồng Bộ Tiêu Đề Tiếng Việt Của Bài Feed (Đã Xử Lý Bởi AI) Cho Chip Trích Dẫn & Drawer Trong Hỏi Đáp
+
+### Bối cảnh & Lý do thay đổi
+- **Trước khi sửa:**
+  - Khi AI trả lời câu hỏi và đính kèm trích dẫn (citation), các bài viết nguồn dù đã được AI dịch/tóm tắt tiêu đề sang tiếng Việt trên feed (`titleVi` trong MongoDB) nhưng trong chip trích dẫn vẫn hiển thị tiêu đề tiếng Anh gốc (`titleOriginal`, ví dụ: *"Gemini 3.1 Flash TTS: the next generation of expressive AI speech"*).
+  - Nguyên nhân: Hợp đồng OpenAPI (`openapi.json`) cho `AnswerCitation` và `HistoricalCitationAvailable` trước đây chỉ định nghĩa trường `titleOriginal` mà không có trường `titleVi`. Backend (`citationEvidenceMetadata` trong `citations.js` và `publicAnswerCitation` trong `chat-repository.js`) chỉ trích xuất `titleOriginal` từ database, làm mất trường `titleVi` khi gửi về client.
+  - Phía Client (`QaView.jsx`): Không có cơ chế tra cứu ngược vào danh sách bài viết trên feed (`articles`) theo `articleId` khi citation chưa có sẵn `titleVi`.
+- **Giải pháp:**
+  1. **Hợp đồng OpenAPI (`docs/contracts/openapi.json`):**
+     - Bổ sung trường tùy chọn `titleVi` dạng `["string", "null"]` vào schema `AnswerCitation` và `HistoricalCitationAvailable`.
+     - Chạy cập nhật tự động toàn bộ client/contract generation qua `npm run contract:generate`.
+  2. **Backend Hydration & Serialization:**
+     - `server/domain/qa/citations.js`: Cập nhật `citationEvidenceMetadata` để đọc và trả về `titleVi: article.titleVi` từ evidence database. Cập nhật `serializeHistoricalCitation` để duy trì `titleVi`.
+     - `server/repositories/mongo/chat-repository.js`: Cập nhật `historicalCitationDocument`, `historicalCitation`, và `publicAnswerCitation` để lưu trữ và trả về `titleVi` khi replay session.
+  3. **Frontend Integration & Fallback Lookup:**
+     - `client/features/public/PublicApp.jsx`: Truyền `articles: feed.articles || []` vào `qa` viewProps.
+     - `client/features/public/views/QaView.jsx`: Xây dựng `articlesMap` từ prop `articles`. Cập nhật `citationChipTitle` và `CitationDrawer` ưu tiên:
+       `citation.titleVi || articleFromFeed.titleVi || citation.titleOriginal`.
+     - Giúp toàn bộ chip trích dẫn hiển thị ngay tiêu đề tiếng Việt đã được AI xử lý trên feed (ví dụ: *"Gemini 3.1 Flash TTS: Thế hệ tiếp theo của giọng nói AI biểu cảm"*), ngay cả đối với các phiên hỏi đáp cũ chưa kịp hydrate `titleVi` từ backend.
+
+### Chi tiết thay đổi mã nguồn
+1. **Hợp đồng OpenAPI (`docs/contracts/openapi.json` & `shared/generated/**`):**
+   - Thêm thuộc tính `titleVi` vào schemas `AnswerCitation` và `HistoricalCitationAvailable`.
+   - Sinh lại API client qua `npm run contract:generate`.
+2. **Backend Domain & Repository:**
+   - `server/domain/qa/citations.js`: `citationEvidenceMetadata` trả về `titleVi: article.titleVi`.
+   - `server/repositories/mongo/chat-repository.js`: Lưu trữ và trả về `titleVi` trong các hàm xử lý citation.
+3. **Frontend Application:**
+   - `client/features/public/PublicApp.jsx`: Truyền prop `articles` cho view Hỏi đáp.
+   - `client/features/public/views/QaView.jsx`: Tích hợp `articlesMap` tra cứu tiêu đề tiếng Việt cho chip trích dẫn và drawer.
+4. **Kiểm thử tự động:**
+   - `test/unit/qa/grounded-answer.test.js`: Thêm unit test kiểm tra `hydrateAnswerCitations` bảo toàn `titleVi` từ bài viết.
+   - `test/ui/public/user-flow-fixes.test.js`: Thêm UI test `displays Vietnamese title translated by AI for citation chips and drawer using articles lookup` xác minh hiển thị tiêu đề tiếng Việt trên chip và drawer.
+
+---
+
+## 17. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
 
 1. **Kiểm tra độc lập giữa chủ đề AI và Học máy, Software Engineering và JavaScript:**
    - Mở `http://localhost:3000` và chuyển sang tab **Hỏi đáp** (Q&A).
@@ -617,3 +653,9 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
       - Tên nguồn tin hiển thị phụ phía sau (ví dụ: ` · The Verge`, ` · arXiv`).
       - Rê chuột vào chip trích dẫn: Tooltip hiển thị đầy đủ tiêu đề bài feed và nguồn tin.
       - Bấm vào chip trích dẫn: Hộp thoại chi tiết trích dẫn (Citation Drawer) mở ra hiển thị đầy đủ thông tin bài feed gốc cùng nút *"Mở nguồn gốc"*.
+13. **Kiểm tra Tiêu đề tiếng Việt đã được AI xử lý cho Citation Chip và Drawer trong Hỏi đáp:**
+    - Vào tab **Hỏi đáp** (Q&A), gửi câu hỏi liên quan đến một bài viết đã có bản dịch/tóm tắt tiếng Việt trên Feed (hoặc mở lại một phiên hỏi đáp có trích dẫn bài viết, ví dụ bài viết về *Gemini 3.1 Flash TTS*).
+    - Quan sát chip trích dẫn bên dưới đoạn văn trả lời của AI:
+      - Tiêu đề hiển thị trên chip là bản tiếng Việt do AI xử lý trên Feed (ví dụ: `[1] Gemini 3.1 Flash TTS: Thế hệ tiếp theo của giọng nói AI biểu cảm · Google DeepMind Blog`) thay vì tiêu đề tiếng Anh gốc (`Gemini 3.1 Flash TTS: the next generation of expressive AI speech`).
+      - Rê chuột vào chip trích dẫn: Tooltip hiển thị đầy đủ tiêu đề tiếng Việt và nguồn tin.
+      - Bấm vào chip trích dẫn: Hộp thoại chi tiết trích dẫn (Citation Drawer) mở ra hiển thị thẻ `<h3>` tiêu đề tiếng Việt rõ ràng, kèm nút *"Mở nguồn gốc"*

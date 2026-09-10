@@ -263,6 +263,7 @@ function publicAnswerCitation(citation, article, source) {
     sourceId: idString(source._id ?? source.id ?? citation.sourceId),
     sourceName,
     titleOriginal: String(article.titleOriginal ?? citation.titleOriginal ?? ''),
+    titleVi: typeof article?.titleVi === 'string' ? article.titleVi : (typeof citation?.titleVi === 'string' ? citation.titleVi : null),
     originalUrl,
     author: typeof article.author === 'string' ? article.author : null,
     publishedAt: dateValue(article.publishedAt ?? citation.publishedAt).toISOString(),

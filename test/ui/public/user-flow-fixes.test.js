@@ -354,4 +354,55 @@ describe('public user-flow regressions', () => {
     expect(html).toContain('The Verge')
     expect(html).toContain('Google AI Blog')
   })
+
+  it('displays Vietnamese title translated by AI for citation chips and drawer using articles lookup', () => {
+    const articles = [
+      {
+        id: 'art-gemini',
+        titleOriginal: 'Gemini 3.1 Flash TTS: the next generation of expressive AI speech',
+        titleVi: 'Gemini 3.1 Flash TTS: Thế hệ tiếp theo của giọng nói AI biểu cảm',
+        sourceName: 'Google DeepMind Blog',
+      },
+    ]
+
+    const html = render(QaView, {
+      state: 'ready',
+      articles,
+      messages: [
+        {
+          role: 'assistant',
+          paragraphs: [
+            { text: 'Google DeepMind vừa giới thiệu mô hình chuyển văn bản thành giọng nói.', citationIds: ['c-tts'] },
+          ],
+          citations: [
+            {
+              id: 'c-tts',
+              articleId: 'art-gemini',
+              titleOriginal: 'Gemini 3.1 Flash TTS: the next generation of expressive AI speech',
+              sourceName: 'Google DeepMind Blog',
+            },
+          ],
+        },
+      ],
+    })
+
+    // Chip citation phải hiển thị bản dịch tiếng Việt qua xử lý của AI trên feed
+    expect(html).toContain('Gemini 3.1 Flash TTS: Thế hệ tiếp theo của giọng nói AI biểu cảm')
+    expect(html).toContain('Google DeepMind Blog')
+
+    // Kiểm tra CitationDrawer khi mở
+    const drawerHtml = render(CitationDrawer, {
+      citation: {
+        id: 'c-tts',
+        articleId: 'art-gemini',
+        titleOriginal: 'Gemini 3.1 Flash TTS: the next generation of expressive AI speech',
+        sourceName: 'Google DeepMind Blog',
+        originalUrl: 'https://deepmind.google/discover/blog/gemini-3-1-flash-tts',
+      },
+      onClose: () => {},
+      articlesMap: new Map([['art-gemini', articles[0]]]),
+    })
+
+    expect(drawerHtml).toContain('Gemini 3.1 Flash TTS: Thế hệ tiếp theo của giọng nói AI biểu cảm')
+  })
 })

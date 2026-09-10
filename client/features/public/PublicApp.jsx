@@ -111,7 +111,7 @@ export default function PublicApp({
     search: { ...search, sources: search.sources || feed.sources || [], ...shared },
     saved: { ...saved, ...shared },
     article: { ...article, ...shared },
-    qa: { ...qa, ...shared },
+    qa: { ...qa, articles: feed.articles || [], ...shared },
     donate: { ...shared },
     account: { ...account, user, ...shared },
   }
