@@ -371,20 +371,32 @@ describe('public feature presentation contract', () => {
     })
     expect(legacy).toContain('id="account-current-password"')
   })
-  it('switches to first-time password setup without a current-password field for Google-only accounts', () => {
+  it('omits change-password and delete-account sections in AccountView for Google OAuth accounts', () => {
     const account = render(AccountView, {
       user: { id: 'u-3', email: 'google@example.com', role: 'user', topicPreferences: [], hasPassword: false },
       onChangePassword: handlers.onSubmit,
+      onRequestDeletion: handlers.onSubmit,
       initialPasswordOpen: true,
+      initialDeletionOpen: true,
     })
-    expect(account).toContain('Đặt mật khẩu')
+    // Không hiển thị thẻ đổi/đặt mật khẩu
     expect(account).not.toContain('Đổi mật khẩu')
-    expect(account).toContain('đăng nhập bằng Google')
+    expect(account).not.toContain('Đặt mật khẩu')
+    expect(account).not.toContain('public-account-security')
     expect(account).not.toContain('id="account-current-password"')
-    expect(account).toContain('id="account-new-password"')
-    expect(account).toContain('autoComplete="new-password"')
-    expect(account).toContain('Xác nhận')
-    expect(account).toContain('Hủy')
+    expect(account).not.toContain('id="account-new-password"')
+    expect(account).not.toContain('id="account-confirm-password"')
+
+    // Không hiển thị thẻ xóa tài khoản
+    expect(account).not.toContain('Quản lý dữ liệu')
+    expect(account).not.toContain('Yêu cầu xóa tài khoản')
+    expect(account).not.toContain('public-danger-zone')
+    expect(account).not.toContain('public-deletion-dialog')
+
+    // Vẫn hiển thị đầy đủ quản lý chủ đề và thông tin tài khoản
+    expect(account).toContain('Chủ đề quan tâm')
+    expect(account).toContain('google@example.com')
+    expect(account).toContain('Lưu chủ đề')
   })
   it('renders a success pop-up modal dialog with auto-logout countdown when password change succeeds', () => {
     const account = render(AccountView, {

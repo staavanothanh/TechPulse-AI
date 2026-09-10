@@ -534,7 +534,38 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 17. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 17. Cải Tiến: Tối Ưu Giao Diện Quản Lý Tài Khoản Cho Người Dùng Đăng Nhập Google OAuth (Ẩn Đổi Mật Khẩu & Xóa Tài Khoản)
+
+### Bối cảnh & Yêu cầu cải tiến
+- **Bối cảnh hệ thống:** Dự án hỗ trợ 2 phương thức đăng nhập chính:
+  1. **Đăng ký trực tiếp:** Lưu thông tin tài khoản (email và mật khẩu băm) vào cơ sở dữ liệu MongoDB (`passwordEnabled: true`, `hasPassword: true`).
+  2. **Đăng nhập bằng Google OAuth:** Sử dụng tài khoản Google thông qua OAuth flow (`passwordEnabled: false`, `hasPassword: false`, `googleSub: '...'`).
+- **Vấn đề trước khi sửa:**
+  - Trong trang Cài đặt tài khoản (`AccountView.jsx`), hai thẻ **Bảo mật** (*Đổi mật khẩu* / *Đặt mật khẩu*) và **Quản lý dữ liệu** (*Yêu cầu xóa tài khoản*) luôn hiển thị đối với tất cả người dùng, kể cả người dùng đăng nhập thông qua Google OAuth.
+  - Người dùng đăng nhập qua Google OAuth sử dụng danh tính Google được xác thực bảo mật từ bên thứ ba, do đó việc hiển thị mục đổi mật khẩu và xóa tài khoản cục bộ là không phù hợp với trải nghiệm người dùng và quy ước quản lý tài khoản liên kết.
+- **Yêu cầu:** Khi người dùng đăng nhập bằng Google OAuth và vào mục Cài đặt tài khoản, hai mục **Đổi mật khẩu** và **Xóa tài khoản** hoàn toàn **không xuất hiện** trên giao diện; trong khi người dùng đăng ký trực tiếp bằng email + mật khẩu vẫn giữ nguyên đầy đủ cả hai tính năng này.
+
+### Giải pháp kỹ thuật đã triển khai
+1. **Nhận diện chính xác tài khoản Google OAuth:**
+   - Dựa vào trường chuẩn hóa trong hợp đồng OpenAPI DTO (`hasPassword: false`) và hỗ trợ mở rộng phòng thủ:
+     ```javascript
+     const isGoogleUser = user?.hasPassword === false || user?.authProvider === 'google' || Boolean(user?.isGoogle)
+     ```
+   - Đối với tài khoản đăng ký trực tiếp có mật khẩu: `hasPassword === true` $\rightarrow$ `isGoogleUser === false`.
+   - Đối với tài khoản Google OAuth: `hasPassword === false` $\rightarrow$ `isGoogleUser === true`.
+2. **Ẩn có điều kiện trên Giao diện (`AccountView.jsx`):**
+   - **Thẻ Đổi mật khẩu (`.public-account-security`):** Chỉ render khi `!isGoogleUser`.
+   - **Thẻ Quản lý dữ liệu / Xóa tài khoản (`.public-danger-zone`):** Chỉ render khi `!isGoogleUser`.
+   - **Modal Dialog:** Các dialog xác nhận xóa (`deletionConfirmationOpen`) và thông báo đổi mật khẩu thành công (`passwordSuccessOpen`) được bảo vệ không render đối với `isGoogleUser`.
+   - **Trạng thái khởi tạo:** Các state `showPasswordForm`, `passwordSuccessOpen`, `deletionConfirmationOpen` được gán an toàn `!isGoogleUser && initial...`.
+   - **Thẻ Chủ đề quan tâm (`.public-account-card-wide`):** Giữ nguyên định kiểu `grid-column: 1 / -1`, tự động co giãn và hiển thị toàn chiều ngang một cách gọn gàng, tinh tế khi hai thẻ bên dưới ẩn đi.
+3. **Kiểm thử tự động:**
+   - Cập nhật test case trong `test/ui/public/public-components.test.js` (`omits change-password and delete-account sections in AccountView for Google OAuth accounts`): xác minh cả hai khối HTML của Đổi mật khẩu và Xóa tài khoản đều không xuất hiện trong DOM khi `hasPassword: false`.
+   - Giữ nguyên và bảo đảm các test case cho tài khoản có mật khẩu (`hasPassword: true`) tiếp tục pass 100%.
+
+---
+
+## 18. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
 
 1. **Kiểm tra độc lập giữa chủ đề AI và Học máy, Software Engineering và JavaScript:**
    - Mở `http://localhost:3000` và chuyển sang tab **Hỏi đáp** (Q&A).
@@ -658,4 +689,11 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
     - Quan sát chip trích dẫn bên dưới đoạn văn trả lời của AI:
       - Tiêu đề hiển thị trên chip là bản tiếng Việt do AI xử lý trên Feed (ví dụ: `[1] Gemini 3.1 Flash TTS: Thế hệ tiếp theo của giọng nói AI biểu cảm · Google DeepMind Blog`) thay vì tiêu đề tiếng Anh gốc (`Gemini 3.1 Flash TTS: the next generation of expressive AI speech`).
       - Rê chuột vào chip trích dẫn: Tooltip hiển thị đầy đủ tiêu đề tiếng Việt và nguồn tin.
-      - Bấm vào chip trích dẫn: Hộp thoại chi tiết trích dẫn (Citation Drawer) mở ra hiển thị thẻ `<h3>` tiêu đề tiếng Việt rõ ràng, kèm nút *"Mở nguồn gốc"*
+      - Bấm vào chip trích dẫn: Hộp thoại chi tiết trích dẫn (Citation Drawer) mở ra hiển thị thẻ `<h3>` tiêu đề tiếng Việt rõ ràng, kèm nút *"Mở nguồn gốc"*.
+14. **Kiểm tra Ẩn mục Đổi mật khẩu & Xóa tài khoản khi đăng nhập Google OAuth:**
+    - Đăng nhập bằng tài khoản email + mật khẩu thông thường:
+      - Vào tab **Tài khoản** (`route = 'account'`).
+      - Quan sát giao diện: Xuất hiện đầy đủ cả 3 thẻ: **Chủ đề quan tâm**, **Đổi mật khẩu** (thẻ Bảo mật) và **Quản lý dữ liệu** (thẻ Xóa tài khoản).
+    - Đăng nhập bằng tài khoản Google OAuth:
+      - Vào tab **Tài khoản** (`route = 'account'`).
+      - Quan sát giao diện: Thẻ **Chủ đề quan tâm** mở rộng toàn chiều ngang trang. Thẻ **Đổi mật khẩu** và thẻ **Quản lý dữ liệu (Xóa tài khoản)** hoàn toàn không xuất hiện.

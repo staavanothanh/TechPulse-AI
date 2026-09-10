@@ -21,14 +21,15 @@ export default function AccountView({
   initialPasswordSuccessOpen = false,
   initialDeletionOpen = false,
 }) {
-  const [showPasswordForm, setShowPasswordForm] = useState(initialPasswordOpen)
-  const [passwordSuccessOpen, setPasswordSuccessOpen] = useState(initialPasswordSuccessOpen)
+  const isGoogleUser = user?.hasPassword === false || user?.authProvider === 'google' || Boolean(user?.isGoogle)
+  const [showPasswordForm, setShowPasswordForm] = useState(!isGoogleUser && initialPasswordOpen)
+  const [passwordSuccessOpen, setPasswordSuccessOpen] = useState(!isGoogleUser && initialPasswordSuccessOpen)
   const COUNTDOWN_SECONDS = 5
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS)
   const countdownIntervalRef = useRef(null)
 
   const DELETION_COUNTDOWN_SECONDS = 5
-  const [deletionConfirmationOpen, setDeletionConfirmationOpen] = useState(initialDeletionOpen)
+  const [deletionConfirmationOpen, setDeletionConfirmationOpen] = useState(!isGoogleUser && initialDeletionOpen)
   const [deletionVerifyEmail, setDeletionVerifyEmail] = useState('')
   const [deletionRiskConfirmed, setDeletionRiskConfirmed] = useState(false)
   const [deletionSafetyCountdown, setDeletionSafetyCountdown] = useState(DELETION_COUNTDOWN_SECONDS)
@@ -406,115 +407,119 @@ export default function AccountView({
             {saving ? 'Đang lưu...' : 'Lưu chủ đề'}
           </button>
         </section>
-        <section className="public-account-card public-account-security">
-          <h2>{needsCurrentPassword ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}</h2>
-          <p>
-            {needsCurrentPassword
-              ? 'Đặt mật khẩu mới. Sau khi đổi thành công, hệ thống sẽ tự động đăng xuất để bạn đăng nhập lại bằng mật khẩu mới.'
-              : 'Tài khoản của bạn đang đăng nhập bằng Google. Đặt mật khẩu để có thể đăng nhập bằng email.'}
-          </p>
-          {!showPasswordForm ? (
-            <div>
-              <button
-                className="public-btn public-btn-secondary"
-                type="button"
-                onClick={() => {
-                  setShowPasswordForm(true)
-                  setPasswordError(null)
-                }}
-              >
-                {needsCurrentPassword ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}
-              </button>
-            </div>
-          ) : (
-            <form className="public-password-form public-field-group" onSubmit={submitPassword} noValidate>
-              {needsCurrentPassword ? (
-                <div className="public-field">
-                  <label htmlFor="account-current-password">Mật khẩu hiện tại</label>
-                  <input
-                    id="account-current-password"
-                    name="currentPassword"
-                    className="public-input"
-                    type="password"
-                    autoComplete="current-password"
-                    value={currentPassword}
-                    onChange={(event) => setCurrentPassword(event.target.value)}
-                  />
-                </div>
-              ) : null}
-              <div className="public-field">
-                <label htmlFor="account-new-password">Mật khẩu mới</label>
-                <input
-                  id="account-new-password"
-                  name="newPassword"
-                  className="public-input"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={10}
-                  maxLength={128}
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                />
-              </div>
-              <div className="public-field">
-                <label htmlFor="account-confirm-password">Xác nhận mật khẩu mới</label>
-                <input
-                  id="account-confirm-password"
-                  name="confirmPassword"
-                  className="public-input"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                />
-              </div>
-              {passwordError ? (
-                <p className="public-field-error" role="alert">
-                  {passwordError}
-                </p>
-              ) : null}
-              <div className="public-password-actions">
+        {!isGoogleUser ? (
+          <section className="public-account-card public-account-security">
+            <h2>{needsCurrentPassword ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}</h2>
+            <p>
+              {needsCurrentPassword
+                ? 'Đặt mật khẩu mới. Sau khi đổi thành công, hệ thống sẽ tự động đăng xuất để bạn đăng nhập lại bằng mật khẩu mới.'
+                : 'Tài khoản của bạn đang đăng nhập bằng Google. Đặt mật khẩu để có thể đăng nhập bằng email.'}
+            </p>
+            {!showPasswordForm ? (
+              <div>
                 <button
                   className="public-btn public-btn-secondary"
-                  type="submit"
-                  disabled={passwordSubmitting}
-                >
-                  {passwordSubmitting ? 'Đang lưu...' : 'Xác nhận'}
-                </button>
-                <button
-                  className="public-btn public-btn-ghost"
                   type="button"
-                  disabled={passwordSubmitting}
                   onClick={() => {
-                    setShowPasswordForm(false)
+                    setShowPasswordForm(true)
                     setPasswordError(null)
-                    setCurrentPassword('')
-                    setNewPassword('')
-                    setConfirmPassword('')
                   }}
                 >
-                  Hủy
+                  {needsCurrentPassword ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}
                 </button>
               </div>
-            </form>
-          )}
-        </section>
-        <section className="public-account-card public-danger-zone">
-          <h2>Quản lý dữ liệu</h2>
-          <p>
-            Yêu cầu xóa tài khoản sẽ thu hồi phiên hiện tại và bắt đầu quy trình làm sạch dữ liệu.
-          </p>
-          <button
-            className="public-btn public-btn-danger"
-            type="button"
-            disabled={deleting}
-            onClick={handleOpenDeletion}
-          >
-            {deleting ? 'Đang gửi...' : 'Yêu cầu xóa tài khoản'}
-          </button>
-        </section>
+            ) : (
+              <form className="public-password-form public-field-group" onSubmit={submitPassword} noValidate>
+                {needsCurrentPassword ? (
+                  <div className="public-field">
+                    <label htmlFor="account-current-password">Mật khẩu hiện tại</label>
+                    <input
+                      id="account-current-password"
+                      name="currentPassword"
+                      className="public-input"
+                      type="password"
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(event) => setCurrentPassword(event.target.value)}
+                    />
+                  </div>
+                ) : null}
+                <div className="public-field">
+                  <label htmlFor="account-new-password">Mật khẩu mới</label>
+                  <input
+                    id="account-new-password"
+                    name="newPassword"
+                    className="public-input"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={10}
+                    maxLength={128}
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                  />
+                </div>
+                <div className="public-field">
+                  <label htmlFor="account-confirm-password">Xác nhận mật khẩu mới</label>
+                  <input
+                    id="account-confirm-password"
+                    name="confirmPassword"
+                    className="public-input"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                  />
+                </div>
+                {passwordError ? (
+                  <p className="public-field-error" role="alert">
+                    {passwordError}
+                  </p>
+                ) : null}
+                <div className="public-password-actions">
+                  <button
+                    className="public-btn public-btn-secondary"
+                    type="submit"
+                    disabled={passwordSubmitting}
+                  >
+                    {passwordSubmitting ? 'Đang lưu...' : 'Xác nhận'}
+                  </button>
+                  <button
+                    className="public-btn public-btn-ghost"
+                    type="button"
+                    disabled={passwordSubmitting}
+                    onClick={() => {
+                      setShowPasswordForm(false)
+                      setPasswordError(null)
+                      setCurrentPassword('')
+                      setNewPassword('')
+                      setConfirmPassword('')
+                    }}
+                  >
+                    Hủy
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
+        ) : null}
+        {!isGoogleUser ? (
+          <section className="public-account-card public-danger-zone">
+            <h2>Quản lý dữ liệu</h2>
+            <p>
+              Yêu cầu xóa tài khoản sẽ thu hồi phiên hiện tại và bắt đầu quy trình làm sạch dữ liệu.
+            </p>
+            <button
+              className="public-btn public-btn-danger"
+              type="button"
+              disabled={deleting}
+              onClick={handleOpenDeletion}
+            >
+              {deleting ? 'Đang gửi...' : 'Yêu cầu xóa tài khoản'}
+            </button>
+          </section>
+        ) : null}
       </div>
-      {deletionConfirmationOpen ? (
+      {!isGoogleUser && deletionConfirmationOpen ? (
         <div className="public-dialog-backdrop" role="presentation">
           <section
             ref={deletionDialogRef}
@@ -599,7 +604,7 @@ export default function AccountView({
           </section>
         </div>
       ) : null}
-      {passwordSuccessOpen ? (
+      {!isGoogleUser && passwordSuccessOpen ? (
         <div className="public-dialog-backdrop" role="presentation">
           <section
             ref={passwordSuccessDialogRef}
