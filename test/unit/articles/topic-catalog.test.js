@@ -142,6 +142,12 @@ describe('shared topic catalog and taxonomy resolver', () => {
     expect(topicsMatch('custom', ' CUSTOM ')).toBe(true)
     expect(topicsMatch('robot', 'AI')).toBe(false)
     expect(topicsMatch('', 'AI')).toBe(false)
+    expect(topicsMatch('AI', 'Học máy')).toBe(false)
+    expect(topicsMatch('Software Engineering', 'JavaScript')).toBe(false)
+    expect(topicsMatch('AI', 'ai-ml')).toBe(true)
+    expect(topicsMatch('Học máy', 'machine-learning')).toBe(true)
+    expect(topicsMatch('JavaScript', 'web-development')).toBe(true)
+    expect(topicsMatch('Software Engineering', 'software-engineering')).toBe(true)
   })
 
   it('derives canonical topic IDs with ancestor closure in deterministic order', () => {

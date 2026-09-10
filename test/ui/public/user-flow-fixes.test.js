@@ -265,4 +265,54 @@ describe('public user-flow regressions', () => {
     expect(html).toContain('OpenAI News')
     expect(html).toContain('Google DeepMind Blog')
   })
+
+  it('renders Phạm vi chủ đề heading and multi-select trigger in QaView', () => {
+    const html = render(QaView, {
+      state: 'empty',
+      scope: { topics: ['AI', 'Học máy'] },
+      handlers: { onToggleTopic: noop },
+    })
+
+    expect(html).toContain('Phạm vi chủ đề')
+    expect(html).toContain('Giới hạn chủ đề và thời gian bài viết cần hỏi đáp.')
+    expect(html).toContain('Đã chọn (2) chủ đề')
+    expect(html).toContain('Bỏ chọn hết')
+    expect(html).toContain('public-selected-topic-chip')
+    expect(html).toContain('Học máy')
+    expect(html).toContain('AI')
+  })
+
+  it('renders unselected trigger text when no topics are chosen in QaView', () => {
+    const html = render(QaView, {
+      state: 'empty',
+      scope: { topics: [] },
+      handlers: { onToggleTopic: noop },
+    })
+
+    expect(html).toContain('Phạm vi chủ đề')
+    expect(html).toContain('Chọn chủ đề bài viết...')
+    expect(html).not.toContain('Bỏ chọn hết')
+  })
+
+  it('keeps parent and child topics independent so selecting AI does not select Học máy and Software Engineering does not select JavaScript', () => {
+    const aiOnlyHtml = render(QaView, {
+      state: 'empty',
+      scope: { topics: ['AI'] },
+      handlers: { onToggleTopic: noop },
+    })
+    expect(aiOnlyHtml).toContain('Đã chọn (1) chủ đề')
+    expect(aiOnlyHtml).toContain('public-selected-topic-chip')
+    expect(aiOnlyHtml).toContain('<span>AI</span>')
+    expect(aiOnlyHtml).not.toContain('<span>Học máy</span>')
+
+    const seOnlyHtml = render(QaView, {
+      state: 'empty',
+      scope: { topics: ['Software Engineering'] },
+      handlers: { onToggleTopic: noop },
+    })
+    expect(seOnlyHtml).toContain('Đã chọn (1) chủ đề')
+    expect(seOnlyHtml).toContain('public-selected-topic-chip')
+    expect(seOnlyHtml).toContain('<span>Software Engineering</span>')
+    expect(seOnlyHtml).not.toContain('<span>JavaScript</span>')
+  })
 })

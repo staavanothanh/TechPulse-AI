@@ -1,6 +1,7 @@
 import { ObjectId } from 'mongodb'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createSessionTitle,
   historicalCitation,
   historicalCitationDocument,
   MongoChatRepository,
@@ -653,5 +654,72 @@ describe('chat repository coverage contracts', () => {
     await expect(append).rejects.toMatchObject({ code: 'ingestion_aborted', retryable: false })
     expect(collections.chatSessions.findOneAndUpdate).not.toHaveBeenCalled()
     expect(collections.chatSessions.insertOne).not.toHaveBeenCalled()
+  })
+
+  it('generates session title from first question and preserves existing title', async () => {
+    expect(createSessionTitle(null)).toBeNull()
+    expect(createSessionTitle('   ')).toBeNull()
+    expect(createSessionTitle('Tin tuc ve tri tue nhan tao')).toBe('Tin tuc ve tri tue nhan tao')
+    expect(createSessionTitle('Mo hinh ngon ngu lon moi nhat cua Google hoat dong nhu the nao trong thuc te?', 45))
+      .toBe('Mo hinh ngon ngu lon moi nhat cua Google...')
+    expect(createSessionTitle('A'.repeat(60), 45)).toBe(`${'A'.repeat(45)}...`)
+
+    const { repository, collections } = makeDatabase()
+    const insertedDocs = []
+    collections.chatSessions.findOne.mockResolvedValue(null)
+    collections.chatSessions.insertOne.mockImplementation(async (doc) => {
+      insertedDocs.push(doc)
+      return { insertedId: doc._id }
+    })
+    collections.chatSessions.findOneAndUpdate.mockImplementation(async (filter, update) => ({
+      value: {
+        _id: filter._id,
+        userId: USER_ID,
+        title: update.$set?.title ?? insertedDocs[0]?.title ?? null,
+        messageCount: 0,
+        messages: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    }))
+
+    const longQuestion = 'Chung toi muon tim hieu chi tiet ve cong nghe ban dan tien tien nhat nam nay?'
+    const result = await repository.appendAnswer({
+      actor: ACTOR,
+      question: longQuestion,
+      answer: { id: 'ans-1', status: 'answered', paragraphs: [{ text: 'Tra loi', citationIds: [] }] },
+      now: NOW,
+    })
+
+    expect(insertedDocs).toHaveLength(1)
+    expect(insertedDocs[0].title).toBe(createSessionTitle(longQuestion))
+    expect(result.session.title).toBe(createSessionTitle(longQuestion))
+
+    // Second question into existing session with title: title should not be overwritten
+    collections.chatSessions.findOne.mockResolvedValue(insertedDocs[0])
+    let updatedFields = null
+    collections.chatSessions.findOneAndUpdate.mockImplementation(async (filter, update) => {
+      updatedFields = update.$set
+      return {
+        value: {
+          ...insertedDocs[0],
+          _id: filter._id,
+          title: insertedDocs[0].title,
+          messageCount: 0,
+          messages: [],
+          updatedAt: NOW,
+        },
+      }
+    })
+
+    await repository.appendAnswer({
+      actor: ACTOR,
+      chatSessionId: insertedDocs[0]._id.toHexString(),
+      question: 'Cau hoi thu hai ngan hon',
+      answer: { id: 'ans-2', status: 'answered', paragraphs: [{ text: 'Tra loi tiep', citationIds: [] }] },
+      now: NOW,
+    })
+
+    expect(updatedFields?.title).toBeUndefined()
   })
 })

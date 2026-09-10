@@ -6,6 +6,34 @@ import {
 } from '../../../../shared/topic-catalog.js'
 
 export const TOPICS = topicOptions({ kind: 'parent', status: 'active', locale: 'vi' })
+export const ALL_TOPICS = topicOptions({ kind: null, status: 'active', locale: 'vi' })
+
+export const GROUPED_TOPICS = Object.freeze(
+  TOPIC_CATALOG
+    .filter((item) => item.kind === 'parent' && item.status === 'active')
+    .slice()
+    .sort((left, right) => left.displayOrder - right.displayOrder)
+    .map((parent) => {
+      const parentLabel = catalogTopicLabel(parent.id, 'vi')
+      const children = TOPIC_CATALOG
+        .filter((child) => child.parentId === parent.id && child.status === 'active')
+        .slice()
+        .sort((left, right) => left.displayOrder - right.displayOrder)
+        .map((child) => Object.freeze({
+          id: child.id,
+          label: catalogTopicLabel(child.id, 'vi'),
+          isChild: true,
+        }))
+      return Object.freeze({
+        id: parent.id,
+        label: parent.labels?.fullVi || parent.labels?.vi || parentLabel,
+        items: Object.freeze([
+          Object.freeze({ id: parent.id, label: parentLabel, isParent: true }),
+          ...children,
+        ]),
+      })
+    }),
+)
 
 export const TOPIC_OPTIONS = Object.freeze(
   TOPIC_CATALOG

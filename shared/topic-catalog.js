@@ -36,7 +36,7 @@ const RAW_CATALOG = [
     parentId: null,
     kind: 'parent',
     labels: { vi: 'AI', en: 'AI', fullVi: 'AI & Machine Learning', fullEn: 'AI & Machine Learning' },
-    aliases: ['ai', 'ai-ml', 'machine learning', 'deep learning', 'học máy', 'học sâu', 'cs.ai', 'cs.lg', 'cs.cl', 'cs.ne', 'trí tuệ nhân tạo'],
+    aliases: ['ai', 'ai-ml', 'cs.ai', 'cs.lg', 'cs.cl', 'cs.ne', 'trí tuệ nhân tạo'],
     keywords: [
       /\bai\b/i,
       /artificial intelligence|trí tuệ nhân tạo/i,
@@ -54,7 +54,7 @@ const RAW_CATALOG = [
     parentId: 'ai-ml',
     kind: 'leaf',
     labels: { vi: 'Học máy', en: 'Machine Learning' },
-    aliases: ['machine learning', 'ml', 'cs.lg'],
+    aliases: ['machine learning', 'ml', 'học máy', 'cs.lg'],
     keywords: [/\b(?:machine learning|ml|cs\.lg)\b/i],
     legacyValues: ['ai'],
     status: 'active',
@@ -65,7 +65,7 @@ const RAW_CATALOG = [
     parentId: 'ai-ml',
     kind: 'leaf',
     labels: { vi: 'Học sâu & LLM', en: 'Deep Learning & LLM' },
-    aliases: ['deep learning', 'llm', 'generative ai', 'transformer'],
+    aliases: ['deep learning', 'học sâu', 'llm', 'generative ai', 'transformer'],
     keywords: [/\b(?:deep learning|llm|gpt|transformer|generative ai)\b/i],
     legacyValues: ['ai'],
     status: 'active',
@@ -132,12 +132,12 @@ const RAW_CATALOG = [
     parentId: null,
     kind: 'parent',
     labels: { vi: 'Software Engineering', en: 'Software Engineering', fullVi: 'Kỹ thuật phần mềm & Lập trình', fullEn: 'Software Engineering & Programming' },
-    aliases: ['software engineering', 'software-engineering', 'kỹ thuật phần mềm', 'lập trình', 'programming', 'javascript', 'typescript', 'python', 'golang', 'rust', 'react', 'nodejs', 'cs.se'],
+    aliases: ['software engineering', 'software-engineering', 'kỹ thuật phần mềm', 'lập trình', 'programming', 'python', 'golang', 'rust', 'react', 'nodejs', 'cs.se'],
     keywords: [
       /\b(?:software engineering|programming|developer|architecture|javascript|typescript|node(?:\.js)?|react|vite|npm|python|golang|rust|cs\.se)\b/i,
       /kỹ thuật phần mềm|lập trình/i,
     ],
-    legacyValues: ['javascript'],
+    legacyValues: [],
     status: 'active',
     displayOrder: 4,
   },
@@ -285,7 +285,7 @@ const RAW_CATALOG = [
     parentId: null,
     kind: 'parent',
     labels: { vi: 'Blockchain', en: 'Blockchain', fullVi: 'Công nghệ mới nổi & Web3', fullEn: 'Emerging Tech & Web3' },
-    aliases: ['emerging tech', 'emerging-it', 'công nghệ mới', 'blockchain', 'web3', 'ethereum', 'bitcoin', 'smart contract', 'cryptocurrency', 'quantum computing', 'iot'],
+    aliases: ['emerging tech', 'emerging-it', 'công nghệ mới', 'blockchain', 'web3', 'ethereum', 'bitcoin', 'smart contract', 'cryptocurrency', 'iot'],
     keywords: [
       /\b(?:blockchain|web3|ethereum|bitcoin|smart contract|cryptocurrency|quantum computing|iot|edge computing)\b/i,
       /công nghệ mới/i,
@@ -355,27 +355,27 @@ function registerAlias(rawKey, targetId) {
   }
 }
 
-// 1st pass: register parent IDs, labels, aliases, legacy values first
+// 1st pass: register IDs and official labels for ALL catalog items (parents & leaves)
+// Primary identity (ID & official labels) takes precedence over aliases
+for (const item of TOPIC_CATALOG) {
+  registerAlias(item.id, item.id)
+  if (item.labels?.vi) registerAlias(item.labels.vi, item.id)
+  if (item.labels?.en) registerAlias(item.labels.en, item.id)
+  if (item.labels?.fullVi) registerAlias(item.labels.fullVi, item.id)
+  if (item.labels?.fullEn) registerAlias(item.labels.fullEn, item.id)
+}
+
+// 2nd pass: register parent aliases and legacy values
 for (const item of TOPIC_CATALOG) {
   if (item.kind === 'parent') {
-    registerAlias(item.id, item.id)
-    if (item.labels?.vi) registerAlias(item.labels.vi, item.id)
-    if (item.labels?.en) registerAlias(item.labels.en, item.id)
-    if (item.labels?.fullVi) registerAlias(item.labels.fullVi, item.id)
-    if (item.labels?.fullEn) registerAlias(item.labels.fullEn, item.id)
     for (const alias of item.aliases ?? []) registerAlias(alias, item.id)
     for (const legacy of item.legacyValues ?? []) registerAlias(legacy, item.id)
   }
 }
 
-// 2nd pass: register leaf IDs, labels, aliases
+// 3rd pass: register leaf aliases and legacy values
 for (const item of TOPIC_CATALOG) {
   if (item.kind === 'leaf') {
-    registerAlias(item.id, item.id)
-    if (item.labels?.vi) registerAlias(item.labels.vi, item.id)
-    if (item.labels?.en) registerAlias(item.labels.en, item.id)
-    if (item.labels?.fullVi) registerAlias(item.labels.fullVi, item.id)
-    if (item.labels?.fullEn) registerAlias(item.labels.fullEn, item.id)
     for (const alias of item.aliases ?? []) registerAlias(alias, item.id)
     for (const legacy of item.legacyValues ?? []) registerAlias(legacy, item.id)
   }

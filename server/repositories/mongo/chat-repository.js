@@ -174,6 +174,19 @@ function publicScope(scope = {}) {
   return result
 }
 
+const MAX_SESSION_TITLE_LENGTH = 45
+
+export function createSessionTitle(question, maxLength = MAX_SESSION_TITLE_LENGTH) {
+  if (typeof question !== 'string') return null
+  const clean = question.trim().replace(/\s+/g, ' ')
+  if (!clean) return null
+  if (clean.length <= maxLength) return clean
+  const truncated = clean.slice(0, maxLength)
+  const lastSpace = truncated.lastIndexOf(' ')
+  const cutIndex = lastSpace > 20 ? lastSpace : maxLength
+  return `${clean.slice(0, cutIndex).trimEnd()}...`
+}
+
 const MAX_HISTORICAL_SOURCE_NAME_LENGTH = 120
 
 function historicalSourceName(citation) {
@@ -520,19 +533,21 @@ export class MongoChatRepository {
             if (idString(target.article._id) !== target.articleId || idString(target.article.sourceId) !== target.sourceId || idString(source?._id) !== target.sourceId || source?.policyVersion !== target.expected.sourcePolicyVersion || (source?.sourceKey ?? null) !== (target.expected.sourceKey ?? null) || !articleMatchesFence(target.article, target.expected) || !canUseQnaEvidence(target.article, source) || textHash !== target.expected.evidenceTextHash || citationMetadataHash !== target.expected.citationMetadataHash) throw conflictError('Source visibility changed')
           }
         }
+        const sessionTitle = createSessionTitle(question)
         let sessionId = chatSessionId ? objectId(chatSessionId, 'chat session') : new ObjectId()
         let document = await execute((options) => this.chatSessions().findOne({ _id: sessionId, userId: values.userId, expiresAt: { $gt: current } }, options))
         if (!document) {
           if (chatSessionId) { const error = new Error('Chat session is unavailable'); error.code = 'not_found'; error.status = 404; throw error }
-          document = { _id: sessionId, userId: values.userId, title: null, scope: { ...scope, ...(scope?.articleId ? { articleId: objectId(scope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+          document = { _id: sessionId, userId: values.userId, title: sessionTitle, scope: { ...scope, ...(scope?.articleId ? { articleId: objectId(scope.articleId, 'article') } : {}) }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
           await execute((options) => this.chatSessions().insertOne(document, options))
         }
         if (document.messageCount + 2 > 30) {
           sessionId = new ObjectId()
-          document = { _id: sessionId, userId: values.userId, title: null, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
+          document = { _id: sessionId, userId: values.userId, title: sessionTitle, scope: { ...document.scope }, messages: [], messageCount: 0, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), createdAt: current, updatedAt: current }
           await execute((options) => this.chatSessions().insertOne(document, options))
         }
-        const chatResult = await execute((options) => this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: { $each: [userMessage, assistant] } }, $inc: { messageCount: 2 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS) } }, { ...options, returnDocument: 'after' }))
+        const sessionTitleUpdate = document.title ? {} : (sessionTitle ? { title: sessionTitle } : {})
+        const chatResult = await execute((options) => this.chatSessions().findOneAndUpdate({ _id: sessionId, userId: values.userId, messageCount: document.messageCount, expiresAt: { $gt: current } }, { $push: { messages: { $each: [userMessage, assistant] } }, $inc: { messageCount: 2 }, $set: { updatedAt: current, expiresAt: new Date(current.getTime() + CHAT_RETENTION_MS), ...sessionTitleUpdate } }, { ...options, returnDocument: 'after' }))
         const after = unwrap(chatResult)
         if (!after) { const error = new Error('Chat session changed concurrently'); error.code = 'conflict'; error.status = 409; throw error }
         if (attempt?.id) {

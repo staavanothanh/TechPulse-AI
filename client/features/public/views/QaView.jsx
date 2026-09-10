@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ErrorState,
   FilterField,
@@ -6,7 +6,7 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
-import { articleTitle, formatDate, sourceName, TOPICS } from '../components/reader-format.js'
+import { articleTitle, formatDate, sourceName, TOPICS, ALL_TOPICS, GROUPED_TOPICS } from '../components/reader-format.js'
 import { safeExternalUrl } from '../safe-url.js'
 import {
   hasQaScope,
@@ -64,7 +64,7 @@ export default function QaView({
   sessions = [],
   messages = [],
   scope = {},
-  topics = TOPICS,
+  topics,
   error,
   onAsk,
   handlers = {},
@@ -77,6 +77,10 @@ export default function QaView({
   const [questionError, setQuestionError] = useState('')
   const [selectedCitation, setSelectedCitation] = useState(null)
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
+  const [isTopicPopoverOpen, setIsTopicPopoverOpen] = useState(false)
+  const [topicSearchTerm, setTopicSearchTerm] = useState('')
+  const [submittedQuestion, setSubmittedQuestion] = useState('')
+  const topicPopoverRef = useRef(null)
   const pendingQuestionRef = useRef('')
   const canceledScopeRef = useRef(false)
   const confirmationKeyRef = useRef('')
@@ -87,9 +91,52 @@ export default function QaView({
     void handlers.onClearSessions?.()
   }, [closeClearConfirmation, handlers.onClearSessions])
   const clearDialogRef = useDialogFocus(clearConfirmationOpen, closeClearConfirmation)
+
+  useEffect(() => {
+    if (state !== 'loading') {
+      setSubmittedQuestion('')
+    }
+  }, [state])
+
+  useEffect(() => {
+    if (!isTopicPopoverOpen) return
+    function handleClickOutside(event) {
+      if (topicPopoverRef.current && !topicPopoverRef.current.contains(event.target)) {
+        setIsTopicPopoverOpen(false)
+      }
+    }
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsTopicPopoverOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isTopicPopoverOpen])
+
   const safeScope = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope : {}
   const scopeTopics = Array.isArray(safeScope.topics) ? safeScope.topics : []
-  const activeTopics = Array.isArray(topics) ? topics : TOPICS
+  const customTopics = Array.isArray(topics) && topics.length > 0 ? topics : null
+  const availableTopicSet = customTopics ? new Set(customTopics.map((t) => typeof t === 'string' ? t.toLowerCase() : '')) : null
+  const normalizedSearch = topicSearchTerm.trim().toLowerCase()
+
+  const filteredTopicGroups = GROUPED_TOPICS.map((group) => {
+    const items = group.items.filter((item) => {
+      const isAvailable = !availableTopicSet || availableTopicSet.has(item.label.toLowerCase()) || availableTopicSet.has(item.id.toLowerCase())
+      if (!isAvailable) return false
+      if (!normalizedSearch) return true
+      return (
+        item.label.toLowerCase().includes(normalizedSearch) ||
+        group.label.toLowerCase().includes(normalizedSearch)
+      )
+    })
+    return items.length > 0 ? { ...group, items } : null
+  }).filter(Boolean)
+
   const hasExplicitScopeInput = Boolean(
     (typeof safeScope.articleId === 'string' ? safeScope.articleId.trim() : safeScope.articleId)
       || (Array.isArray(scopeTopics) && scopeTopics.length > 0)
@@ -140,6 +187,7 @@ export default function QaView({
       confirmationKeyRef.current = ''
       pendingQuestionRef.current = value
       pendingNaturalQuestions.set(handlers, value)
+      setSubmittedQuestion(value)
       onAsk?.({ question: value, scopeMode: 'preview' })
       return
     }
@@ -151,6 +199,7 @@ export default function QaView({
     confirmationKeyRef.current = ''
     pendingQuestionRef.current = ''
     pendingNaturalQuestions.delete(handlers)
+    setSubmittedQuestion(value)
     onAsk?.({ ...validation.scope, question: value })
     setQuestion('')
   }
@@ -195,7 +244,7 @@ export default function QaView({
                     type="button"
                     onClick={() => handlers.onSelectSession?.(session.id)}
                   >
-                    <strong>{session.title || 'Phiên hỏi đáp'}</strong>
+                    <strong title={session.title || undefined}>{session.title || 'Phiên hỏi đáp'}</strong>
                     <small>{session.messageCount ?? 0} tin nhắn</small>
                   </button>
                   <button
@@ -259,7 +308,9 @@ export default function QaView({
                 ) : null}
               </div>
             ) : null}
-            {state === 'loading' ? <Skeleton label="Đang truy xuất nguồn" /> : null}
+            {state === 'loading' && messages.length === 0 && !submittedQuestion ? (
+              <Skeleton label="Đang truy xuất nguồn" />
+            ) : null}
             {state === 'error' ? (
               <ErrorState
                 title="Không thể tạo câu trả lời"
@@ -267,8 +318,13 @@ export default function QaView({
                 onRetry={handlers.onRetry}
               />
             ) : null}
-            {state === 'ready' ? (
-              <MessageThread messages={messages} onCitation={setSelectedCitation} />
+            {state === 'ready' || (state === 'loading' && (messages.length > 0 || submittedQuestion)) ? (
+              <MessageThread
+                messages={messages}
+                pendingQuestion={submittedQuestion}
+                isLoading={state === 'loading'}
+                onCitation={setSelectedCitation}
+              />
             ) : null}
           </div>
           {canConfirmScope ? (
@@ -318,15 +374,22 @@ export default function QaView({
                   aria-describedby={!hasScope ? 'public-qa-scope-hint' : undefined}
                   disabled={!question.trim() || state === 'loading' || (!hasScope && !naturalMode)}
                 >
-                  Hỏi với nguồn
+                  {state === 'loading' ? (
+                    <span className="public-btn-loading">
+                      <span className="public-btn-spinner" aria-hidden="true" />
+                      <span>Đang trả lời...</span>
+                    </span>
+                  ) : (
+                    'Hỏi với nguồn'
+                  )}
                 </button>
               </div>
             </form>
           </div>
         </div>
         <aside className="public-qa-scope" aria-labelledby="public-qa-scope-title">
-          <h2 id="public-qa-scope-title">Phạm vi nguồn</h2>
-          <p className="public-form-note">Giới hạn nguồn truy xuất cho câu trả lời.</p>
+          <h2 id="public-qa-scope-title">Phạm vi chủ đề</h2>
+          <p className="public-form-note">Giới hạn chủ đề và thời gian bài viết cần hỏi đáp.</p>
           {safeScope.articleId ? (
             <div className="public-qa-article-selected public-qa-article-context">
               <div className="public-qa-article-context-head">
@@ -368,18 +431,151 @@ export default function QaView({
                 : 'Chọn ít nhất một chủ đề hoặc cung cấp đủ hai mốc thời gian trước khi hỏi.'}
             </p>
           ) : null}
-          <div className="public-topic-row public-scope-topics">
-            {activeTopics.map((topic) => (
-              <button
-                key={topic}
-                className={isTopicSelected(topic) ? 'active' : ''}
-                type="button"
-                aria-pressed={isTopicSelected(topic)}
-                onClick={() => handlers.onToggleTopic?.(topic)}
+
+          {customTopics ? (
+            <div className="public-topic-row public-scope-topics" role="group" aria-label="Chủ đề bài viết">
+              {customTopics.map((topic) => (
+                <button
+                  key={topic}
+                  className={isTopicSelected(topic) ? 'active' : ''}
+                  type="button"
+                  aria-pressed={isTopicSelected(topic)}
+                  onClick={() => handlers.onToggleTopic?.(topic)}
+                >
+                  {topic}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="public-topic-popover-container" ref={topicPopoverRef}>
+            <div className="public-topic-trigger-header">
+              <span className="public-field-label">Chủ đề ({scopeTopics.length})</span>
+              {scopeTopics.length > 0 ? (
+                <button
+                  className="public-text-action public-topic-clear-btn"
+                  type="button"
+                  title="Bỏ chọn tất cả chủ đề"
+                  onClick={() => {
+                    for (const t of [...scopeTopics]) {
+                      handlers.onToggleTopic?.(t)
+                    }
+                  }}
+                >
+                  Bỏ chọn hết
+                </button>
+              ) : null}
+            </div>
+
+            <button
+              id="public-topic-trigger"
+              className={`public-topic-trigger-btn ${isTopicPopoverOpen ? 'active' : ''}`}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={isTopicPopoverOpen}
+              onClick={() => setIsTopicPopoverOpen((prev) => !prev)}
+            >
+              <span className="public-topic-trigger-text">
+                {scopeTopics.length === 0
+                  ? '🏷️ Chọn chủ đề bài viết...'
+                  : `🏷️ Đã chọn (${scopeTopics.length}) chủ đề`}
+              </span>
+              <span className="public-topic-trigger-arrow" aria-hidden="true">
+                {isTopicPopoverOpen ? '▲' : '▼'}
+              </span>
+            </button>
+
+            {isTopicPopoverOpen ? (
+              <div
+                className="public-topic-popover"
+                role="dialog"
+                aria-label="Danh mục chủ đề bài viết"
               >
-                {topic}
-              </button>
-            ))}
+                <div className="public-topic-search-wrap">
+                  <input
+                    type="search"
+                    className="public-input public-topic-search-input"
+                    placeholder="Tìm trong 22 chủ đề..."
+                    value={topicSearchTerm}
+                    onChange={(e) => setTopicSearchTerm(e.target.value)}
+                    autoFocus
+                  />
+                  {topicSearchTerm ? (
+                    <button
+                      className="public-topic-search-clear"
+                      type="button"
+                      onClick={() => setTopicSearchTerm('')}
+                      aria-label="Xóa tìm kiếm"
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="public-topic-popover-list" tabIndex={0} role="group" aria-label="Danh mục chủ đề">
+                  {filteredTopicGroups.length === 0 ? (
+                    <p className="public-topic-empty">Không tìm thấy chủ đề nào phù hợp.</p>
+                  ) : (
+                    filteredTopicGroups.map((group) => (
+                      <div key={group.id} className="public-topic-group">
+                        <div className="public-topic-group-title">{group.label}</div>
+                        <div className="public-topic-group-items">
+                          {group.items.map((item) => {
+                            const checked = isTopicSelected(item.label)
+                            return (
+                              <label
+                                key={item.id}
+                                className={`public-topic-checkbox-item ${checked ? 'checked' : ''} ${item.isParent ? 'is-parent' : 'is-child'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => handlers.onToggleTopic?.(item.label)}
+                                />
+                                <span className="public-topic-checkbox-label">
+                                  {item.label}
+                                  {item.isParent ? <span className="public-topic-parent-tag">Chính</span> : null}
+                                </span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="public-topic-popover-foot">
+                  <span className="public-muted" style={{ fontSize: '12px' }}>
+                    {scopeTopics.length > 0 ? `${scopeTopics.length} chủ đề được chọn` : 'Chưa chọn chủ đề'}
+                  </span>
+                  <button
+                    className="public-btn public-btn-sm"
+                    type="button"
+                    onClick={() => setIsTopicPopoverOpen(false)}
+                  >
+                    Xong
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {scopeTopics.length > 0 ? (
+              <div className="public-selected-topic-chips" aria-label="Các chủ đề đang chọn">
+                {scopeTopics.map((topic) => (
+                  <span key={topic} className="public-selected-topic-chip">
+                    <span>{topic}</span>
+                    <button
+                      type="button"
+                      aria-label={`Bỏ chọn chủ đề ${topic}`}
+                      onClick={() => handlers.onToggleTopic?.(topic)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
           <FilterField
             id="public-qa-after"
@@ -550,9 +746,20 @@ function CitationDrawer({ citation, onClose }) {
   )
 }
 
-function MessageThread({ messages, onCitation }) {
-  if (!Array.isArray(messages) || messages.length === 0)
+function MessageThread({ messages, onCitation, pendingQuestion = '', isLoading = false }) {
+  const safeMessages = Array.isArray(messages) ? messages : []
+  if (safeMessages.length === 0 && !pendingQuestion && !isLoading)
     return <StateCard title="Chưa có tin nhắn" copy="Đặt câu hỏi để tạo câu trả lời có nguồn." />
+
+  const threadEndRef = useRef(null)
+  useEffect(() => {
+    if (isLoading || pendingQuestion || safeMessages.length > 0) {
+      threadEndRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [safeMessages.length, pendingQuestion, isLoading])
+
+  const lastUserMsg = [...safeMessages].reverse().find((m) => m.role === 'user')
+  const showPendingBubble = Boolean(pendingQuestion) && (!lastUserMsg || (lastUserMsg.text !== pendingQuestion && lastUserMsg.content !== pendingQuestion))
   return (
     <div className="public-message-list">
       {messages.map((message, index) => {
@@ -625,6 +832,37 @@ function MessageThread({ messages, onCitation }) {
           </article>
         )
       })}
+      {showPendingBubble ? (
+        <article
+          className="public-message public-message-user public-message-pending"
+          aria-label="Câu hỏi vừa gửi"
+        >
+          <div className="public-message-bubble">{pendingQuestion}</div>
+        </article>
+      ) : null}
+      {isLoading ? (
+        <article
+          className="public-message public-message-assistant public-message-thinking"
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <div className="public-thinking-card">
+            <div className="public-thinking-status">
+              <div className="public-thinking-badge">
+                <span className="public-thinking-sparkle" aria-hidden="true">✨</span>
+                <span className="public-thinking-label">Đang truy xuất nguồn và suy nghĩ...</span>
+              </div>
+              <div className="public-thinking-dots" aria-hidden="true">
+                <span className="public-thinking-dot" />
+                <span className="public-thinking-dot" />
+                <span className="public-thinking-dot" />
+              </div>
+            </div>
+            <div className="public-thinking-shimmer-bar" aria-hidden="true" />
+          </div>
+        </article>
+      ) : null}
+      <div ref={threadEndRef} className="public-thread-end" />
     </div>
   )
 }

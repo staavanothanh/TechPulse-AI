@@ -258,33 +258,157 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 8. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 8. Cải Tiến: Tự Động Đặt Tiêu Đề Phiên Hỏi Đáp Từ Câu Hỏi Đầu Tiên (First Question Session Title)
 
-1. **Kiểm tra xóa phiên hỏi đáp:**
+### Bối cảnh & Lý do thay đổi
+- **Trước khi sửa:** Mọi phiên hỏi đáp mới tạo đều có tiêu đề mặc định là `"Phiên hỏi đáp"`. Khi người dùng có nhiều phiên trò chuyện trong lịch sử, danh sách hiển thị hàng loạt mục trùng tên nhau, rất khó phân biệt nội dung của từng phiên.
+- **Giải pháp:** Tự động lấy câu hỏi đầu tiên của người dùng trong phiên, cắt ngắn gọn gàng (tối đa 40 ký tự) để làm tiêu đề hiển thị cho phiên.
+
+### Chi tiết thay đổi mã nguồn
+1. **Backend Repository (`server/repositories/mongo/chat-repository.js`):**
+   - Trong hàm `appendMessage(sessionId, message, options)`: Khi tin nhắn đầu tiên (`role === 'user'`) được thêm vào phiên chat:
+     - Kiểm tra nếu phiên hiện tại chưa có tiêu đề riêng hoặc vẫn mang tiêu đề mặc định `"Phiên hỏi đáp"`.
+     - Trích xuất nội dung câu hỏi đầu tiên: lấy tối đa 40 ký tự, nếu câu hỏi dài hơn thì cắt tại ranh giới từ và thêm dấu ba chấm `…`.
+     - Cập nhật trường `title` của phiên trong MongoDB cùng lúc với việc append message, không phát sinh thêm round-trip database.
+   - Khi truy vấn `listSessions(userId)`: Trả về trường `title` đã lưu.
+
+---
+
+## 9. Cải Tiến: Phạm Vi Chủ Đề & Multi-Select Dropdown Popover (22 Chủ Đề)
+
+### Bối cảnh & Nhu cầu
+- **Trước khi sửa:**
+  - Cột bên phải hiển thị nhãn *"Phạm vi nguồn"*, gây hiểu lầm là chọn nguồn báo (RSS, arXiv) trong khi thực chất là giới hạn chủ đề bài viết cần hỏi.
+  - Hệ thống chỉ hiển thị một hàng vài nút chủ đề cứng, thiếu rất nhiều chủ đề công nghệ có trong database.
+  - Nếu render toàn bộ 22 chủ đề ra sidebar dưới dạng nút bấm thì cột bên phải bị kéo dài ngoằng, vỡ bố cục giao diện.
+- **Giải pháp:**
+  - Đổi tiêu đề thành **"Phạm vi chủ đề"** kèm mô tả rõ ràng: *"Giới hạn chủ đề và thời gian bài viết cần hỏi đáp."*.
+  - Thiết kế Dropdown Popover đa lựa chọn (Multi-Select Popover):
+    - Khi đóng: Chỉ hiển thị một nút bấm trigger nhỏ gọn `🏷️ Chọn chủ đề bài viết...` (hoặc `🏷️ Đã chọn (X) chủ đề`).
+    - Khi mở: Hiển thị Popover nổi với ô tìm kiếm nhanh, gom nhóm 22 chủ đề theo 8 lĩnh vực công nghệ, có checkbox chọn nhiều chủ đề cùng lúc.
+    - Bên dưới trigger có các chip chủ đề đã chọn kèm nút `×` để gỡ nhanh và nút *"Bỏ chọn hết"*.
+
+---
+
+## 10. Khắc Phục Lỗi: Xung Đột Nhãn Giữa Chủ Đề Cha và Con (AI vs Học Máy, Software Engineering vs JavaScript)
+
+### Bối cảnh & Nguyên nhân
+- **Hiện tượng lỗi:** Khi người dùng chọn chủ đề `AI` thì mục `Học máy` tự động bị tích chọn theo; khi chọn `Software Engineering` thì mục `JavaScript` tự động bị chọn theo.
+- **Nguyên nhân cốt lõi:**
+  - Trong `shared/topic-catalog.js`, chủ đề cha `ai-ml` chứa alias `'học máy'`, `'machine learning'` vốn là nhãn chính thức của chủ đề con `machine-learning`.
+  - Chủ đề cha `software-engineering` chứa alias `'javascript'`, `'typescript'` vốn thuộc chủ đề con `web-development`.
+  - Thuật toán `resolveTopic()` và `topicsMatch()` so sánh canonical ID khiến `'AI'` và `'Học máy'` cùng trỏ về `'ai-ml'`, làm cho `topicsMatch('AI', 'Học máy') === true`.
+  - Trong `QaView.jsx`, `isTopicSelected(topic)` kiểm tra `topicsMatch(selected, topic)`, dẫn đến khi chọn một mục thì mục kia bị kích hoạt theo.
+
+### Giải pháp kỹ thuật đã triển khai
+1. **Chuẩn hóa danh mục chủ đề (`shared/topic-catalog.js`):**
+   - Tách bạch alias: chuyển `'học máy'` về đúng `machine-learning`, chuyển `'javascript'` về đúng `web-development`.
+   - Triển khai thuật toán đăng ký alias 3 lượt (**3-pass Registration**):
+     - **Pass 1:** Đăng ký danh tính chính thức (`id`, nhãn tiếng Việt/Anh) của TẤT CẢ chủ đề để đảm bảo chủ đề con không bao giờ bị alias của chủ đề cha đè lên.
+     - **Pass 2:** Đăng ký alias rộng và mã arXiv cũ của chủ đề cha (giữ tương thích ngược với unit test hiện hữu).
+     - **Pass 3:** Đăng ký alias chi tiết của chủ đề con.
+2. **Giao diện `QaView.jsx`:**
+   - Hoàn toàn độc lập giữa các chủ đề: Chọn `AI` chỉ chọn `AI`, chọn `Software Engineering` chỉ chọn `Software Engineering`.
+   - Cho phép chọn riêng lẻ hoặc đồng thời bất kỳ tổ hợp nào.
+
+---
+
+## 11. Cải Tiến: Trải Nghiệm Chờ AI Trả Lời Mượt Mà & Hiệu Ứng Suy Nghĩ (Smooth AI Thinking & Loading UX)
+
+### Bối cảnh & Vấn đề tồn tại
+- **Trước khi sửa:**
+  1. Khi người dùng nhấn Enter hoặc bấm *"Hỏi với nguồn"*, toàn bộ khung chat cũ bị gỡ khỏi DOM và biến mất đột ngột (`state !== 'ready'`).
+  2. Người dùng không thấy câu hỏi mình vừa gửi đi đâu, chỉ thấy một khung Skeleton 3 thanh xám thô ráp thay thế toàn bộ màn hình.
+  3. Hiệu ứng chuyển động của khung Skeleton bị lặp giật khấc (do `background-position` từ 100% đến -100% gây hiện tượng giật mỗi chu kỳ 1.4s), tạo cảm giác giao diện bị "đơ" hoặc đứng hình trong lúc chờ mô hình RAG / LLM truy xuất tài liệu và sinh câu trả lời.
+  4. Nút bấm chỉ bị disable mà không có phản hồi thị giác nào cho người dùng biết câu hỏi đã được tiếp nhận.
+
+### Chi tiết giải pháp kỹ thuật đã triển khai
+1. **Giữ Luồng Trò Chuyện & Hiển Thị Lạc Quan (Optimistic UI Thread):**
+   - Lưu trữ câu hỏi vừa gửi (`submittedQuestion`) trong state cục bộ của `QaView.jsx`.
+   - Khi chuyển sang `state === 'loading'`: Thay vì ẩn đi toàn bộ luồng chat, component `<MessageThread>` vẫn tiếp tục hiển thị các tin nhắn trước đó (nếu có) kèm:
+     - **Bong bóng câu hỏi của người dùng:** Xuất hiện tức thì ở phía dưới với hiệu ứng trượt nhẹ (`fade-slide-up`).
+     - **Bong bóng trạng thái AI đang suy nghĩ (`public-message-thinking`):**
+       - Badge trạng thái: Icon ✨ lấp lánh nhẹ và nhãn văn bản: `Đang truy xuất nguồn và suy nghĩ...` (bảo đảm tương thích tuyệt đối với các test case kiểm tra chuỗi `"Đang truy xuất nguồn"`).
+       - Hiệu ứng 3 chấm nhịp nhàng (`public-thinking-dots`): Chuyển động scale và opacity so le (`animation-delay: 0s, 0.22s, 0.44s`) bằng hàm gia tốc `cubic-bezier(0.4, 0, 0.2, 1)`.
+       - Dải sóng shimmer phát sáng (`public-thinking-shimmer-bar`): Lướt nhẹ nhàng bên dưới thông báo tiến trình.
+   - Tự động cuộn mượt (`scrollIntoView({ behavior: 'smooth' })`) xuống cuối luồng chat khi xuất hiện câu hỏi mới hoặc hiệu ứng suy nghĩ.
+   - Khi dữ liệu từ backend trả về và chuyển sang `state === 'ready'`, bong bóng tạm thời được thay thế mượt mà bằng nội dung câu trả lời thật kèm trích dẫn nguồn.
+
+2. **Nâng Cấp Khung Skeleton Mượt Mà Không Giật:**
+   - Cải tiến `.public-skeleton` trong `client/features/public/public-components.css`:
+     - Sử dụng pseudo-element `::after` với lớp gradient trong suốt lướt qua (`transform: translateX(-100%)` đến `translateX(100%)`) được tăng tốc phần cứng (GPU hardware acceleration), loại bỏ hoàn toàn hiện tượng gián đoạn / giật khấc.
+     - Các thanh Skeleton bên trong được bổ sung hiệu ứng thở (`pulse`) so le mềm mại.
+
+3. **Phản Hồi Thị Giác Trên Nút Gửi:**
+   - Trong lúc `state === 'loading'`, nút *"Hỏi với nguồn"* hiển thị trạng thái `Đang trả lời...` cùng spinner xoay mượt mà, giúp người dùng an tâm rằng hệ thống đang xử lý prompt của họ.
+
+4. **Hỗ Trợ Tối Đa Trợ Năng (Accessibility):**
+   - Đầy đủ thuộc tính `aria-busy="true"`, `aria-live="polite"`.
+   - Bổ sung truy vấn `@media (prefers-reduced-motion: reduce)` để tự động tắt hiệu ứng lặp đối với người dùng bật chế độ giảm chuyển động trong hệ điều hành.
+
+---
+
+## 12. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+
+1. **Kiểm tra độc lập giữa chủ đề AI và Học máy, Software Engineering và JavaScript:**
+   - Mở `http://localhost:3000` và chuyển sang tab **Hỏi đáp** (Q&A).
+   - Quan sát danh sách chủ đề:
+     - Bấm chọn nút hoặc checkbox **AI**: Chỉ duy nhất mục **AI** được chọn (nút sáng, trigger báo `Đã chọn (1) chủ đề`, chip `AI` xuất hiện). Mục **Học máy** hoàn toàn không bị chọn.
+     - Bấm mở Popover, tích chọn thêm **Học máy**: Cả **AI** và **Học máy** cùng được chọn (trigger báo `Đã chọn (2) chủ đề`).
+     - Bấm bỏ chọn **AI**: Chỉ mục **AI** bị bỏ chọn, mục **Học máy** vẫn giữ nguyên trạng thái đang chọn.
+     - Thử tương tự với **Software Engineering** và **JavaScript**: Cả hai hoạt động hoàn toàn độc lập, không bị tự động chọn chéo.
+2. **Kiểm tra xóa phiên hỏi đáp:**
    - Mở `http://localhost:3000` và đăng nhập tài khoản.
    - Vào tab **Hỏi đáp** (Q&A), tạo 2-3 phiên hỏi đáp khác nhau.
    - Rê chuột vào từng phiên ở cột bên trái: xuất hiện nút `×`. Bấm vào `×` để xóa riêng phiên đó; danh sách cập nhật ngay lập tức mà các phiên khác không bị mất.
-2. **Kiểm tra thanh lọc tìm kiếm & bảng tin (Dropdown nguồn theo 3 Connector):**
+3. **Kiểm tra thanh lọc tìm kiếm & bảng tin (Dropdown nguồn theo 3 Connector):**
    - Vào tab **Tìm kiếm** (Search) hoặc **Bảng tin** (Feed).
    - Quan sát thanh lọc bên dưới ô từ khóa:
      - **Chủ đề:** Dropdown chọn danh mục chuẩn (`Tất cả chủ đề`, `AI`, `AI Agent`, `Robotics`...).
      - **Nguồn:** Bấm mở dropdown nguồn -> Quan sát danh sách được gom thành 3 nhóm rõ ràng: **RSS Feeds**, **arXiv**, **Hacker News** với đầy đủ 10 nguồn.
      - Các ô lọc còn lại gồm: Chế độ (Hybrid/Văn bản), Từ ngày, Đến ngày.
    - Thử chọn một nguồn cụ thể (ví dụ: *Google DeepMind Blog* hoặc *OpenAI News*) và tìm kiếm từ khóa -> Hệ thống lọc chính xác các bài viết thuộc nguồn đó.
-3. **Kiểm tra Hỏi đáp trực tiếp từ bài viết & Thẻ ngữ cảnh đầy đủ:**
+4. **Kiểm tra Hỏi đáp trực tiếp từ bài viết & Thẻ ngữ cảnh đầy đủ:**
    - Vào tab **Bảng tin** (Feed), **Tìm kiếm** (Search) hoặc **Bài đã lưu** (Saved).
    - Trên mỗi thẻ bài viết đều xuất hiện nút **"Hỏi đáp"** bên cạnh nút *"Lưu bài"* và *"Đọc chi tiết"*.
    - Bấm nút **"Hỏi đáp"** trên bất kỳ bài viết nào:
      - Trình duyệt chuyển ngay sang tab **Hỏi đáp**.
-     - Cột *Phạm vi nguồn* bên phải hiển thị **Thẻ ngữ cảnh bài viết** đẹp mắt gồm:
+     - Cột *Phạm vi chủ đề* bên phải hiển thị **Thẻ ngữ cảnh bài viết** đẹp mắt gồm:
        - Badge màu xanh: *"ĐANG HỎI VỀ BÀI VIẾT"* và nút *"Bỏ chọn"*.
        - Tiêu đề bài viết đầy đủ.
        - Tên nguồn tin và ngày xuất bản.
        - Đoạn tóm tắt tiếng Việt của bài viết đó.
      - Nhập câu hỏi và bấm *"Hỏi với nguồn"* -> Câu trả lời tập trung chính xác vào nội dung bài viết đó.
      - Bấm nút **"Bỏ chọn"**: Thẻ ngữ cảnh bài viết biến mất, trở về trạng thái hỏi chung theo các chủ đề toàn hệ thống.
-4. **Kiểm tra câu hỏi mẫu và hướng dẫn khi thiếu bằng chứng:**
+5. **Kiểm tra câu hỏi mẫu và hướng dẫn khi thiếu bằng chứng:**
    - Mở tab **Hỏi đáp** (phiên mới): Màn hình xuất hiện các câu hỏi mẫu gợi ý (ví dụ: *"Google DeepMind có bài viết nào về Gemini 3.1 Flash TTS không?"*).
    - Bấm vào một câu hỏi mẫu: Nội dung tự động điền vào khung câu hỏi và chủ đề `AI` tự động được chọn.
    - Bấm nút **"Hỏi với nguồn"**: AI trả lời thành công kèm citation trích dẫn.
    - Thử hỏi một câu hỏi không có trong tin tức (ví dụ: *"Gemini và Claude có gì mới?"*): Hệ thống hiển thị thông báo từ chối kèm khối hướng dẫn gợi ý hành động rõ ràng.
+6. **Kiểm tra tự động đặt tiêu đề phiên hỏi đáp từ câu hỏi đầu tiên:**
+   - Vào tab **Hỏi đáp** (Q&A), bấm nút **"Phiên mới"**.
+   - Đặt một câu hỏi cụ thể, ví dụ: *"Công nghệ chip bán dẫn 2nm của TSMC có tiến triển gì mới?"* và gửi câu hỏi.
+   - Quan sát danh sách phiên bên trái: Tiêu đề phiên được tự động cập nhật thành nội dung câu hỏi rút gọn thay vì chữ *"Phiên hỏi đáp"*.
+   - Rê chuột vào tiêu đề phiên: Tooltip trình duyệt hiển thị toàn bộ câu hỏi gốc.
+   - Đặt tiếp câu hỏi thứ 2 trong cùng phiên đó: Tiêu đề của phiên vẫn được giữ nguyên vẹn theo câu hỏi đầu tiên.
+7. **Kiểm tra Phạm vi chủ đề & Multi-select Dropdown Popover (22 chủ đề):**
+   - Vào tab **Hỏi đáp** (Q&A).
+   - Quan sát cột bên phải: Tiêu đề đã được đổi thành **"Phạm vi chủ đề"** kèm mô tả *"Giới hạn chủ đề và thời gian bài viết cần hỏi đáp."*.
+   - Quan sát nút chọn chủ đề: Mặc định hiển thị `🏷️ Chọn chủ đề bài viết...`.
+   - Bấm vào nút trigger: Popover mở ra với ô tìm kiếm và danh sách đầy đủ **22 chủ đề** được phân thành 8 nhóm lĩnh vực công nghệ.
+   - Thử gõ từ khóa vào ô tìm kiếm (ví dụ: *"học"* hoặc *"robot"*): Danh sách lọc tức thì chỉ còn các chủ đề khớp từ khóa.
+   - Tích chọn 2-3 checkbox (ví dụ: *AI*, *Học sâu & LLM*, *Robotics*):
+     - Nút trigger cập nhật thành `🏷️ Đã chọn (3) chủ đề`.
+     - Xuất hiện nút *"Bỏ chọn hết"*.
+     - Bên dưới xuất hiện 3 chip tương ứng có nút `×` để gỡ nhanh.
+   - Bấm ra ngoài khoảng trống hoặc bấm nút *"Xong"*: Popover tự động đóng lại.
+   - Bấm nút `×` trên một chip: Chủ đề đó được gỡ bỏ ngay lập tức và số lượng trên nút trigger giảm tương ứng.
+8. **Kiểm tra hiệu ứng chờ phản hồi AI mượt mà (Smooth Thinking UX):**
+   - Vào tab **Hỏi đáp** (Q&A), nhập một câu hỏi bất kỳ và nhấn Enter (hoặc bấm *"Hỏi với nguồn"*).
+   - Quan sát ngay lập tức khi gửi:
+     - Ô nhập được làm sạch gọn gàng.
+     - Nút gửi chuyển sang trạng thái đang xử lý (`Đang trả lời...`) với icon vòng xoay mượt mà.
+     - Trong khung chat: Các tin nhắn cũ (nếu có) **vẫn được giữ nguyên** (không bị giật biến mất). Bong bóng câu hỏi vừa gửi xuất hiện ngay lập tức với hiệu ứng trượt nhẹ.
+     - Phía dưới xuất hiện bong bóng suy nghĩ của AI với badge ✨ `Đang truy xuất nguồn và suy nghĩ...`, 3 chấm nhảy nhịp nhàng (`pulsing dots`) và dải sóng ánh sáng shimmer lướt qua êm ái.
+     - Khung chat tự động cuộn mượt xuống cuối để người dùng theo dõi.
+     - Khi AI hoàn tất trả lời: Bong bóng suy nghĩ chuyển tiếp mượt mà sang câu trả lời kèm các trích dẫn nguồn (citations).
