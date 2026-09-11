@@ -16,21 +16,6 @@
 .public-citation-dialog .public-fact-list {
   margin: 14px 0 20px;
 }
-.public-auth-guest {
-  display: block;
-  margin-top: 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--public-fg);
-  font-size: 14px;
-  font-weight: 650;
-  text-align: left;
-}
-.public-auth-guest:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
 .public-topnav {
   position: sticky;
   top: 0;
@@ -158,6 +143,9 @@
 }
 .public-btn-block {
   width: 100%;
+}
+.public-auth-google {
+  margin-top: 12px;
 }
 .public-text-action {
   padding: 4px 0;

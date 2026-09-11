@@ -24,7 +24,6 @@ export default function AuthPanel({
   onSubmit,
   onGoogleLogin,
   onModeChange,
-  onGuestBrowse,
 }) {
   const [prevMode, setPrevMode] = useState(initialMode)
   const [mode, setMode] = useState(() => normalizeAuthMode(initialMode))
@@ -139,7 +138,7 @@ export default function AuthPanel({
       </form>
       {!register ? (
         <button
-          className="public-btn public-btn-secondary public-btn-block"
+          className="public-btn public-btn-secondary public-btn-block public-auth-google"
           type="button"
           onClick={onGoogleLogin}
           disabled={authPending}
@@ -154,11 +153,6 @@ export default function AuthPanel({
           {register ? 'Đăng nhập' : 'Tạo tài khoản'}
         </button>
       </p>
-      {!register ? (
-        <button className="public-auth-guest" type="button" onClick={onGuestBrowse}>
-          Tiếp tục như khách →
-        </button>
-      ) : null}
     </section>
   )
 }

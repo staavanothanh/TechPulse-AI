@@ -175,7 +175,7 @@ Migration dùng credential operator riêng; không dùng runtime URI để thự
 
 ## Hành trình người dùng cơ bản
 
-1. Mở landing page, chọn đăng ký/đăng nhập hoặc Google OAuth nếu đã cấu hình. Nút “Tiếp tục như khách” chỉ hiển thị hướng dẫn đăng nhập vì feed yêu cầu server-side session.
+1. Mở landing page, chọn đăng ký/đăng nhập hoặc Google OAuth nếu đã cấu hình. Feed yêu cầu server-side session.
 2. Sau khi có session, đọc feed, lọc/tìm kiếm theo chủ đề, mở một bài và đi tới original URL để kiểm chứng.
 3. Lưu bài cần quay lại; mở `/qa` để đặt câu hỏi trong phạm vi evidence đã truy xuất. Citation xuất hiện cùng câu trả lời; thiếu evidence thì câu trả lời bị từ chối thay vì đoán.
 4. Trong `/account`, chỉnh topic preferences, đổi mật khẩu hoặc gửi yêu cầu xóa tài khoản.

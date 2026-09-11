@@ -71,7 +71,6 @@ export default function PublicApp({
   onAuthSubmit,
   onGoogleLogin,
   onAuthModeChange,
-  onGuestBrowse,
   auth = {},
   api,
   csrfToken,
@@ -99,7 +98,6 @@ export default function PublicApp({
           onGoogleLogin: auth.onGoogleLogin || onGoogleLogin,
           onModeChange: auth.onModeChange || onAuthModeChange,
         }}
-        onGuestBrowse={onGuestBrowse}
       />
     )
   }

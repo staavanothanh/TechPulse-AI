@@ -204,14 +204,14 @@ describe('public feature presentation contract', () => {
     }
   })
 
-  it('renders the landing/auth presentation with the guarded guest affordance', () => {
+  it('renders the landing/auth presentation without a guest browse affordance', () => {
     const html = render(LandingPage, { auth: { mode: 'login', onSubmit: handlers.onSubmit } })
     expect(html).toContain('Nắm nhanh công nghệ.')
     expect(html).toContain('Biết rõ nguồn gốc.')
     expect(html).toContain('id="public-auth-form"')
     expect(html).toContain('id="public-auth-email"')
     expect(html).toContain('id="public-auth-password"')
-    expect(html).toContain('Tiếp tục như khách →')
+    expect(html).not.toContain('Tiếp tục như khách')
     expect(html).toContain('DZone')
     expect(html).toContain('DEV Community')
     expect(html).toContain('VnExpress')
@@ -519,7 +519,7 @@ describe('public feature presentation contract', () => {
       feed: { state: 'ready', articles: [article] },
     })
     expect(landing).toContain('Nắm nhanh công nghệ.')
-    expect(landing).toContain('Tiếp tục như khách →')
+    expect(landing).not.toContain('Tiếp tục như khách')
     expect(landing).not.toContain('Bài đã lưu')
     expect(reader).toContain('Feed công nghệ')
     expect(reader).toContain(article.titleVi)

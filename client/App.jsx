@@ -55,7 +55,6 @@ function PublicSurface({
   onAuthSubmit,
   onGoogleLogin,
   onAuthModeChange,
-  onGuestBrowse,
   auth,
   accountActions,
   sessionNotice,
@@ -93,7 +92,6 @@ function PublicSurface({
       onAuthSubmit={onAuthSubmit}
       onGoogleLogin={onGoogleLogin}
       onAuthModeChange={onAuthModeChange}
-      onGuestBrowse={onGuestBrowse}
       auth={auth}
       api={api}
       csrfToken={publicSession?.csrfToken}
@@ -372,19 +370,6 @@ export default function App() {
     loadSession()
   }
 
-  const guestBrowseNotice = useCallback(() => {
-    setAuth((current) => ({
-      ...current,
-      mode: 'login',
-      error: null,
-      notice: 'Feed chỉ mở sau khi đăng nhập để giữ phiên và dữ liệu theo đúng contract.',
-    }))
-    globalThis.setTimeout?.(
-      () => globalThis.document?.getElementById('public-auth-email')?.focus(),
-      0,
-    )
-  }, [])
-
   const surfaceIdentity = sessionIdentity(session)
   const surfaceEpoch = sessionEpochRef.current
   const guardedSurfaceExpire = useCallback(
@@ -429,7 +414,6 @@ export default function App() {
         onAuthSubmit={authenticate}
         onGoogleLogin={authenticateWithGoogle}
         onAuthModeChange={(mode) => setAuth((current) => ({ ...current, mode, error: null }))}
-        onGuestBrowse={guestBrowseNotice}
         auth={auth}
         accountActions={accountActions}
         sessionNotice={session.notice}

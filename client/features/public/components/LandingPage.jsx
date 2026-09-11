@@ -96,7 +96,6 @@ export default function LandingPage({
   theme = 'light',
   onThemeToggle,
   onBrandClick,
-  onGuestBrowse,
 }) {
   return (
     <div className="public-page public-landing" data-theme={theme}>
@@ -115,7 +114,7 @@ export default function LandingPage({
               chứng để bạn kiểm chứng.
             </p>
           </div>
-          <AuthPanel {...auth} onGuestBrowse={onGuestBrowse} />
+          <AuthPanel {...auth} />
         </div>
         <div className="public-container public-source-marquee-wrap">
           <div className="public-source-marquee" aria-label="Các nguồn tin được hỗ trợ">
