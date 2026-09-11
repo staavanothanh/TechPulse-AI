@@ -1,0 +1,969 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071115">
+  <meta name="description" content="TechPulse AI — thuyết trình dự án đọc tin công nghệ Vietnamese-first, có summary và Q&A kèm citation.">
+  <title>TechPulse AI — Nắm nhanh, biết nguồn, tự kiểm chứng</title>
+  <style>
+    /* ===========================================
+       VIEWPORT FITTING: MANDATORY BASE STYLES
+       =========================================== */
+    html, body {
+      height: 100%;
+      overflow-x: hidden;
+    }
+
+    html {
+      scroll-snap-type: y mandatory;
+      scroll-behavior: smooth;
+    }
+
+    .slide {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      scroll-snap-align: start;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .slide-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+      min-height: 0;
+      max-height: 100%;
+      overflow: hidden;
+      padding: var(--slide-padding);
+    }
+
+    :root {
+      --title-size: clamp(1.5rem, 5vw, 4rem);
+      --h2-size: clamp(1.25rem, 3.5vw, 2.5rem);
+      --h3-size: clamp(1rem, 2.5vw, 1.75rem);
+      --body-size: clamp(0.75rem, 1.5vw, 1.125rem);
+      --small-size: clamp(0.65rem, 1vw, 0.875rem);
+
+      --slide-padding: clamp(1rem, 4vw, 4rem);
+      --content-gap: clamp(0.5rem, 2vw, 2rem);
+      --element-gap: clamp(0.25rem, 1vw, 1rem);
+
+      --ink: #eef7f3;
+      --muted: #9bb0ad;
+      --faint: #7c9898;
+      --bg: #071115;
+      --bg-2: #0b1a1d;
+      --panel: rgba(14, 32, 35, 0.78);
+      --line: rgba(152, 210, 199, 0.2);
+      --cyan: #71e3d2;
+      --cyan-strong: #25c9bd;
+      --lime: #d7ef76;
+      --amber: #f5c46f;
+      --danger: #ffad87;
+      --shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.28);
+      --radius: clamp(0.65rem, 1.4vw, 1.15rem);
+      --display-font: "Arial Narrow", "Bahnschrift Condensed", "Segoe UI", sans-serif;
+      --body-font: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: var(--body-font);
+      font-size: var(--body-size);
+      line-height: 1.4;
+      text-rendering: optimizeLegibility;
+    }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 20;
+      opacity: 0.18;
+      background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 5rem 5rem;
+      mask-image: linear-gradient(to bottom, black, transparent 94%);
+    }
+
+    main { width: 100%; }
+
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at 82% 12%, rgba(113, 227, 210, .09), transparent 30%), radial-gradient(circle at 10% 88%, rgba(215, 239, 118, .06), transparent 28%);
+    }
+
+    .slide-content > * { position: relative; z-index: 1; }
+
+    .kicker, .slide-label, .mono, .chip, .metric, .table-label {
+      font-family: var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .kicker {
+      color: var(--cyan);
+      font-size: var(--small-size);
+      font-weight: 700;
+      margin: 0 0 clamp(.5rem, 1.2vh, 1rem);
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1, h2, h3 { text-wrap: balance; }
+    h1, h2 { font-family: var(--display-font); letter-spacing: -.045em; line-height: .94; }
+    h1 { font-size: clamp(3.2rem, 11vw, 9rem); max-width: 9ch; margin-bottom: clamp(1rem, 2vw, 1.6rem); }
+    h2 { font-size: var(--h2-size); max-width: 18ch; margin-bottom: clamp(.7rem, 1.5vw, 1.25rem); }
+    h3 { font-size: var(--h3-size); line-height: 1.05; margin-bottom: .45rem; }
+    p { color: var(--muted); max-width: 65ch; }
+    strong { color: var(--ink); }
+    em { color: var(--lime); font-style: normal; }
+
+    .lead {
+      font-size: clamp(1rem, 2vw, 1.45rem);
+      line-height: 1.35;
+      max-width: 43rem;
+      color: #c8d8d3;
+    }
+
+    .small { font-size: var(--small-size); color: var(--muted); }
+    .mono { font-size: var(--small-size); color: var(--cyan); }
+
+    .hero {
+      justify-content: center;
+      min-height: 100%;
+      padding-top: clamp(4rem, 10vh, 8rem);
+      padding-bottom: clamp(3rem, 8vh, 6rem);
+    }
+
+    .hero::before {
+      content: "01";
+      position: absolute;
+      right: var(--slide-padding);
+      top: clamp(4.5rem, 12vh, 8rem);
+      color: rgba(113, 227, 210, .24);
+      font: 700 clamp(4rem, 18vw, 15rem)/.8 var(--mono);
+      letter-spacing: -.12em;
+    }
+
+    .hero-mark {
+      width: clamp(4rem, 8vw, 7rem);
+      aspect-ratio: 1;
+      margin-bottom: clamp(1.25rem, 3vw, 2.5rem);
+      position: relative;
+      border: 1px solid var(--cyan);
+      border-radius: 50%;
+      box-shadow: 0 0 0 .6rem rgba(113, 227, 210, .06), 0 0 3rem rgba(113, 227, 210, .18);
+    }
+
+    .hero-mark::before, .hero-mark::after { content: ""; position: absolute; inset: 18%; border: 1px solid var(--cyan); }
+    .hero-mark::before { border-radius: 50% 50% 50% 0; transform: rotate(45deg); }
+    .hero-mark::after { inset: 43%; border-radius: 50%; background: var(--lime); border: 0; box-shadow: 0 0 .8rem var(--lime); }
+
+    .hero-meta { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: clamp(1.5rem, 4vw, 3rem); }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2rem;
+      padding: .45rem .7rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255,255,255,.025);
+      font-size: var(--small-size);
+    }
+    .chip.accent { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
+    .chip.lime { color: #182213; background: var(--lime); border-color: var(--lime); }
+
+    .section-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: var(--content-gap); }
+    .section-top > div { min-width: 0; }
+    .slide-label { color: var(--faint); font-size: var(--small-size); white-space: nowrap; padding-top: .2rem; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: clamp(.5rem, 1.5vw, 1rem); }
+    .card, .container, .content-box { max-width: min(90vw, 1000px); max-height: min(80vh, 700px); }
+    .card {
+      position: relative;
+      padding: clamp(.85rem, 1.8vw, 1.35rem);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(17, 42, 43, .86), rgba(10, 23, 27, .78));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card::before { content: ""; position: absolute; width: 4rem; height: 4rem; right: -2rem; top: -2rem; border: 1px solid rgba(113,227,210,.18); border-radius: 50%; }
+    .card p:last-child { margin-bottom: 0; }
+    .card .index { color: var(--cyan); font: 700 var(--small-size)/1 var(--mono); margin-bottom: .85rem; display: block; }
+    .card .accent-line { width: 2.2rem; height: .2rem; background: var(--lime); margin: .6rem 0 .85rem; }
+
+    .bullet-list, .feature-list { display: flex; flex-direction: column; gap: clamp(.4rem, 1vh, 1rem); padding: 0; margin: 0; list-style: none; }
+    .bullet-list li, .feature-list li { display: grid; grid-template-columns: 1rem 1fr; gap: .65rem; align-items: start; font-size: var(--body-size); line-height: 1.4; }
+    .bullet-list li::before, .feature-list li::before { content: "↗"; color: var(--lime); font-family: var(--mono); }
+
+    .note {
+      border-left: 2px solid var(--lime);
+      padding: .6rem 0 .6rem 1rem;
+      color: var(--muted);
+      font-size: var(--small-size);
+      max-width: 68ch;
+    }
+    .note strong { color: var(--lime); }
+
+
+    /* slide 2: problem */
+    .problem-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .audience-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .problem-grid .card { min-height: clamp(8rem, 18vh, 12rem); }
+    .problem-grid .card:nth-child(2) { transform: translateY(clamp(.2rem, 1.5vh, 1rem)); }
+    .problem-grid .card:nth-child(3) { transform: translateY(calc(-1 * clamp(.2rem, 1.5vh, 1rem))); }
+
+    /* flow and diagrams */
+    .flow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(.35rem, 1vw, .8rem); align-items: stretch; }
+    .flow-step { position: relative; padding: clamp(.7rem, 1.5vw, 1rem); border: 1px solid var(--line); border-radius: .8rem; background: rgba(14,32,35,.75); min-width: 0; }
+    .flow-step:not(:last-child)::after { content: "→"; position: absolute; right: calc(-1 * clamp(.45rem, 1vw, .8rem)); top: 50%; transform: translateY(-50%); color: var(--lime); z-index: 2; font-family: var(--mono); }
+    .flow-step .step-no { color: var(--lime); font: 700 .7rem var(--mono); }
+    .flow-step p { font-size: var(--small-size); line-height: 1.3; margin: .5rem 0 0; color: #c2d4d0; }
+    .flow-step.highlight { border-color: rgba(113,227,210,.72); background: rgba(20, 63, 61, .65); }
+    .flow-step.highlight p { color: var(--ink); }
+
+    .source-grid { display: grid; grid-template-columns: .85fr 1.3fr 1fr; gap: clamp(.6rem, 1.5vw, 1.2rem); align-items: stretch; }
+    .source-list { display: grid; grid-template-columns: 1fr; gap: .6rem; }
+    .source-badge { padding: .7rem .8rem; border: 1px solid var(--line); border-radius: .7rem; background: rgba(255,255,255,.025); }
+    .source-badge strong { display: block; font-size: var(--body-size); }
+    .source-badge small { color: var(--muted); font-size: var(--small-size); }
+    .policy-gate { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 1rem; border: 1px solid var(--cyan); border-radius: var(--radius); background: radial-gradient(circle, rgba(37,201,189,.22), rgba(14,32,35,.68) 64%); min-height: 14rem; }
+    .policy-gate .lock { font-size: clamp(2rem, 5vw, 3.5rem); color: var(--lime); line-height: 1; margin-bottom: .7rem; }
+    .policy-gate p { font-size: var(--small-size); margin: 0; }
+    .branch-list { display: flex; flex-direction: column; justify-content: center; gap: .65rem; }
+    .branch { padding: .75rem; border: 1px dashed var(--line); border-radius: .7rem; }
+    .branch strong { display: block; font-size: var(--small-size); }
+    .branch span { color: var(--muted); font-size: .7rem; }
+    .branch.discovery { border-color: rgba(245,196,111,.48); }
+    .branch.evidence { border-color: rgba(215,239,118,.6); }
+
+    .pipeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .55rem; margin-bottom: var(--content-gap); }
+    .pipeline .stage { position: relative; min-height: 6.8rem; padding: .8rem; border-top: 2px solid var(--cyan); background: rgba(255,255,255,.035); }
+    .pipeline .stage:nth-child(even) { border-color: var(--lime); }
+    .pipeline .stage::after { content: "+"; position: absolute; right: -.4rem; top: -.75rem; color: var(--faint); font: 700 1rem var(--mono); }
+    .pipeline .stage:last-child::after { display: none; }
+    .stage b { display: block; font: 700 .7rem var(--mono); color: var(--cyan); margin-bottom: .5rem; }
+    .stage p { margin: 0; font-size: var(--small-size); line-height: 1.3; color: var(--ink); }
+    .safeguards { display: grid; grid-template-columns: repeat(3, 1fr); gap: .6rem; }
+    .safeguard { padding: .7rem .8rem; border: 1px solid var(--line); border-radius: .7rem; color: var(--muted); font-size: var(--small-size); }
+    .safeguard b { display: block; color: var(--lime); margin-bottom: .25rem; }
+
+    .reader-map { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: .8rem; position: relative; }
+    .reader-map::before { content: ""; position: absolute; top: 2.6rem; left: 10%; right: 10%; border-top: 1px dashed rgba(113,227,210,.45); }
+    .reader-card { min-height: 14rem; padding: clamp(.8rem, 1.8vw, 1.2rem); border: 1px solid var(--line); border-radius: var(--radius); background: rgba(14,32,35,.82); position: relative; }
+    .reader-card .mock-header { display: flex; gap: .3rem; margin-bottom: .8rem; }
+    .reader-card .mock-header i { display: block; width: .45rem; height: .45rem; border-radius: 50%; background: var(--cyan); }
+    .reader-card .mock-line { height: .45rem; margin: .45rem 0; border-radius: 99px; background: rgba(155,176,173,.26); }
+    .reader-card .mock-line.short { width: 62%; }
+    .reader-card .mock-line.accent { background: rgba(215,239,118,.72); width: 74%; }
+    .reader-card .feature-list { margin-top: .8rem; }
+    .reader-card .feature-list li { font-size: var(--small-size); }
+
+    .qa-layout { display: grid; grid-template-columns: 1.35fr .85fr; gap: clamp(1rem, 3vw, 2.5rem); align-items: center; }
+    .answer-card { padding: clamp(1rem, 2.3vw, 1.7rem); border: 1px solid var(--cyan); border-radius: var(--radius); background: linear-gradient(135deg, rgba(19,62,61,.88), rgba(12,27,30,.75)); box-shadow: 0 0 3rem rgba(37,201,189,.08); }
+    .answer-card .question { color: var(--muted); font-size: var(--small-size); margin-bottom: 1rem; }
+    .answer-card blockquote { margin: 0; padding-left: 1rem; border-left: 2px solid var(--lime); font-size: clamp(1rem, 2.1vw, 1.45rem); line-height: 1.3; color: var(--ink); }
+    .citation-row { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: 1rem; }
+    .citation { border: 1px solid rgba(215,239,118,.55); color: var(--lime); border-radius: 999px; padding: .35rem .55rem; font: .68rem var(--mono); }
+    .qa-rail { display: flex; flex-direction: column; gap: .7rem; }
+    .qa-step { display: grid; grid-template-columns: 2.2rem 1fr; gap: .65rem; align-items: center; }
+    .qa-step .circle { width: 2.2rem; height: 2.2rem; display: grid; place-items: center; border-radius: 50%; background: rgba(113,227,210,.12); border: 1px solid var(--cyan); color: var(--cyan); font: .72rem var(--mono); }
+    .qa-step strong { display: block; font-size: var(--small-size); }
+    .qa-step span { color: var(--muted); font-size: .7rem; }
+    .refusal { margin-top: .9rem; padding: .8rem; border: 1px dashed rgba(255,173,135,.65); border-radius: .7rem; color: var(--danger); font-size: var(--small-size); }
+
+    .stack { display: flex; flex-direction: column; gap: .5rem; max-width: 58rem; }
+    .stack-layer { display: grid; grid-template-columns: minmax(8rem, .38fr) 1fr; gap: 1rem; align-items: center; padding: clamp(.65rem, 1.5vw, 1rem) clamp(.8rem, 2vw, 1.3rem); border: 1px solid var(--line); background: rgba(255,255,255,.035); border-radius: .7rem; }
+    .stack-layer:nth-child(1) { border-left: 3px solid var(--cyan); }
+    .stack-layer:nth-child(2) { border-left: 3px solid var(--lime); }
+    .stack-layer:nth-child(3) { border-left: 3px solid var(--amber); }
+    .stack-layer:nth-child(4) { border-left: 3px solid var(--danger); }
+    .stack-layer b { font-family: var(--mono); font-size: var(--small-size); color: var(--ink); }
+    .stack-layer span { color: var(--muted); font-size: var(--small-size); }
+    .stack-caption { display: flex; justify-content: space-between; gap: 1rem; margin-top: .7rem; color: var(--faint); font-size: var(--small-size); }
+
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: clamp(.8rem, 2.2vw, 1.5rem); }
+    .column-head { display: flex; align-items: baseline; justify-content: space-between; gap: .7rem; padding-bottom: .6rem; margin-bottom: .75rem; border-bottom: 1px solid var(--line); }
+    .column-head h3 { margin: 0; }
+    .advantage .column-head { color: var(--lime); }
+    .limit .column-head { color: var(--danger); }
+    .compare-list { display: flex; flex-direction: column; gap: .55rem; }
+    .compare-row { display: grid; grid-template-columns: 1.15fr .85fr; gap: .7rem; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: .65rem; background: rgba(255,255,255,.025); }
+    .compare-row b { font-size: var(--small-size); color: var(--ink); }
+    .compare-row span { color: var(--muted); font-size: .72rem; }
+    .compare-row span::before { content: "↳ "; color: var(--danger); }
+    .differentiation { margin-top: .9rem; padding: .8rem 1rem; border: 1px solid rgba(113,227,210,.38); border-radius: .7rem; color: #c8d8d3; font-size: var(--small-size); }
+    .differentiation b { color: var(--cyan); }
+
+    .team-layout { display: grid; grid-template-columns: .8fr 1.6fr; gap: clamp(1rem, 3vw, 2.5rem); align-items: stretch; }
+    .team-meta { display: flex; flex-direction: column; justify-content: center; gap: .65rem; padding: clamp(1rem, 2vw, 1.5rem); border: 1px solid var(--cyan); border-radius: var(--radius); background: rgba(14,50,50,.55); }
+    .team-meta .meta-row { border-bottom: 1px solid rgba(113,227,210,.2); padding-bottom: .6rem; }
+    .team-meta .meta-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .table-label { display: block; color: var(--faint); font-size: .65rem; margin-bottom: .22rem; }
+    .meta-value { color: var(--ink); font-size: clamp(.95rem, 1.7vw, 1.25rem); font-weight: 700; }
+    .table-wrap { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: rgba(255,255,255,.025); }
+    table { width: 100%; border-collapse: collapse; font-size: clamp(.68rem, 1.2vw, .95rem); }
+    th, td { text-align: left; padding: clamp(.55rem, 1.2vw, .85rem); border-bottom: 1px solid var(--line); }
+    th { font: 700 .68rem var(--mono); color: var(--cyan); letter-spacing: .08em; text-transform: uppercase; background: rgba(113,227,210,.07); }
+    td { color: #d6e4df; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td:first-child { color: var(--lime); font-family: var(--mono); width: 2rem; }
+    .responsibility-list { display: flex; flex-direction: column; gap: clamp(.45rem, 1.2vh, .85rem); width: min(100%, 70rem); max-width: 100%; padding: 0; margin: 0; list-style: none; }
+    .responsibility-row { display: flex; align-items: center; min-height: clamp(3rem, 8vh, 4.6rem); padding: clamp(.7rem, 1.5vw, 1.1rem) clamp(.8rem, 2vw, 1.35rem); border: 1px solid var(--line); border-left: 3px solid var(--cyan); border-radius: .7rem; background: rgba(255,255,255,.035); color: var(--ink); font-size: clamp(.86rem, 1.8vw, 1.2rem); line-height: 1.25; overflow-wrap: anywhere; }
+    .responsibility-row:nth-child(even) { border-left-color: var(--lime); }
+
+
+    .closing { justify-content: center; }
+    .closing h2 { font-size: clamp(2.2rem, 6vw, 5rem); max-width: 11ch; }
+    .closing-track { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin: clamp(1rem, 3vw, 2rem) 0; max-width: 58rem; }
+    .closing-track span { padding: .65rem .8rem; border: 1px solid var(--line); border-radius: .6rem; color: var(--ink); background: rgba(255,255,255,.03); font-size: var(--small-size); }
+    .closing-track i { color: var(--lime); font-style: normal; font-family: var(--mono); }
+    .closing-track span:last-of-type { border-color: var(--lime); color: var(--lime); }
+    .closing-foot { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; }
+    .closing-foot .chip { font-size: .68rem; }
+
+    /* fixed navigation */
+    .controls {
+      position: fixed;
+      z-index: 30;
+      right: clamp(.8rem, 2.5vw, 2.2rem);
+      bottom: clamp(.8rem, 2.5vh, 1.8rem);
+      display: flex;
+      align-items: center;
+      gap: .55rem;
+      padding: .35rem;
+      border: 1px solid rgba(152,210,199,.25);
+      border-radius: 999px;
+      background: rgba(7,17,21,.78);
+      backdrop-filter: blur(10px);
+    }
+    .control-button, .dot {
+      min-width: 2.75rem;
+      min-height: 2.75rem;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 50%;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font: 1rem var(--mono);
+      text-decoration: none;
+    }
+    .control-button:not(:disabled):hover, .dot:hover { color: var(--ink); background: rgba(113,227,210,.1); }
+    .control-button:disabled { opacity: .45; cursor: default; }
+    .control-button:focus-visible, .dot:focus-visible, a:focus-visible, button:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
+    h1:focus-visible, h2:focus-visible { outline: none; text-shadow: 0 0 .65rem rgba(113,227,210,.7); }
+    .nav-dots { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .3rem; }
+    .dot { min-width: 1.5rem; min-height: 1.5rem; font-size: .55rem; }
+    .dot[aria-current="true"] { color: var(--bg); background: var(--cyan); border-color: var(--cyan); outline: 1px solid var(--cyan); outline-offset: 2px; }
+    .progress-label { color: var(--faint); font: .62rem var(--mono); white-space: nowrap; padding: 0 .3rem; }
+    .progress-bar { position: fixed; z-index: 31; top: 0; left: 0; height: 2px; width: 0; background: linear-gradient(90deg, var(--cyan), var(--lime)); transition: width .25s ease; }
+
+    @media (max-height: 700px) {
+      :root {
+        --slide-padding: clamp(0.75rem, 3vw, 2rem);
+        --content-gap: clamp(0.4rem, 1.5vw, 1rem);
+        --title-size: clamp(1.25rem, 4.5vw, 2.5rem);
+        --h2-size: clamp(1rem, 3vw, 1.75rem);
+      }
+      .hero { padding-top: 2.5rem; padding-bottom: 1.5rem; }
+      .hero-mark { margin-bottom: 1rem; }
+      .problem-grid .card { min-height: 7rem; }
+    }
+    @media (min-height: 701px) and (max-height: 760px) {
+      .hero { padding-top: 2rem; padding-bottom: 1rem; }
+      .closing h2 { font-size: clamp(2rem, 5vw, 4rem); max-width: 14ch; }
+      .closing-track { margin: 1rem 0; }
+      .hero h1 { font-size: clamp(3rem, 8vw, 6rem); }
+    }
+
+    @media (max-height: 600px) {
+      :root {
+        --slide-padding: clamp(0.5rem, 2.5vw, 1.5rem);
+        --content-gap: clamp(0.3rem, 1vw, 0.75rem);
+        --title-size: clamp(1.1rem, 4vw, 2rem);
+        --body-size: clamp(0.7rem, 1.2vw, 0.95rem);
+      }
+      .nav-dots, .decorative { display: none; }
+      .hero { padding-top: 2.2rem; padding-bottom: 2rem; }
+      .hero-mark { width: 3.2rem; margin-bottom: .7rem; }
+      .hero h1 { font-size: clamp(2.5rem, 9vw, 5.5rem); margin-bottom: .65rem; }
+      .hero-meta { margin-top: 1rem; }
+      .card { padding: .7rem; }
+      .card .index { margin-bottom: .5rem; }
+      .problem-grid .card { min-height: 5.8rem; }
+      .reader-card { min-height: 10rem; }
+      .qa-layout { gap: 1rem; }
+      .answer-card { padding: .85rem; }
+      .team-meta { padding: .8rem; }
+      th, td { padding: .4rem .5rem; }
+    }
+
+    @media (max-height: 500px) {
+      :root {
+        --slide-padding: clamp(0.4rem, 2vw, 1rem);
+        --title-size: clamp(1rem, 3.5vw, 1.5rem);
+        --h2-size: clamp(0.9rem, 2.5vw, 1.25rem);
+        --body-size: clamp(0.65rem, 1vw, 0.85rem);
+      }
+      h2 { margin-bottom: .45rem; }
+      .kicker { margin-bottom: .3rem; }
+      .flow-step { padding: .45rem; }
+      .flow-step p { margin-top: .25rem; }
+      .pipeline { gap: .3rem; }
+      .pipeline .stage { min-height: 4.6rem; padding: .5rem; }
+      .safeguard { padding: .45rem; }
+      .stack-layer { padding: .45rem .6rem; }
+      .source-grid { gap: .4rem; }
+      .policy-gate { min-height: 9rem; }
+      .team-layout { gap: .6rem; }
+      .responsibility-list { gap: .3rem; }
+      .responsibility-row { min-height: 0; padding: .45rem .55rem; font-size: .68rem; line-height: 1.15; }
+    }
+
+    @media (max-width: 900px) {
+      .problem-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .audience-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .source-grid { grid-template-columns: 1fr 1.15fr; }
+      .source-grid .branch-list { grid-column: 1 / -1; flex-direction: row; }
+      .branch { flex: 1; }
+      .team-layout { grid-template-columns: 1fr 1.65fr; gap: 1rem; }
+    }
+
+    @media (max-width: 700px) {
+      :root { --slide-padding: clamp(.85rem, 4vw, 1.5rem); }
+      .section-top { margin-bottom: .7rem; }
+      .section-top h2 { max-width: 16ch; }
+      .problem-grid { gap: .5rem; }
+      .problem-grid .card { min-height: 6.7rem; }
+      .problem-grid .card:nth-child(2), .problem-grid .card:nth-child(3) { transform: none; }
+      .flow { grid-template-columns: repeat(2, minmax(0,1fr)); gap: .45rem; }
+      .flow-step:not(:last-child)::after { display: none; }
+      .flow-step:nth-child(odd)::after { display: block; content: "↘"; right: -.15rem; top: auto; bottom: -.9rem; transform: none; }
+      .flow-step:nth-child(6)::after { display: none; }
+      .source-grid { grid-template-columns: 1fr; }
+      .source-grid .branch-list { grid-column: auto; flex-direction: column; }
+      .pipeline { width: 100%; min-width: 0; grid-template-columns: repeat(3, minmax(0,1fr)); overflow: visible; }
+      .pipeline .stage { min-width: 0; min-height: 6rem; overflow-wrap: anywhere; }
+      .pipeline .stage::after { display: none; }
+      .reader-map { gap: .45rem; }
+      .reader-map::before { left: 5%; right: 5%; }
+      .reader-card { min-height: 12rem; padding: .7rem; }
+      .qa-layout { grid-template-columns: 1fr; gap: .8rem; }
+      .qa-rail { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4rem; }
+      .qa-step { display: block; text-align: center; }
+      .qa-step .circle { margin: 0 auto .35rem; }
+      .refusal { margin-top: .55rem; }
+      .stack-layer { grid-template-columns: 6.8rem 1fr; gap: .6rem; }
+      .two-col { gap: .55rem; }
+      .compare-row { grid-template-columns: 1fr; gap: .2rem; padding: .55rem; }
+      .team-layout { grid-template-columns: 1fr; gap: .65rem; }
+      .team-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: .55rem; }
+      .team-meta .meta-row { border-bottom: 0; padding-bottom: 0; }
+      .team-meta .meta-row:nth-child(1) { grid-column: span 1; }
+      .team-meta .meta-row:nth-child(2) { grid-column: span 1; }
+      .team-meta .meta-row:nth-child(3) { grid-column: span 1; }
+      .table-wrap { min-width: 0; }
+      th, td { padding: .45rem .35rem; }
+      .controls { right: .65rem; bottom: .65rem; }
+      .control-button { min-width: 2.5rem; min-height: 2.5rem; }
+    }
+
+    @media (max-width: 420px) {
+      h2 { font-size: clamp(1.2rem, 6.5vw, 1.7rem); }
+      .lead { font-size: .92rem; }
+      .hero h1 { font-size: clamp(2.7rem, 15vw, 4.6rem); }
+      .hero::before { display: none; }
+      .hero-meta { gap: .35rem; }
+      .chip { min-height: 1.8rem; padding: .35rem .5rem; font-size: .58rem; }
+      .problem-grid .card { min-height: 6.1rem; }
+      .card .index { margin-bottom: .4rem; }
+      .card p { font-size: .72rem; }
+      .flow-step p { font-size: .68rem; }
+      .pipeline { gap: .3rem; }
+      .pipeline .stage { min-width: 0; padding: .45rem; }
+      .pipeline .stage p { font-size: .62rem; }
+      .safeguards { gap: .35rem; }
+      .safeguard { font-size: .62rem; padding: .45rem; }
+      .reader-card { min-height: 10.6rem; }
+      .reader-card .feature-list li { font-size: .64rem; }
+      .stack-layer { grid-template-columns: 5.9rem 1fr; }
+      .stack-layer span { font-size: .66rem; }
+      .team-meta { padding: .65rem; }
+      .table-label { font-size: .7rem; }
+      .meta-value { font-size: .8rem; }
+      table { font-size: .75rem; }
+      th { font-size: .68rem; }
+      th, td { padding: .38rem .28rem; }
+      .nav-dots { display: none; }
+      .slide#slide-11 h2 { font-size: 1.35rem; }
+      .slide#slide-11 .compare-row { padding: .4rem .42rem; }
+      .slide#slide-11 .compare-row b, .slide#slide-11 .compare-row span { font-size: .68rem; line-height: 1.15; }
+      .slide#slide-11 .differentiation { font-size: .6rem; line-height: 1.15; padding: .5rem .6rem; }
+    }
+
+    @media (max-width: 420px) and (min-height: 501px) {
+      .source-grid { grid-template-columns: 1fr 1fr; gap: .45rem; }
+      .source-grid .source-list { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .35rem; }
+      .source-grid .source-badge { padding: .45rem; }
+      .source-grid .source-badge strong { font-size: .7rem; }
+      .source-grid .source-badge small { font-size: .56rem; }
+      .source-grid .policy-gate { min-height: 7rem; padding: .55rem; }
+      .source-grid .lock { font-size: 1.8rem; margin-bottom: .35rem; }
+      .source-grid .branch-list { grid-column: 1 / -1; flex-direction: row; gap: .35rem; }
+      .source-grid .branch { padding: .45rem; }
+      .source-grid .branch strong { font-size: .6rem; }
+      .source-grid .branch span { font-size: .56rem; }
+      .slide#slide-5 .note { margin-top: .45rem; font-size: .68rem; }
+    }
+
+    @media (max-height: 500px) {
+      :root {
+        --slide-padding: clamp(0.4rem, 2vw, 1rem);
+        --title-size: clamp(1rem, 3.5vw, 1.5rem);
+        --h2-size: clamp(0.9rem, 2.5vw, 1.25rem);
+        --body-size: clamp(0.65rem, 1vw, 0.85rem);
+      }
+      .slide-content { justify-content: flex-start; min-width: 0; position: relative; }
+      .nav-dots, .decorative { display: none; }
+      .controls { display: none; }
+      .note { position: absolute; left: var(--slide-padding); right: var(--slide-padding); bottom: 2.05rem; margin: 0 !important; font-size: .54rem; line-height: 1.05; }
+      .differentiation { display: block; position: absolute; left: var(--slide-padding); right: var(--slide-padding); bottom: 2.05rem; margin: 0; padding: .25rem .35rem; font-size: .5rem; line-height: 1.05; }
+      h2 { margin-bottom: .45rem; }
+      .kicker { margin-bottom: .3rem; }
+      .section-top { margin-bottom: .4rem; }
+      .section-top h2 { margin-bottom: .35rem; }
+      .flow-step { padding: .45rem; }
+      .flow-step p { margin-top: .25rem; }
+      .pipeline { gap: .3rem; }
+      .pipeline .stage { min-height: 4.6rem; padding: .5rem; }
+      .safeguard { padding: .45rem; }
+      .stack-layer { padding: .45rem .6rem; }
+      .source-grid { gap: .4rem; }
+      .source-grid .source-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .3rem; }
+      .source-grid .source-badge { padding: .4rem; }
+      .source-grid .source-badge strong { font-size: .65rem; }
+      .source-grid .source-badge small { font-size: .54rem; }
+      .source-grid .branch-list { flex-direction: row; gap: .3rem; }
+      .source-grid .branch { padding: .4rem; }
+      .source-grid .branch strong { font-size: .58rem; }
+      .source-grid .branch span { font-size: .54rem; }
+      .source-grid .policy-gate { min-height: 6.5rem; padding: .4rem; }
+      .source-grid .lock { font-size: 1.5rem; margin-bottom: .25rem; }
+      .source-grid .policy-gate h3 { font-size: .9rem; }
+      .problem-grid .card { min-height: 4.5rem; }
+      .reader-card { min-height: 8rem; }
+      .qa-layout { gap: .45rem; }
+      .answer-card { padding: .65rem; }
+      .answer-card blockquote { font-size: .95rem; }
+      .refusal { padding: .5rem; }
+      .compare-list { gap: .3rem; }
+      .compare-row { padding: .34rem .4rem; }
+      .column-head { padding-bottom: .3rem; margin-bottom: .35rem; }
+      .closing h2 { font-size: clamp(1.7rem, 6vw, 3rem); max-width: 14ch; }
+      .closing-track { margin: .65rem 0; }
+      .closing-track span { padding: .45rem .55rem; }
+      .team-layout { gap: .4rem; }
+      .team-meta { padding: .55rem; }
+      th, td { padding: .3rem .35rem; }
+      .hero { padding-top: .6rem; padding-bottom: .4rem; }
+      .hero-mark { width: 2.5rem; margin-bottom: .4rem; }
+      .hero h1 { font-size: clamp(2rem, 7vw, 3.3rem); margin-bottom: .35rem; }
+      .hero .lead { font-size: .78rem; line-height: 1.2; }
+      .hero-meta { margin-top: .65rem; gap: .3rem; }
+      .hero-meta .chip { min-height: 1.6rem; padding: .3rem .45rem; font-size: .52rem; }
+      .slide#slide-8 .qa-layout { gap: .3rem; }
+      .slide#slide-8 .answer-card { padding: .45rem; }
+      .slide#slide-8 .answer-card .question { margin-bottom: .35rem; }
+      .slide#slide-8 .answer-card blockquote { font-size: .78rem; }
+      .slide#slide-8 .citation-row { margin-top: .35rem; }
+      .slide#slide-8 .refusal { margin-top: .35rem; padding: .35rem; }
+      .slide#slide-11 .compare-list { gap: .2rem; }
+      .slide#slide-11 .compare-row { padding: .25rem .3rem; }
+      .slide#slide-11 .compare-row b, .slide#slide-11 .compare-row span { font-size: .56rem; line-height: 1.05; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.2s !important;
+      }
+      html { scroll-behavior: auto; }
+      .slide, .card, .flow-step { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress-bar" id="progress-bar" aria-hidden="true"></div>
+  <main id="deck" aria-label="Bài thuyết trình TechPulse AI">
+    <section class="slide" id="slide-1" data-index="1" aria-labelledby="slide-title-1" tabindex="-1">
+      <div class="slide-content hero">
+        <div class="hero-mark" aria-hidden="true"></div>
+        <p class="kicker">Dự án web · Vietnamese-first · source-aware</p>
+        <h1 id="slide-title-1">TechPulse AI</h1>
+        <p class="lead">Nắm nhanh nội dung công nghệ bằng tiếng Việt — biết nguồn, mở được bằng chứng, tự kiểm chứng trước khi tin.</p>
+        <div class="hero-meta" aria-label="Định vị sản phẩm">
+          <span class="chip accent">Summary tiếng Việt</span>
+          <span class="chip">Hybrid search</span>
+          <span class="chip lime">Q&amp;A có citation</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-2" data-index="2" aria-labelledby="slide-title-2" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">01 / Bối cảnh</p><h2 id="slide-title-2">Tin nhiều, kiểm chứng khó</h2></div><span class="slide-label">FRICTION MAP</span></div>
+        <div class="grid problem-grid">
+          <article class="card"><span class="index">A / 01</span><h3>Nguồn rải rác</h3><p>Báo chí, blog, research và cộng đồng nằm ở nhiều điểm vào khác nhau.</p></article>
+          <article class="card"><span class="index">B / 02</span><h3>Nhiễu trùng</h3><p>Một sự kiện có thể được đăng lại nhiều lần, khiến tín hiệu bị pha loãng.</p></article>
+          <article class="card"><span class="index">C / 03</span><h3>Chi phí đọc</h3><p>Người đọc phải tự dịch, tự so sánh và tự đánh giá độ tin cậy.</p></article>
+          <article class="card"><span class="index">D / 04</span><h3>Chatbot thiếu evidence</h3><p>Trả lời tổng quát có thể thiếu nguồn, lệch dữ liệu mới hoặc không chỉ ra bằng chứng.</p></article>
+        </div>
+        <p class="note"><strong>Góc nhìn sản phẩm:</strong> Tóm tắt nên giúp chọn bài đáng đọc, không biến thành bản sao toàn văn hay lý do để bỏ qua nguồn gốc.</p>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-3" data-index="3" aria-labelledby="slide-title-3" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">02 / Audience</p><h2 id="slide-title-3">Người dùng và công việc cần hoàn thành</h2></div><span class="slide-label">JOB TO BE DONE</span></div>
+        <div class="grid audience-grid">
+          <article class="card"><span class="index">01</span><h3>Sinh viên CNTT</h3><p>Muốn cập nhật nhanh bằng một luồng đọc có định hướng.</p></article>
+          <article class="card"><span class="index">02</span><h3>Junior / mid developer</h3><p>Đọc nguồn tiếng Anh nhưng cần nắm ý chính bằng tiếng Việt.</p></article>
+          <article class="card"><span class="index">03</span><h3>Người theo dõi AI</h3><p>AI, AI Agent, Robotics và Software Engineering.</p></article>
+          <article class="card"><span class="index">04</span><h3>Người cần kiểm chứng</h3><p>Không chỉ nhận câu trả lời; muốn mở nguồn để đối chiếu.</p></article>
+        </div>
+        <div class="card" style="margin-top:var(--content-gap);padding:clamp(.85rem,2vw,1.3rem);">
+          <span class="mono">Nhiệm vụ cốt lõi</span>
+          <div class="closing-track" style="margin:.8rem 0 0;">
+            <span>Chọn chủ đề</span><i>→</i><span>Tìm bài</span><i>→</i><span>Xem summary</span><i>→</i><span>Mở citation</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-4" data-index="4" aria-labelledby="slide-title-4" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">03 / Product thesis</p><h2 id="slide-title-4">Từ nguồn được duyệt đến kiểm chứng</h2></div><span class="slide-label">SYSTEM LOOP</span></div>
+        <p class="lead" style="margin-bottom:var(--content-gap);">Giá trị nằm ở chuỗi end-to-end — không phải ở một chatbot đứng riêng.</p>
+        <div class="flow" aria-label="Luồng giá trị sáu bước">
+          <div class="flow-step"><span class="step-no">01</span><p><strong>Nguồn đã duyệt</strong><br>Registry + policy</p></div>
+          <div class="flow-step"><span class="step-no">02</span><p><strong>Ingestion có log</strong><br>Connector có giới hạn</p></div>
+          <div class="flow-step"><span class="step-no">03</span><p><strong>Chuẩn hóa</strong><br>Canonical + chống trùng</p></div>
+          <div class="flow-step"><span class="step-no">04</span><p><strong>Feed / Search</strong><br>Từ khóa + ngữ nghĩa</p></div>
+          <div class="flow-step"><span class="step-no">05</span><p><strong>Summary Việt</strong><br>Ngắn, không thay bài gốc</p></div>
+          <div class="flow-step highlight"><span class="step-no">06</span><p><strong>Q&amp;A + citation</strong><br>Mở nguồn để kiểm chứng</p></div>
+        </div>
+        <p class="note" style="margin-top:var(--content-gap);"><strong>Nguyên tắc:</strong> provenance đi cùng nội dung từ connector đến citation; dữ liệu nguồn luôn được xem là untrusted input.</p>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-5" data-index="5" aria-labelledby="slide-title-5" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">04 / Source governance</p><h2 id="slide-title-5">Nhiều đầu vào, một lớp kiểm soát</h2></div><span class="slide-label">POLICY GATE</span></div>
+        <div class="source-grid">
+          <div class="source-list" aria-label="Ba nguồn MVP">
+            <div class="source-badge"><strong>RSS / Atom</strong><small>Feed báo chí, blog, research đã duyệt</small></div>
+            <div class="source-badge"><strong>arXiv</strong><small>Metadata / abstract theo query cấu hình</small></div>
+            <div class="source-badge"><strong>Hacker News</strong><small>Tín hiệu khám phá từ API chính thức</small></div>
+          </div>
+          <div class="policy-gate"><div class="lock" aria-hidden="true">⌁</div><h3>Source Registry</h3><p>Technical check · policy approval · scope rõ ràng</p></div>
+          <div class="branch-list" aria-label="Các nhánh sau policy gate">
+            <div class="branch discovery"><strong>DISCOVERY</strong><span>HN community-signal có thể vào feed/search.</span></div>
+            <div class="branch evidence"><strong>EVIDENCE</strong><span>Q&amp;A chỉ nhận nguồn primary/editorial đủ điều kiện.</span></div>
+            <div class="branch"><strong>DEFAULT</strong><span>Không rõ quyền xử lý → metadata-only.</span></div>
+          </div>
+        </div>
+        <p class="note" style="margin-top:var(--content-gap);"><strong>Ranh giới rõ:</strong> community signal giúp khám phá, nhưng không tự biến thành bằng chứng hay citation.</p>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-6" data-index="6" aria-labelledby="slide-title-6" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">05 / Ingestion</p><h2 id="slide-title-6">Chuẩn hóa trước khi xuất hiện</h2></div><span class="slide-label">MVP PIPELINE</span></div>
+        <div class="pipeline" aria-label="Năm bước pipeline">
+          <div class="stage"><b>01 · CONNECT</b><p>Nhận candidate từ connector allowlist.</p></div>
+          <div class="stage"><b>02 · NORMALIZE</b><p>Đưa fields về schema và canonical URL.</p></div>
+          <div class="stage"><b>03 · CLASSIFY</b><p>Kiểm tra policy, quyền và trạng thái source.</p></div>
+          <div class="stage"><b>04 · DEDUPE</b><p>Chống trùng trước khi đưa vào hệ thống.</p></div>
+          <div class="stage"><b>05 · INDEX</b><p>MongoDB → feed, search, summary, Q&amp;A.</p></div>
+        </div>
+        <div class="safeguards">
+          <div class="safeguard"><b>Batch hữu hạn</b>Job có lease, checkpoint và log vận hành.</div>
+          <div class="safeguard"><b>State bền vững</b>MongoDB Atlas là system of record.</div>
+          <div class="safeguard"><b>Quyền media</b>Remote preview/link-only; không rehost binary.</div>
+        </div>
+        <p class="note" style="margin-top:var(--content-gap);"><strong>Không lưu toàn văn:</strong> text chỉ xử lý tạm khi source policy cho phép; Vercel memory/filesystem không phải state store.</p>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-7" data-index="7" aria-labelledby="slide-title-7" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">06 / Reader surface</p><h2 id="slide-title-7">Feed → Search → Detail</h2></div><span class="slide-label">CORE FEATURES</span></div>
+        <div class="reader-map" aria-label="Ba bề mặt đọc chính">
+          <article class="reader-card"><div class="mock-header" aria-hidden="true"><i></i><i></i><i></i></div><h3>Feed</h3><div class="mock-line accent"></div><div class="mock-line"></div><div class="mock-line short"></div><ul class="feature-list"><li>Topic và source có quản trị</li><li>Summary ngắn bằng tiếng Việt</li></ul></article>
+          <article class="reader-card"><div class="mock-header" aria-hidden="true"><i></i><i></i><i></i></div><h3>Search</h3><div class="mock-line"></div><div class="mock-line accent"></div><div class="mock-line short"></div><ul class="feature-list"><li>Keyword + semantic retrieval</li><li>Text search làm fallback</li></ul></article>
+          <article class="reader-card"><div class="mock-header" aria-hidden="true"><i></i><i></i><i></i></div><h3>Detail</h3><div class="mock-line accent"></div><div class="mock-line"></div><div class="mock-line"></div><ul class="feature-list"><li>Original URL và citation</li><li>CTA: Đọc bài gốc</li></ul></article>
+        </div>
+        <div class="hero-meta" style="margin-top:var(--content-gap);"><span class="chip">Lưu bài</span><span class="chip">Session auth</span><span class="chip">Topic preferences</span><span class="chip lime">Mở nguồn gốc</span></div>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-8" data-index="8" aria-labelledby="slide-title-8" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">07 / Grounded Q&amp;A</p><h2 id="slide-title-8">Truy xuất trước, trả lời sau</h2></div><span class="slide-label">EVIDENCE GATE</span></div>
+        <div class="qa-layout">
+          <div class="answer-card">
+            <p class="question">Câu hỏi trong phạm vi bài/topic đã truy xuất</p>
+            <blockquote>“Câu trả lời chỉ được giữ lại khi từng đoạn có evidence hỗ trợ và citation mở được nguồn.”</blockquote>
+            <div class="citation-row" aria-label="Ví dụ citation"><span class="citation">[source · article]</span><span class="citation">[evidence · paragraph]</span><span class="citation">[open · original URL]</span></div>
+            <div class="refusal"><strong>Thiếu bằng chứng?</strong> Hiển thị “Chưa đủ bằng chứng để trả lời” — không đoán, không tự tạo URL.</div>
+          </div>
+          <div class="qa-rail" aria-label="Các bước Q&A">
+            <div class="qa-step"><span class="circle">01</span><div><strong>Validate</strong><span>scope + privacy admission</span></div></div>
+            <div class="qa-step"><span class="circle">02</span><div><strong>Retrieve</strong><span>primary/editorial evidence</span></div></div>
+            <div class="qa-step"><span class="circle">03</span><div><strong>Verify</strong><span>support + citation IDs</span></div></div>
+          </div>
+        </div>
+        <p class="note" style="margin-top:var(--content-gap);"><strong>Giới hạn có chủ đích:</strong> HN chỉ là discovery signal; media chưa phân tích không được nâng thành Q&amp;A evidence.</p>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-9" data-index="9" aria-labelledby="slide-title-9" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">08 / Technology</p><h2 id="slide-title-9">MVP gọn, ranh giới rõ</h2></div><span class="slide-label">STACK / BOUNDARIES</span></div>
+        <div class="stack" aria-label="Kiến trúc bốn lớp">
+          <div class="stack-layer"><b>Browser / UI</b><span><strong>React + Vite</strong> — render surface, gọi generated API client; không tự quyết role/policy.</span></div>
+          <div class="stack-layer"><b>Policy boundary</b><span><strong>Node.js + Express</strong> — API, validation, auth/CSRF và enforcement point.</span></div>
+          <div class="stack-layer"><b>System of record</b><span><strong>MongoDB Atlas</strong> — users, articles, jobs, sessions, audit và governance state.</span></div>
+          <div class="stack-layer"><b>Inputs / jobs</b><span><strong>RSS/Atom · arXiv · Hacker News · LLM/embedding · Vercel Cron</strong> — allowlist, policy gate, bounded runners.</span></div>
+        </div>
+        <div class="stack-caption"><span>External content = untrusted data</span><span>State bền vững ≠ Vercel memory/filesystem</span></div>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-10" data-index="10" aria-labelledby="slide-title-10" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">09 / Advantages</p><h2 id="slide-title-10">Điểm mạnh đến từ thiết kế</h2></div><span class="slide-label">WHY THIS SHAPE</span></div>
+        <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+          <article class="card"><span class="index">01</span><h3>Vietnamese-first</h3><p>Tóm tắt ngắn giúp người đọc nắm ý chính mà vẫn giữ title, URL và nguồn nguyên bản.</p></article>
+          <article class="card"><span class="index">02</span><h3>Evidence-aware Q&amp;A</h3><p>Truy xuất, citation cấp đoạn và refusal là một acceptance gate — không phải lớp trang trí.</p></article>
+          <article class="card"><span class="index">03</span><h3>Source governance</h3><p>Registry, policy và provenance đi trước ingestion; rights scope là rule thực thi.</p></article>
+          <article class="card"><span class="index">04</span><h3>Degradation rõ ràng</h3><p>Embedding unavailable thì text search vẫn giữ đường đọc; không che giấu fallback.</p></article>
+        </div>
+        <p class="note" style="margin-top:var(--content-gap);"><strong>Cách nói chính xác:</strong> TechPulse được thiết kế để ưu tiên nguồn có quản trị, summary tiếng Việt và Q&amp;A có evidence — không tuyên bố “tốt nhất”.</p>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-11" data-index="11" aria-labelledby="slide-title-11" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">10 / Trade-offs</p><h2 id="slide-title-11">Giới hạn có chủ đích, khác biệt có điều kiện</h2></div><span class="slide-label">HONEST COMPARISON</span></div>
+        <div class="two-col">
+          <div class="limit"><div class="column-head"><h3>Giới hạn MVP</h3><span class="mono">KNOWN</span></div><div class="compare-list"><div class="compare-row"><b>3 connector chính</b><span>Không crawl toàn Internet hay mở rộng social tùy ý.</span></div><div class="compare-row"><b>Không lưu full text</b><span>Text tạm thời theo policy; không rehost binary media.</span></div><div class="compare-row"><b>AI có thể sai</b><span>Citation không thay thế việc tự kiểm chứng nguồn gốc.</span></div><div class="compare-row"><b>Hậu MVP</b><span>Event clustering, claim-level citation, GitHub/video/social.</span></div></div></div>
+          <div class="advantage"><div class="column-head"><h3>Khác biệt theo thiết kế</h3><span class="mono">FRAMING</span></div><div class="compare-list"><div class="compare-row"><b>Newsfeed generic</b><span>Nguồn có quản trị + provenance rõ.</span></div><div class="compare-row"><b>Tóm tắt</b><span>Tiếng Việt, ngắn, giữ CTA tới bài gốc.</span></div><div class="compare-row"><b>Q&amp;A</b><span>Evidence trước, citation sau; thiếu evidence thì refusal.</span></div><div class="compare-row"><b>Search</b><span>Hybrid route với lexical fallback minh bạch.</span></div></div></div>
+        </div>
+        <div class="differentiation"><b>Ghi chú so sánh:</b> Đây là product framing trong Product Brief, không phải benchmark độc lập; độ phủ, UX và độ chính xác của công cụ khác cần được đo riêng.</div>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-12" data-index="12" aria-labelledby="slide-title-12" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">11 / Team dossier</p><h2 id="slide-title-12">Thông tin nhóm</h2></div><span class="slide-label">SEMESTER 1</span></div>
+        <div class="team-layout">
+          <div class="team-meta" aria-label="Thông tin lớp và giảng viên">
+            <div class="meta-row"><span class="table-label">Giảng viên hướng dẫn</span><span class="meta-value">Lê Mộng Thúy</span></div>
+            <div class="meta-row"><span class="table-label">Batch</span><span class="meta-value">T3.2603.E0</span></div>
+            <div class="meta-row"><span class="table-label">Nhóm</span><span class="meta-value">3</span></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Danh sách thành viên nhóm TechPulse AI</caption>
+              <thead><tr><th scope="col">#</th><th scope="col">Họ và tên</th><th scope="col">FTS</th><th scope="col">Student</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td>Tạ Văn Thành</td><td>FTS00090</td><td>Student1728068</td></tr>
+                <tr><td>2</td><td>Trần Anh Khoa</td><td>FTS00088</td><td>Student1727847</td></tr>
+                <tr><td>3</td><td>Lý Quốc Huy</td><td>FTS00077</td><td>Student1716586</td></tr>
+                <tr><td>4</td><td>Lê Quang Minh</td><td>FTS00089</td><td>Student1728065</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p class="note" style="margin-top:var(--content-gap);"><strong>Thông tin trình bày nguyên văn</strong> theo dữ liệu nhóm được cung cấp; không gán thêm vai trò hay thông tin cá nhân.</p>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-13" data-index="13" aria-labelledby="slide-title-13" tabindex="-1">
+      <div class="slide-content">
+        <div class="section-top"><div><p class="kicker">12 / Responsibilities</p><h2 id="slide-title-13">Phân công trách nhiệm</h2></div></div>
+        <ul class="responsibility-list">
+          <li class="responsibility-row">Thành: backend helper, db, testing, merge, admin (vận hành)</li>
+          <li class="responsibility-row">Khoa: implement Admin dashboard UI, login oauth, admin (governance, source, user)</li>
+          <li class="responsibility-row">Minh: Thiết kế wireframe UI/UX, implement user ui phần feed, donate, saved</li>
+          <li class="responsibility-row">Huy: implement user ui phần search, account, Q&amp;A</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="slide" id="slide-14" data-index="14" aria-labelledby="slide-title-14" tabindex="-1">
+      <div class="slide-content closing">
+        <p class="kicker">13 / Closing</p>
+        <h2 id="slide-title-14">Nắm nhanh để quyết định đọc. Mở nguồn để tự kiểm chứng.</h2>
+        <p class="lead">Một luồng gọn từ nguồn được duyệt đến summary tiếng Việt và Q&amp;A có citation — với giới hạn được nói rõ.</p>
+        <div class="closing-track" aria-label="Luồng demo">
+          <span>Nguồn đã duyệt</span><i>→</i><span>Feed / Search</span><i>→</i><span>Summary Việt</span><i>→</i><span>Q&amp;A citation</span><i>→</i><span>Mở nguồn</span>
+        </div>
+        <div class="closing-foot"><span class="chip lime">MVP: source-first</span><span class="chip">Hậu MVP: mở rộng có kiểm soát</span><span class="chip">Cảm ơn</span></div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="controls" aria-label="Điều hướng slide">
+    <button class="control-button" id="prev" type="button" aria-label="Slide trước">←</button>
+    <div class="nav-dots" id="nav-dots" aria-label="Chọn slide"></div>
+    <span class="progress-label" id="progress-label" aria-live="polite">01 / 14</span>
+    <button class="control-button" id="next" type="button" aria-label="Slide tiếp theo">→</button>
+  </nav>
+
+  <script>
+    (() => {
+      const slides = [...document.querySelectorAll('.slide')];
+      const dotsRoot = document.querySelector('#nav-dots');
+      const progress = document.querySelector('#progress-bar');
+      const progressLabel = document.querySelector('#progress-label');
+      const previous = document.querySelector('#prev');
+      const next = document.querySelector('#next');
+      let activeIndex = 0;
+      let wheelLock = false;
+      let touchStartX = 0;
+      let touchStartY = 0;
+
+      const clampIndex = (index) => Math.max(0, Math.min(slides.length - 1, index));
+      const readHash = () => {
+        const match = window.location.hash.match(/^#slide-(\d+)$/);
+        return match ? clampIndex(Number(match[1]) - 1) : 0;
+      };
+      const updateControls = (index) => {
+        activeIndex = clampIndex(index);
+        slides.forEach((slide, slideIndex) => {
+          const isActive = slideIndex === activeIndex;
+          slide.setAttribute('aria-hidden', String(!isActive));
+        });
+        document.querySelectorAll('.dot').forEach((dot, dotIndex) => {
+          dot.setAttribute('aria-current', String(dotIndex === activeIndex));
+        });
+        const current = String(activeIndex + 1).padStart(2, '0');
+        progressLabel.textContent = `${current} / ${String(slides.length).padStart(2, '0')}`;
+        progress.style.width = `${((activeIndex + 1) / slides.length) * 100}%`;
+        previous.disabled = activeIndex === 0;
+        next.disabled = activeIndex === slides.length - 1;
+      };
+      const goTo = (index, updateHash = true) => {
+        const nextIndex = clampIndex(index);
+        const focusedSlide = document.activeElement?.closest('.slide');
+        const destinationHeading = slides[nextIndex].querySelector('h1, h2');
+        slides[nextIndex].scrollIntoView({ behavior: 'auto', block: 'start' });
+        updateControls(nextIndex);
+        if (focusedSlide && focusedSlide !== slides[nextIndex]) {
+          if (destinationHeading) destinationHeading.tabIndex = -1;
+          (destinationHeading || slides[nextIndex]).focus({ preventScroll: true });
+        }
+        if (updateHash) window.history.replaceState(null, '', `#slide-${nextIndex + 1}`);
+      };
+      const goNext = () => goTo(activeIndex + 1);
+      const goPrevious = () => goTo(activeIndex - 1);
+
+      slides.forEach((slide, index) => {
+        const dot = document.createElement('a');
+        dot.className = 'dot';
+        dot.href = `#slide-${index + 1}`;
+        const token = String(index + 1).padStart(2, '0');
+        dot.setAttribute('aria-label', `${token} — đi tới slide ${index + 1}`);
+        dot.setAttribute('aria-current', String(index === 0));
+        dot.textContent = token;
+        dot.addEventListener('click', (event) => { event.preventDefault(); goTo(index); });
+        dotsRoot.append(dot);
+      });
+
+      previous.addEventListener('click', goPrevious);
+      next.addEventListener('click', goNext);
+      window.addEventListener('hashchange', () => goTo(readHash(), false));
+      window.addEventListener('keydown', (event) => {
+        const target = event.target;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable) return;
+        if (event.key === ' ' && target.closest('button, a[href], [role="button"], select, [contenteditable]')) return;
+        const actions = {
+          ArrowRight: goNext,
+          ArrowDown: goNext,
+          PageDown: goNext,
+          ' ': goNext,
+          ArrowLeft: goPrevious,
+          ArrowUp: goPrevious,
+          PageUp: goPrevious,
+          Home: () => goTo(0),
+          End: () => goTo(slides.length - 1)
+        };
+        const action = actions[event.key];
+        if (!action) return;
+        event.preventDefault();
+        action();
+      });
+      window.addEventListener('wheel', (event) => {
+        if (Math.abs(event.deltaY) < 18 || wheelLock) return;
+        event.preventDefault();
+        wheelLock = true;
+        event.deltaY > 0 ? goNext() : goPrevious();
+        window.setTimeout(() => { wheelLock = false; }, 650);
+      }, { passive: false });
+      window.addEventListener('touchstart', (event) => {
+        const [touch] = event.changedTouches;
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+      }, { passive: true });
+      window.addEventListener('touchend', (event) => {
+        const [touch] = event.changedTouches;
+        const deltaX = touch.clientX - touchStartX;
+        const deltaY = touch.clientY - touchStartY;
+        if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 45 || Math.abs(deltaY) > Math.abs(deltaX)) return;
+        deltaX < 0 ? goNext() : goPrevious();
+      }, { passive: true });
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting || entry.intersectionRatio < .58) return;
+          const index = slides.indexOf(entry.target);
+          if (index < 0) return;
+          updateControls(index);
+          const desiredHash = `#slide-${index + 1}`;
+          if (window.location.hash !== desiredHash) window.history.replaceState(null, '', desiredHash);
+        });
+      }, { threshold: [.58, .8] });
+      slides.forEach((slide) => observer.observe(slide));
+
+      const initialIndex = readHash();
+      updateControls(initialIndex);
+      window.requestAnimationFrame(() => {
+        slides[initialIndex].scrollIntoView({ behavior: 'auto', block: 'start' });
+        updateControls(initialIndex);
+        if (!window.location.hash) window.history.replaceState(null, '', '#slide-1');
+      });
+    })();
+  </script>
+</body>
+</html>
