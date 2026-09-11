@@ -8,6 +8,8 @@ import {
   createCronDueWorkRunner,
   createProfiledIndexingDrainRunner,
 } from '../../../server/bootstrap/jobs.js'
+import { createQueueRegistry } from '../../../server/jobs/queue-registry.js'
+import { runDueWork } from '../../../server/jobs/due-work-coordinator.js'
 import { createIndexingDrainRunner } from '../../../server/jobs/indexing-drain.js'
 import { createInternalCronRouter } from '../../../server/http/internal/cron/router.js'
 
@@ -272,6 +274,58 @@ describe('worker scheduling', () => {
     expect(result.nextAvailableAt).toBeNull()
   })
 
+  it('resumes indexing when only the coordinator sub-deadline expires', async () => {
+    let currentMs = STARTED_AT.getTime()
+    const now = () => new Date(currentMs)
+    const registry = createQueueRegistry()
+    const ingestion = {
+      queueName: 'ingestion',
+      recoveryStrategy: 'terminal-parent-linked-retry',
+      recoverExpired: vi.fn(async () => ({ inspected: 0, recovered: 0, retriesCreated: 0, failed: 0 })),
+      selectDue: vi.fn(async () => ({ id: 'ingestion-1', sourceId: 'source-1', availableAt: STARTED_AT })),
+      claimAndExecute: vi.fn(async ({ deadline }) => {
+        currentMs = deadline.getTime() + 1
+        return { status: 'succeeded', claimed: true }
+      }),
+      nextAvailableAt: vi.fn(async () => { throw Object.assign(new Error('availability deadline'), { code: 'runtime_deadline_exceeded' }) }),
+    }
+    registry.register(ingestion)
+    const indexingDrainRunner = vi.fn(async (result) => result)
+    const runner = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false })) },
+      coordinatorRunner: (options) => runDueWork({ ...options, registry, now }),
+      indexingDrainRunner,
+      now,
+      runIdFactory: () => 'internal-deadline-drain-run',
+    })
+
+    const result = await runner()
+
+    expect(ingestion.claimAndExecute).toHaveBeenCalledTimes(1)
+    expect(ingestion.nextAvailableAt).not.toHaveBeenCalled()
+    expect(indexingDrainRunner).toHaveBeenCalledTimes(1)
+    expect(indexingDrainRunner.mock.calls[0][1].deadline).toEqual(new Date(STARTED_AT.getTime() + CRON_DUE_WORK_PROFILE.budgetMs))
+    expect(result.queues.ingestion.claimed).toBe(1)
+  })
+
+  it('does not enter indexing when the parent signal is already aborted', async () => {
+    const controller = new globalThis.AbortController()
+    controller.abort()
+    const indexingDrainRunner = vi.fn()
+    const coordinatorRunner = vi.fn()
+    const runner = createCronDueWorkRunner({
+      jobRepository: { materializeDailyIngestion: vi.fn(async () => ({ hasMore: false })) },
+      coordinatorRunner,
+      indexingDrainRunner,
+      now: () => STARTED_AT,
+    })
+
+    const result = await runner({ signal: controller.signal })
+
+    expect(result.materialization).toEqual(expect.objectContaining({ outcome: 'deferred', materializationReason: 'deferred' }))
+    expect(coordinatorRunner).not.toHaveBeenCalled()
+    expect(indexingDrainRunner).not.toHaveBeenCalled()
+  })
   it('clamps task drain deadline to the global profile deadline', async () => {
     const queue = queueFixture([
       { id: 'summary-1', articleId: 'article-1', task: 'summary' },

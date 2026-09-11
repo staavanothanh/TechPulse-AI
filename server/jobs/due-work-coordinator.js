@@ -219,18 +219,25 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
     handleResult(await claimAndExecuteCandidate({ adapter: selected.adapter, candidate: selected.candidate, now: claimNow, runId, deadline: new Date(workDeadline), signal }), selected.adapter.queueName, selected.candidate)
     slots -= 1
   }
-  const availability = await Promise.all(adapters.map((adapter) => adapter.nextAvailableAt({ now: startedAt, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) })))
-  const nextDates = availability.filter(Boolean).map((value) => value instanceof Date ? value : new Date(value)).filter((value) => !Number.isNaN(value.getTime()))
+  const availabilityReady = canStart() !== null
+  let nextAvailableAt = null
+  if (availabilityReady) {
+    const availability = await Promise.all(adapters.map((adapter) => adapter.nextAvailableAt({ now: startedAt, deadline: new Date(workDeadline), ...(signal ? { signal } : {}) })))
+    const nextDates = availability.filter(Boolean).map((value) => value instanceof Date ? value : new Date(value)).filter((value) => !Number.isNaN(value.getTime()))
+    nextAvailableAt = nextDates.length > 0 ? new Date(Math.min(...nextDates.map((value) => value.getTime()))) : null
+  }
   const finishedAt = now()
-
-  coordinatorPhase.succeed({
-    counters: {
-      claimed: Object.values(queueCounters).reduce((sum, c) => sum + c.claimed, 0),
-      succeeded: Object.values(queueCounters).reduce((sum, c) => sum + c.succeeded, 0),
-      failed: Object.values(queueCounters).reduce((sum, c) => sum + c.failed, 0),
-      deferred: Object.values(queueCounters).reduce((sum, c) => sum + c.deferred, 0),
-    },
-  })
+  const phaseCounters = {
+    claimed: Object.values(queueCounters).reduce((sum, c) => sum + c.claimed, 0),
+    succeeded: Object.values(queueCounters).reduce((sum, c) => sum + c.succeeded, 0),
+    failed: Object.values(queueCounters).reduce((sum, c) => sum + c.failed, 0),
+    deferred: Object.values(queueCounters).reduce((sum, c) => sum + c.deferred, 0),
+  }
+  if (availabilityReady) coordinatorPhase.succeed({ counters: phaseCounters })
+  else coordinatorPhase.timeout(
+    Object.assign(new Error('Due-work internal budget exhausted before availability lookup'), { code: 'runtime_deadline_exceeded' }),
+    { counters: { ...phaseCounters, deferred: Math.max(1, phaseCounters.deferred) } },
+  )
 
   return {
     runId,
@@ -238,7 +245,7 @@ export async function runDueWork({ registry, maxJobs = 3, maxRecoveries = 3, bud
     finishedAt,
     recovery,
     queues: Object.fromEntries(QUEUE_ORDER.map((name) => [RESPONSE_KEY[name], queueCounters[name]])),
-    nextAvailableAt: nextDates.length > 0 ? new Date(Math.min(...nextDates.map((value) => value.getTime()))) : null,
+    nextAvailableAt,
   }
   }
   catch (error) {
