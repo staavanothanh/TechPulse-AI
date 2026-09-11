@@ -8,7 +8,11 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
-import { EMPTY_FILTERS } from '../components/reader-format.js'
+import {
+  EMPTY_FILTERS,
+  SOURCE_CATALOG,
+  groupSourcesByConnector,
+} from '../components/reader-format.js'
 
 const MAX_DIRECT_PAGE = 10_000
 
@@ -43,6 +47,7 @@ function articleSource(article) {
 
 function collectSourceItems(sources, articles) {
   const candidates = [
+    ...SOURCE_CATALOG,
     ...(Array.isArray(sources) ? sources : []),
     ...(Array.isArray(articles) ? articles.map(articleSource) : []),
   ]
@@ -70,13 +75,13 @@ export default function FeedView({
   savedOverrides = {},
   saveError = null,
   handlers = {},
-  maxSavedLimit = 20,
 }) {
   const nextFilters = { ...EMPTY_FILTERS, ...filters }
   const hasFilters = Boolean(
-    nextFilters.sourceId || nextFilters.publishedAfter || nextFilters.publishedBefore
+    nextFilters.topic || nextFilters.sourceId || nextFilters.publishedAfter || nextFilters.publishedBefore,
   )
   const sourceItems = collectSourceItems(sources, articles)
+  const sourceGroups = groupSourcesByConnector(sourceItems)
   const totalItems = Number(meta.totalItems)
   const totalPages = Number.isFinite(totalItems) && totalItems > 0 ? Math.ceil(totalItems / 10) : undefined
 
@@ -108,7 +113,7 @@ export default function FeedView({
         className="public-feed-layout"
         style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 320px',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
           gap: '32px',
           marginTop: '24px',
           alignItems: 'start',
@@ -145,11 +150,11 @@ export default function FeedView({
           {state === 'ready' && articles.length === 0 ? (
             <StateCard
               eyebrow="Feed trống"
-              title="Không có bài viết phù hợp"
+              title="Không có bài phù hợp"
               copy={
                 hasFilters
-                  ? 'Thử xóa bớt bộ lọc ở cột bên phải để mở rộng kết quả tìm kiếm.'
-                  : 'Chưa có bài viết mới được xuất bản từ các nguồn theo dõi.'
+                  ? 'Xóa một vài bộ lọc để mở rộng kết quả.'
+                  : 'Chưa có bài đã xuất bản từ nguồn đang hoạt động.'
               }
               action={
                 hasFilters ? (
@@ -184,7 +189,7 @@ export default function FeedView({
             </div>
           ) : null}
 
-          {state === 'ready' && articles.length > 0 && (
+          {state === 'ready' && (
             <div style={{ marginTop: '16px' }}>
               <Pagination
                 page={page}
@@ -204,19 +209,7 @@ export default function FeedView({
           )}
         </div>
 
-        <aside
-          className="public-filter-rail"
-          aria-labelledby="public-feed-filter-title"
-          style={{
-            position: 'sticky',
-            top: '20px',
-            backgroundColor: '#ffffff',
-            border: '1px solid #e5e7eb',
-            borderRadius: '12px',
-            padding: '20px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-          }}
-        >
+        <aside className="public-filter-rail" aria-labelledby="public-feed-filter-title">
           <div className="public-filter-card">
             <div
               className="public-filter-heading"
@@ -226,12 +219,12 @@ export default function FeedView({
                 alignItems: 'center',
                 marginBottom: '16px',
                 paddingBottom: '12px',
-                borderBottom: '1px solid #f3f4f6',
+                borderBottom: '1px solid var(--public-border)',
               }}
             >
               <h2
                 id="public-feed-filter-title"
-                style={{ fontSize: '1.125rem', fontWeight: '700', margin: 0, color: '#111827' }}
+                style={{ fontSize: '1.125rem', fontWeight: '700', margin: 0, color: 'var(--public-fg)' }}
               >
                 Bộ lọc tin tức
               </h2>
@@ -243,7 +236,7 @@ export default function FeedView({
                   disabled={applying}
                   style={{
                     fontSize: '0.875rem',
-                    color: '#2563eb',
+                    color: 'var(--public-accent)',
                     background: 'none',
                     border: 'none',
                     cursor: 'pointer',
@@ -261,10 +254,19 @@ export default function FeedView({
               aria-busy={applying || undefined}
               style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
             >
+              <FilterField
+                id="public-feed-topic"
+                label="Chủ đề"
+                value={nextFilters.topic}
+                onChange={(value) => handlers.onFilterChange?.('topic', value)}
+                error={errors.topic}
+                maxLength={64}
+                placeholder="Ví dụ: AI"
+              />
               <label
                 className="public-field"
                 htmlFor="public-feed-source"
-                style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.875rem', fontWeight: '500', color: '#374151' }}
+                style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.875rem', fontWeight: '500', color: 'var(--public-fg)' }}
               >
                 <span>Nguồn tin</span>
                 <select
@@ -272,22 +274,33 @@ export default function FeedView({
                   className="public-input"
                   value={nextFilters.sourceId}
                   onChange={(event) => handlers.onFilterChange?.('sourceId', event.target.value)}
+                  aria-invalid={Boolean(errors.sourceId)}
+                  aria-describedby={errors.sourceId ? 'public-feed-source-error' : undefined}
                   style={{
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid #d1d5db',
-                    backgroundColor: '#ffffff',
+                    border: '1px solid var(--public-border)',
+                    backgroundColor: 'var(--public-surface)',
                     fontSize: '0.875rem',
                   }}
                 >
                   <option value="">Tất cả nguồn</option>
-                  {sourceItems.map((source) => (
-                    <option key={source.id} value={source.id}>
-                      {source.name || source.id}
-                    </option>
+                  {sourceGroups.map((group) => (
+                    <optgroup key={group.key} label={group.label}>
+                      {group.items.map((source) => (
+                        <option key={source.id} value={source.id}>
+                          {source.name || source.id}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
+                {errors.sourceId ? (
+                  <small className="public-field-error" id="public-feed-source-error">
+                    {errors.sourceId}
+                  </small>
+                ) : null}
               </label>
 
               <FilterField

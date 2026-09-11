@@ -366,6 +366,86 @@ describe('public feature presentation contract', () => {
     expect(unsafe).not.toContain('javascript:')
     expect(insecure).not.toContain('http://example.com/article-1')
   })
+  it('sanitizes saved source CTA to canonical originalUrl only', () => {
+    const safeRunner = createMountedRunner(SavedView)
+    const unsafeRunner = createMountedRunner(SavedView)
+    try {
+      safeRunner.render({ state: 'ready', articles: [article], handlers: {} })
+      const safeSaved = renderToStaticMarkup(safeRunner.current)
+      expect(safeSaved).toContain('href="https://example.com/articles/article-1"')
+
+      unsafeRunner.render({
+        state: 'ready',
+        articles: [{ ...article, originalUrl: 'javascript:alert(1)', url: 'https://attacker.example/legacy' }],
+        handlers: {},
+      })
+      const unsafeSaved = renderToStaticMarkup(unsafeRunner.current)
+      expect(unsafeSaved).not.toContain('javascript:')
+      expect(unsafeSaved).not.toContain('attacker.example')
+      expect(unsafeSaved).not.toContain('href="#"')
+      expect(unsafeSaved).toContain('Xem chi tiết bài viết')
+    } finally {
+      safeRunner.unmount()
+      unsafeRunner.unmount()
+    }
+  })
+
+  it('suppresses saved summary text until the artifact status is ready', () => {
+    const pending = createMountedRunner(SavedView)
+    const ready = createMountedRunner(SavedView)
+    try {
+      pending.render({
+        state: 'ready',
+        articles: [{ ...article, summaryStatus: 'pending', summaryVi: 'Tóm tắt chưa sẵn sàng.' }],
+        handlers: {},
+      })
+      const pendingHtml = renderToStaticMarkup(pending.current)
+      expect(pendingHtml).not.toContain('Tóm tắt chưa sẵn sàng.')
+      expect(pendingHtml).toContain('chưa có đủ thông tin để tóm tắt chi tiết')
+
+      ready.render({ state: 'ready', articles: [article], handlers: {} })
+      const readyHtml = renderToStaticMarkup(ready.current)
+      expect(readyHtml).toContain(article.summaryVi)
+    } finally {
+      pending.unmount()
+      ready.unmount()
+    }
+  })
+
+  it('renders the topic filter and offers a reset when only the topic filter is applied', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [],
+      filters: { topic: 'AI' },
+      handlers,
+    })
+    expect(html).toContain('id="public-feed-topic"')
+    expect(html).toContain('value="AI"')
+    expect(html).toContain('Xóa bộ lọc')
+  })
+
+  it('groups canonical source options under connector labels using server-valid ObjectId values', () => {
+    const html = render(FeedView, { state: 'ready', articles: [], handlers })
+    expect(html).toContain('label="RSS Feeds"')
+    expect(html).toContain('label="arXiv"')
+    const optionValues = [...html.matchAll(/<option value="([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter(Boolean)
+    expect(optionValues.length).toBeGreaterThan(0)
+    for (const value of optionValues) expect(value).toMatch(/^[0-9a-f]{24}$/)
+  })
+
+  it('keeps pagination reachable when the current feed page is empty', () => {
+    const html = render(FeedView, {
+      state: 'ready',
+      articles: [],
+      page: 2,
+      meta: { hasNext: false, nextCursor: null, totalItems: 20 },
+      handlers,
+    })
+    expect(html).toContain('aria-label="Phân trang feed"')
+    expect(html).toMatch(/>Trước<\/button>/)
+  })
 
   it('renders grounded Q&A and account controls from props without inventing sessions or credentials', () => {
     const qa = render(QaView, { sessions: [], state: 'empty', onAsk: handlers.onSubmit })

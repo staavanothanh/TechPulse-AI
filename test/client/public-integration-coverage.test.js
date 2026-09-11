@@ -614,3 +614,82 @@ describe('Q&A session integration queue', () => {
     expect(result.error).toBeTruthy()
   })
 })
+
+describe('saved article pagination and account logout', () => {
+  it('walks saved pages through opaque cursors and resets them after clearing', async () => {
+    hookRuntime.reset()
+    const observedUrls = []
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input) => {
+      observedUrls.push(String(input))
+      return { headers: { get: () => null } }
+    })
+    const listSavedArticles = vi
+      .fn()
+      .mockImplementationOnce(async (init) => {
+        await init.fetchImpl('https://example.test/api/v1/me/saved-articles')
+        return response([article], { hasNext: true, nextCursor: 'saved-cursor-1' })
+      })
+      .mockImplementationOnce(async (init) => {
+        await init.fetchImpl('https://example.test/api/v1/me/saved-articles')
+        return response([{ ...article, id: 'article-2' }], { hasNext: false, nextCursor: null })
+      })
+    const api = {
+      listSavedArticles,
+      clearSavedArticles: vi.fn().mockResolvedValue({}),
+    }
+    const props = {
+      api,
+      csrfToken: 'csrf-token',
+      user: { id: 'user-1', topicPreferences: [] },
+      route: 'saved',
+      onNavigate: vi.fn(),
+    }
+
+    try {
+      let result = hookRuntime.render(usePublicIntegration, props)
+      await hookRuntime.runEffects()
+      result = hookRuntime.render(usePublicIntegration, props)
+      expect(result.saved.state).toBe('ready')
+      expect(result.saved.meta.page).toBe(1)
+      expect(new URL(observedUrls[0]).searchParams.get('limit')).toBe('20')
+      expect(new URL(observedUrls[0]).searchParams.get('cursor')).toBeNull()
+
+      await result.saved.handlers.onNextPage()
+      result = hookRuntime.render(usePublicIntegration, props)
+      expect(result.saved.meta.page).toBe(2)
+      expect(new URL(observedUrls.at(-1)).searchParams.get('cursor')).toBe('saved-cursor-1')
+      expect(result.saved.articles).toHaveLength(1)
+
+      await result.saved.handlers.onConfirmClear()
+      result = hookRuntime.render(usePublicIntegration, props)
+      expect(result.saved.articles).toEqual([])
+      expect(result.saved.meta.page).toBe(1)
+
+      await result.saved.handlers.onNextPage()
+      expect(listSavedArticles).toHaveBeenCalledTimes(2)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('passes the session notice to logout instead of the CSRF token', async () => {
+    hookRuntime.reset()
+    const api = { listArticles: vi.fn().mockResolvedValue(response([])) }
+    const accountActions = { logout: vi.fn().mockResolvedValue({}) }
+    const props = {
+      api,
+      csrfToken: 'csrf-secret-token',
+      user: { id: 'user-1', topicPreferences: [] },
+      route: 'account',
+      accountActions,
+      onNavigate: vi.fn(),
+    }
+
+    const result = hookRuntime.render(usePublicIntegration, props)
+    await result.account.onLogout('Đã đăng xuất.')
+
+    expect(accountActions.logout).toHaveBeenCalledWith('Đã đăng xuất.')
+    expect(accountActions.logout).not.toHaveBeenCalledWith('csrf-secret-token')
+  })
+})

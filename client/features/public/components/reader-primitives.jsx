@@ -49,7 +49,6 @@ export function ErrorState({ title, error, onRetry }) {
     />
   )
 }
-
 export function SaveErrorNotice({ error, onRetry, onDismiss }) {
   if (!error) return null
   const message = typeof error === 'string' ? error : error?.message
@@ -229,12 +228,13 @@ export function Summary({ article }) {
 export function MediaImage({ src, alt = '', fallbackLabel = 'Ảnh nguồn không khả dụng', className = 'public-card-media' }) {
   const [failedSrc, setFailedSrc] = useState(null)
   const failed = failedSrc === src
-
-  // Nếu không có src hoặc tải ảnh lỗi -> Ẩn hoàn toàn (trả về null), không hiển thị khung placeholder nữa
   if (!src || failed) {
-    return null
+    return (
+      <div className={`${className} ${className.includes('detail') ? 'public-detail-media-fallback' : 'public-card-media-placeholder'}`} role="img" aria-label={fallbackLabel}>
+        <span>{fallbackLabel}</span>
+      </div>
+    )
   }
-
   return (
     <img
       className={className}
@@ -299,23 +299,16 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
   const topics = Array.isArray(article?.topics)
     ? article.topics.filter((topic) => typeof topic === 'string' && topic.trim()).slice(0, 6)
     : []
-
-  // Xử lý kiểm tra dữ liệu hình ảnh/video từ nguồn
   const media = article?.leadMedia || article?.media
   const mediaKind = media?.kind || media?.type
-  
-  // Kiểm tra đường dẫn ảnh hợp lệ (không phải null/undefined/chuỗi rỗng)
-  const rawUrl = media?.url || article?.imageUrl || article?.image
   const mediaUrl =
-    (mediaKind === 'image' || !mediaKind) && rawUrl
-      ? safeMediaUrl(rawUrl, media?.allowedHosts)
+    mediaKind === 'image' && media?.displayMode === 'remote-preview'
+      ? safeMediaUrl(media?.url, media?.allowedHosts)
       : null
-
   const videoUrl =
     mediaKind === 'video' && media?.displayMode === 'link-only'
       ? safeExternalUrl(media?.sourcePageUrl)
       : null
-
   return (
     <article
       className="public-article-card"
@@ -330,11 +323,9 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
         {article?.sourceLanguage ? <span>{article.sourceLanguage}</span> : null}
       </div>
       <ArticleIdBadge id={article?.id} className="public-card-article-id" />
-
-      {/* Bỏ hoàn toàn phần placeholder: Chỉ hiển thị khung khi có mediaUrl hoặc videoUrl hợp lệ */}
       {mediaUrl ? (
         <figure className="public-card-media-figure">
-          <MediaImage src={mediaUrl} alt={media?.altText || articleTitle(article)} fallbackLabel="" />
+          <MediaImage src={mediaUrl} alt={media?.altText || ''} fallbackLabel={`Ảnh nguồn: ${sourceLabel}`} />
           {media?.attribution ? <figcaption>{media.attribution}</figcaption> : null}
         </figure>
       ) : videoUrl ? (
@@ -349,8 +340,15 @@ export function ArticleCard({ article, busy = false, savedOverride, onOpenArticl
           </a>
           <span>Video nguồn chưa được AI phân tích.</span>
         </div>
-      ) : null}
-
+      ) : (
+        <div
+          className="public-card-media public-card-media-placeholder"
+          role="img"
+          aria-label={`Ảnh nguồn: ${sourceLabel}`}
+        >
+          <span>{sourceLabel}</span>
+        </div>
+      )}
       <h2 className="public-article-title">
         <button type="button" onClick={() => onOpenArticle?.(article?.id, article)}>
           {articleTitle(article)}
@@ -429,8 +427,13 @@ export function FilterField({
         placeholder={placeholder}
         onChange={(event) => onChange?.(event.target.value)}
         aria-invalid={Boolean(error)}
+        aria-describedby={error ? `${id}-error` : undefined}
       />
-      {error ? <small className="public-field-error">{error}</small> : null}
+      {error ? (
+        <small className="public-field-error" id={`${id}-error`}>
+          {error}
+        </small>
+      ) : null}
     </label>
   )
 }
