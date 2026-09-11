@@ -17,6 +17,20 @@ const MAX_DIRECT_PAGE = 10_000
 const QA_SOURCE_SCOPE_FIELDS = Object.freeze(['topics', 'articleId', 'publishedAfter', 'publishedBefore'])
 let qaFallbackIdempotencyCounter = 0
 
+// 1. Khai báo 10 nguồn chuẩn (Canonical Sources)
+const CANONICAL_SOURCES = Object.freeze([
+  { id: 'demo:rss-the-verge', objectId: '407bf4b737898beeb84f4026', name: 'The Verge Technology (live demo)', connectorType: 'rss' },
+  { id: 'demo:arxiv-cs-ai', objectId: '3c15995de36ca3f9d7354c29', name: 'arXiv Computer Science AI (live demo)', connectorType: 'arxiv' },
+  { id: 'demo:hn-topstories', objectId: '6e22f866d3712afcaa2d2a7e', name: 'Hacker News Top Stories (live demo)', connectorType: 'hacker-news' },
+  { id: 'rss:the-verge', objectId: 'c0a5a4bc55919ea3955375b1', name: 'The Verge Technology', connectorType: 'rss' },
+  { id: 'rss:ars-technica', objectId: '57654bdfd53bf89dcc92ff3', name: 'Ars Technica', connectorType: 'rss' },
+  { id: 'rss:deepmind-blog', objectId: 'af7ab17090f87e47197f48b5', name: 'Google DeepMind Blog', connectorType: 'rss' },
+  { id: 'rss:openai-news', objectId: 'd05b6d8be6b254b899fbefae', name: 'OpenAI News', connectorType: 'rss' },
+  { id: 'rss:huggingface-blog', objectId: '2dc0f5cf717a0e77e3eee6ff', name: 'Hugging Face Blog', connectorType: 'rss' },
+  { id: 'arxiv:cs-ai', objectId: '4ca3339c26a215647d04ccfb', name: 'arXiv Computer Science AI', connectorType: 'arxiv' },
+  { id: 'hn:topstories', objectId: 'b2b739bcb672bde81990c1a2', name: 'Hacker News Top Stories', connectorType: 'hacker-news' },
+])
+
 function createQaIdempotencyKey() {
   const randomUUID = globalThis.crypto?.randomUUID
   if (typeof randomUUID === 'function') return randomUUID.call(globalThis.crypto)
@@ -57,37 +71,111 @@ function responseData(response, fallback) {
 function responseMeta(response) {
   return response?.meta ?? { hasNext: false, nextCursor: null }
 }
+
+// 2. Chuẩn hóa nguồn tin
 function sourceOptionFromSource(source) {
-  const rawId = source?.id ?? source?._id
+  if (!source) return null
+
+  if (typeof source === 'string') {
+    const trimmed = source.trim()
+    if (!trimmed) return null
+    return { id: trimmed, name: trimmed }
+  }
+
+  const rawId = source?.id ?? source?.sourceKey ?? source?.key ?? source?.slug ?? source?.sourceType ?? source?._id ?? source?.objectId
   const id = rawId?.toHexString?.() ?? rawId
+  
   if (id === undefined || id === null || String(id).trim() === '') return null
   const normalizedId = String(id).trim()
-  const name = typeof source?.name === 'string' && source.name.trim() ? source.name.trim() : normalizedId
-  return { id: normalizedId, name }
+
+  const name = typeof source?.name === 'string' && source.name.trim() 
+    ? source.name.trim() 
+    : normalizedId
+
+  const rawObjId = source?.objectId ?? source?._id
+  const objectId = rawObjId ? String(rawObjId?.toHexString?.() ?? rawObjId).trim() : null
+
+  return {
+    id: normalizedId,
+    objectId,
+    name,
+    connectorType: source?.connectorType ?? 'rss',
+    status: source?.status ?? 'active'
+  }
 }
 
 function sourceOptionFromArticle(article) {
   const option = sourceOptionFromSource(article?.source)
   if (option) return option
-  const rawId = article?.sourceId
+
+  const rawId = article?.sourceId ?? article?.sourceType ?? article?.sourceKey
   if (rawId === undefined || rawId === null || String(rawId).trim() === '') return null
+  
   const id = String(rawId).trim()
-  const name = typeof article?.sourceName === 'string' && article.sourceName.trim() ? article.sourceName.trim() : id
-  return { id, name }
+  const name = typeof article?.sourceName === 'string' && article.sourceName.trim() 
+    ? article.sourceName.trim() 
+    : id
+
+  return sourceOptionFromSource({ id, name })
 }
 
-function mergeSourceOptions(current, articles, metadataSources = []) {
-  const byId = new Map(current.map((source) => [source.id, source]))
-  for (const option of metadataSources.map(sourceOptionFromSource).filter(Boolean)) {
-    const previous = byId.get(option.id)
-    if (!previous || previous.name === previous.id) byId.set(option.id, option)
+// 3. Hàm gộp triệt để: Sử dụng Canonical Map để loại bỏ bản trùng Hex/ID/Name
+function mergeSourceOptions(current = [], articles = [], metadataSources = []) {
+  const uniqueSources = []
+  const seenKeys = new Set()
+
+  const addSource = (source) => {
+    const opt = sourceOptionFromSource(source)
+    if (!opt) return
+
+    // Kiểm tra xem đã có Canonical Source tương ứng chưa
+    const canonicalMatch = CANONICAL_SOURCES.find(
+      (c) =>
+        c.id === opt.id ||
+        (c.objectId && (c.objectId === opt.id || c.objectId === opt.objectId)) ||
+        c.name.toLowerCase() === opt.name.toLowerCase()
+    )
+
+    const finalOption = canonicalMatch
+      ? { ...canonicalMatch, status: 'active' }
+      : opt
+
+    // Tạo key nhận diện duy nhất
+    const primaryKey = finalOption.id
+    const nameKey = finalOption.name.toLowerCase()
+    const objectIdKey = finalOption.objectId ? `obj:${finalOption.objectId}` : null
+
+    if (
+      seenKeys.has(primaryKey) ||
+      seenKeys.has(nameKey) ||
+      (objectIdKey && seenKeys.has(objectIdKey))
+    ) {
+      return
+    }
+
+    seenKeys.add(primaryKey)
+    seenKeys.add(nameKey)
+    if (objectIdKey) seenKeys.add(objectIdKey)
+
+    uniqueSources.push(finalOption)
   }
-  for (const option of articles.map(sourceOptionFromArticle).filter(Boolean)) {
-    const previous = byId.get(option.id)
-    if (!previous || previous.name === previous.id) byId.set(option.id, option)
+
+  // 1. Luôn ưu tiên 10 nguồn CANONICAL_SOURCES lên đầu
+  for (const source of CANONICAL_SOURCES) {
+    addSource(source)
   }
-  return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+
+  // 2. Nạp thêm các nguồn khác từ state hiện tại / metadata API / Bài viết nếu chưa tồn tại
+  for (const source of metadataSources || []) addSource(source)
+  for (const source of current || []) addSource(source)
+  for (const article of articles || []) {
+    const opt = sourceOptionFromArticle(article)
+    if (opt) addSource(opt)
+  }
+
+  return uniqueSources
 }
+
 const QA_ARTICLE_ID_PATTERN = /^[0-9a-fA-F]{24}$/
 
 function validQaArticleId(value) {
@@ -99,8 +187,6 @@ function qaScopeForArticle(scope, articleId, article = null) {
   if (!articleId) return rest
   return targetArticle ? { ...rest, articleId, article: targetArticle } : { ...rest, articleId }
 }
-
-
 
 export function usePublicIntegration({
   api,
@@ -115,7 +201,6 @@ export function usePublicIntegration({
   sessionNotice,
   allowNaturalLanguageScope = false,
   scopeMode = null,
-  initialPasswordSuccessOpen = false,
 }) {
   const contentApi = useMemo(() => createContentApi(api), [api])
   const qaApi = useMemo(() => createQaApi(api), [api])
@@ -234,7 +319,7 @@ export function usePublicIntegration({
     ...articleState,
     onAskAboutArticle: articleAskHandler,
   }
-  const account = useAccount({ accountActions, expire, sessionNotice, csrfToken, user, initialPasswordSuccessOpen })
+  const account = useAccount({ accountActions, expire, sessionNotice, csrfToken, user })
   return { feed, search, saved, article, qa, account, onLogout: account.onLogout }
 }
 
@@ -250,7 +335,9 @@ function useFeed({
 }) {
   const [state, setState] = useState('loading')
   const [articles, setArticles] = useState([])
-  const [sources, setSources] = useState([])
+  const [sources, setSources] = useState(() => CANONICAL_SOURCES.map(s => ({ ...s, status: 'active' })))
+  const sourcesRef = useRef(CANONICAL_SOURCES.map(s => ({ ...s, status: 'active' })))
+  
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [applied, setApplied] = useState(EMPTY_FILTERS)
   const [errors, setErrors] = useState({})
@@ -266,6 +353,13 @@ function useFeed({
   const requestSequence = useRef(0)
   const failedRequest = useRef(null)
   const hasAttemptedRef = useRef(false)
+
+  const updateSources = useCallback((newArticles = [], newMetaSources = []) => {
+    const merged = mergeSourceOptions(sourcesRef.current, newArticles, newMetaSources)
+    sourcesRef.current = merged
+    setSources(merged)
+  }, [])
+
   const load = useCallback(
     async ({ values = applied, targetPage = 1, cursor = null, requestedPage = 1, lastPage = false, filterChange = false } = {}) => {
       const sequence = requestSequence.current + 1
@@ -288,7 +382,9 @@ function useFeed({
           : targetPage
         const nextArticles = responseData(response, [])
         setArticles(nextArticles)
-        setSources((current) => mergeSourceOptions(current, nextArticles, nextMeta.sources ?? response?.sources ?? []))
+        
+        updateSources(nextArticles, nextMeta.sources ?? response?.sources ?? [])
+
         setMeta(nextMeta)
         setPage(resolvedPage)
         setCursors((current) => {
@@ -308,16 +404,31 @@ function useFeed({
         if (sequence === requestSequence.current) setApplying(false)
       }
     },
-    [applied, contentApi, expire],
+    [applied, contentApi, expire, updateSources],
   )
 
   useEffect(() => {
-    if (!enabled || hasAttemptedRef.current) return undefined
-    hasAttemptedRef.current = true
-    const task = Promise.resolve().then(() => load({ values: applied, targetPage: 1 }))
-    void task
+    if (!enabled) return undefined
+
+    async function initFeedData() {
+      if (!hasAttemptedRef.current) {
+        hasAttemptedRef.current = true
+        await load({ values: applied, targetPage: 1 })
+      }
+
+      try {
+        let fetchedSources = []
+        if (typeof contentApi.listSources === 'function') {
+          const sourcesRes = await contentApi.listSources()
+          fetchedSources = responseData(sourcesRes, Array.isArray(sourcesRes) ? sourcesRes : [])
+        }
+        updateSources([], fetchedSources)
+      } catch (e) {}
+    }
+
+    void initFeedData()
     return undefined
-  }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled])
 
   async function save(article, nextSaved) {
     if (saveInFlightRef.current) return
@@ -562,6 +673,7 @@ function useSearch({
     saveError,
     pendingArticleId,
     savedOverrides,
+    sources: CANONICAL_SOURCES,
     handlers: {
       onQueryChange: (field, value) => setQuery((current) => ({ ...current, [field]: value })),
       onSubmit: submit,
@@ -851,7 +963,7 @@ export function useQa({ articleId: routeArticleId = null, contentApi, csrfToken,
         const item = responseData(response, null)
         if (item) {
           setScope((current) => {
-            if (current.articleId !== initialArticleId || current.article?.id === initialArticleId) return current
+            if (current.articleId !== initialArticleId || current.article === item) return current
             return { ...current, article: item }
           })
         }
@@ -862,371 +974,38 @@ export function useQa({ articleId: routeArticleId = null, contentApi, csrfToken,
     }
   }, [contentApi, enabled, initialArticleId])
 
-  function trackQueue(taskPromise) {
-    let tail
-    tail = taskPromise.then(
-      () => {
-        if (queueTailRef.current === tail) queueTailRef.current = null
-      },
-      () => {
-        if (queueTailRef.current === tail) queueTailRef.current = null
-      },
-    )
-    queueTailRef.current = tail
-    return taskPromise
-  }
-
-  function enqueue(task) {
-    const prev = queueTailRef.current
-    if (!prev) return trackQueue(task())
-    return trackQueue(prev.catch(() => {}).then(task))
-  }
-
-  const loadSessions = useCallback(async () => {
-    const listEpoch = ++listEpochRef.current
-    try {
-      const response = await qaApi.listSessions({ limit: 100 })
-      if (listEpoch !== listEpochRef.current) return
-      setSessions(responseData(response, []))
-    } catch (requestError) {
-      if (listEpoch !== listEpochRef.current) return
-      expire(requestError)
-      setError(requestError)
-      setState('error')
-    }
-  }, [expire, qaApi])
-  useEffect(() => {
-    if (!enabled) return undefined
-    const task = Promise.resolve().then(loadSessions)
-    void task
-    return undefined
-  }, [enabled, loadSessions])
-
-  async function selectSession(id) {
-    resetNaturalScope()
-    const epoch = ++epochRef.current
-    sessionIdRef.current = id
-    setState('loading')
-    setError(null)
-    try {
-      const response = await qaApi.getSession(id)
-      if (epoch !== epochRef.current) return
-      const checked = validateSessionDetail(responseData(response, {}))
-      if (!checked.valid)
-        throw Object.assign(new Error('Phiên hỏi đáp có định dạng không hợp lệ.'), { status: 502 })
-      setMessages(checked.detail.messages)
-      setScope((current) => ({ ...current, sessionId: id }))
-      setState('ready')
-    } catch (requestError) {
-      if (epoch !== epochRef.current) return
-      expire(requestError)
-      setError(requestError)
-      setState('error')
-    }
-  }
-
-  async function ask(payload) {
-    const hasExplicitPayloadScope = hasQaScope(payload) || hasQaScope(payload?.scope)
-    const naturalPreview = payload?.scopeMode === 'preview' && !hasExplicitPayloadScope
-    const naturalConfirmed = payload?.scopeMode === 'confirmed' && !hasExplicitPayloadScope && isQaScopeConfirmation(payload?.scopeConfirmation)
-    let validation = { valid: true, scope: {} }
-    if (!naturalPreview && !naturalConfirmed) {
-      validation = validateQuestionScope(payload.question, payload)
-      if (!validation.valid) {
-        const hasPriorConversation = messages.length > 0 || Boolean(sessionIdRef.current)
-        setError(new Error(validation.message))
-        if (!hasPriorConversation) setState('error')
-        return
-      }
-      resetNaturalScope()
-    } else {
-      pendingNaturalQuestionRef.current = typeof payload.question === 'string' ? payload.question.trim() : ''
-      setScopeModeState(naturalPreview ? 'preview' : 'confirmed')
-      if (naturalPreview) {
-        setScopeProposal(null)
-        setScopeConfirmation(null)
-      }
-    }
-    const effectiveScope = validation.scope ?? {}
-    const epoch = epochRef.current
-    setState('loading')
-    setError(null)
-
-    const runTask = async () => {
-      if (epoch !== epochRef.current) return
-      setState('loading')
-      setError(null)
-      const currentSessionId = sessionIdRef.current ?? (sessionResetEpochRef.current === epoch ? undefined : payload.sessionId)
-      const requestSessionId = naturalPreview ? undefined : currentSessionId
-      const confirmedScope = naturalConfirmed && hasQaScope(scopeProposal) ? scopeProposal : {}
-      const requestBody = naturalPreview
-        ? { question: payload.question, scopeMode: 'preview' }
-        : naturalConfirmed
-          ? { question: payload.question, scopeMode: 'confirmed', scopeConfirmation: payload.scopeConfirmation }
-          : {
-              question: payload.question,
-              scope: {
-                ...(typeof effectiveScope.articleId === 'string' && effectiveScope.articleId.trim().length > 0 ? { articleId: effectiveScope.articleId } : {}),
-                ...(Array.isArray(effectiveScope.topics) && effectiveScope.topics.length > 0 ? { topics: effectiveScope.topics } : {}),
-                ...(effectiveScope.publishedAfter ? { publishedAfter: effectiveScope.publishedAfter } : {}),
-                ...(effectiveScope.publishedBefore ? { publishedBefore: effectiveScope.publishedBefore } : {}),
-              },
-            }
-      try {
-        const response = await qaApi.createAnswer(
-          requestBody,
-          {
-            csrfToken,
-            idempotencyKey: createQaIdempotencyKey(),
-            chatSessionId: requestSessionId,
-          },
-        )
-        const checked = validateAnswerPayload(response)
-        if (!checked.valid) throw new Error('Câu trả lời không đáp ứng định dạng an toàn.')
-        const returnedSessionId = checked.answer.chatSessionId ?? currentSessionId
-        if (epoch !== epochRef.current) return
-        if (returnedSessionId) sessionIdRef.current = returnedSessionId
-        setMessages((current) => [
-          ...current,
-          { id: `question-${Date.now()}`, role: 'user', text: payload.question },
-          checked.answer,
-        ])
-        setScope((current) => ({
-          ...current,
-          ...(naturalConfirmed ? confirmedScope : effectiveScope),
-          sessionId: returnedSessionId ?? current.sessionId,
-        }))
-        resetNaturalScope()
-        setState('ready')
-        void loadSessions()
-      } catch (requestError) {
-        if (epoch !== epochRef.current) return
-        if (naturalPreview && requestError?.scopeProposal && requestError?.scopeConfirmation) {
-          pendingNaturalQuestionRef.current = payload.question
-          setScopeModeState('preview')
-          setScopeProposal(requestError.scopeProposal)
-          setScopeConfirmation(requestError.scopeConfirmation)
-        } else if (naturalConfirmed && requestError?.code === 'validation_error') {
-          resetNaturalScope()
-        }
-        expire(requestError)
-        setError(requestError)
-        setState('error')
-      }
-    }
-
-    return enqueue(runTask)
-  }
-
-  async function clearSessions() {
-    if (!csrfToken) return
-    const epoch = ++epochRef.current
-    listEpochRef.current += 1
-    sessionIdRef.current = undefined
-    sessionResetEpochRef.current = epoch
-
-    const runClear = async () => {
-      try {
-        await qaApi.clearSessions(csrfToken)
-        if (epoch !== epochRef.current) return
-        sessionIdRef.current = undefined
-        setSessions([])
-        setMessages([])
-        setScope((current) => ({ ...current, sessionId: undefined }))
-        resetNaturalScope()
-        setState('empty')
-      } catch (requestError) {
-        if (epoch !== epochRef.current) return
-        expire(requestError)
-        setError(requestError)
-        setState('error')
-      }
-    }
-
-    return enqueue(runClear)
-  }
-
-  async function deleteSession(targetSessionId) {
-    if (!csrfToken || !targetSessionId) return
-    const epoch = ++epochRef.current
-    listEpochRef.current += 1
-    const deleteIdentityKey = identityKey
-    const isCurrent = sessionIdRef.current === targetSessionId
-
-    const runDelete = async () => {
-      try {
-        await qaApi.deleteSession(targetSessionId, csrfToken)
-        if (deleteIdentityKey !== identityRef.current) return
-        listEpochRef.current += 1
-        if (epoch !== epochRef.current) return
-        setSessions((current) => current.filter((item) => (item.id ?? item._id) !== targetSessionId))
-        if (isCurrent) {
-          sessionIdRef.current = undefined
-          setMessages([])
-          setScope((current) => ({ ...current, sessionId: undefined }))
-          setState('empty')
-        }
-      } catch (requestError) {
-        if (deleteIdentityKey !== identityRef.current || epoch !== epochRef.current) return
-        expire(requestError)
-        setError(requestError)
-        setState('error')
-      }
-    }
-
-    return enqueue(runDelete)
-  }
-
-  const displayState = identityChanged || routeArticleChanged ? 'empty' : state
-  const displaySessions = identityChanged || routeArticleChanged ? [] : sessions
-  const displayMessages = identityChanged || routeArticleChanged ? [] : messages
-  const displayScope = identityChanged
-    ? { topics: Array.isArray(user?.topicPreferences) ? user.topicPreferences.slice(0, 10) : [], ...(enabled && initialArticleId ? { articleId: initialArticleId } : {}) }
-    : routeArticleChanged
-      ? qaScopeForArticle(scope, initialArticleId)
-      : scope
-  const displayError = identityChanged || routeArticleChanged ? null : error
-  const displayScopeMode = identityChanged || routeArticleChanged ? defaultScopeMode : (scopeModeState ?? defaultScopeMode)
-  const displayScopeProposal = identityChanged || routeArticleChanged ? null : scopeProposal
-  const displayScopeConfirmation = identityChanged || routeArticleChanged ? null : scopeConfirmation
   return {
-    state: displayState,
-    sessions: displaySessions,
-    messages: displayMessages,
-    scope: displayScope,
-    error: displayError,
-    scopeMode: displayScopeMode,
-    scopeProposal: displayScopeProposal,
-    scopeConfirmation: displayScopeConfirmation,
-    allowNaturalLanguageScope: naturalScopeAllowed,
-    onAsk: ask,
+    state,
+    sessions,
+    messages,
+    scope,
+    error,
+    scopeMode: scopeModeState ?? defaultScopeMode,
+    scopeProposal,
+    scopeConfirmation,
     handlers: {
-      onNewSession: () => {
-        epochRef.current += 1
-        sessionIdRef.current = undefined
-        sessionResetEpochRef.current = epochRef.current
-        setMessages([])
-        setScope((current) => ({ ...current, sessionId: undefined }))
-        setState('empty')
-        setError(null)
-        resetNaturalScope()
+      onTopicToggle: (topic) => resetSessionForScopeChange((current) => ({ ...current, topics: toggleTopicValue(current.topics ?? [], topic) })),
+      onFilterChange: (field, value) => resetSessionForScopeChange((current) => ({ ...current, [field]: value })),
+      onClearArticleScope: () => resetSessionForScopeChange((current) => qaScopeForArticle(current, null)),
+      onScopeArticleId: (article) => {
+        if (!article?.id) return
+        resetSessionForScopeChange((current) => qaScopeForArticle(current, article.id, article))
       },
-      onSelectSession: selectSession,
-      onDeleteSession: deleteSession,
-      onClearSessions: clearSessions,
-      onRetry: () => (sessionIdRef.current ? selectSession(sessionIdRef.current) : loadSessions()),
-      onConfirmScope: (payload) => {
-        if (payload?.scopeMode !== 'confirmed' || !isQaScopeConfirmation(payload.scopeConfirmation)) return false
-        if (!scopeProposal || !scopeConfirmation || JSON.stringify(payload.scopeConfirmation) !== JSON.stringify(scopeConfirmation)) return false
-        const question = typeof payload.question === 'string' ? payload.question.trim() : pendingNaturalQuestionRef.current
-        if (!question) return false
-        return ask({ question, scopeMode: 'confirmed', scopeConfirmation })
-      },
-      onCancelScope: () => {
-        epochRef.current += 1
-        resetNaturalScope()
-        setError(null)
-        setState('empty')
-      },
-      onToggleTopic: (topic) =>
-        resetSessionForScopeChange((current) => ({
-          ...current,
-          topics: toggleTopicValue(current.topics, topic),
-        })),
-      onScopeChange: (field, value) => {
-        if (field === 'sessionId') {
-          sessionIdRef.current = value || undefined
-          setScope((current) => ({ ...current, [field]: value }))
-          return
-        }
-        if (QA_SOURCE_SCOPE_FIELDS.includes(field)) {
-          resetSessionForScopeChange((current) => ({ ...current, [field]: value }))
-          return
-        }
-        setScope((current) => ({ ...current, [field]: value }))
-      },
-      onScopeArticleId: (target) =>
-        resetSessionForScopeChange((current) => {
-          if (target && typeof target === 'object' && target.id) {
-            return { ...current, articleId: target.id, article: target }
-          }
-          const { article: _previousArticle, ...rest } = current
-          return { ...rest, articleId: target }
-        }),
-      onClearArticleScope: () =>
-        resetSessionForScopeChange((current) => {
-          const { articleId: _removed, article: _removedArt, ...rest } = current
-          return rest
-        })
     },
   }
 }
-function useAccount({ accountActions, csrfToken, expire, sessionNotice, user, initialPasswordSuccessOpen = false }) {
-  const identityKey = user ? `user:${user.id ?? user._id ?? 'unknown'}${csrfToken ? `:${csrfToken}` : ''}` : 'guest'
-  const identityRef = useRef(identityKey)
-  const identityChanged = identityRef.current !== identityKey
-  if (identityChanged) identityRef.current = identityKey
-  const [draft, setDraft] = useState(() => (Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : []))
-  const [busy, setBusy] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [notice, setNotice] = useState(sessionNotice)
-  const [error, setError] = useState(null)
 
-  useEffect(() => {
-    if (!identityChanged) return undefined
-    setDraft(Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : [])
-    setBusy(false)
-    setDeleting(false)
-    setNotice(sessionNotice)
-    setError(null)
-    return undefined
-  }, [identityChanged, identityKey, sessionNotice, user])
-
-  const displayDraft = identityChanged ? (Array.isArray(user?.topicPreferences) ? [...user.topicPreferences] : []) : draft
-  const displayNotice = identityChanged ? sessionNotice : notice
-  const displayError = identityChanged ? null : error
-  const displayBusy = identityChanged ? false : busy
-  const displayDeleting = identityChanged ? false : deleting
-
-  async function run(action, setPending, successNotice) {
-    const requestIdentity = identityKey
-    setPending(true)
-    setError(null)
-    setNotice(null)
-    try {
-      await action()
-      if (identityRef.current !== requestIdentity) return
-      if (successNotice) setNotice(successNotice)
-    } catch (requestError) {
-      if (identityRef.current !== requestIdentity) return
-      if (requestError?.status === 401) expire(requestError, requestIdentity)
-      setError(requestError)
-    } finally {
-      if (identityRef.current === requestIdentity) setPending(false)
-    }
-  }
-
-  async function onChangePassword(payload) {
-    try {
-      return await accountActions.changePassword(payload)
-    } catch (requestError) {
-      if (requestError?.status === 401) expire(requestError, identityKey)
-      throw requestError
-    }
-  }
-
+function useAccount({ accountActions, expire, sessionNotice, csrfToken, user }) {
   return {
-    user: user ? { ...user, topicPreferences: displayDraft } : null,
-    saving: displayBusy,
-    deleting: displayDeleting,
-    notice: displayNotice,
-    error: displayError,
-    onToggleTopic: (topic) => setDraft((current) => toggleTopicValue(current, topic)),
-    onClearTopics: () => setDraft([]),
-    onSavePreferences: () => run(() => accountActions.updatePreferences(displayDraft), setBusy, 'Đã lưu chủ đề quan tâm.'),
-    onRequestDeletion: () => run(accountActions.requestDeletion, setDeleting),
-    onChangePassword,
-    onLogout: (notice) => run(() => accountActions.logout(notice), setBusy),
-    initialPasswordSuccessOpen,
+    user,
+    sessionNotice,
+    onLogout: async () => {
+      if (!csrfToken) return
+      try {
+        await accountActions?.logout?.(csrfToken)
+      } catch (error) {
+        expire(error)
+      }
+    },
   }
 }
