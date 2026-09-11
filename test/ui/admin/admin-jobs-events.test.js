@@ -35,16 +35,16 @@ describe('AdminJobsView lifecycle events tab', () => {
       }),
     )
 
-    expect(html).toContain('Lifecycle Events')
+    expect(html).toContain('Sự kiện vòng đời')
     expect(html).toContain('run-cron-1234')
     expect(html).toContain('indexing.executor')
     expect(html).toContain('summary')
-    expect(html).toContain('Lọc theo jobId')
-    expect(html).toContain('Lọc theo sourceId')
-    expect(html).toContain('Lọc theo articleId')
+    expect(html).toContain('Lọc theo mã tác vụ')
+    expect(html).toContain('Lọc theo mã nguồn')
+    expect(html).toContain('Lọc theo mã bài viết')
     expect(html).toContain('Từ thời gian')
     expect(html).toContain('Đến thời gian')
-    expect(html).not.toContain('Xếp indexing job')
+    expect(html).not.toContain('Xếp tác vụ chỉ mục')
   })
   it('reloads the Events resource for refresh and all job resources after bounded work', () => {
     const resources = {

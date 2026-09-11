@@ -31,11 +31,11 @@ describe('admin source media policy controls', () => {
 
     expect(message).toContain('invalid_state_transition')
     expect(message).toContain('Trạng thái vừa thay đổi')
-    expect(message).not.toContain('yêu cầu duyệt lại source')
+    expect(message).not.toContain('duyệt lại nguồn')
 
     const reviewMessage = safeAdminError(error, { operation: 'reviewSourcePolicy' })
-    expect(reviewMessage).toContain('policy review')
-    expect(reviewMessage).toContain('yêu cầu duyệt lại source')
+    expect(reviewMessage).toContain('đánh giá chính sách')
+    expect(reviewMessage).toContain('duyệt lại nguồn')
     expect(reviewMessage).toContain('invalid_state_transition')
   })
 
@@ -48,7 +48,7 @@ describe('admin source media policy controls', () => {
       }),
     )
 
-    expect(html).toContain('Source đang active')
+    expect(html).toContain('Nguồn đang hoạt động')
     expect(html).toContain('Yêu cầu duyệt lại')
     expect(html).toContain('type="submit" disabled=""')
   })
@@ -58,9 +58,9 @@ describe('admin source media policy controls', () => {
       React.createElement(SourcePolicyReviewForm, { source, onSubmit: () => {}, busy: false }),
     )
 
-    expect(html).not.toContain('Source đang active')
+    expect(html).not.toContain('Nguồn đang hoạt động')
     expect(html).not.toContain('type="submit" disabled=""')
-    expect(html).toContain('<span>Lưu quyết định review</span>')
+    expect(html).toContain('<span>Lưu quyết định đánh giá</span>')
   })
 
   it('renders independent image, video, host and media attribution controls', () => {
@@ -68,12 +68,12 @@ describe('admin source media policy controls', () => {
       React.createElement(SourcePolicyReviewForm, { source, onSubmit: () => {}, busy: false }),
     )
 
-    expect(html).toContain('Chế độ preview ảnh')
+    expect(html).toContain('Chế độ xem trước ảnh')
     expect(html).toContain('Chế độ video')
     expect(html).toContain('Host media được duyệt')
-    expect(html).toContain('Bắt buộc attribution media')
-    expect(html).toContain('Bằng chứng media policy')
-    expect(html).toContain('reload/restart runtime để cập nhật CSP')
+    expect(html).toContain('Bắt buộc ghi công media')
+    expect(html).toContain('Bằng chứng chính sách media')
+    expect(html).toContain('nạp lại/khởi động lại runtime để cập nhật CSP')
   })
 
   it('normalizes exact host entries and preserves media modes in the review payload', () => {

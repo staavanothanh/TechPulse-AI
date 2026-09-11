@@ -1,32 +1,33 @@
 import { useState } from 'react'
 import { AdminButton } from './AdminShared.jsx'
+import { llmScopeLabel, statusLabel } from './admin-data.js'
 import { buildPolicyReview } from '../sources/source-form.js'
 
 export function SourcePolicy({ source }) {
   return (
     <dl className="admin-policy-grid">
       <div>
-        <dt>Policy</dt>
+        <dt>Chính sách</dt>
         <dd>v{source.policyVersion ?? 'n/a'}</dd>
       </div>
       <div>
-        <dt>License</dt>
-        <dd>{source.licenseStatus ?? 'Chưa ghi nhận'}</dd>
+        <dt>Giấy phép</dt>
+        <dd>{statusLabel(source.licenseStatus ?? 'Chưa ghi nhận')}</dd>
       </div>
       <div>
-        <dt>LLM scope</dt>
-        <dd>{source.llmInputScope ?? 'none'}</dd>
+        <dt>Phạm vi LLM</dt>
+        <dd>{llmScopeLabel(source.llmInputScope ?? 'none')}</dd>
       </div>
       <div>
-        <dt>Technical check</dt>
-        <dd>{source.technicalCheck?.status ?? 'Chưa chạy'}</dd>
+        <dt>Kiểm tra kỹ thuật</dt>
+        <dd>{statusLabel(source.technicalCheck?.status ?? 'Chưa chạy')}</dd>
       </div>
       <div>
-        <dt>Reconciliation</dt>
-        <dd>{source.reconciliation?.status ?? 'Chưa ghi nhận'}</dd>
+        <dt>Đối chiếu</dt>
+        <dd>{statusLabel(source.reconciliation?.status ?? 'Chưa ghi nhận')}</dd>
       </div>
       <div>
-        <dt>Connector</dt>
+        <dt>Kết nối</dt>
         <dd>
           {source.connectorType ?? 'Chưa ghi nhận'} · {source.accessMethod ?? 'n/a'}
         </dd>
@@ -81,43 +82,43 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
     <form className="admin-source-create admin-policy-review-form" onSubmit={submit}>
       <div className="admin-form-heading">
         <div>
-          <p className="admin-eyebrow">Human policy review</p>
+          <p className="admin-eyebrow">Đánh giá chính sách bởi con người</p>
           <h3>Quyết định quyền xử lý</h3>
         </div>
         <span className="admin-chip">v{source.policyVersion ?? 'n/a'}</span>
       </div>
       <p className="admin-form-hint">
-        Ghi bằng chứng review trước khi lưu. Server vẫn kiểm tra policy và trạng thái nguồn. Sau khi đổi host preview, cần reload/restart runtime để cập nhật CSP; trước khi reload, preview mới sẽ fail closed.
+        Ghi bằng chứng đánh giá trước khi lưu. Máy chủ vẫn kiểm tra chính sách và trạng thái nguồn. Sau khi đổi host xem trước, cần nạp lại/khởi động lại runtime để cập nhật CSP; trước khi nạp lại, bản xem trước mới sẽ bị khóa an toàn.
       </p>
       {reviewBlockedByLifecycle ? (
         <p className="admin-form-hint" role="note">
-          Source đang active nên chưa thể gửi policy review trực tiếp. Hãy bấm “Yêu cầu duyệt lại” ở phần lifecycle, chờ reload source về trạng thái tạm dừng rồi gửi quyết định mới.
+          Nguồn đang hoạt động nên chưa thể gửi đánh giá chính sách trực tiếp. Hãy bấm “Yêu cầu duyệt lại” ở phần vòng đời, chờ nạp lại nguồn về trạng thái tạm dừng rồi gửi quyết định mới.
         </p>
       ) : null}
       <div className="admin-form-grid">
         <label>
           Quyền sử dụng
           <select value={form.licenseStatus} onChange={set('licenseStatus')}>
-            <option value="metadata-only">Chỉ metadata</option>
+            <option value="metadata-only">Chỉ siêu dữ liệu</option>
             <option value="permitted">Được phép</option>
             <option value="blocked">Chặn</option>
           </select>
         </label>
         <label>
-          LLM input
+          Đầu vào LLM
           <select
             value={form.llmInputScope}
             onChange={set('llmInputScope')}
             disabled={form.licenseStatus === 'blocked'}
           >
             <option value="none">Không gửi</option>
-            <option value="metadata">Metadata</option>
-            <option value="excerpt">Excerpt</option>
-            <option value="fulltext-temporary">Full text tạm thời</option>
+            <option value="metadata">Siêu dữ liệu</option>
+            <option value="excerpt">Trích đoạn</option>
+            <option value="fulltext-temporary">Toàn văn tạm thời</option>
           </select>
         </label>
         <label>
-          Attribution
+          Ghi công nguồn
           <input
             value={form.attributionText}
             onChange={set('attributionText')}
@@ -126,11 +127,11 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
           />
         </label>
         <label>
-          Terms URL
+          URL điều khoản
           <input type="url" value={form.termsUrl} onChange={set('termsUrl')} maxLength="2048" />
         </label>
         <label>
-          License URL
+          URL giấy phép
           <input type="url" value={form.licenseUrl} onChange={set('licenseUrl')} maxLength="2048" />
         </label>
         <div className="admin-policy-options">
@@ -149,7 +150,7 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
               onChange={set('storeSummary')}
               disabled={form.licenseStatus === 'blocked' || form.llmInputScope === 'none'}
             />{' '}
-            Lưu summary
+            Lưu tóm tắt
           </label>
           <label>
             <input
@@ -158,14 +159,14 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
               onChange={set('storeEmbedding')}
               disabled={form.licenseStatus === 'blocked' || form.llmInputScope === 'none'}
             />{' '}
-            Lưu embedding
+            Lưu vector
           </label>
         </div>
         <label>
-          Chế độ preview ảnh
+          Chế độ xem trước ảnh
           <select value={form.imageMode} onChange={set('imageMode')} disabled={form.licenseStatus === 'blocked'}>
             <option value="none">Không hiển thị</option>
-            <option value="remote-preview">Remote preview</option>
+            <option value="remote-preview">Xem trước từ xa</option>
           </select>
         </label>
         <label>
@@ -187,17 +188,17 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
           <small className="admin-form-hint">Nhập hostname HTTPS chính xác, phân tách bằng dấu phẩy. Không dùng wildcard.</small>
         </label>
         <label>
-          Attribution media
+          Ghi công media
           <input
             type="checkbox"
             checked={form.mediaAttributionRequired}
             onChange={set('mediaAttributionRequired')}
             disabled={form.licenseStatus === 'blocked'}
           />{' '}
-          Bắt buộc attribution media
+          Bắt buộc ghi công media
         </label>
         <label className="admin-form-full">
-          Bằng chứng media policy
+          Bằng chứng chính sách media
           <textarea
             value={form.mediaEvidenceNote}
             onChange={set('mediaEvidenceNote')}
@@ -207,7 +208,7 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
           />
         </label>
         <label className="admin-form-full">
-          Bằng chứng policy
+          Bằng chứng chính sách
           <textarea
             value={form.evidenceNote}
             onChange={set('evidenceNote')}
@@ -224,7 +225,7 @@ export function SourcePolicyReviewForm({ source, onSubmit, busy }) {
         icon="shield"
         disabled={busy || reviewBlockedByLifecycle}
       >
-        Lưu quyết định review
+        Lưu quyết định đánh giá
       </AdminButton>
     </form>
   )

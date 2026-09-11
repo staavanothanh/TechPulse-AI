@@ -8,7 +8,10 @@ import {
   mutateAdmin,
   normalizeDueWorkRun,
   normalizeLifecycleEventQuery,
+  queueLabel,
   runAdminDueWork,
+  statusLabel,
+  taskLabel,
   useAdminMutation,
   useAdminResource,
 } from './admin-data.js'
@@ -103,26 +106,26 @@ export function JobList({
   return (
     <ResourceFrame
       resource={resource}
-      loadingLabel={`Đang tải ${kind === 'ingestion' ? 'ingestion' : 'indexing'} jobs…`}
+      loadingLabel={`Đang tải tác vụ ${kind === 'ingestion' ? 'thu thập' : 'chỉ mục'}…`}
     >
       <Table
-        label={`${kind} jobs`}
+        label={`Tác vụ ${kind === 'ingestion' ? 'thu thập' : 'chỉ mục'}`}
         rows={rows}
-        emptyTitle="Chưa có job phù hợp."
+        emptyTitle="Chưa có tác vụ phù hợp."
         columns={
           kind === 'ingestion'
             ? [
                 {
                   key: 'id',
-                  label: 'Job',
+                  label: 'Tác vụ',
                   render: (value, row) => (
                     <div className="admin-cell-resource">
                       <strong className="admin-cell-primary">
-                        {(row.connectorType ?? 'connector').toUpperCase()} · {row.trigger ?? 'unknown'}
+                        {(row.connectorType ?? 'connector').toUpperCase()} · {row.trigger ?? 'không rõ'}
                       </strong>
                       <small className="admin-cell-sub">
-                        <span>Job: </span>
-                        <CompactId id={value} label="Job ID" length={8} />
+                        <span>Tác vụ: </span>
+                        <CompactId id={value} label="Mã tác vụ" length={8} />
                       </small>
                     </div>
                   ),
@@ -135,26 +138,26 @@ export function JobList({
                 ...JOB_TIME_COLUMNS,
                 {
                   key: 'sourceId',
-                  label: 'Nguồn crawl',
+                  label: 'Nguồn thu thập',
                   render: (value, row) => (
                     <div className="admin-cell-resource">
                       <SourceBadge sourceId={value} />
                       <small className="admin-cell-sub">
-                        <span>Source: </span>
-                        <CompactId id={value} label="Source ID" length={8} />
-                        <span> · attempt {row.attempt ?? 1} · batch {row.batchSize ?? 20}</span>
+                        <span>Nguồn: </span>
+                        <CompactId id={value} label="Mã nguồn" length={8} />
+                        <span> · lần thử {row.attempt ?? 1} · lô {row.batchSize ?? 20}</span>
                       </small>
                     </div>
                   ),
                 },
                 {
                   key: 'counters',
-                  label: 'Counters',
+                  label: 'Bộ đếm',
                   render: (value) =>
                     value ? (
                       <span className="admin-counter-copy">
-                        {value.fetched ?? 0} fetched · {value.created ?? 0} created ·{' '}
-                        {value.failed ?? 0} failed
+                        {value.fetched ?? 0} đã lấy · {value.created ?? 0} đã tạo ·{' '}
+                        {value.failed ?? 0} lỗi
                       </span>
                     ) : (
                       'Chưa ghi nhận'
@@ -164,19 +167,19 @@ export function JobList({
             : [
                 {
                   key: 'id',
-                  label: 'Job',
+                  label: 'Tác vụ',
                   render: (value, row) => (
                     <div className="admin-cell-resource">
                       <strong className="admin-cell-primary">
                         {row.task === 'summary'
-                          ? 'Tóm tắt AI (Summary)'
+                          ? 'Tóm tắt AI'
                           : row.task === 'embedding'
-                            ? 'Embedding Vector'
-                            : (row.task ?? 'task')} · {row.trigger ?? 'unknown'}
+                            ? 'Vector nhúng'
+                            : (row.task ?? 'tác vụ')} · {row.trigger ?? 'không rõ'}
                       </strong>
                       <small className="admin-cell-sub">
-                        <span>Job: </span>
-                        <CompactId id={value} label="Job ID" length={8} />
+                        <span>Tác vụ: </span>
+                        <CompactId id={value} label="Mã tác vụ" length={8} />
                       </small>
                     </div>
                   ),
@@ -189,7 +192,7 @@ export function JobList({
                 ...JOB_TIME_COLUMNS,
                 {
                   key: 'articleId',
-                  label: 'Article',
+                  label: 'Bài viết',
                   render: (value, row) => (
                     <div className="admin-cell-resource">
                       <div className="admin-cell-title-row">
@@ -206,9 +209,9 @@ export function JobList({
                         </button>
                       </div>
                       <small className="admin-cell-sub">
-                        <span>Article: </span>
-                        <CompactId id={value} label="Article ID" length={8} />
-                        <span> · attempt {row.attempt ?? 'n/a'}</span>
+                        <span>Bài viết: </span>
+                        <CompactId id={value} label="Mã bài viết" length={8} />
+                        <span> · lần thử {row.attempt ?? '—'}</span>
                       </small>
                     </div>
                   ),
@@ -248,22 +251,22 @@ export function EventList({
   return (
     <ResourceFrame
       resource={resource}
-      loadingLabel="Đang tải lifecycle events…"
+      loadingLabel="Đang tải sự kiện vòng đời…"
     >
       <Table
-        label="Lifecycle events"
+        label="Sự kiện vòng đời"
         rows={rows}
-        emptyTitle="Chưa có event nào."
+        emptyTitle="Chưa có sự kiện nào."
         columns={[
           {
             key: 'eventId',
-            label: 'Event',
+            label: 'Sự kiện',
             render: (value, row) => (
               <div className="admin-cell-resource">
                 <strong className="admin-cell-primary">{row.stage}</strong>
                 <small className="admin-cell-sub">
-                  <span>Event: </span>
-                  <CompactId id={value} label="Event ID" length={8} />
+                  <span>Sự kiện: </span>
+                  <CompactId id={value} label="Mã sự kiện" length={8} />
                   {row.elapsedMs !== null && row.elapsedMs !== undefined ? (
                     <span> · {row.elapsedMs}ms</span>
                   ) : null}
@@ -283,21 +286,21 @@ export function EventList({
           },
           {
             key: 'runId',
-            label: 'Run / Queue / Task',
+            label: 'Lượt / Hàng đợi / Tác vụ',
             render: (value, row) => (
               <div className="admin-cell-resource">
                 <strong className="admin-cell-primary">
-                  {row.queueName ? row.queueName : 'cron'}
-                  {row.task ? ` · ${row.task}` : ''}
+                  {row.queueName ? queueLabel(row.queueName) : 'cron'}
+                  {row.task ? ` · ${taskLabel(row.task)}` : ''}
                 </strong>
                 <small className="admin-cell-sub">
                   {value ? (
                     <>
-                      <span>Run: </span>
-                      <CompactId id={value} label="Run ID" length={8} />
+                      <span>Lượt: </span>
+                      <CompactId id={value} label="Mã lượt chạy" length={8} />
                     </>
                   ) : (
-                    <span>Không có runId</span>
+                    <span>Không có lượt chạy</span>
                   )}
                 </small>
               </div>
@@ -305,26 +308,26 @@ export function EventList({
           },
           {
             key: 'jobId',
-            label: 'Job / Source / Article',
+            label: 'Tác vụ / Nguồn / Bài viết',
             render: (value, row) => (
               <div className="admin-cell-resource">
                 <small className="admin-cell-sub">
                   {value ? (
                     <>
-                      <span>Job: </span>
-                      <CompactId id={value} label="Job ID" length={8} />
+                      <span>Tác vụ: </span>
+                      <CompactId id={value} label="Mã tác vụ" length={8} />
                     </>
                   ) : null}
                   {row.articleId ? (
                     <>
-                      <span> · Art: </span>
-                      <CompactId id={row.articleId} label="Article ID" length={8} />
+                      <span> · Bài: </span>
+                      <CompactId id={row.articleId} label="Mã bài viết" length={8} />
                     </>
                   ) : null}
                   {row.sourceId ? (
                     <>
-                      <span> · Src: </span>
-                      <CompactId id={row.sourceId} label="Source ID" length={8} />
+                      <span> · Nguồn: </span>
+                      <CompactId id={row.sourceId} label="Mã nguồn" length={8} />
                     </>
                   ) : null}
                 </small>
@@ -338,7 +341,7 @@ export function EventList({
               if (value) {
                 return (
                   <span className="admin-safe-error">
-                    {value.code}: {value.retryable ? 'retryable' : 'non-retryable'}
+                    {value.code}: {value.retryable ? 'thử lại được' : 'không thử lại được'}
                   </span>
                 )
               }
@@ -362,17 +365,17 @@ export function EventList({
 }
 
 const DUE_WORK_COUNTERS = Object.freeze([
-  ['claimed', 'Claimed'],
-  ['succeeded', 'Succeeded'],
-  ['partial', 'Partial'],
-  ['failed', 'Failed'],
-  ['deferred', 'Deferred'],
+  ['claimed', 'Đã nhận'],
+  ['succeeded', 'Thành công'],
+  ['partial', 'Một phần'],
+  ['failed', 'Lỗi'],
+  ['deferred', 'Hoãn lại'],
 ])
 
 const DUE_WORK_QUEUES = Object.freeze([
-  ['ingestion', 'Ingestion'],
-  ['indexing', 'Indexing'],
-  ['accountDeletion', 'Account deletion'],
+  ['ingestion', 'Thu thập dữ liệu'],
+  ['indexing', 'Chỉ mục hóa'],
+  ['accountDeletion', 'Xóa tài khoản'],
 ])
 
 function DueWorkRunPanel({ run }) {
@@ -381,14 +384,14 @@ function DueWorkRunPanel({ run }) {
   return (
     <Panel
       className="admin-due-work-panel"
-      title="Kết quả bounded run gần nhất"
+      title="Kết quả lượt chạy giới hạn gần nhất"
     >
       <div className="admin-due-work-meta" role="status">
         {normalized.runId
-          ? `Run ${normalized.runId}`
+          ? `Lượt chạy ${normalized.runId}`
           : 'Chưa có lần chạy thủ công nào trong phiên này.'}
       </div>
-      <div className="admin-due-work-summary" aria-label="Aggregate bounded run counters">
+      <div className="admin-due-work-summary" aria-label="Tổng hợp bộ đếm lượt chạy giới hạn">
         {DUE_WORK_COUNTERS.map(([key, label]) => (
           <div className="admin-due-work-counter" key={key}>
             <strong>{aggregate[key]}</strong>
@@ -396,7 +399,7 @@ function DueWorkRunPanel({ run }) {
           </div>
         ))}
       </div>
-      <div className="admin-due-work-queues" aria-label="Kết quả theo queue">
+      <div className="admin-due-work-queues" aria-label="Kết quả theo hàng đợi">
         {DUE_WORK_QUEUES.map(([queueName, label]) => (
           <div className="admin-due-work-queue" key={queueName}>
             <h3>{label}</h3>
@@ -433,7 +436,7 @@ function IngestionCreateForm({ sources, onSubmit, busy }) {
       }}
     >
       <div>
-        <label htmlFor="admin-job-source">Nguồn ingestion</label>
+        <label htmlFor="admin-job-source">Nguồn thu thập</label>
         <select
           id="admin-job-source"
           value={sourceId}
@@ -449,7 +452,7 @@ function IngestionCreateForm({ sources, onSubmit, busy }) {
         </select>
       </div>
       <div>
-        <label htmlFor="admin-job-batch">Batch size</label>
+        <label htmlFor="admin-job-batch">Kích thước lô</label>
         <input
           id="admin-job-batch"
           type="number"
@@ -466,10 +469,10 @@ function IngestionCreateForm({ sources, onSubmit, busy }) {
         icon="arrow"
         disabled={busy || eligible.length === 0}
       >
-        Trigger ingestion
+        Kích hoạt thu thập
       </AdminButton>
       {eligible.length === 0 ? (
-        <small className="admin-form-hint">Chưa có source active đủ điều kiện.</small>
+        <small className="admin-form-hint">Chưa có nguồn hoạt động nào đủ điều kiện.</small>
       ) : null}
     </form>
   )
@@ -487,7 +490,7 @@ function IndexingCreateForm({ onSubmit, busy }) {
       }}
     >
       <div>
-        <label htmlFor="admin-index-article">Article ID</label>
+        <label htmlFor="admin-index-article">Mã bài viết</label>
         <input
           id="admin-index-article"
           value={articleId}
@@ -497,19 +500,19 @@ function IndexingCreateForm({ onSubmit, busy }) {
         />
       </div>
       <div>
-        <label htmlFor="admin-index-task">Task</label>
+        <label htmlFor="admin-index-task">Tác vụ</label>
         <select
           id="admin-index-task"
           value={task}
           onChange={(event) => setTask(event.target.value)}
         >
-          <option value="summary">summary</option>
-          <option value="embedding">embedding</option>
-          <option value="visibility-reconcile">visibility-reconcile</option>
+          <option value="summary">Tóm tắt</option>
+          <option value="embedding">Vector</option>
+          <option value="visibility-reconcile">Đối chiếu hiển thị</option>
         </select>
       </div>
       <AdminButton type="submit" variant="primary" icon="arrow" disabled={busy}>
-        Xếp indexing job
+        Xếp tác vụ chỉ mục
       </AdminButton>
     </form>
   )
@@ -625,7 +628,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
           idempotencyStore: mutation.idempotencyStore,
           idempotencyIntent: action === 'retry' ? `${kind}-retry:${job.id}` : undefined,
         }),
-      action === 'retry' ? 'Đã xếp job thử lại.' : 'Đã ghi nhận yêu cầu dừng job.',
+      action === 'retry' ? 'Đã xếp tác vụ thử lại.' : 'Đã ghi nhận yêu cầu dừng tác vụ.',
     )
     if (response) {
       setConfirmation(null)
@@ -640,7 +643,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
     return mutation
       .run(
         () => runAdminDueWork(api, { csrfToken: session?.csrfToken }),
-        'Đã chạy một lượt bounded queue.',
+        'Đã chạy một lượt hàng đợi giới hạn.',
       )
       .then((response) => {
         if (response) {
@@ -707,7 +710,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
             idempotencyStore: mutation.idempotencyStore,
             idempotencyIntent: `ingestion-create:${input.sourceId}:${input.batchSize}`,
           }),
-        'Đã xếp ingestion job vào durable queue.',
+        'Đã xếp tác vụ thu thập vào hàng đợi bền vững.',
       )
       .then((response) => {
         if (response) ingestion.reload()
@@ -726,7 +729,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
             idempotencyStore: mutation.idempotencyStore,
             idempotencyIntent: `${task}:${articleId}`,
           }),
-        `Đã xếp job ${task} vào hàng đợi.`,
+        `Đã xếp tác vụ ${task === 'summary' ? 'tóm tắt' : task === 'embedding' ? 'vector' : 'đối chiếu hiển thị'} vào hàng đợi.`,
       )
       .then((response) => {
         if (response) indexing.reload()
@@ -737,8 +740,8 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
   return (
     <div className="admin-view admin-jobs-view">
       <PageHeader
-        eyebrow="Durable jobs"
-        title="Jobs và queue"
+        eyebrow="Tác vụ bền vững"
+        title="Tác vụ và hàng đợi"
         action={
           <>
             <AdminButton
@@ -747,7 +750,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
               onClick={runDueWorkNow}
               disabled={mutation.busy}
             >
-              {mutation.busy ? 'Đang chạy queue…' : 'Chạy queue bounded'}
+              {mutation.busy ? 'Đang chạy hàng đợi…' : 'Chạy một lượt hàng đợi'}
             </AdminButton>
             <AdminButton icon="refresh" onClick={refreshCurrent} disabled={mutation.busy}>
               Làm mới
@@ -756,7 +759,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         }
       />
       <DueWorkRunPanel run={dueWorkRun} />
-      <div className="admin-tabs" role="tablist" aria-label="Loại job">
+      <div className="admin-tabs" role="tablist" aria-label="Loại tác vụ">
         <button
           type="button"
           role="tab"
@@ -764,7 +767,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
           className={tab === 'ingestion' ? 'active' : ''}
           onClick={() => setTab('ingestion')}
         >
-          Ingestion
+          Thu thập
         </button>
         <button
           type="button"
@@ -773,7 +776,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
           className={tab === 'indexing' ? 'active' : ''}
           onClick={() => setTab('indexing')}
         >
-          Indexing
+          Chỉ mục
         </button>
         <button
           type="button"
@@ -782,7 +785,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
           className={tab === 'events' ? 'active' : ''}
           onClick={() => setTab('events')}
         >
-          Lifecycle Events
+          Sự kiện vòng đời
         </button>
       </div>
       <div className="admin-toolbar">
@@ -800,7 +803,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
             <option value="">Tất cả</option>
             {['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled', 'deferred', 'timeout', 'started'].map((status) => (
               <option key={status} value={status}>
-                {status}
+                {statusLabel(status)}
               </option>
             ))}
           </select>
@@ -808,7 +811,7 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
         {tab === 'events' ? (
           <>
             <label>
-              <span>Queue</span>
+              <span>Hàng đợi</span>
               <select
                 value={draftQuery.events?.queueName ?? ''}
                 onChange={(event) =>
@@ -818,14 +821,14 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
                   }))
                 }
               >
-                <option value="">Tất cả queue</option>
-                <option value="ingestion">ingestion</option>
-                <option value="indexing">indexing</option>
-                <option value="account-deletion">account-deletion</option>
+                <option value="">Tất cả hàng đợi</option>
+                <option value="ingestion">Thu thập dữ liệu</option>
+                <option value="indexing">Chỉ mục hóa</option>
+                <option value="account-deletion">Xóa tài khoản</option>
               </select>
             </label>
             <label>
-              <span>Task</span>
+              <span>Loại tác vụ</span>
               <select
                 value={draftQuery.events?.task ?? ''}
                 onChange={(event) =>
@@ -835,17 +838,17 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
                   }))
                 }
               >
-                <option value="">Tất cả task</option>
-                <option value="summary">summary</option>
-                <option value="embedding">embedding</option>
-                <option value="visibility-reconcile">visibility-reconcile</option>
+                <option value="">Tất cả loại tác vụ</option>
+                <option value="summary">Tóm tắt</option>
+                <option value="embedding">Vector</option>
+                <option value="visibility-reconcile">Đối chiếu hiển thị</option>
               </select>
             </label>
             <label>
-              <span>Run ID</span>
+              <span>Mã lượt chạy</span>
               <input
                 type="text"
-                placeholder="Lọc theo runId"
+                placeholder="Lọc theo mã lượt chạy"
                 value={draftQuery.events?.runId ?? ''}
                 onChange={(event) =>
                   setDraftQuery((current) => ({
@@ -856,10 +859,10 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
               />
             </label>
             <label>
-              <span>Job ID</span>
+              <span>Mã tác vụ</span>
               <input
                 type="text"
-                placeholder="Lọc theo jobId"
+                placeholder="Lọc theo mã tác vụ"
                 value={draftQuery.events?.jobId ?? ''}
                 onChange={(event) =>
                   setDraftQuery((current) => ({
@@ -870,10 +873,10 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
               />
             </label>
             <label>
-              <span>Article ID</span>
+              <span>Mã bài viết</span>
               <input
                 type="text"
-                placeholder="Lọc theo articleId"
+                placeholder="Lọc theo mã bài viết"
                 value={draftQuery.events?.articleId ?? ''}
                 onChange={(event) =>
                   setDraftQuery((current) => ({
@@ -884,10 +887,10 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
               />
             </label>
             <label>
-              <span>Source ID</span>
+              <span>Mã nguồn</span>
               <input
                 type="text"
-                placeholder="Lọc theo sourceId"
+                placeholder="Lọc theo mã nguồn"
                 value={draftQuery.events?.sourceId ?? ''}
                 onChange={(event) =>
                   setDraftQuery((current) => ({
@@ -955,10 +958,10 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
       <Panel
         title={
           tab === 'ingestion'
-            ? 'Ingestion queue'
+            ? 'Hàng đợi thu thập'
             : tab === 'indexing'
-              ? 'Indexing queue'
-              : 'Cron & job lifecycle events'
+              ? 'Hàng đợi chỉ mục'
+              : 'Sự kiện vòng đời cron và tác vụ'
         }
       >
         {tab === 'events' ? (
@@ -988,11 +991,11 @@ export function AdminJobsView({ api, session, initialData, onSessionExpired, cac
       </Panel>
       <AdminConfirmDialog
         open={Boolean(confirmation)}
-        title={confirmation?.action === 'retry' ? 'Tạo linked retry cho job?' : 'Yêu cầu dừng job?'}
+        title={confirmation?.action === 'retry' ? 'Tạo tác vụ thử lại liên kết?' : 'Yêu cầu dừng tác vụ?'}
         consequence={
           confirmation?.action === 'retry'
-            ? 'Server sẽ kiểm tra retryable và attempt policy trước khi tạo job mới.'
-            : 'Server sẽ kiểm tra lifecycle trước khi hủy hoặc dừng an toàn job.'
+            ? 'Máy chủ sẽ kiểm tra khả năng thử lại và chính sách số lần trước khi tạo tác vụ mới.'
+            : 'Máy chủ sẽ kiểm tra vòng đời trước khi hủy hoặc dừng an toàn tác vụ.'
         }
         reasonCode={confirmation?.reasonCode}
         busy={mutation.busy}

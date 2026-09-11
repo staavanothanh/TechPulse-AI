@@ -139,7 +139,7 @@ describe('Admin ID presentation & Article Preview UX', () => {
         initialData: { data: [deletedUser] },
       })
 
-      expect(html).toContain('Đã ẩn theo tombstone')
+      expect(html).toContain('Đã ẩn (xóa vĩnh viễn)')
       expect(html).toContain('66c0a1b…9999')
       expect(html).not.toContain('undefined')
     })
@@ -244,7 +244,7 @@ describe('Admin ID presentation & Article Preview UX', () => {
 
       expect(html).toContain('6a8c123…9999')
       expect(html).toContain('6a8d567…8888')
-      expect(html).toContain('article · 1 target')
+      expect(html).toContain('article · 1 đối tượng')
     })
   })
 })

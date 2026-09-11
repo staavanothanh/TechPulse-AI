@@ -287,7 +287,7 @@ function SourceBadge({ sourceId, source, showId = false, className = '' }) {
     <span className={`admin-source-badge ${className}`} title={`Nguồn: ${name} (${sourceId || resolved?.id})`}>
       <Icon name="globe" size={13} />
       <span className="admin-source-badge-name">{name}</span>
-      {showId && sourceId ? <CompactId id={sourceId} label="Source ID" length={8} /> : null}
+      {showId && sourceId ? <CompactId id={sourceId} label="Mã nguồn" length={8} /> : null}
     </span>
   )
 }
@@ -583,7 +583,7 @@ export function AdminConfirmDialog({
         <h2 id="admin-confirm-title">{title}</h2>
         <p id="admin-confirm-copy">{consequence}</p>
         <p className="admin-confirm-reason">
-          <span>Reason code cố định</span>
+          <span>Mã lý do cố định</span>
           <code>{reasonCode}</code>
         </p>
         <div className="admin-confirm-actions">
@@ -686,7 +686,7 @@ function ArticlePreviewDialog({
               {loading
                 ? 'Đang tải thông tin…'
                 : article?.status === 'removed'
-                  ? 'Bài viết đã gỡ bỏ (Tombstone)'
+                  ? 'Bài viết đã gỡ bỏ'
                   : article?.titleOriginal || article?.titleVi || `Bài viết #${articleId}`}
             </h2>
           </div>
@@ -713,11 +713,11 @@ function ArticlePreviewDialog({
         ) : article?.status === 'removed' ? (
           <div className="admin-preview-body">
             <p className="admin-muted">
-              Bài viết này đã được gỡ bỏ khỏi hệ thống theo quy trình takedown. Toàn bộ nội dung và metadata đã bị xóa an toàn.
+              Bài viết này đã được gỡ bỏ khỏi hệ thống theo quy trình gỡ bài. Toàn bộ nội dung và dữ liệu mô tả đã bị xóa an toàn.
             </p>
             <div className="admin-preview-meta">
               <span>Mã bài viết:</span>
-              <CompactId id={articleId} label="Article ID" />
+              <CompactId id={articleId} label="Mã bài viết" />
             </div>
           </div>
         ) : (
@@ -750,15 +750,15 @@ function ArticlePreviewDialog({
               <div>
                 <small>Trạng thái AI</small>
                 <div className="admin-status-group">
-                  <StatusBadge value={article?.summaryStatus || 'pending'} label={`Summary: ${article?.summaryStatus || 'pending'}`} />
-                  <StatusBadge value={article?.embeddingStatus || 'pending'} label={`Embedding: ${article?.embeddingStatus || 'pending'}`} />
+                  <StatusBadge value={article?.summaryStatus || 'pending'} label={`Tóm tắt: ${statusLabel(article?.summaryStatus || 'pending')}`} />
+                  <StatusBadge value={article?.embeddingStatus || 'pending'} label={`Vector: ${statusLabel(article?.embeddingStatus || 'pending')}`} />
                 </div>
               </div>
             </div>
 
             <div className="admin-preview-meta">
               <span>Mã bài viết:</span>
-              <CompactId id={articleId} label="Article ID" />
+              <CompactId id={articleId} label="Mã bài viết" />
             </div>
           </div>
         )}
