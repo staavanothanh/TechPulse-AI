@@ -80,7 +80,6 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
           {OVERVIEW_METRICS.map(([key, label, tone]) => (
             <article className={`admin-metric admin-metric-${tone}`} key={key}>
               <strong>{formatCount(data[key])}</strong>
-              <span>{key}</span>
               <small>{label}</small>
             </article>
           ))}
@@ -98,7 +97,6 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
                   >
                     <span>
                       <strong>{label}</strong>
-                      <small>{key}</small>
                     </span>
                     <b className={`admin-value-${tone}`}>{formatCount(data[valueKey])}</b>
                     <Icon name="arrow" size={16} />
@@ -112,14 +110,14 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
               )}
             </div>
           </Panel>
-          <Panel title="Trạng thái pipeline">
+          <Panel title="Trạng thái dây chuyền xử lý">
             <div className="admin-pipeline">
               <div>
                 <span className="admin-pipeline-index">01</span>
                 <span>
-                  <strong>Ingestion</strong>
+                  <strong>Thu thập dữ liệu</strong>
                   <small>
-                    {formatCount(data.queuedJobs)} job đang chờ · {formatCount(data.activeJobs)} job đang chạy
+                    {formatCount(data.queuedJobs)} tác vụ đang chờ · {formatCount(data.activeJobs)} tác vụ đang chạy
                   </small>
                 </span>
                 <StatusBadge value={ingestionStatus.value} label={ingestionStatus.label} />
@@ -127,8 +125,8 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
               <div>
                 <span className="admin-pipeline-index">02</span>
                 <span>
-                  <strong>Indexing</strong>
-                  <small>{formatCount(data.failedIndexes)} index lỗi</small>
+                  <strong>Chỉ mục hóa</strong>
+                  <small>{formatCount(data.failedIndexes)} lỗi chỉ mục</small>
                 </span>
                 <StatusBadge
                   value={Number(data.failedIndexes) ? 'failed' : 'active'}
@@ -138,8 +136,8 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
               <div>
                 <span className="admin-pipeline-index">03</span>
                 <span>
-                  <strong>Governance</strong>
-                  <small>{formatCount(data.openTakedowns)} takedown mở</small>
+                  <strong>Quản trị nội dung</strong>
+                  <small>{formatCount(data.openTakedowns)} yêu cầu gỡ bài đang mở</small>
                 </span>
                 <StatusBadge
                   value={Number(data.openTakedowns) ? 'reviewing' : 'active'}
@@ -150,8 +148,8 @@ export function AdminOverviewView({ api, initialData, onNavigate, onSessionExpir
           </Panel>
         </div>
         <Panel
-          title="Lần ingestion thành công gần nhất"
-          hint="lastSuccessfulIngestionAt"
+          title="Lần thu thập dữ liệu thành công gần nhất"
+          hint="Tổng hợp từ nhật ký vận hành"
         >
           <div className="admin-last-run">
             <Icon name="activity" size={24} />

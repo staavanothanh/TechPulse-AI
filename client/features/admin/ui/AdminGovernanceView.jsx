@@ -85,7 +85,7 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
                 pathParams: { takedownRequestId: confirmation.item.id },
                 body: { status: confirmation.next[0], reasonCode: confirmation.reasonCode },
               }),
-            'Đã cập nhật workflow takedown.',
+            'Đã cập nhật quy trình gỡ bài.',
           )
         : await mutation.run(
             () =>
@@ -96,7 +96,7 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
                 idempotencyStore: mutation.idempotencyStore,
                 idempotencyIntent: `account-deletion-retry:${confirmation.item.id}`,
               }),
-            'Đã xếp lại workflow xóa tài khoản.',
+            'Đã xếp lại quy trình xóa tài khoản.',
           )
     if (response) {
       setConfirmation(null)
@@ -109,8 +109,8 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
   return (
     <div className="admin-view admin-governance-view">
       <PageHeader
-        eyebrow="Governance"
-        title="Takedown & xóa tài khoản"
+        eyebrow="Quản trị"
+        title="Gỡ bài & xóa tài khoản"
         action={
           <AdminButton
             icon="refresh"
@@ -135,26 +135,26 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
         </p>
       ) : null}
       <Panel
-        title="Takedown requests"
-        hint="Hide trước khi hoàn tất"
+        title="Yêu cầu gỡ bài"
+        hint="Ẩn bài trước khi hoàn tất"
       >
-        <ResourceFrame resource={takedowns} loadingLabel="Đang tải takedown requests…">
+        <ResourceFrame resource={takedowns} loadingLabel="Đang tải yêu cầu gỡ bài…">
           <Table
-            label="Takedown requests"
+            label="Yêu cầu gỡ bài"
             rows={tdRows}
-            emptyTitle="Không có takedown đang mở."
+            emptyTitle="Không có yêu cầu gỡ bài nào đang mở."
             columns={[
               {
                 key: 'id',
-                label: 'Request',
+                label: 'Yêu cầu',
                 render: (value, row) => (
                   <div className="admin-cell-resource">
                     <strong className="admin-cell-primary">
-                      {row.targetType} · {row.targetIds?.length ?? 0} target
+                      {row.targetType} · {row.targetIds?.length ?? 0} đối tượng
                     </strong>
                     <small className="admin-cell-sub">
-                      <span>Request: </span>
-                      <CompactId id={value} label="Request ID" length={8} />
+                      <span>Yêu cầu: </span>
+                      <CompactId id={value} label="Mã yêu cầu" length={8} />
                     </small>
                   </div>
                 ),
@@ -185,25 +185,25 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
         </ResourceFrame>
       </Panel>
       <Panel
-        title="Account deletion workflows"
+        title="Quy trình xóa tài khoản"
       >
-        <ResourceFrame resource={deletions} loadingLabel="Đang tải account deletion workflows…">
+        <ResourceFrame resource={deletions} loadingLabel="Đang tải quy trình xóa tài khoản…">
           <Table
-            label="Account deletion workflows"
+            label="Quy trình xóa tài khoản"
             rows={deletionRows}
-            emptyTitle="Không có workflow xóa tài khoản lỗi."
+            emptyTitle="Không có quy trình xóa tài khoản nào bị lỗi."
             columns={[
               {
                 key: 'id',
-                label: 'Workflow',
+                label: 'Quy trình',
                 render: (value, row) => (
                   <div className="admin-cell-resource">
                     <strong className="admin-cell-primary">
-                      User Deletion · attempt {row.attempt ?? 1}
+                      Xóa tài khoản · lần thử {row.attempt ?? 1}
                     </strong>
                     <small className="admin-cell-sub">
-                      <span>Workflow: </span>
-                      <CompactId id={value} label="Workflow ID" length={8} />
+                      <span>Quy trình: </span>
+                      <CompactId id={value} label="Mã quy trình" length={8} />
                     </small>
                   </div>
                 ),
@@ -259,8 +259,8 @@ export function AdminGovernanceView({ api, session, initialData, onSessionExpire
         }
         consequence={
           confirmation?.type === 'takedown'
-            ? 'Server sẽ kiểm tra lifecycle và completion fence trước khi thay đổi trạng thái.'
-            : 'Server sẽ tiếp tục các bước cleanup còn lại mà không khôi phục identity hoặc session.'
+            ? 'Máy chủ sẽ kiểm tra vòng đời và hàng rào hoàn tất trước khi thay đổi trạng thái.'
+            : 'Máy chủ sẽ tiếp tục các bước dọn dẹp còn lại mà không khôi phục danh tính hay phiên đăng nhập.'
         }
         reasonCode={confirmation?.reasonCode}
         busy={mutation.busy}

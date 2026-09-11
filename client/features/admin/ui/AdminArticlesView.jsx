@@ -21,7 +21,7 @@ import {
 } from './AdminShared.jsx'
 
 function ArticleActions({ article, onAction, busy }) {
-  if (article.status === 'removed') return <span className="admin-muted">Tombstone</span>
+  if (article.status === 'removed') return <span className="admin-muted">Đã gỡ bỏ</span>
   return (
     <div className="admin-row-actions">
       <AdminButton
@@ -40,7 +40,7 @@ function ArticleActions({ article, onAction, busy }) {
         onClick={(event) => onAction(article, 'summary', event.currentTarget)}
         disabled={busy}
       >
-        Regenerate summary
+        Tạo lại tóm tắt
       </AdminButton>
       <AdminButton
         size="small"
@@ -49,7 +49,7 @@ function ArticleActions({ article, onAction, busy }) {
         onClick={(event) => onAction(article, 'embedding', event.currentTarget)}
         disabled={busy}
       >
-        Regenerate embedding
+        Tạo lại vector
       </AdminButton>
     </div>
   )
@@ -115,10 +115,10 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
     const response = await mutation.run(
       request,
       action === 'status'
-        ? 'Đã cập nhật trạng thái article.'
+        ? 'Đã cập nhật trạng thái bài viết.'
         : action === 'summary'
-          ? 'Đã xếp job tóm tắt.'
-          : 'Đã xếp job embedding.',
+          ? 'Đã xếp tác vụ tóm tắt.'
+          : 'Đã xếp tác vụ vector.',
     )
     if (response) {
       setConfirmation(null)
@@ -129,7 +129,7 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
   return (
     <div className="admin-view admin-articles-view">
       <PageHeader
-        eyebrow="Articles & AI index"
+        eyebrow="Bài viết & chỉ mục AI"
         title="Quản lý bài viết"
         action={
           <AdminButton icon="refresh" onClick={resource.reload} disabled={mutation.busy}>
@@ -154,7 +154,7 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
           </select>
         </label>
         <label>
-          <span>Source ID</span>
+          <span>Mã nguồn</span>
           <input
             value={draftQuery.sourceId}
             maxLength="128"
@@ -177,23 +177,23 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
           {mutation.notice}
         </p>
       ) : null}
-      <Panel title="Article index" hint={`${rows.length} bản ghi trong trang hiện tại`}>
-        <ResourceFrame resource={resource} loadingLabel="Đang tải articles…">
+      <Panel title="Chỉ mục bài viết" hint={`${rows.length} bản ghi trong trang hiện tại`}>
+        <ResourceFrame resource={resource} loadingLabel="Đang tải bài viết…">
           <Table
-            label="Danh sách articles"
+            label="Danh sách bài viết"
             rows={rows}
-            emptyTitle="Chưa có article phù hợp."
+            emptyTitle="Chưa có bài viết phù hợp."
             columns={[
               {
                 key: 'id',
-                label: 'Article',
+                label: 'Bài viết',
                 render: (value, row) =>
                   row.status === 'removed' ? (
                     <div className="admin-cell-resource">
-                      <strong className="admin-muted">Bài viết đã gỡ bỏ (Tombstone)</strong>
+                      <strong className="admin-muted">Bài viết đã gỡ bỏ</strong>
                       <small className="admin-cell-sub">
-                        <span>Article: </span>
-                        <CompactId id={value} label="Article ID" length={8} />
+                        <span>Bài viết: </span>
+                        <CompactId id={value} label="Mã bài viết" length={8} />
                       </small>
                     </div>
                   ) : (
@@ -219,7 +219,7 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
                       <small className="admin-cell-sub">
                         <SourceBadge sourceId={row.sourceId} />
                         <span> · </span>
-                        <CompactId id={value} label="Article ID" length={8} />
+                        <CompactId id={value} label="Mã bài viết" length={8} />
                       </small>
                     </div>
                   ),
@@ -231,12 +231,12 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
               },
               {
                 key: 'summaryStatus',
-                label: 'Summary',
+                label: 'Tóm tắt',
                 render: (value) => <StatusBadge value={value} />,
               },
               {
                 key: 'embeddingStatus',
-                label: 'Embedding',
+                label: 'Vector',
                 render: (value) => <StatusBadge value={value} />,
               },
               {
@@ -255,16 +255,16 @@ export function AdminArticlesView({ api, session, initialData, onSessionExpired,
         title={
           confirmation?.action === 'status'
             ? confirmation.next === 'hidden'
-              ? 'Ẩn article?'
-              : 'Hiện article?'
+              ? 'Ẩn bài viết?'
+              : 'Hiện bài viết?'
             : confirmation?.action === 'summary'
-              ? 'Tạo summary job?'
-              : 'Tạo embedding job?'
+              ? 'Tạo tác vụ tóm tắt?'
+              : 'Tạo tác vụ vector?'
         }
         consequence={
           confirmation?.action === 'status'
-            ? 'Thay đổi trạng thái sẽ ghi audit và cập nhật khả năng hiển thị của article.'
-            : 'Server sẽ kiểm tra Source Registry policy trước khi xếp bounded job.'
+            ? 'Thay đổi trạng thái sẽ ghi kiểm toán và cập nhật khả năng hiển thị của bài viết.'
+            : 'Máy chủ sẽ kiểm tra chính sách danh mục nguồn trước khi xếp tác vụ giới hạn.'
         }
         reasonCode={confirmation?.reasonCode}
         busy={mutation.busy}

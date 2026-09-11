@@ -67,13 +67,13 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
     >
       <div className="admin-form-heading">
         <div>
-          <p className="admin-eyebrow">Draft source</p>
-          <h2 id="source-create-title">Tạo nguồn draft</h2>
+          <p className="admin-eyebrow">Nguồn bản nháp</p>
+          <h2 id="source-create-title">Tạo nguồn mới (bản nháp)</h2>
         </div>
-        <span className="admin-chip">fail closed</span>
+        <span className="admin-chip">khóa an toàn</span>
       </div>
       <p className="admin-form-hint">
-        Chỉ nhập metadata connector. Quyền xử lý vẫn cần policy review của admin.
+        Chỉ nhập metadata trình kết nối. Quyền xử lý vẫn cần đánh giá chính sách của quản trị viên.
       </p>
       <div className="admin-form-grid">
         <label htmlFor="source-name">
@@ -87,7 +87,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
           />
         </label>
         <label htmlFor="source-key">
-          Source key
+          Khóa nguồn (sourceKey)
           <input
             id="source-key"
             required
@@ -98,7 +98,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
           />
         </label>
         <label htmlFor="source-publisher">
-          Publisher
+          Nhà xuất bản
           <input
             id="source-publisher"
             required
@@ -118,7 +118,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
           />
         </label>
         <label htmlFor="source-connector">
-          Connector
+          Loại kết nối
           <select id="source-connector" value={form.connectorType} onChange={setConnector}>
             <option value="rss">RSS / Atom</option>
             <option value="arxiv">arXiv API</option>
@@ -142,9 +142,9 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
               value={form.endpoint || 'topstories'}
               onChange={set('endpoint')}
             >
-              <option value="topstories">Top stories</option>
-              <option value="newstories">New stories</option>
-              <option value="beststories">Best stories</option>
+              <option value="topstories">Tin nóng</option>
+              <option value="newstories">Tin mới</option>
+              <option value="beststories">Tin hay nhất</option>
             </select>
           ) : (
             <input
@@ -158,7 +158,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
           )}
         </label>
         <label htmlFor="source-batch">
-          Batch size
+          Kích thước lô
           <input
             id="source-batch"
             required
@@ -177,7 +177,7 @@ export function SourceCreateForm({ onSubmit, busy = false, error = null, onClose
       ) : null}
       <div className="admin-row-actions admin-add-source-actions">
         <AdminButton type="submit" variant="primary" disabled={busy}>
-          {busy ? 'Đang tạo…' : 'Tạo draft'}
+          {busy ? 'Đang tạo…' : 'Tạo bản nháp'}
         </AdminButton>
         {onClose ? (
           <AdminButton type="button" variant="secondary" onClick={onClose}>

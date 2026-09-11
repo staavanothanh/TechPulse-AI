@@ -228,7 +228,7 @@ describe('admin feature views', () => {
       }),
     )
     const jobException = html.match(
-      /<button class="admin-exception"[\s\S]*?<strong>Job lỗi<\/strong>[\s\S]*?<b class="admin-value-danger">([^<]+)<\/b>[\s\S]*?<\/button>/,
+      /<button class="admin-exception"[\s\S]*?<strong>Tác vụ lỗi<\/strong>[\s\S]*?<b class="admin-value-danger">([^<]+)<\/b>[\s\S]*?<\/button>/,
     )
     expect(jobException?.[1]).toBe('2')
     expect(html).toContain('<strong>4</strong>')
@@ -303,7 +303,7 @@ describe('admin feature views', () => {
       }
       const runner = renderHookRunner((input) => AdminArticlesView(input))
       const tree = runner.render(props)
-      const table = findElement(tree, (element) => element?.props?.label === 'Danh sách articles')
+      const table = findElement(tree, (element) => element?.props?.label === 'Danh sách bài viết')
       const actionElement = table.props.children(article(status))
       const actionTree = actionElement.type(actionElement.props)
       const actionButton = findElement(
@@ -515,7 +515,7 @@ describe('admin feature views', () => {
       }),
     )
 
-    expect(html).toContain('Jobs và queue')
+    expect(html).toContain('Tác vụ và hàng đợi')
     expect(html).toContain('job-opaque')
     expect(html).toContain('Thử lại')
     expect(html).not.toMatch(/idempotencyKey|leaseGeneration|provider|token/i)
@@ -541,7 +541,7 @@ describe('admin feature views', () => {
     }
     const runner = renderHookRunner((input) => AdminJobsView(input))
     const initialTree = runner.render(props)
-    const header = findElement(initialTree, (element) => element?.props?.title === 'Jobs và queue')
+    const header = findElement(initialTree, (element) => element?.props?.title === 'Tác vụ và hàng đợi')
     const action = findElement(header.props.action, (element) => element?.props?.icon === 'play')
 
     await action.props.onClick()
@@ -578,7 +578,7 @@ describe('admin feature views', () => {
       }),
     )
     const toolbarStart = ingestionHtml.indexOf('class="admin-toolbar"')
-    const panelStart = ingestionHtml.indexOf('Ingestion queue')
+    const panelStart = ingestionHtml.indexOf('Hàng đợi thu thập')
     const ingestionFormStart = ingestionHtml.indexOf('id="admin-job-source"')
     const indexingFormStart = ingestionHtml.indexOf('id="admin-index-article"')
 
@@ -592,7 +592,7 @@ describe('admin feature views', () => {
     expect(ingestionSlotStart).toBeGreaterThan(-1)
     expect(ingestionSlotEnd).toBeGreaterThan(-1)
     expect(ingestionHtml.slice(ingestionSlotStart, ingestionSlotEnd)).toContain(
-      'Trigger ingestion',
+      'Kích hoạt thu thập',
     )
     expect(ingestionHtml.slice(0, panelStart)).not.toContain(
       'class="admin-inline-form admin-indexing-form"',
@@ -622,7 +622,7 @@ describe('admin feature views', () => {
       }),
     )
     expect(ingestionFormHtml).toContain('id="admin-job-source"')
-    expect(ingestionFormHtml).toContain('Trigger ingestion')
+    expect(ingestionFormHtml).toContain('Kích hoạt thu thập')
     expect(ingestionFormHtml).not.toContain('id="admin-index-article"')
 
     const indexingFormHtml = renderToStaticMarkup(
@@ -633,7 +633,7 @@ describe('admin feature views', () => {
       }),
     )
     expect(indexingFormHtml).toContain('id="admin-index-article"')
-    expect(indexingFormHtml).toContain('Xếp indexing job')
+    expect(indexingFormHtml).toContain('Xếp tác vụ chỉ mục')
     expect(indexingFormHtml).not.toContain('id="admin-job-source"')
   })
 
@@ -665,9 +665,11 @@ describe('admin feature views', () => {
     )
 
     expect(html).toContain('Bài kiểm tra an toàn')
-    expect(html).toContain('Regenerate summary')
-    expect(html).toContain('Regenerate embedding')
-    expect(html).not.toMatch(/fullText|rawHtml|vector|providerPayload|excerpt/i)
+    expect(html).toContain('Tạo lại tóm tắt')
+    expect(html).toContain('Tạo lại vector')
+    // Raw vector-bearing fields must never render; asserting on the raw field
+    // names keeps this guard meaningful now that "vector" is legitimate UI copy.
+    expect(html).not.toMatch(/fullText|rawHtml|embeddingInputHash|embeddingDimensions|embeddedAt|providerPayload|excerpt/i)
   })
 
   it('renders Source Registry policy controls without secret or credential inputs', () => {
@@ -703,9 +705,9 @@ describe('admin feature views', () => {
       }),
     )
 
-    expect(html).toContain('Source Registry')
+    expect(html).toContain('Quản lý nguồn')
     expect(html).toContain('Nguồn kiểm thử')
-    expect(html).toContain('LLM scope')
+    expect(html).toContain('Phạm vi LLM')
     expect(html).not.toMatch(/password|secret|api[_-]?key|token|credential/i)
   })
 
@@ -734,7 +736,7 @@ describe('admin feature views', () => {
     expect(html).toContain('role="tabpanel"')
     expect(html).toContain('tabindex="0"')
     expect(html).toContain('tabindex="-1"')
-    expect(html).not.toContain('Tạo nguồn draft')
+    expect(html).not.toContain('Tạo nguồn mới (bản nháp)')
   })
 
   it('renders the extracted source form as a disclosure with all supported connectors', () => {
@@ -746,7 +748,7 @@ describe('admin feature views', () => {
       }),
     )
     expect(html).toContain('Thêm nguồn')
-    expect(html).not.toContain('Tạo nguồn draft')
+    expect(html).not.toContain('Tạo nguồn mới (bản nháp)')
 
     const openHtml = renderToStaticMarkup(
       React.createElement(AddSourcePanel, {
@@ -758,7 +760,7 @@ describe('admin feature views', () => {
     )
     expect(openHtml).toContain('role="region"')
     expect(openHtml).not.toContain('aria-modal="true"')
-    expect(openHtml).toContain('Tạo nguồn draft')
+    expect(openHtml).toContain('Tạo nguồn mới (bản nháp)')
     expect(openHtml).toContain('aria-expanded="true"')
 
     const formHtml = renderToStaticMarkup(
@@ -812,7 +814,7 @@ describe('admin feature views', () => {
 
     onSubmit.mockRejectedValueOnce(new Error('network interrupted'))
     await submitSourceCreate({ form, onSubmit, onClose, onError })
-    expect(onError).toHaveBeenCalledWith('Không thể tạo source. Hãy kiểm tra dữ liệu và thử lại.')
+    expect(onError).toHaveBeenCalledWith('Không thể tạo nguồn. Hãy kiểm tra dữ liệu và thử lại.')
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
@@ -864,7 +866,7 @@ describe('admin feature views', () => {
 
     expect(users).toContain('Đã xóa')
     expect(users).not.toContain('email@example.com')
-    expect(audit).toContain('Audit bất biến')
+    expect(audit).toContain('Nhật ký kiểm toán bất biến')
     expect(audit).toContain('article_status_changed')
     expect(audit).not.toContain('textarea')
     expect(audit).not.toContain('Xóa audit')
