@@ -172,17 +172,17 @@ export function clearAdminResourceCache(scope) {
 
 export const ADMIN_NAVIGATION = Object.freeze([
   { id: 'overview', label: 'Tổng quan', section: 'Vận hành' },
-  { id: 'jobs', label: 'Jobs', section: 'Vận hành', badge: 'queuedJobs' },
-  { id: 'articles', label: 'Articles & AI index', section: 'Vận hành' },
+  { id: 'jobs', label: 'Tác vụ', section: 'Vận hành', badge: 'queuedJobs' },
+  { id: 'articles', label: 'Bài viết & chỉ mục AI', section: 'Vận hành' },
   {
     id: 'governance',
-    label: 'Takedown & xóa tài khoản',
-    section: 'Governance',
+    label: 'Gỡ bài & xóa tài khoản',
+    section: 'Quản trị',
     badge: 'openTakedowns',
   },
-  { id: 'sources', label: 'Source Registry', section: 'Nguồn & người dùng' },
+  { id: 'sources', label: 'Danh mục nguồn', section: 'Nguồn & người dùng' },
   { id: 'users', label: 'Người dùng', section: 'Nguồn & người dùng' },
-  { id: 'audit', label: 'Audit bất biến', section: 'Nguồn & người dùng' },
+  { id: 'audit', label: 'Kiểm toán bất biến', section: 'Nguồn & người dùng' },
   { id: 'account', label: 'Tài khoản', section: 'Nguồn & người dùng' },
 ])
 
@@ -201,19 +201,61 @@ const QUERY_FIELDS = Object.freeze({
 const STATUS_LABELS = Object.freeze({
   active: 'Đang hoạt động',
   approved: 'Đã duyệt',
+  archived: 'Lưu trữ',
+  blocked: 'Bị chặn',
   cancelled: 'Đã hủy',
   completed: 'Hoàn tất',
+  deferred: 'Hoãn lại',
   deleted: 'Đã xóa',
+  draft: 'Bản nháp',
   failed: 'Lỗi',
   hidden: 'Đã ẩn',
+  'metadata-only': 'Chỉ siêu dữ liệu',
   partial: 'Một phần',
+  passed: 'Đạt',
+  paused: 'Tạm ngưng',
+  pending: 'Chưa xử lý',
+  permitted: 'Được phép',
+  processing: 'Đang xử lý',
   published: 'Đang hiển thị',
   queued: 'Đang chờ',
+  ready: 'Sẵn sàng',
   received: 'Đã tiếp nhận',
   rejected: 'Từ chối',
+  'review-needed': 'Cần xem xét',
   reviewing: 'Đang xem xét',
   running: 'Đang chạy',
+  started: 'Đã bắt đầu',
+  succeeded: 'Thành công',
   suspended: 'Tạm dừng',
+  testing: 'Đang kiểm thử',
+  timeout: 'Hết thời gian',
+  unknown: 'Không xác định',
+})
+
+const LLM_SCOPE_LABELS = Object.freeze({
+  none: 'Không gửi',
+  metadata: 'Siêu dữ liệu',
+  excerpt: 'Trích đoạn',
+  'fulltext-temporary': 'Toàn văn tạm thời',
+})
+
+const QUEUE_LABELS = Object.freeze({
+  ingestion: 'Thu thập dữ liệu',
+  indexing: 'Chỉ mục hóa',
+  'account-deletion': 'Xóa tài khoản',
+})
+
+const TASK_LABELS = Object.freeze({
+  summary: 'Tóm tắt',
+  embedding: 'Vector',
+  'visibility-reconcile': 'Đối chiếu hiển thị',
+})
+
+const ROLE_LABELS = Object.freeze({
+  admin: 'Quản trị viên',
+  user: 'Người dùng',
+  'system-worker': 'Tiến trình hệ thống',
 })
 
 const ERROR_MESSAGES = Object.freeze({
@@ -231,18 +273,18 @@ const CANONICAL_ERROR_CODE = /^[a-z0-9_:-]{1,128}$/
 const OPERATION_ERROR_MESSAGES = Object.freeze({
   reviewSourcePolicy: Object.freeze({
     invalid_state_transition:
-      'Không thể lưu policy review vì source đang active. Hãy yêu cầu duyệt lại source rồi tải lại.',
+      'Không thể lưu đánh giá chính sách vì nguồn đang hoạt động. Hãy yêu cầu duyệt lại nguồn rồi tải lại.',
   }),
 })
 
 export const OVERVIEW_METRICS = Object.freeze([
-  ['failedJobs', 'Job lỗi', 'danger'],
-  ['failedIndexes', 'Index lỗi', 'danger'],
-  ['openTakedowns', 'Takedown đang mở', 'warning'],
+  ['failedJobs', 'Tác vụ lỗi', 'danger'],
+  ['failedIndexes', 'Lỗi chỉ mục', 'danger'],
+  ['openTakedowns', 'Yêu cầu gỡ bài đang mở', 'warning'],
   ['failedAccountDeletions', 'Xóa tài khoản lỗi', 'danger'],
   ['sourcesNeedingReview', 'Nguồn cần duyệt', 'warning'],
-  ['articlesNeedingReview', 'Article cần duyệt', 'warning'],
-  ['queuedJobs', 'Job đang chờ', 'quiet'],
+  ['articlesNeedingReview', 'Bài viết cần duyệt', 'warning'],
+  ['queuedJobs', 'Tác vụ đang chờ', 'quiet'],
   ['activeSources', 'Nguồn đang hoạt động', 'quiet'],
   ['pausedSources', 'Nguồn tạm dừng', 'quiet'],
 ])
@@ -392,6 +434,22 @@ export function formatAdminDate(value) {
 
 export function statusLabel(value) {
   return STATUS_LABELS[value] ?? value ?? 'Chưa xác định'
+}
+
+export function llmScopeLabel(value) {
+  return LLM_SCOPE_LABELS[value] ?? value ?? 'Chưa ghi nhận'
+}
+
+export function queueLabel(value) {
+  return QUEUE_LABELS[value] ?? value ?? 'không rõ'
+}
+
+export function taskLabel(value) {
+  return TASK_LABELS[value] ?? value ?? 'tác vụ'
+}
+
+export function roleLabel(value) {
+  return ROLE_LABELS[value] ?? value ?? 'Chưa xác định'
 }
 
 export function statusTone(value) {

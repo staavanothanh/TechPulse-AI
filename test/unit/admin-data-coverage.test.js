@@ -17,15 +17,19 @@ import {
   isSessionExpired,
   listItems,
   listMeta,
+  llmScopeLabel,
   mutateAdmin,
   normalizeDueWorkRun,
+  queueLabel,
   readAdmin,
   readResponseData,
+  roleLabel,
   safeAdminError,
   safeTopics,
   stableQueryKey,
   statusLabel,
   statusTone,
+  taskLabel,
   useAdminResource,
 } from '../../client/features/admin/ui/admin-data.js'
 
@@ -234,13 +238,19 @@ describe('admin-data helpers and cache requests', () => {
     expect(formatAdminDate('bad-date')).toBe('Không xác định')
     expect(formatAdminDate('2026-08-20T08:00:00.000Z')).toContain('2026')
     expect(statusLabel('running')).toBe('Đang chạy')
-    expect(statusLabel('unknown')).toBe('unknown')
+    expect(statusLabel('unknown')).toBe('Không xác định')
     expect(statusLabel(null)).toBe('Chưa xác định')
     expect(statusTone('failed')).toBe('danger')
     expect(statusTone('reviewing')).toBe('warning')
     expect(statusTone('published')).toBe('success')
     expect(statusTone('processing')).toBe('accent')
     expect(statusTone('other')).toBe('muted')
+    expect(llmScopeLabel('metadata')).toBe('Siêu dữ liệu')
+    expect(llmScopeLabel('none')).toBe('Không gửi')
+    expect(queueLabel('ingestion')).toBe('Thu thập dữ liệu')
+    expect(taskLabel('embedding')).toBe('Vector')
+    expect(roleLabel('admin')).toBe('Quản trị viên')
+    expect(roleLabel(null)).toBe('Chưa xác định')
     expect(OVERVIEW_METRICS.length).toBeGreaterThan(5)
   })
 

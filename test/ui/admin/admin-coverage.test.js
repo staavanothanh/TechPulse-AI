@@ -407,15 +407,15 @@ describe('admin coverage states', () => {
       initialData: {},
     })
 
-    expect(jobs).toContain('Jobs và queue')
+    expect(jobs).toContain('Tác vụ và hàng đợi')
     expect(jobs).toContain('Tải thêm')
-    expect(governance).toContain('Takedown requests')
+    expect(governance).toContain('Yêu cầu gỡ bài')
     expect(governance).toContain('Bắt đầu xem xét')
     expect(governance).toContain('Không có bước tiếp theo')
     expect(governance).toContain('Thử lại xóa dữ liệu')
     expect(governance).toContain('Theo dõi')
     expect(articles).toContain('Ẩn bài')
-    expect(articles).toContain('Tombstone')
+    expect(articles).toContain('Đã gỡ bỏ')
     expect(articles).toContain('Hiện bài')
     expect(users).toContain('user@example.test')
     expect(users).toContain('Tạm dừng')
@@ -423,7 +423,7 @@ describe('admin coverage states', () => {
     expect(audit).toContain('user_suspended')
     expect(audit).toContain('Chưa ghi nhận')
     expect(overview).toContain('Cần xử lý')
-    expect(overview).toContain('lastSuccessfulIngestionAt')
+    expect(overview).toContain('Lần thu thập dữ liệu thành công gần nhất')
     expect(overviewEmpty).toContain('Không có ngoại lệ mở.')
     expect(overviewQueued).toContain('Đang chờ')
     expect(overviewEmpty).toContain('Ổn định')
@@ -445,8 +445,8 @@ describe('admin coverage states', () => {
       sourcesNeedingReview: 0,
     })
     expect(actionable).toContain('Cần xem')
-    expect(actionable).toContain('0 job đang chờ')
-    expect(actionable).toContain('0 job đang chạy')
+    expect(actionable).toContain('0 tác vụ đang chờ')
+    expect(actionable).toContain('0 tác vụ đang chạy')
 
     const active = renderOverview({
       queuedJobs: 2,
@@ -456,8 +456,8 @@ describe('admin coverage states', () => {
       sourcesNeedingReview: 0,
     })
     expect(active).toContain('Đang chạy')
-    expect(active).toContain('2 job đang chờ')
-    expect(active).toContain('1 job đang chạy')
+    expect(active).toContain('2 tác vụ đang chờ')
+    expect(active).toContain('1 tác vụ đang chạy')
 
     const reviewNeeded = renderOverview({
       queuedJobs: 0,
@@ -545,11 +545,11 @@ describe('admin coverage states', () => {
     expect(sources).toContain('Tạm dừng')
     expect(sources).toContain('Kiểm tra kỹ thuật')
     expect(create).toContain('Create error')
-    expect(create).toContain('Tạo draft')
+    expect(create).toContain('Tạo bản nháp')
     expect(addClosed).toContain('+ Thêm nguồn')
-    expect(addOpen).toContain('Tạo nguồn draft')
+    expect(addOpen).toContain('Tạo nguồn mới (bản nháp)')
     expect(policy).toContain('v4')
-    expect(review).toContain('Lưu quyết định review')
+    expect(review).toContain('Lưu quyết định đánh giá')
     expect(account).toContain('admin@example.test')
     expect(anonymousAccount).toContain('Không hiển thị')
     expect(sources).not.toMatch(/password|secret|credential/i)

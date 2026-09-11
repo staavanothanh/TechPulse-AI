@@ -45,8 +45,8 @@ describe('admin shell', () => {
     ])
     expect(html).toContain('TechPulse Admin')
     expect(html).toContain('Tổng quan vận hành')
-    expect(html).toContain('failedJobs')
-    expect(html).toContain('openTakedowns')
+    expect(html).toContain('Tác vụ lỗi')
+    expect(html).toContain('Yêu cầu gỡ bài đang mở')
     expect(html).toContain('aria-current="page"')
     expect(html).not.toContain('API sẵn sàng')
     expect(html).not.toContain('CSRF trong memory · phiên no-store')
@@ -88,9 +88,9 @@ describe('admin shell', () => {
       }),
     )
 
-    expect(html).toContain('Takedown &amp; xóa tài khoản')
-    expect(html).toContain('Hide trước')
-    expect(html).toContain('article · 1 target')
+    expect(html).toContain('Gỡ bài &amp; xóa tài khoản')
+    expect(html).toContain('Ẩn bài trước khi hoàn tất')
+    expect(html).toContain('article · 1 đối tượng')
     expect(html).not.toMatch(
       /admin@example\.com|alice@example\.com|requester|evidence|textarea|placeholder="Lý do/i,
     )
@@ -118,7 +118,7 @@ describe('admin shell', () => {
     expect(html).toContain('id="admin-source-create-tab"')
     expect(html).toContain('aria-controls="admin-source-registry-panel"')
     expect(html).not.toContain('aria-controls="admin-source-create-panel"')
-    expect(html).not.toContain('Tạo nguồn draft')
+    expect(html).not.toContain('Tạo nguồn mới (bản nháp)')
   })
 
   it('keeps the admin account surface session-bound and exposes logout through props', () => {
@@ -133,7 +133,7 @@ describe('admin shell', () => {
     )
 
     expect(html).toContain('Phiên admin')
-    expect(html).toMatch(/csrf trong memory/i)
+    expect(html).toMatch(/csrf lưu trong bộ nhớ/i)
     expect(html).toContain('Đăng xuất')
     expect(html).not.toContain('localStorage')
     expect(html).not.toContain('csrf-in-memory')

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   formatAdminDate,
   listItems,
+  roleLabel,
   safeAdminError,
   useAdminResource,
 } from './admin-data.js'
@@ -28,8 +29,8 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
   return (
     <div className="admin-view admin-audit-view">
       <PageHeader
-        eyebrow="Append-only"
-        title="Audit bất biến"
+        eyebrow="Chỉ ghi thêm"
+        title="Nhật ký kiểm toán bất biến"
         action={
           <AdminButton icon="refresh" onClick={resource.reload}>
             Làm mới
@@ -44,7 +45,7 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
         }}
       >
         <label>
-          <span>Actor type</span>
+          <span>Loại tác nhân</span>
           <select
             value={draftQuery.actorType}
             onChange={(event) =>
@@ -52,13 +53,13 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
             }
           >
             <option value="">Tất cả</option>
-            <option value="admin">admin</option>
-            <option value="user">user</option>
-            <option value="system-worker">system-worker</option>
+            <option value="admin">Quản trị viên</option>
+            <option value="user">Người dùng</option>
+            <option value="system-worker">Tiến trình hệ thống</option>
           </select>
         </label>
         <label>
-          <span>Target ID</span>
+          <span>Mã đối tượng</span>
           <input
             value={draftQuery.targetId}
             maxLength="128"
@@ -71,12 +72,12 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
           Lọc
         </AdminButton>
       </form>
-      <Panel title="Audit stream">
-        <ResourceFrame resource={resource} loadingLabel="Đang tải audit logs…">
+      <Panel title="Dòng kiểm toán">
+        <ResourceFrame resource={resource} loadingLabel="Đang tải nhật ký kiểm toán…">
           <Table
-            label="Audit logs"
+            label="Nhật ký kiểm toán"
             rows={rows}
-            emptyTitle="Chưa có audit record phù hợp."
+            emptyTitle="Chưa có bản ghi kiểm toán phù hợp."
             columns={[
               {
                 key: 'createdAt',
@@ -90,12 +91,12 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
               },
               {
                 key: 'actorType',
-                label: 'Actor',
+                label: 'Tác nhân',
                 render: (value, row) => (
                   <div className="admin-cell-resource">
-                    <strong className="admin-cell-primary">{value}</strong>
+                    <strong className="admin-cell-primary">{roleLabel(value)}</strong>
                     <small className="admin-cell-sub">
-                      <CompactId id={row.actorId} label="Actor ID" length={8} />
+                      <CompactId id={row.actorId} label="Mã tác nhân" length={8} />
                     </small>
                   </div>
                 ),
@@ -111,7 +112,7 @@ export function AdminAuditView({ api, session, initialData, onSessionExpired, ca
                       <strong className="admin-cell-primary">{value}</strong>
                     )}
                     <small className="admin-cell-sub">
-                      <CompactId id={row.targetId} label="Target ID" length={8} />
+                      <CompactId id={row.targetId} label="Mã đối tượng" length={8} />
                     </small>
                   </div>
                 ),
@@ -167,7 +168,7 @@ export function AdminAccountView({ api, session, onLogout, onSessionExpired }) {
           <div>
             <dt>Vai trò</dt>
             <dd>
-              <StatusBadge value={user.role ?? 'admin'} label={user.role ?? 'admin'} />
+              <StatusBadge value={user.role ?? 'admin'} label={roleLabel(user.role ?? 'admin')} />
             </dd>
           </div>
           <div>
@@ -182,7 +183,7 @@ export function AdminAccountView({ api, session, onLogout, onSessionExpired }) {
           </div>
           <div>
             <dt>CSRF</dt>
-            <dd className="admin-mono">CSRF trong memory · session-bound</dd>
+            <dd className="admin-mono">CSRF lưu trong bộ nhớ · gắn theo phiên</dd>
           </div>
         </dl>
         {error ? (

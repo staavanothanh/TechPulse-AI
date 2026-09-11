@@ -35,17 +35,47 @@ describe('AdminJobsView lifecycle events tab', () => {
       }),
     )
 
-    expect(html).toContain('Lifecycle Events')
+    expect(html).toContain('Sự kiện vòng đời')
     expect(html).toContain('run-cron-1234')
     expect(html).toContain('indexing.executor')
     expect(html).toContain('summary')
-    expect(html).toContain('Lọc theo jobId')
-    expect(html).toContain('Lọc theo sourceId')
-    expect(html).toContain('Lọc theo articleId')
+    expect(html).toContain('Lọc theo mã tác vụ')
+    expect(html).toContain('Lọc theo mã nguồn')
+    expect(html).toContain('Lọc theo mã bài viết')
     expect(html).toContain('Từ thời gian')
     expect(html).toContain('Đến thời gian')
-    expect(html).not.toContain('Xếp indexing job')
+    expect(html).not.toContain('Xếp tác vụ chỉ mục')
   })
+  it('renders the Vietnamese task label for every indexing task instead of the raw enum', () => {
+    const indexingJob = {
+      id: '507f1f77bcf86cd799439021',
+      status: 'queued',
+      task: 'visibility-reconcile',
+      trigger: 'policy-change',
+      articleId: '507f1f77bcf86cd799439012',
+      sourceId: '507f1f77bcf86cd799439013',
+      attempt: 1,
+      createdAt: '2026-09-03T10:00:00.000Z',
+      finishedAt: null,
+      error: null,
+    }
+    const html = renderToStaticMarkup(
+      React.createElement(AdminJobsView, {
+        api: {},
+        session,
+        initialData: {
+          tab: 'indexing',
+          indexing: { data: [indexingJob], meta: { hasNext: false } },
+        },
+        onSessionExpired: vi.fn(),
+      }),
+    )
+
+    expect(html).toContain('Đối chiếu hiển thị')
+    // The machine enum stays only in the filter option value, never as the visible row title.
+    expect(html).not.toMatch(/admin-cell-primary">\s*visibility-reconcile/)
+  })
+
   it('reloads the Events resource for refresh and all job resources after bounded work', () => {
     const resources = {
       ingestion: { reload: vi.fn() },

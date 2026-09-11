@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { listItems, mutateAdmin, useAdminMutation, useAdminResource } from './admin-data.js'
+import { listItems, mutateAdmin, statusLabel, useAdminMutation, useAdminResource } from './admin-data.js'
 import {
   AdminButton,
   AdminConfirmDialog,
@@ -79,7 +79,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                 },
                 idempotencyStore: mutation.idempotencyStore,
               }),
-            'Đã chuyển nguồn sang ' + confirmation.operationalStatus + '.',
+            'Đã chuyển nguồn sang ' + statusLabel(confirmation.operationalStatus) + '.',
           )
         : await mutation.run(
             () =>
@@ -90,7 +90,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                 idempotencyStore: mutation.idempotencyStore,
                 idempotencyIntent: `source-policy-rereview:${confirmation.source.id}`,
               }),
-            'Đã fail-close source để duyệt lại.',
+            'Đã khóa nguồn để duyệt lại.',
           )
     if (response) {
       setConfirmation(null)
@@ -124,7 +124,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
             pathParams: { sourceId: selected.id },
             body: review,
           }),
-        'Đã gửi policy review.',
+        'Đã gửi đánh giá chính sách.',
         { operation: 'reviewSourcePolicy' },
       )
       .then((response) => {
@@ -137,7 +137,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
     return mutation
       .run(
         () => mutateAdmin(api, 'createSource', { csrfToken: session?.csrfToken, body: input }),
-        'Đã tạo source draft.',
+        'Đã tạo bản nháp nguồn.',
       )
       .then((response) => {
         if (response) {
@@ -151,7 +151,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
   return (
     <div className="admin-view admin-sources-view">
       <PageHeader
-        eyebrow="Source Registry"
+        eyebrow="Danh mục nguồn"
         title="Quản lý nguồn"
         action={
           <AdminButton icon="refresh" onClick={reload} disabled={mutation.busy}>
@@ -159,7 +159,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
           </AdminButton>
         }
       />
-      <div className="admin-tabs" role="tablist" aria-label="Source Registry">
+      <div className="admin-tabs" role="tablist" aria-label="Danh mục nguồn">
         <button
           type="button"
           ref={registryTabRef}
@@ -207,7 +207,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
           tabIndex={0}
           aria-labelledby={SOURCE_REGISTRY_TAB_ID}
         >
-          <ResourceFrame resource={resource} loadingLabel="Đang tải Source Registry…">
+          <ResourceFrame resource={resource} loadingLabel="Đang tải danh mục nguồn…">
             <div className="admin-source-workspace">
               <aside className="admin-source-list" aria-label="Danh sách nguồn">
                 {sources.length ? (
@@ -224,15 +224,15 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                       <span>
                         <StatusBadge value={source.operationalStatus} />{' '}
                         <span className="admin-source-version">
-                          policy v{source.policyVersion ?? 'n/a'}
+                          chính sách v{source.policyVersion ?? 'n/a'}
                         </span>
                       </span>
                     </button>
                   ))
                 ) : (
                   <EmptyState
-                    title="Chưa có source."
-                    description="Bấm Thêm nguồn để mở biểu mẫu tạo draft đầu tiên."
+                    title="Chưa có nguồn nào."
+                    description="Bấm Thêm nguồn để mở biểu mẫu tạo bản nháp đầu tiên."
                   />
                 )}
               </aside>
@@ -244,7 +244,7 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                         <StatusBadge value={selected.operationalStatus} />
                         <StatusBadge
                           value={selected.licenseStatus}
-                          label={selected.licenseStatus ?? 'Chưa ghi nhận'}
+                          label={statusLabel(selected.licenseStatus ?? 'Chưa ghi nhận')}
                         />
                       </div>
                       <span className="admin-mono">{selected.id}</span>
@@ -313,8 +313,8 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                   </Panel>
                 ) : (
                   <EmptyState
-                    title="Chọn một source"
-                    description="Policy và trạng thái sẽ hiển thị ở đây."
+                    title="Chọn một nguồn"
+                    description="Chính sách và trạng thái sẽ hiển thị ở đây."
                   />
                 )}
                 {selected ? (
@@ -329,13 +329,13 @@ export function AdminSourcesView({ api, session, initialData, onSessionExpired, 
                   open={Boolean(confirmation)}
                   title={
                     confirmation?.type === 'rereview'
-                      ? 'Fail-close source để duyệt lại?'
-                      : 'Đổi trạng thái source?'
+                      ? 'Khóa nguồn để duyệt lại?'
+                      : 'Đổi trạng thái nguồn?'
                   }
                   consequence={
                     confirmation?.type === 'rereview'
-                      ? 'Source sẽ cần một quyết định policy mới trước khi được xử lý tiếp.'
-                      : 'Server sẽ kiểm tra lifecycle và policy trước khi đổi trạng thái.'
+                      ? 'Nguồn sẽ cần một quyết định chính sách mới trước khi được xử lý tiếp.'
+                      : 'Máy chủ sẽ kiểm tra vòng đời và chính sách trước khi đổi trạng thái.'
                   }
                   reasonCode={confirmation?.reasonCode}
                   busy={mutation.busy}

@@ -1,6 +1,6 @@
 import { buildSourceCreateInput } from './source-form.js'
 
-export const SOURCE_CREATE_ERROR = 'Không thể tạo source. Hãy kiểm tra dữ liệu và thử lại.'
+export const SOURCE_CREATE_ERROR = 'Không thể tạo nguồn. Hãy kiểm tra dữ liệu và thử lại.'
 
 export async function submitSourceCreate({ form, onSubmit, onClose, onError } = {}) {
   try {

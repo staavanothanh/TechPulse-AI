@@ -3,6 +3,7 @@ import {
   formatAdminDate,
   listItems,
   mutateAdmin,
+  roleLabel,
   useAdminMutation,
   useAdminResource,
 } from './admin-data.js'
@@ -40,7 +41,7 @@ export function AdminUsersView({ api, session, initialData, onSessionExpired, ca
           pathParams: { userId: user.id },
           body: { status: suspended ? 'active' : 'suspended', reasonCode },
         }),
-      suspended ? 'Đã khôi phục user.' : 'Đã tạm dừng user.',
+      suspended ? 'Đã khôi phục người dùng.' : 'Đã tạm dừng người dùng.',
     )
     if (response) {
       setConfirmation(null)
@@ -63,7 +64,7 @@ export function AdminUsersView({ api, session, initialData, onSessionExpired, ca
           {mutation.error}
         </p>
       ) : null}
-      <Panel title="User lifecycle" hint={`${rows.length} bản ghi trong trang hiện tại`}>
+      <Panel title="Vòng đời người dùng" hint={`${rows.length} bản ghi trong trang hiện tại`}>
         <ResourceFrame resource={resource} loadingLabel="Đang tải người dùng…">
           <Table
             label="Danh sách người dùng"
@@ -72,24 +73,24 @@ export function AdminUsersView({ api, session, initialData, onSessionExpired, ca
             columns={[
               {
                 key: 'id',
-                label: 'User',
+                label: 'Người dùng',
                 render: (value, row) =>
                   row.status === 'deleted' ? (
                     <div className="admin-cell-resource">
-                      <strong className="admin-muted">Đã ẩn theo tombstone</strong>
+                      <strong className="admin-muted">Đã ẩn (xóa vĩnh viễn)</strong>
                       <small className="admin-cell-sub">
-                        <span>User: </span>
-                        <CompactId id={value} label="User ID" length={8} />
-                        <span> · {row.role ?? 'identity tombstone'}</span>
+                        <span>Người dùng: </span>
+                        <CompactId id={value} label="Mã người dùng" length={8} />
+                        <span> · {row.role ? roleLabel(row.role) : 'ẩn danh'}</span>
                       </small>
                     </div>
                   ) : (
                     <div className="admin-cell-resource">
                       <strong className="admin-cell-primary">{row.email || 'Chưa ghi nhận email'}</strong>
                       <small className="admin-cell-sub">
-                        <span>User: </span>
-                        <CompactId id={value} label="User ID" length={8} />
-                        <span> · {row.role ?? 'user'}</span>
+                        <span>Người dùng: </span>
+                        <CompactId id={value} label="Mã người dùng" length={8} />
+                        <span> · {row.role ? roleLabel(row.role) : 'Người dùng'}</span>
                       </small>
                     </div>
                   ),
@@ -126,8 +127,8 @@ export function AdminUsersView({ api, session, initialData, onSessionExpired, ca
       </Panel>
       <AdminConfirmDialog
         open={Boolean(confirmation)}
-        title={confirmation?.suspended ? 'Khôi phục user?' : 'Tạm dừng user?'}
-        consequence="Server sẽ cập nhật lifecycle và thu hồi session theo policy."
+        title={confirmation?.suspended ? 'Khôi phục người dùng?' : 'Tạm dừng người dùng?'}
+        consequence="Máy chủ sẽ cập nhật vòng đời và thu hồi phiên theo chính sách."
         reasonCode={confirmation?.reasonCode}
         busy={mutation.busy}
         onCancel={() => setConfirmation(null)}
