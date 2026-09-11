@@ -127,12 +127,24 @@ describe('Q&A evidence fence regressions', () => {
   })
 
   it('includes exact trusted source identity in the fence and keeps lookalike keys blocked', () => {
-    const article = articleDocument(firstArticleId, firstSourceId, { titleOriginal: 'Nội dung có email dev@example.com' })
+    const article = articleDocument(firstArticleId, firstSourceId, { titleOriginal: 'Nội dung tin cậy' })
     const trustedSource = sourceDocument(firstSourceId, { sourceKey: 'arxiv:cs-ai', connectorType: 'arxiv', authorityTier: 'primary' })
-    expect(admittedEvidenceText(article, trustedSource)).toContain('dev@example.com')
+    expect(admittedEvidenceText(article, trustedSource)).toContain('Nội dung tin cậy')
     expect(evidenceAdmissionFence(qnaEvidence(article, trustedSource)).articles[0]).toEqual(expect.objectContaining({ sourceKey: 'arxiv:cs-ai' }))
-    expect(() => admittedEvidenceText(article, { ...trustedSource, sourceKey: 'arxiv:other' })).toThrow(/policy/i)
+    const sensitiveArticle = articleDocument(firstArticleId, firstSourceId, { titleOriginal: 'Nội dung có email dev@example.com' })
+    expect(() => admittedEvidenceText(sensitiveArticle, { ...trustedSource, sourceKey: 'arxiv:other' })).toThrow(/policy/i)
   })
+  it.each([
+    ['title', { titleOriginal: 'Nội dung có github_pat_1234567890abcdefghijklmnop' }],
+    ['excerpt', { excerptOriginal: 'Authorization: Bearer abcdefghijklmnop' }],
+  ])('rejects a sensitive %s for exact trusted and lookalike Q&A source keys', (_field, articleOverrides) => {
+    const article = articleDocument(firstArticleId, firstSourceId, articleOverrides)
+    for (const sourceKey of ['arxiv:cs-ai', 'arxiv:cs-ai-copy']) {
+      const source = sourceDocument(firstSourceId, { sourceKey, connectorType: 'arxiv', authorityTier: 'primary' })
+      expect(() => admittedEvidenceText(article, source)).toThrow(expect.objectContaining({ code: 'policy-blocked', status: 422 }))
+    }
+  })
+
 
   it('does not change the evidence fence when only text outside the provider bound changes', () => {
     const source = sourceDocument(firstSourceId)

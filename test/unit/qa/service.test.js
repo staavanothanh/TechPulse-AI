@@ -119,7 +119,7 @@ describe('Step 10 grounded answer service', () => {
     const findQnaEvidence = vi.spyOn(repo, 'findQnaEvidence')
     const queryEmbedding = vi.fn(async () => ({ model: 'test-embedding', dimensions: 1, version: 1, artifactCompatibilityId: 'test-embedding-v1', embedding: [1] }))
     const intentPlanner = vi.fn((input) => planQaIntent(input))
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
     const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
@@ -165,7 +165,7 @@ describe('Step 10 grounded answer service', () => {
     const findQnaEvidence = vi.spyOn(repo, 'findQnaEvidence')
     const queryEmbedding = vi.fn(async () => ({ model: 'test-embedding', dimensions: 1, version: 1, artifactCompatibilityId: 'test-embedding-v1', embedding: [1] }))
     const intentPlanner = vi.fn((input) => planQaIntent(input))
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
     const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
@@ -223,7 +223,7 @@ describe('Step 10 grounded answer service', () => {
 
   it('allows one grounded generation and support verdict, then appends one answer', async () => {
     const repo = repository({ records: evidence() })
-    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Bài viết mô tả kết quả ổn định.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const provider = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Bài viết mô tả kết quả ổn định.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: provider } }, routes: { primary: 'primary' }, supportVerifier })
     const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'grounded-key-1' })
@@ -237,13 +237,73 @@ describe('Step 10 grounded answer service', () => {
       evidenceMap: { E1: 'C1' },
     }))
   })
+  it.each([
+    ['missing status', { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }],
+    ['unknown status', { status: 'pending', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }],
+  ])('refuses a generation candidate with %s instead of persisting answered output', async (_label, candidate) => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async () => candidate)
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const appendAnswer = vi.spyOn(repo, 'appendAnswer')
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: `generation-${_label.replaceAll(' ', '-')}` })
+
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'provider-unavailable', paragraphs: [], citations: [] })
+    expect(providerRouter.execute).toHaveBeenCalledTimes(1)
+    expect(answer).toHaveBeenCalledTimes(1)
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(appendAnswer).toHaveBeenCalledTimes(1)
+    expect(repo.sessions[0].answer).toMatchObject({ status: 'refused', refusalReason: 'provider-unavailable', paragraphs: [], citations: [] })
+    expect([...repo.attempts.values()][0]).toMatchObject({ status: 'refused', resultStatus: 'refused' })
+  })
+
+  it('keeps an explicit answered generation candidate answered through support and persistence', async () => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'explicit-answered-generation' })
+
+    expect(result.answer).toMatchObject({ status: 'answered', paragraphs: [expect.objectContaining({ citationIds: ['C1'] })] })
+    expect(providerRouter.execute).toHaveBeenCalledTimes(2)
+    expect(answer).toHaveBeenCalledTimes(1)
+    expect(supportVerifier).toHaveBeenCalledTimes(1)
+    expect(repo.sessions).toHaveLength(1)
+    expect(repo.sessions[0].answer.status).toBe('answered')
+  })
+
+  it('keeps an explicit refused generation candidate refused without support or answered persistence', async () => {
+    const repo = repository({ records: evidence() })
+    const answer = vi.fn(async () => ({ status: 'refused', refusalReason: 'insufficient-evidence', paragraphs: [], citations: [] }))
+    const supportVerifier = vi.fn()
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'explicit-refused-generation' })
+
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence', paragraphs: [], citations: [] })
+    expect(providerRouter.execute).toHaveBeenCalledTimes(1)
+    expect(answer).toHaveBeenCalledTimes(1)
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(repo.sessions).toHaveLength(1)
+    expect(repo.sessions[0].answer).toMatchObject({ status: 'refused', refusalReason: 'insufficient-evidence' })
+    expect(repo.sessions[0].answer.status).not.toBe('answered')
+  })
+
 
   it('uses the repository transaction to bind an answered chat write to its receipt', async () => {
     const repo = repository({ records: evidence() })
     const originalAppend = repo.appendAnswer
     repo.appendAnswer = vi.fn(async (input) => ({ ...await originalAppend(input), attemptCommitted: true }))
     const updateAttempt = vi.spyOn(repo, 'updateAnswerAttempt')
-    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }) } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }) } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     await service.createAnswer({ auth, question: 'Kết luận là gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'atomic-receipt-key' })
 
@@ -253,7 +313,7 @@ describe('Step 10 grounded answer service', () => {
 
   it('rejects a provider paragraph that lacks the exact internal evidence block ID', async () => {
     const repo = repository({ records: evidence() })
-    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận không có block.', citationIds: ['C1'] }] }))
+    const provider = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận không có block.', citationIds: ['C1'] }] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: provider } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'missing-block-key' })
@@ -336,7 +396,7 @@ describe('Step 10 grounded answer service', () => {
   it('treats normalized continuation topics as an unordered scope', async () => {
     const repo = repository({ records: evidence() })
     repo.getChatSession = vi.fn(async () => ({ id: '507f1f77bcf86cd799439099', scope: { topics: ['ml', 'ai'] } }))
-    const provider = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const provider = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer: provider } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     const result = await service.createAnswer({ auth, question: 'Tiếp tục phiên này', scope: { topics: [' AI ', 'ML'] }, chatSessionId: '507f1f77bcf86cd799439099', idempotencyKey: 'scope-order-key' })
@@ -367,6 +427,37 @@ describe('Step 10 grounded answer service', () => {
     expect(answer).not.toHaveBeenCalled()
     expect(supportVerifier).not.toHaveBeenCalled()
   })
+  it.each([
+    ['trusted title', 'arxiv:cs-ai', 'titleOriginal', 'Nội dung có github_pat_1234567890abcdefghijklmnop'],
+    ['trusted excerpt', 'arxiv:cs-ai', 'excerptOriginal', 'Authorization: Bearer abcdefghijklmnop'],
+    ['lookalike title', 'arxiv:cs-ai-copy', 'titleOriginal', 'Nội dung có github_pat_1234567890abcdefghijklmnop'],
+    ['lookalike excerpt', 'arxiv:cs-ai-copy', 'excerptOriginal', 'Authorization: Bearer abcdefghijklmnop'],
+  ])('fails closed before providers for sensitive admitted evidence in a %s', async (_label, sourceKey, field, rawValue) => {
+    const repo = repository({ records: evidence().map((record) => ({
+      ...record,
+      article: { ...record.article, [field]: rawValue },
+      source: { ...record.source, sourceKey, authorityTier: 'primary' },
+    })) })
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
+    const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
+    const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
+    const appendAnswer = vi.spyOn(repo, 'appendAnswer')
+    const service = createQaService({ chatRepository: repo, articleRepository: repo, providerRouter, providerAdapters: { llmProvider: { answer } }, supportVerifier })
+
+    const result = await service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: `admitted-sensitive-${sourceKey.replaceAll(':', '-')}-${field}` })
+
+    expect(result.answer).toMatchObject({ status: 'refused', refusalReason: 'policy-blocked', paragraphs: [], citations: [] })
+    expect(providerRouter.execute).not.toHaveBeenCalled()
+    expect(answer).not.toHaveBeenCalled()
+    expect(supportVerifier).not.toHaveBeenCalled()
+    expect(appendAnswer).toHaveBeenCalledTimes(1)
+    expect(repo.sessions).toHaveLength(1)
+    expect(repo.sessions[0].answer).toMatchObject({ status: 'refused', paragraphs: [], citations: [] })
+    expect(JSON.stringify(repo.sessions)).not.toContain(rawValue)
+    expect(JSON.stringify(appendAnswer.mock.calls)).not.toContain(rawValue)
+  })
+
 
   it('does not call a provider after the actor fence is lost during provider reservation', async () => {
     const repo = repository({ records: evidence() })
@@ -386,7 +477,7 @@ describe('Step 10 grounded answer service', () => {
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false)
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
@@ -457,7 +548,7 @@ describe('Step 10 grounded answer service', () => {
         article: { ...record.article, rightsSnapshot: { ...record.article.rightsSnapshot, licenseStatus: 'metadata-only', llmInputScope: 'metadata' } },
         source: { ...record.source, licenseStatus: 'metadata-only', llmInputScope: 'metadata', storageScope: { ...record.source.storageScope, excerpt: false } },
       }))
-      return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
+      return { status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
     })
     const supportVerifier = vi.fn()
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
@@ -470,7 +561,7 @@ describe('Step 10 grounded answer service', () => {
 
   it('fails closed when the support verdict is not bound to the exact evidence block set', async () => {
     const repo = repository({ records: evidence() })
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E2'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
@@ -482,7 +573,7 @@ describe('Step 10 grounded answer service', () => {
 
   it('refuses visible evidence that does not address the admitted question', async () => {
     const repo = repository({ records: evidence() })
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: false, evidenceBlockIds: ['E1'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
@@ -494,7 +585,7 @@ describe('Step 10 grounded answer service', () => {
 
   it('fails closed when the support verifier does not explicitly confirm the question is addressed', async () => {
     const repo = repository({ records: evidence() })
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', evidenceBlockIds: ['E1'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
 
@@ -545,7 +636,7 @@ describe('Step 10 grounded answer service', () => {
   it('does not create a refusal when final append CAS loses the article lifecycle race', async () => {
     const repo = repository({ records: evidence() })
     repo.appendAnswer = vi.fn(async () => { throw Object.assign(new Error('article lifecycle changed'), { status: 409, code: 'conflict' }) })
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'append-cas-race' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
@@ -556,7 +647,7 @@ describe('Step 10 grounded answer service', () => {
   it('does not create a refusal when final append CAS loses the active user lifecycle race', async () => {
     const repo = repository({ records: evidence() })
     repo.appendAnswer = vi.fn(async () => { throw Object.assign(new Error('user lifecycle changed'), { status: 409, code: 'conflict' }) })
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
     await expect(service.createAnswer({ auth, question: 'Bài viết kết luận gì?', scope: { articleId: 'article-1' }, idempotencyKey: 'append-user-cas-race' })).rejects.toMatchObject({ status: 409, code: 'conflict' })
@@ -584,7 +675,7 @@ describe('Step 10 grounded answer service', () => {
         markAppendComplete()
       }
     })
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', support: 'support' }, supportVerifier })
     const controller = new globalThis.AbortController()
@@ -629,7 +720,7 @@ describe('Step 10 grounded answer service', () => {
       async appendAnswer({ answer, chatSessionId }) { const value = { chatSessionId: chatSessionId ?? 'chat-1', messageId: answer.id, answer: { ...answer, chatSessionId: chatSessionId ?? 'chat-1' } }; sessions.push(value); return value },
       async findQnaEvidence() { return records },
     }
-    const answer = vi.fn(async () => { providerCalls += 1; await new Promise((resolve) => setTimeout(resolve, 15)); return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] } })
+    const answer = vi.fn(async () => { providerCalls += 1; await new Promise((resolve) => setTimeout(resolve, 15)); return { status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] } })
     const rateLimitAdmission = { reserve: vi.fn(async () => ({ allowed: true })) }
     const service = createQaService({ chatRepository: repo, articleRepository: repo, rateLimitAdmission, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
@@ -663,7 +754,7 @@ describe('Step 10 grounded answer service', () => {
     const repo = repository({ records: evidence() })
     let records = evidence()
     repo.findQnaEvidence = vi.fn(async () => records)
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn()
     const providerAdmission = {
       run: vi.fn(async ({ invoke, kind, routeId }) => {
@@ -684,7 +775,7 @@ describe('Step 10 grounded answer service', () => {
     const updateAttempt = vi.spyOn(repo, 'updateAnswerAttempt')
     const answer = vi.fn(async ({ route }) => {
       if (route.routeId === 'primary') throw Object.assign(new Error('retryable'), { retryable: true })
-      return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
+      return { status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
     })
     const service = createQaService({ chatRepository: repo, articleRepository: repo, providerAdapters: { llmProvider: { answer } }, routes: { primary: 'primary', fallback: 'fallback', support: 'support' }, supportVerifier: async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }) })
 
@@ -708,7 +799,7 @@ describe('Step 10 grounded answer service', () => {
     const repo = repository({ records: evidence() })
     const answer = vi.fn(async ({ route }) => {
       if (route.routeId === 'qa-primary') throw Object.assign(new Error('model unavailable'), { failureClass: 'model-retryable' })
-      return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
+      return { status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
     })
     const verifySupport = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const generationInputs = []
@@ -775,7 +866,7 @@ describe('Step 10 grounded answer service', () => {
     const repo = repository({ records: evidence() })
     const answer = vi.fn(async ({ route }) => route.routeId === 'qa-provider-primary'
       ? Promise.reject(Object.assign(new Error('provider domain unavailable'), { failureClass: 'provider-retryable' }))
-      : { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] })
+      : { status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] })
     const providerRouter = {
       execute: vi.fn(async ({ workloadId, admittedInput, invoke, validateOutput }) => {
         if (workloadId === 'qa-generation') {
@@ -939,7 +1030,7 @@ describe('Step 10 grounded answer service', () => {
       source: valid.source,
     }
     const repo = repository({ records: [invalid, valid] })
-    const answer = vi.fn(async () => ({ paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
+    const answer = vi.fn(async () => ({ status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }))
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })
     const providerRouter = { execute: vi.fn((input) => baseRouter.execute(input)) }
@@ -962,7 +1053,7 @@ describe('Step 10 grounded answer service', () => {
     repo.getAnswerResult = vi.fn(async () => repo.sessions[0]?.answer)
     const answer = vi.fn(async () => {
       records[0].article.originalUrl = 'http://example.com/mutated'
-      return { paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
+      return { status: 'answered', paragraphs: [{ text: 'Kết luận có căn cứ.', citationIds: ['C1'], evidenceBlockIds: ['E1'] }] }
     })
     const supportVerifier = vi.fn(async () => ({ verdict: 'supported', addressesQuestion: true, evidenceBlockIds: ['E1'] }))
     const baseRouter = routerFixture({ routes: { primary: 'primary', support: 'support' } })

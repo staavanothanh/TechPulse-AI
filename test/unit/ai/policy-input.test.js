@@ -77,15 +77,47 @@ describe('Step 9 policy-derived AI input', () => {
 
   it('allows the reviewed connector payload exception only for an exact trusted source key', () => {
     const credentialArticle = { ...article, titleOriginal: 'Nghiên cứu có email dev@example.com' }
-    expect(buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey: 'rss:the-verge' }, purpose: 'summary' })).toEqual(expect.objectContaining({ basis: 'official-payload' }))
-    expect(() => buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey: 'rss:the-verge' }, purpose: 'embedding' })).toThrow(PolicyInputError)
-    expect(() => buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey: 'rss:other-verge-copy' }, purpose: 'summary' })).toThrow(PolicyInputError)
+    const trustedSource = { ...source, sourceKey: 'rss:the-verge', connectorType: 'rss', accessMethod: 'rss', authorityTier: 'editorial' }
+    expect(buildPolicyDerivedInput({ article: credentialArticle, source: trustedSource, purpose: 'summary' })).toEqual(expect.objectContaining({ basis: 'official-payload' }))
+    expect(() => buildPolicyDerivedInput({ article: credentialArticle, source: trustedSource, purpose: 'embedding' })).toThrow(PolicyInputError)
+    expect(() => buildPolicyDerivedInput({ article: credentialArticle, source: { ...trustedSource, sourceKey: 'rss:other-verge-copy' }, purpose: 'summary' })).toThrow(PolicyInputError)
+  })
+  it.each([
+    ['title', 'connectorType', { titleOriginal: 'github_pat_1234567890abcdefghijklmnop' }, undefined, { connectorType: 'arxiv' }],
+    ['title', 'accessMethod', { titleOriginal: 'github_pat_1234567890abcdefghijklmnop' }, undefined, { accessMethod: 'api' }],
+    ['title', 'authorityTier', { titleOriginal: 'github_pat_1234567890abcdefghijklmnop' }, undefined, { authorityTier: 'primary' }],
+    ['title', 'source identity', { titleOriginal: 'github_pat_1234567890abcdefghijklmnop' }, undefined, { id: '507f1f77bcf86cd799439099' }],
+    ['excerpt', 'connectorType', { titleOriginal: 'Safe title', excerptOriginal: 'Authorization: Bearer abcdefghijklmnop' }, undefined, { connectorType: 'arxiv' }],
+    ['excerpt', 'accessMethod', { titleOriginal: 'Safe title', excerptOriginal: 'Authorization: Bearer abcdefghijklmnop' }, undefined, { accessMethod: 'api' }],
+    ['excerpt', 'authorityTier', { titleOriginal: 'Safe title', excerptOriginal: 'Authorization: Bearer abcdefghijklmnop' }, undefined, { authorityTier: 'primary' }],
+    ['excerpt', 'source identity', { titleOriginal: 'Safe title', excerptOriginal: 'Authorization: Bearer abcdefghijklmnop' }, undefined, { id: '507f1f77bcf86cd799439099' }],
+    ['fullText', 'connectorType', { titleOriginal: 'Safe title' }, 'api_key=credential-value-123456', { connectorType: 'arxiv', llmInputScope: 'fulltext-temporary' }],
+    ['fullText', 'accessMethod', { titleOriginal: 'Safe title' }, 'api_key=credential-value-123456', { accessMethod: 'api', llmInputScope: 'fulltext-temporary' }],
+    ['fullText', 'authorityTier', { titleOriginal: 'Safe title' }, 'api_key=credential-value-123456', { authorityTier: 'primary', llmInputScope: 'fulltext-temporary' }],
+    ['fullText', 'source identity', { titleOriginal: 'Safe title' }, 'api_key=credential-value-123456', { id: '507f1f77bcf86cd799439099', llmInputScope: 'fulltext-temporary' }],
+  ])('does not authorize sensitive %s input for an exact trusted key with mismatched %s', (_field, _mismatch, articleOverrides, fullTextTemporary, sourceOverrides) => {
+    const trustedSource = {
+      ...source,
+      sourceKey: 'rss:the-verge',
+      connectorType: 'rss',
+      accessMethod: 'rss',
+      authorityTier: 'editorial',
+      ...sourceOverrides,
+    }
+    expect(() => buildPolicyDerivedInput({ article: { ...article, ...articleOverrides, sourceId: article.sourceId }, source: trustedSource, purpose: 'summary', fullTextTemporary }))
+      .toThrow(PolicyInputError)
   })
 
-  it('recognizes the exact demo source keys used by the live connector seed', () => {
+
+  it('recognizes the exact demo source keys and canonical connector tuples used by the live seed', () => {
     const credentialArticle = { ...article, titleOriginal: 'Nghiên cứu có email dev@example.com' }
-    for (const sourceKey of ['demo:rss-the-verge', 'demo:arxiv-cs-ai', 'demo:hn-topstories']) {
-      expect(buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey }, purpose: 'summary' }))
+    const demoSources = [
+      ['demo:rss-the-verge', { connectorType: 'rss', accessMethod: 'rss', authorityTier: 'editorial' }],
+      ['demo:arxiv-cs-ai', { connectorType: 'arxiv', accessMethod: 'api', authorityTier: 'primary' }],
+      ['demo:hn-topstories', { connectorType: 'hacker-news', accessMethod: 'api', authorityTier: 'community-signal' }],
+    ]
+    for (const [sourceKey, metadata] of demoSources) {
+      expect(buildPolicyDerivedInput({ article: credentialArticle, source: { ...source, sourceKey, ...metadata }, purpose: 'summary' }))
         .toEqual(expect.objectContaining({ basis: 'official-payload' }))
     }
   })

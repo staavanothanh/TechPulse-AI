@@ -155,6 +155,24 @@ describe('Step 8 Mongo content repository', () => {
     expect(page.articles[0]).toEqual(expect.objectContaining({ summaryStatus: 'failed', summaryVi: null, summaryBasis: null, leadMedia: null }))
     expect(JSON.stringify(page)).not.toMatch(/must not leak|sourcePolicyVersion|leadMediaStatus|removed/)
   })
+  it('fails closed when a legacy ready summary or title contains credential-like text', async () => {
+    const currentSource = source()
+    const unsafeSummary = 'Tóm tắt chứa github_pat_1234567890abcdefghijklmnop và dev@example.com.'
+    const unsafeTitle = 'Tiêu đề chứa github_pat_1234567890abcdefghijklmnop và dev@example.com.'
+    const legacy = {
+      ...document({ titleVi: unsafeTitle, summaryStatus: 'ready', summaryVi: unsafeSummary, summaryBasis: 'metadata', summaryDetailStatus: 'pending' }),
+      _currentSource: currentSource,
+      _isSaved: [],
+    }
+    const repository = new MongoArticleRepository({ db: {}, client: {} })
+    repository.articles = () => ({ aggregate: vi.fn(() => ({ toArray: vi.fn(async () => [legacy]) })) })
+
+    const page = await repository.listVisibleArticles({ userId: USER_ID, limit: 20 })
+
+    expect(page.articles[0]).toMatchObject({ titleVi: null, summaryStatus: 'failed', summaryVi: null, summaryBasis: null })
+    expect(JSON.stringify(page)).not.toMatch(/github_pat_1234567890abcdefghijklmnop|dev@example\.com/)
+  })
+
 
   it('projects legacy short-ready detail as explicit pending/null and emits canonical ready detail', async () => {
     const currentSource = source()

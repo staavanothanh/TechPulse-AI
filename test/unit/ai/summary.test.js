@@ -62,6 +62,31 @@ describe('Step 9 Vietnamese summary boundary', () => {
       summaryParagraphsVi: ['Công cụ này giúp lập trình viên phân tích mã nguồn bằng API an toàn.', 'Quy trình tự động hóa vẫn giữ các thuật ngữ CLI và code identifier.'],
     })
   })
+  it.each([
+    ['email', 'titleVi', 'Bản tin xác nhận liên hệ dev@example.com trong hệ thống.'],
+    ['token', 'titleVi', 'Bản tin xác nhận github_pat_1234567890abcdefghijklmnop trong hệ thống.'],
+    ['Bearer', 'titleVi', 'Bản tin xác nhận Bearer abcdefghijklmnop trong hệ thống.'],
+    ['email', 'summaryVi', 'Nhóm nghiên cứu xác nhận liên hệ dev@example.com trong tài liệu và mô tả kết quả.'],
+    ['token', 'summaryVi', 'Nhóm nghiên cứu xác nhận github_pat_1234567890abcdefghijklmnop trong tài liệu và mô tả kết quả.'],
+    ['Bearer', 'summaryVi', 'Nhóm nghiên cứu xác nhận Bearer abcdefghijklmnop trong tài liệu và mô tả kết quả.'],
+    ['email', 'summaryParagraphsVi', 'Đoạn chi tiết ghi nhận liên hệ dev@example.com trong tài liệu nguồn và nêu giới hạn.'],
+    ['token', 'summaryParagraphsVi', 'Đoạn chi tiết ghi nhận github_pat_1234567890abcdefghijklmnop trong tài liệu nguồn và nêu giới hạn.'],
+    ['Bearer', 'summaryParagraphsVi', 'Đoạn chi tiết ghi nhận Bearer abcdefghijklmnop trong tài liệu nguồn và nêu giới hạn.'],
+  ])('rejects %s-like text embedded in %s', (_kind, field, injectedText) => {
+    const base = {
+      titleVi: 'Mô hình AI mới giúp giảm chi phí suy luận',
+      summaryVi: 'Nhóm nghiên cứu công bố một kỹ thuật mới giúp giảm chi phí suy luận trong khi vẫn giữ chất lượng trên bộ đánh giá đã nêu.',
+      summaryParagraphsVi: [
+        'Nhóm nghiên cứu giới thiệu một kỹ thuật mới nhằm giảm chi phí vận hành mô hình AI.',
+        'Kết quả được báo cáo vẫn giữ chất lượng trên benchmark đã nêu trong nguồn.',
+      ],
+    }
+    const candidate = field === 'summaryParagraphsVi'
+      ? { ...base, summaryParagraphsVi: [injectedText, base.summaryParagraphsVi[1]] }
+      : { ...base, [field]: injectedText }
+    expect(() => validateVietnameseSummary(candidate)).toThrow(/sensitive|policy|privacy|safe/i)
+  })
+
 
   it('accepts safe Unicode compatibility normalization from provider output', () => {
     expect(validateVietnameseSummary({

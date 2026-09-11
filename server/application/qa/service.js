@@ -698,9 +698,10 @@ export function createQaService({ articleRepository, chatRepository, answerAttem
           return adapters.llmProvider.answer({ route, input: admittedInput.prompt.prompt, locale: 'vi', tools: [], signal: execution.signal, deadline: execution.deadline })
         }
         const validateGenerationOutput = ({ output: candidate }) => {
-          if (candidate?.status === 'refused') return candidate
-          const parsedCandidate = candidate?.status === 'answered' ? candidate : { ...candidate, status: 'answered' }
-          if (parsedCandidate.status !== 'answered' || !Array.isArray(parsedCandidate.paragraphs)) throw new ProviderAdapterError('schema')
+          if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || !Object.hasOwn(candidate, 'status') || !['answered', 'refused'].includes(candidate.status)) throw new ProviderAdapterError('schema')
+          if (candidate.status === 'refused') return candidate
+          if (!Array.isArray(candidate.paragraphs)) throw new ProviderAdapterError('schema')
+          const parsedCandidate = candidate
           try {
             return { ...parsedCandidate, paragraphs: validateParagraphCitations({ paragraphs: parsedCandidate.paragraphs, citationIds: providerInput.prompt.citations.map(({ id }) => id), evidenceBlocks: providerInput.prompt.blocks }) }
           } catch (error) {
