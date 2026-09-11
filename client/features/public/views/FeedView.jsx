@@ -8,11 +8,7 @@ import {
   Skeleton,
   StateCard,
 } from '../components/reader-primitives.jsx'
-import {
-  EMPTY_FILTERS,
-  SOURCE_CATALOG,
-  groupSourcesByConnector,
-} from '../components/reader-format.js'
+import { EMPTY_FILTERS } from '../components/reader-format.js'
 
 const MAX_DIRECT_PAGE = 10_000
 
@@ -33,31 +29,20 @@ function sourceOption(source) {
     : typeof source.sourceName === 'string' && source.sourceName.trim()
       ? source.sourceName.trim()
       : id
-  const connectorType = source.connectorType || source.connector
-  return { id, name, ...(connectorType ? { connectorType } : {}) }
+  return { id, name }
 }
 
 function articleSource(article) {
   if (!article || typeof article !== 'object') return null
-  if (article.source) {
-    return {
-      ...article.source,
-      ...(article.connectorType ? { connectorType: article.connectorType } : {}),
-    }
-  }
+  if (article.source) return article.source
   if (article.sourceId || article.sourceName) {
-    return {
-      sourceId: article.sourceId,
-      sourceName: article.sourceName,
-      ...(article.connectorType ? { connectorType: article.connectorType } : {}),
-    }
+    return { sourceId: article.sourceId, sourceName: article.sourceName }
   }
   return null
 }
 
 function collectSourceItems(sources, articles) {
   const candidates = [
-    ...SOURCE_CATALOG,
     ...(Array.isArray(sources) ? sources : []),
     ...(Array.isArray(articles) ? articles.map(articleSource) : []),
   ]
@@ -85,18 +70,22 @@ export default function FeedView({
   savedOverrides = {},
   saveError = null,
   handlers = {},
+  maxSavedLimit = 20,
 }) {
   const nextFilters = { ...EMPTY_FILTERS, ...filters }
-  const hasFilters = Object.values(nextFilters).some(Boolean)
+  const hasFilters = Boolean(
+    nextFilters.sourceId || nextFilters.publishedAfter || nextFilters.publishedBefore
+  )
   const sourceItems = collectSourceItems(sources, articles)
-  const sourceGroups = groupSourcesByConnector(sourceItems)
   const totalItems = Number(meta.totalItems)
   const totalPages = Number.isFinite(totalItems) && totalItems > 0 ? Math.ceil(totalItems / 10) : undefined
+
   return (
     <section
       className="public-view public-feed-view"
       aria-labelledby="public-feed-title"
       data-od-id="feed"
+      style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 16px' }}
     >
       <PageHeading
         id="public-feed-title"
@@ -108,39 +97,59 @@ export default function FeedView({
             className="public-btn public-btn-primary"
             type="button"
             onClick={handlers.onOpenSearch}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
           >
-            Tìm kiếm
+            <span>🔍</span> Tìm kiếm nâng cao
           </button>
         }
       />
-      <div className="public-feed-layout">
+
+      <div
+        className="public-feed-layout"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 320px',
+          gap: '32px',
+          marginTop: '24px',
+          alignItems: 'start',
+        }}
+      >
         <div
           className="public-results"
           id="public-feed-results"
           aria-busy={state === 'loading' ? 'true' : 'false'}
+          style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
         >
           <SaveErrorNotice
             error={saveError}
             onRetry={handlers.onSaveRetry}
             onDismiss={handlers.onDismissSaveError}
           />
+
           {state === 'loading' ? (
-            <>
-              <Skeleton label="Đang tải feed" />
-              <Skeleton label="Đang tải feed" />
-            </>
+            <div style={{ display: 'grid', gap: '16px' }}>
+              <Skeleton label="Đang tải feed tín hiệu..." />
+              <Skeleton label="Đang tải feed tín hiệu..." />
+              <Skeleton label="Đang tải feed tín hiệu..." />
+            </div>
           ) : null}
+
           {state === 'error' ? (
-            <ErrorState title="Không thể tải feed" error={error} onRetry={handlers.onRetry} />
+            <ErrorState
+              title="Không thể tải danh sách Feed"
+              error={error}
+              onRetry={handlers.onRetry}
+            />
           ) : null}
+
           {state === 'ready' && articles.length === 0 ? (
             <StateCard
               eyebrow="Feed trống"
-              title="Không có bài phù hợp"
+              title="Không có bài viết phù hợp"
               copy={
                 hasFilters
-                  ? 'Xóa một vài bộ lọc để mở rộng kết quả.'
-                  : 'Chưa có bài đã xuất bản từ nguồn đang hoạt động.'
+                  ? 'Thử xóa bớt bộ lọc ở cột bên phải để mở rộng kết quả tìm kiếm.'
+                  : 'Chưa có bài viết mới được xuất bản từ các nguồn theo dõi.'
               }
               action={
                 hasFilters ? (
@@ -155,8 +164,13 @@ export default function FeedView({
               }
             />
           ) : null}
-          {state === 'ready'
-            ? articles.map((item) => (
+
+          {state === 'ready' && articles.length > 0 ? (
+            <div
+              className="feed-articles-list"
+              style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+            >
+              {articles.map((item) => (
                 <ArticleCard
                   key={item.id}
                   article={item}
@@ -166,68 +180,116 @@ export default function FeedView({
                   onOpenArticle={handlers.onOpenArticle}
                   onAskAboutArticle={handlers.onAskAboutArticle}
                 />
-              ))
-            : null}
-          <Pagination
-            page={page}
-            hasNext={Boolean(meta.hasNext)}
-            totalPages={totalPages}
-            onPrevious={handlers.onPreviousPage}
-            onNext={handlers.onNextPage}
-            onFirst={handlers.onFirstPage}
-            onLast={handlers.onLastPage}
-            onPageChange={handlers.onPageChange}
-            disabled={state === 'loading'}
-            maxPage={MAX_DIRECT_PAGE}
-            canGoPrevious={page <= MAX_DIRECT_PAGE}
-            label="Phân trang feed"
-          />
+              ))}
+            </div>
+          ) : null}
+
+          {state === 'ready' && articles.length > 0 && (
+            <div style={{ marginTop: '16px' }}>
+              <Pagination
+                page={page}
+                hasNext={Boolean(meta.hasNext)}
+                totalPages={totalPages}
+                onPrevious={handlers.onPreviousPage}
+                onNext={handlers.onNextPage}
+                onFirst={handlers.onFirstPage}
+                onLast={handlers.onLastPage}
+                onPageChange={handlers.onPageChange}
+                disabled={state === 'loading'}
+                maxPage={MAX_DIRECT_PAGE}
+                canGoPrevious={page <= MAX_DIRECT_PAGE}
+                label="Phân trang feed"
+              />
+            </div>
+          )}
         </div>
-        <aside className="public-filter-rail" aria-labelledby="public-feed-filter-title">
+
+        <aside
+          className="public-filter-rail"
+          aria-labelledby="public-feed-filter-title"
+          style={{
+            position: 'sticky',
+            top: '20px',
+            backgroundColor: '#ffffff',
+            border: '1px solid #e5e7eb',
+            borderRadius: '12px',
+            padding: '20px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          }}
+        >
           <div className="public-filter-card">
-            <div className="public-filter-heading">
-              <h2 id="public-feed-filter-title">Bộ lọc</h2>
+            <div
+              className="public-filter-heading"
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '16px',
+                paddingBottom: '12px',
+                borderBottom: '1px solid #f3f4f6',
+              }}
+            >
+              <h2
+                id="public-feed-filter-title"
+                style={{ fontSize: '1.125rem', fontWeight: '700', margin: 0, color: '#111827' }}
+              >
+                Bộ lọc tin tức
+              </h2>
               {hasFilters ? (
                 <button
                   className="public-text-action"
                   type="button"
                   onClick={handlers.onClearFilters}
                   disabled={applying}
+                  style={{
+                    fontSize: '0.875rem',
+                    color: '#2563eb',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: '500',
+                  }}
                 >
                   Đặt lại
                 </button>
               ) : null}
             </div>
-            <form onSubmit={handlers.onSubmit} noValidate aria-busy={applying || undefined}>
-              <FilterField
-                id="public-feed-topic"
-                label="Chủ đề"
-                value={nextFilters.topic}
-                onChange={(value) => handlers.onFilterChange?.('topic', value)}
-                error={errors.topic}
-                maxLength={64}
-                placeholder="Ví dụ: AI"
-              />
-              <label className="public-field" htmlFor="public-feed-source">
-                <span>Nguồn</span>
+
+            <form
+              onSubmit={handlers.onSubmit}
+              noValidate
+              aria-busy={applying || undefined}
+              style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+            >
+              <label
+                className="public-field"
+                htmlFor="public-feed-source"
+                style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.875rem', fontWeight: '500', color: '#374151' }}
+              >
+                <span>Nguồn tin</span>
                 <select
                   id="public-feed-source"
                   className="public-input"
                   value={nextFilters.sourceId}
                   onChange={(event) => handlers.onFilterChange?.('sourceId', event.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #d1d5db',
+                    backgroundColor: '#ffffff',
+                    fontSize: '0.875rem',
+                  }}
                 >
                   <option value="">Tất cả nguồn</option>
-                  {sourceGroups.map((group) => (
-                    <optgroup key={group.key} label={group.label}>
-                      {group.items.map((source) => (
-                        <option key={source.id} value={source.id}>
-                          {source.name || source.id}
-                        </option>
-                      ))}
-                    </optgroup>
+                  {sourceItems.map((source) => (
+                    <option key={source.id} value={source.id}>
+                      {source.name || source.id}
+                    </option>
                   ))}
                 </select>
               </label>
+
               <FilterField
                 id="public-feed-after"
                 label="Từ ngày"
@@ -236,6 +298,7 @@ export default function FeedView({
                 error={errors.publishedAfter}
                 type="datetime-local"
               />
+
               <FilterField
                 id="public-feed-before"
                 label="Đến ngày"
@@ -244,11 +307,18 @@ export default function FeedView({
                 error={errors.publishedBefore}
                 type="datetime-local"
               />
+
               <button
                 className="public-btn public-btn-primary public-btn-block"
                 type="submit"
                 disabled={applying}
                 aria-busy={applying || undefined}
+                style={{
+                  width: '100%',
+                  marginTop: '8px',
+                  padding: '10px 16px',
+                  fontWeight: '600',
+                }}
               >
                 {applying ? 'Đang áp dụng...' : 'Áp dụng bộ lọc'}
               </button>
