@@ -1,3 +1,4 @@
+import { containsSensitiveProviderInput } from './policy-input.js'
 import { sanitizeText } from '../domain/article/normalization.js'
 
 const RICH_FIELDS = new Set(['titleVi', 'summaryVi', 'summaryParagraphsVi'])
@@ -13,6 +14,7 @@ function boundedPlainText(value, label, maximum) {
   const normalized = value.normalize('NFKC').replace(/\s+/g, ' ').trim()
   const safe = sanitizeText(value, maximum)
   if (!safe || safe !== normalized) throw new Error(`${label} must be plain text`)
+  if (containsSensitiveProviderInput(safe)) throw new Error(`${label} contains sensitive provider input`)
   return safe
 }
 

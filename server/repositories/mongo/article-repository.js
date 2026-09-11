@@ -14,7 +14,7 @@ import { validateArticleDocument } from '../../../scripts/migrations/articles.js
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_VERSION, validateEmbeddingVector } from '../../ai/embedding.js'
 import { validateVietnameseSummary } from '../../ai/summary.js'
 import { cosineSimilarity, rankQnaEvidence } from '../../ai/retrieval.js'
-import { buildPolicyDerivedInput } from '../../ai/policy-input.js'
+import { buildPolicyDerivedInput, containsSensitiveProviderInput } from '../../ai/policy-input.js'
 import { buildIngestionArtifactJobs, indexingJobDocument } from './indexing-job-repository.js'
 import { buildRemovedArticleTombstone, serializeRemovedArticleTombstone, validateRemovedArticleTombstone } from '../../domain/article/removed-tombstone.js'
 
@@ -371,7 +371,7 @@ function publicLeadMedia(media) {
 }
 
 function summaryFields(article) {
-  const ready = article.summaryStatus === 'ready' && typeof article.summaryVi === 'string' && article.summaryVi.length > 0 && SUMMARY_BASES.has(article.summaryBasis)
+  const ready = article.summaryStatus === 'ready' && typeof article.summaryVi === 'string' && article.summaryVi.length > 0 && SUMMARY_BASES.has(article.summaryBasis) && !containsSensitiveProviderInput(article.summaryVi)
   const status = ready ? 'ready' : PUBLIC_SUMMARY_STATUSES.has(article.summaryStatus) && article.summaryStatus !== 'ready' ? article.summaryStatus : 'failed'
   return { summaryStatus: status, summaryVi: ready ? article.summaryVi : null, summaryBasis: ready ? article.summaryBasis : null }
 }
@@ -403,7 +403,7 @@ function publicArticleCard(document, source = document?._currentSource) {
   return {
     id: article.id,
     titleOriginal: article.titleOriginal,
-    titleVi: typeof article.titleVi === 'string' ? article.titleVi : null,
+    titleVi: typeof article.titleVi === 'string' && !containsSensitiveProviderInput(article.titleVi) ? article.titleVi : null,
     source: {
       id: source._id?.toHexString?.() ?? String(source.id ?? article.sourceId),
       name: String(source.name ?? ''),
