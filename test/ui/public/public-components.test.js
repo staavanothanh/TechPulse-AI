@@ -427,6 +427,11 @@ describe('public feature presentation contract', () => {
       row.props.onKeyDown({ key: 'Enter', preventDefault: () => {} })
       const selected = findElement(runner.current, (element) => element.props?.['aria-current'] === 'true')
       expect(selected).not.toBeNull()
+
+      const nestedEvent = { key: 'Enter', target: {}, currentTarget: {}, preventDefault: vi.fn() }
+      nestedEvent.currentTarget = { nested: true }
+      row.props.onKeyDown(nestedEvent)
+      expect(nestedEvent.preventDefault).not.toHaveBeenCalled()
     } finally {
       runner.unmount()
     }

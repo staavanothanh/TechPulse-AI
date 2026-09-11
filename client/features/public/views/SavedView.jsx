@@ -160,6 +160,7 @@ export default function SavedView({
                   tabIndex={0}
                   onClick={() => setSelectedArticleId(item.id)}
                   onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return
                     if (event.key !== 'Enter' && event.key !== ' ') return
                     event.preventDefault()
                     setSelectedArticleId(item.id)
