@@ -592,6 +592,7 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
   const failedSave = useRef(null)
   const saveInFlightRef = useRef(false)
   const failedRequestRef = useRef({ cursor: null, targetPage: 1 })
+  const markedSavedIdsRef = useRef(new Set())
   const load = useCallback(async ({ cursor = null, targetPage = 1 } = {}) => {
     failedRequestRef.current = { cursor, targetPage }
     setState('loading')
@@ -607,7 +608,10 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
         next[targetPage - 1] = nextMeta.nextCursor ?? null
         return next
       })
-      items.forEach((item) => markSaved(item.id, true))
+      items.forEach((item) => {
+        markedSavedIdsRef.current.add(item.id)
+        markSaved(item.id, true)
+      })
       setState('ready')
     } catch (requestError) {
       expire(requestError)
@@ -652,7 +656,8 @@ function useSaved({ contentApi, csrfToken, enabled, expire, markSaved, openArtic
     try {
       await contentApi.clearSavedArticles(csrfToken)
       failedSave.current = null
-      articles.forEach((item) => markSaved(item.id, false))
+      markedSavedIdsRef.current.forEach((id) => markSaved(id, false))
+      markedSavedIdsRef.current.clear()
       setArticles([])
       setMeta({ hasNext: false, nextCursor: null, page: 1 })
       setCursors([null])

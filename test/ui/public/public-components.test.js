@@ -390,6 +390,48 @@ describe('public feature presentation contract', () => {
     }
   })
 
+  it('keeps saved pagination reachable when a later page is empty', () => {
+    const html = render(SavedView, {
+      state: 'ready',
+      articles: [],
+      meta: { hasNext: false, nextCursor: null, page: 2 },
+      handlers,
+    })
+    expect(html).toContain('aria-label="Phân trang bài đã lưu"')
+    expect(html).toContain('Trang này không còn bài viết')
+    expect(html).not.toContain('Chưa có bài đã lưu')
+  })
+
+  it('shows a page-scoped indicator instead of an invented saved quota', () => {
+    const first = render(SavedView, { state: 'ready', articles: [article], meta: { page: 1 }, handlers })
+    const second = render(SavedView, {
+      state: 'ready',
+      articles: [{ ...article, id: 'article-2' }],
+      meta: { page: 2, hasNext: true, nextCursor: 'cursor-2' },
+      handlers,
+    })
+    expect(first).toContain('Trang 1')
+    expect(second).toContain('Trang 2')
+    expect(first).not.toMatch(/\d+\/20/)
+  })
+
+  it('makes saved list entries keyboard selectable', () => {
+    const runner = createMountedRunner(SavedView)
+    try {
+      runner.render({ state: 'ready', articles: [article, { ...article, id: 'article-2' }], handlers })
+      const row = findElement(
+        runner.current,
+        (element) => element.props?.role === 'listitem' && element.props?.tabIndex === 0,
+      )
+      expect(row).not.toBeNull()
+      row.props.onKeyDown({ key: 'Enter', preventDefault: () => {} })
+      const selected = findElement(runner.current, (element) => element.props?.['aria-current'] === 'true')
+      expect(selected).not.toBeNull()
+    } finally {
+      runner.unmount()
+    }
+  })
+
   it('suppresses saved summary text until the artifact status is ready', () => {
     const pending = createMountedRunner(SavedView)
     const ready = createMountedRunner(SavedView)

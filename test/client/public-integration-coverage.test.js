@@ -665,6 +665,8 @@ describe('saved article pagination and account logout', () => {
       result = hookRuntime.render(usePublicIntegration, props)
       expect(result.saved.articles).toEqual([])
       expect(result.saved.meta.page).toBe(1)
+      expect(result.feed.savedOverrides[article.id]).toBe(false)
+      expect(result.feed.savedOverrides['article-2']).toBe(false)
 
       await result.saved.handlers.onNextPage()
       expect(listSavedArticles).toHaveBeenCalledTimes(2)

@@ -20,9 +20,9 @@ export default function SavedView({
   pendingArticleId,
   clearOpen = false,
   handlers = {},
-  maxSavedLimit = 20,
 }) {
   const [selectedArticleId, setSelectedArticleId] = useState(null)
+  const savedPage = Math.max(1, Number(meta.page) || 1)
   const selectedArticle =
     articles.find((item) => item.id === selectedArticleId) ?? articles[0] ?? null
   const selectedArticleUrl = selectedArticle ? safeExternalUrl(selectedArticle.originalUrl) : null
@@ -60,19 +60,19 @@ export default function SavedView({
                 fontFamily: 'inherit',
                 padding: '2px 10px',
                 borderRadius: '9999px',
-                backgroundColor: articles.length >= maxSavedLimit ? 'var(--public-danger-soft)' : 'var(--public-border)',
-                color: articles.length >= maxSavedLimit ? 'var(--public-danger)' : 'var(--public-fg)',
-                border: `1px solid ${articles.length >= maxSavedLimit ? 'var(--public-danger)' : 'var(--public-border)'}`,
+                backgroundColor: 'var(--public-border)',
+                color: 'var(--public-fg)',
+                border: '1px solid var(--public-border)',
                 lineHeight: '1.5',
               }}
             >
-              {articles.length}/{maxSavedLimit}
+              Trang {savedPage}
             </span>
           </div>
         }
         copy="Danh sách các bài viết bạn đã lưu để xem lại sau."
         action={
-          articles.length > 0 ? (
+          articles.length > 0 || savedPage > 1 ? (
             <button
               className="public-btn public-btn-secondary"
               type="button"
@@ -106,7 +106,7 @@ export default function SavedView({
         />
       )}
 
-      {state === 'ready' && articles.length === 0 && (
+      {state === 'ready' && articles.length === 0 && savedPage === 1 && (
         <StateCard
           eyebrow="Danh sách trống"
           title="Chưa có bài đã lưu"
@@ -124,7 +124,7 @@ export default function SavedView({
       )}
 
       {/* BỐ CỤC 2 CỘT */}
-      {state === 'ready' && articles.length > 0 && (
+      {state === 'ready' && (articles.length > 0 || savedPage > 1) && (
         <div
           className="saved-split-layout"
           style={{
@@ -140,6 +140,7 @@ export default function SavedView({
             className="saved-list-column"
             role="list"
             aria-label="Danh sách bài đã lưu"
+            aria-live="polite"
             style={{
               display: 'flex',
               flexDirection: 'column',
@@ -156,7 +157,13 @@ export default function SavedView({
                   key={item.id}
                   role="listitem"
                   aria-current={isSelected ? 'true' : undefined}
+                  tabIndex={0}
                   onClick={() => setSelectedArticleId(item.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    setSelectedArticleId(item.id)
+                  }}
                   style={{
                     cursor: 'pointer',
                     borderRadius: '12px',
@@ -179,9 +186,12 @@ export default function SavedView({
                 </div>
               )
             })}
-            {meta.hasNext || meta.page > 1 ? (
+            {articles.length === 0 ? (
+              <p className="public-muted">Trang này không còn bài viết. Dùng nút bên dưới để quay lại.</p>
+            ) : null}
+            {meta.hasNext || savedPage > 1 ? (
               <Pagination
-                page={meta.page || 1}
+                page={savedPage}
                 hasNext={Boolean(meta.hasNext)}
                 onPrevious={handlers.onPreviousPage}
                 onNext={handlers.onNextPage}
