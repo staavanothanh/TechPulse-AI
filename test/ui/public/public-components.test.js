@@ -459,6 +459,62 @@ describe('public feature presentation contract', () => {
     }
   })
 
+  it('keeps class CSS authoritative for feed layout while preserving filter semantics and handlers', () => {
+    const onFilterChange = vi.fn()
+    const onSubmit = vi.fn()
+    const props = {
+      state: 'ready',
+      articles: [],
+      filters: {
+        topic: 'AI',
+        publishedAfter: '2026-09-01T00:00',
+        publishedBefore: '2026-09-12T23:59',
+      },
+      handlers: { onFilterChange, onSubmit },
+    }
+    const html = render(FeedView, props)
+    const layoutTag = html.match(/<div class="public-feed-layout"[^>]*>/)?.[0]
+
+    expect(layoutTag).toBeDefined()
+    expect(layoutTag).not.toMatch(/\sstyle="/)
+    expect(html).toMatch(/<label[^>]*for="public-feed-topic"[^>]*>/)
+    expect(html).toContain('id="public-feed-topic"')
+    expect(html).toContain('value="AI"')
+    expect(html).toContain('id="public-feed-source"')
+    expect(html).toMatch(/<label[^>]*for="public-feed-source"[^>]*>/)
+    expect(html).toContain('<optgroup label="RSS Feeds">')
+    expect(html).toContain('<optgroup label="arXiv">')
+    expect(html).toContain('<optgroup label="Hacker News">')
+    expect(html).toMatch(/<label[^>]*for="public-feed-after"[^>]*>/)
+    expect(html).toMatch(/<input[^>]*id="public-feed-after"[^>]*type="datetime-local"[^>]*value="2026-09-01T00:00"/)
+    expect(html).toMatch(/<label[^>]*for="public-feed-before"[^>]*>/)
+    expect(html).toMatch(/<input[^>]*id="public-feed-before"[^>]*type="datetime-local"[^>]*value="2026-09-12T23:59"/)
+    expect(html).toContain('type="submit"')
+
+    const runner = createMountedRunner(FeedView)
+    try {
+      const tree = runner.render(props)
+      const findById = (id) => findElement(tree, (element) => element.props?.id === id)
+      const form = findElement(tree, (element) => element.type === 'form')
+      expect(form).not.toBeNull()
+      expect(form.props.onSubmit).toBe(onSubmit)
+      form.props.onSubmit({ preventDefault: vi.fn() })
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+
+      findById('public-feed-topic').props.onChange('Robotics')
+      findById('public-feed-source').props.onChange({ target: { value: '507f1f77bcf86cd799439011' } })
+      findById('public-feed-after').props.onChange('2026-09-02T00:00')
+      findById('public-feed-before').props.onChange('2026-09-11T23:59')
+
+      expect(onFilterChange).toHaveBeenNthCalledWith(1, 'topic', 'Robotics')
+      expect(onFilterChange).toHaveBeenNthCalledWith(2, 'sourceId', '507f1f77bcf86cd799439011')
+      expect(onFilterChange).toHaveBeenNthCalledWith(3, 'publishedAfter', '2026-09-02T00:00')
+      expect(onFilterChange).toHaveBeenNthCalledWith(4, 'publishedBefore', '2026-09-11T23:59')
+    } finally {
+      runner.unmount()
+    }
+  })
+
   it('renders the topic filter and offers a reset when only the topic filter is applied', () => {
     const html = render(FeedView, {
       state: 'ready',

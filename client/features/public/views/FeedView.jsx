@@ -111,13 +111,6 @@ export default function FeedView({
 
       <div
         className="public-feed-layout"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
-          gap: '32px',
-          marginTop: '24px',
-          alignItems: 'start',
-        }}
       >
         <div
           className="public-results"
