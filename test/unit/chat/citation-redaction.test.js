@@ -7,8 +7,8 @@ describe('Step 10 historical citation persistence and read redaction', () => {
   const sourceId = new ObjectId('507f1f77bcf86cd799439012')
   const available = { id: 'C1', articleId: articleId.toHexString(), sourceId: sourceId.toHexString(), sourceName: 'Nguồn public-only', author: 'Tác giả public-only', sourceLanguage: 'vi', titleOriginal: 'Bài hợp lệ', titleVi: 'Bài hợp lệ bằng tiếng Việt', originalUrl: 'https://example.test/article', publishedAt: '2026-08-12T00:00:00.000Z' }
 
-  it('persists titleVi in the strict available historical union', () => {
-    expect(historicalCitationDocument(available)).toEqual({ id: 'C1', status: 'available', articleId, sourceId, titleOriginal: 'Bài hợp lệ', titleVi: 'Bài hợp lệ bằng tiếng Việt', originalUrl: 'https://example.test/article', publishedAt: new Date('2026-08-12T00:00:00.000Z'), sourceName: 'Nguồn public-only' })
+  it('persists only the strict available historical union from a public answer citation', () => {
+    expect(historicalCitationDocument(available)).toEqual({ id: 'C1', status: 'available', articleId, sourceId, titleOriginal: 'Bài hợp lệ', originalUrl: 'https://example.test/article', publishedAt: new Date('2026-08-12T00:00:00.000Z'), sourceName: 'Nguồn public-only' })
   })
   it('hydrates titleVi from a visible article for legacy citations without the field', () => {
     const legacy = { ...available }
@@ -42,7 +42,7 @@ describe('Step 10 historical citation persistence and read redaction', () => {
     expect(result).toMatchObject({ status: 'available', titleVi: 'Tiêu đề khôi phục từ bài viết' })
   })
   it('preserves an explicit null historical title instead of hydrating current article metadata', () => {
-    const stored = historicalCitationDocument({ ...available, titleVi: null })
+    const stored = { ...historicalCitationDocument(available), titleVi: null }
     const result = redactHistoricalCitation(stored, {
       article: {
         _id: articleId,

@@ -511,7 +511,7 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
      - Chạy cập nhật tự động toàn bộ client/contract generation qua `npm run contract:generate`.
   2. **Backend Hydration & Serialization:**
      - `server/domain/qa/citations.js`: Cập nhật `citationEvidenceMetadata` để đọc và trả về `titleVi: article.titleVi` từ evidence database. Cập nhật `serializeHistoricalCitation` để duy trì `titleVi`.
-     - `server/repositories/mongo/chat-repository.js`: Cập nhật `historicalCitationDocument`, `historicalCitation`, và `publicAnswerCitation` để lưu trữ và trả về `titleVi` khi replay session.
+      - `server/repositories/mongo/chat-repository.js`: Cập nhật `publicAnswerCitation` và `historicalCitation` trả về `titleVi` cho client; giữ `historicalCitationDocument` tuân thủ strict schema của MongoDB collection `chatSessions` (không persist `titleVi` để tránh vi phạm validator code 121); khi replay session, `redactHistoricalCitation` sẽ tự động hydrate `titleVi` từ collection `articles`.
   3. **Frontend Integration & Fallback Lookup:**
      - `client/features/public/PublicApp.jsx`: Truyền `articles: feed.articles || []` vào `qa` viewProps.
      - `client/features/public/views/QaView.jsx`: Xây dựng `articlesMap` từ prop `articles`. Cập nhật `citationChipTitle` và `CitationDrawer` ưu tiên:
@@ -524,7 +524,7 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
    - Sinh lại API client qua `npm run contract:generate`.
 2. **Backend Domain & Repository:**
    - `server/domain/qa/citations.js`: `citationEvidenceMetadata` trả về `titleVi: article.titleVi`.
-   - `server/repositories/mongo/chat-repository.js`: Lưu trữ và trả về `titleVi` trong các hàm xử lý citation.
+   - `server/repositories/mongo/chat-repository.js`: Tuân thủ schema lưu trữ của chatSessions (không ghi trường lạ vào database), hydrate động và trả về `titleVi` trong các hàm serialization citation cho client.
 3. **Frontend Application:**
    - `client/features/public/PublicApp.jsx`: Truyền prop `articles` cho view Hỏi đáp.
    - `client/features/public/views/QaView.jsx`: Tích hợp `articlesMap` tra cứu tiêu đề tiếng Việt cho chip trích dẫn và drawer.
@@ -598,7 +598,38 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
 
 ---
 
-## 19. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
+## 19. Sửa Lỗi: Khắc Phục MongoServerError Code 121 (DocumentValidationFailure) Khi Lưu Câu Trả Lời Hỏi Đáp (Q&A)
+
+### Bối cảnh & Nguyên nhân lỗi
+- **Hiện tượng:** Sau khi người dùng gửi câu hỏi trong tab Hỏi đáp (Q&A), hệ thống xử lý sinh câu trả lời thành công nhưng tại bước lưu phiên chat (`appendAnswer`), backend báo lỗi:
+  ```text
+  Q&A infrastructure error { stage: 'appendAnswer', name: 'MongoServerError', code: 121 }
+  ```
+  Client nhận mã phản hồi HTTP `503 service_unavailable` với thông báo *"Q&A service is temporarily unavailable"*.
+- **Nguyên nhân kỹ thuật:**
+  1. Trên MongoDB Atlas, collection `chatSessions` có schema validator `CHAT_SESSION_SOURCE_NAME_VALIDATOR` được áp dụng mức `validationLevel: 'strict'`, `validationAction: 'error'`. Nhánh trích dẫn hợp lệ (`available`) được cấu hình nghiêm ngặt với `additionalProperties: false`, chỉ cho phép các trường: `id`, `status`, `articleId`, `sourceId`, `originalUrl`, `titleOriginal`, `publishedAt`, `sourceName`.
+  2. Tại commit `be14582c`, hàm `historicalCitationDocument` trong `server/repositories/mongo/chat-repository.js` đã thêm dòng:
+     ```javascript
+     const titleVi = historicalTitleVi(citation.titleVi)
+     ...
+     ...(titleVi !== undefined ? { titleVi } : {}),
+     ```
+     khiến trường `titleVi` bị lưu trực tiếp vào tài liệu MongoDB của `chatSessions`.
+  3. Do collection `chatSessions` không cho phép trường lạ ngoài schema (`additionalProperties: false`), MongoDB Atlas lập tức từ chối thao tác cập nhật document với lỗi validation code 121.
+
+### Giải pháp kỹ thuật đã triển khai
+1. **Tuân thủ triệt để MongoDB Schema Validator (`server/repositories/mongo/chat-repository.js`):**
+   - Loại bỏ việc ghi trường `titleVi` vào `historicalCitationDocument`, đảm bảo document citation lưu trong `chatSessions` hoàn toàn tuân thủ `CHAT_SESSION_SOURCE_NAME_VALIDATOR`.
+   - Vẫn đảm bảo tính năng hiển thị `titleVi` tiếng Việt cho người dùng:
+     - **Khi AI trả lời trực tiếp:** Đối tượng `publicAnswer` nhận trích dẫn trực tiếp từ `answer.citations` (đã gắn sẵn `titleVi` từ bước tìm kiếm bằng chứng).
+     - **Khi đọc lại phiên chat cũ (`getChatSession`):** Hàm `redactHistoricalCitation` tự động truy vấn bài viết từ collection `articles` và hydrate trường `titleVi: article.titleVi` trước khi tuần tự hóa trả về client.
+2. **Cập nhật kiểm thử tự động:**
+   - `test/unit/chat/citation-redaction.test.js`: Cập nhật test case `persists only the strict available historical union from a public answer citation` xác nhận `historicalCitationDocument` chỉ lưu các trường nghiêm ngặt của schema `available`.
+   - Đã chạy kiểm thử trực tiếp trên MongoDB Atlas xác nhận `appendAnswer` lưu thành công mà không gặp lỗi validation 121.
+
+---
+
+## 20. Hướng Dẫn Kiểm Thử Thủ Công Nhanh (Manual Verification)
 
 1. **Kiểm tra độc lập giữa chủ đề AI và Học máy, Software Engineering và JavaScript:**
    - Mở `http://localhost:3000` và chuyển sang tab **Hỏi đáp** (Q&A).
@@ -737,3 +768,8 @@ Tài liệu này ghi lại các cập nhật, cải tiến tính năng và giao 
     - Sau khi xóa thành công và chuyển hướng về trang chủ:
       - Form xác thực hiển thị tiêu đề **Đăng nhập** (kèm nút bấm *"Đăng nhập"* và ô nhập mật khẩu có `autoComplete="current-password"`), hoàn toàn không bị kẹt lại form Đăng ký.
       - Phía trên form hiển thị thông báo thành công màu xanh: *"Yêu cầu xóa tài khoản đã được chấp nhận. Phiên của bạn đã bị thu hồi."*.
+16. **Kiểm tra Hỏi đáp thành công và không bị lỗi MongoServerError 121 khi lưu câu trả lời có trích dẫn:**
+    - Mở tab **Hỏi đáp** (Q&A), gửi câu hỏi (ví dụ: *"Google DeepMind đã công bố mô hình speech AI nào dựa trên Gemini?"*).
+    - Quan sát câu trả lời hiển thị hoàn chỉnh, đính kèm đầy đủ các chip trích dẫn có tiêu đề tiếng Việt.
+    - Kiểm tra terminal chạy server (`npm run dev`): Không xuất hiện lỗi `Q&A infrastructure error { stage: 'appendAnswer', name: 'MongoServerError', code: 121 }`.
+    - Nhấn F5 tải lại trang và mở lại phiên hỏi đáp từ cột danh sách bên trái: Phiên chat hiển thị lại mượt mà, chip trích dẫn và drawer vẫn giữ nguyên tiêu đề tiếng Việt đã được hydrate tự động.

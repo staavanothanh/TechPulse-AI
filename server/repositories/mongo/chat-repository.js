@@ -245,7 +245,6 @@ function historicalCitationDocument(citation) {
   const parsedUrl = new URL(citation.originalUrl)
   if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password || !citation.articleId || !citation.sourceId || typeof citation.titleOriginal !== 'string' || !citation.titleOriginal) throw new Error('Historical citation is invalid')
   const sourceName = historicalSourceName(citation)
-  const titleVi = historicalTitleVi(citation.titleVi)
   return {
     id: citation.id,
     status: 'available',
@@ -255,7 +254,6 @@ function historicalCitationDocument(citation) {
     titleOriginal: citation.titleOriginal.slice(0, 500),
     publishedAt: dateValue(citation.publishedAt),
     ...(sourceName ? { sourceName } : {}),
-    ...(titleVi !== undefined ? { titleVi } : {}),
   }
 }
 
